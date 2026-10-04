@@ -27,9 +27,22 @@ using TimePoint = std::chrono::system_clock::time_point;
 // thinking pauses as active time and inflated the speed metric.
 inline constexpr int64_t kActiveGapLimitMs = 10'000;
 
+// Lower bound on the denominator of the speed metric. active_ms only ever
+// counts the gaps *between* consecutive commits: the wait before the first key
+// and the reaction after the last one are not in it. On a sparse day that
+// remainder is all there is, and dividing by it reports a rate nobody typed --
+// 81 readable characters over 1.9 s of counted gaps read as 2503 chars/min.
+// Crediting a full minute keeps the figure a conservative lower bound instead of
+// a measurement the sample cannot support, and costs nothing on real days: at
+// active_ms just below the floor the two denominators are nearly identical.
+inline constexpr int64_t kMinSpeedActiveMs = 60'000;
+
 // Minimum active time a day needs before it may win the "fastest day" metric.
 // Without it a day with a handful of characters in two seconds would dominate
-// the ranking.
+// the ranking. This stays a separate gate rather than a consequence of
+// kMinSpeedActiveMs: the floor only caps a short day at "chars per one credited
+// minute", which is still a plausible-looking rate, so without this gate
+// exactly those floored short days would take the ranking.
 inline constexpr int64_t kFastestSpeedMinActiveMs = 60'000;
 
 // LocalTimeParts is a resolved local calendar time: exactly what the day/hour
@@ -139,15 +152,21 @@ inline TimePoint DayKeyToTime(int day_key)
 }
 
 // CharsPerMinute converts a character count and an active duration to the
-// speed metric. Zero characters or zero active time yield 0 instead of a
-// division result.
+// speed metric.
+//
+// Zero characters or zero active time yield 0 instead of a division result.
+// Zero active time must stay 0 rather than being rescued by the
+// kMinSpeedActiveMs floor: no active time at all is a missing measurement, not a
+// small one. A positive but tiny duration is divided by kMinSpeedActiveMs rather
+// than by its own value (see the constant for why).
 inline double CharsPerMinute(int64_t chars, int64_t active_ms)
 {
     if (chars <= 0 || active_ms <= 0)
     {
         return 0.0;
     }
-    return static_cast<double>(chars) / (static_cast<double>(active_ms) / 60000.0);
+    const int64_t denominator_ms = active_ms < kMinSpeedActiveMs ? kMinSpeedActiveMs : active_ms;
+    return static_cast<double>(chars) / (static_cast<double>(denominator_ms) / 60000.0);
 }
 
 // DailyRow is one row of stats_daily: per-day category counts plus the active
@@ -180,8 +199,9 @@ struct DailyRow
         return cjk + latin;
     }
 
-    // Speed returns readable characters per active minute; 0 when no active
-    // time.
+    // Speed returns readable characters per active minute; 0 when there is no
+    // active time at all, and a rate floored at one minute of active time when
+    // there is only a little (see CharsPerMinute).
     double Speed() const
     {
         return CharsPerMinute(SpeedChars(), active_ms);

@@ -247,4 +247,21 @@ TEST_CASE(stats_chars_per_minute_guard)
     REQUIRE_EQ(MsimeStats::CharsPerMinute(100, 0), 0.0);
     REQUIRE_EQ(MsimeStats::CharsPerMinute(120, 60'000), 120.0);
     REQUIRE_EQ(MsimeStats::CharsPerMinute(0, 60'000), 0.0);
+    // 负活跃时间与零字符同样没有测量值。
+    REQUIRE_EQ(MsimeStats::CharsPerMinute(120, -1), 0.0);
+}
+
+// 分母下限：活跃时间不足一分钟时按一分钟算，而不是按真实活跃时间外推。
+// 第一条和最后一条取自本机 stats.db 里 20261004 / 20261002 的原始记录，其余是边界值。
+TEST_CASE(stats_chars_per_minute_floors_tiny_active_time)
+{
+    // 81 字 / 1.9 秒活跃：按真实时间算是 2503 字/分，按下限算是 81 字/分。
+    REQUIRE_EQ(MsimeStats::CharsPerMinute(81, 1942), 81.0);
+    // 下限之下一律取满一分钟，值与该分钟数成正比。
+    REQUIRE_EQ(MsimeStats::CharsPerMinute(50, 30'000), 50.0);
+    REQUIRE_EQ(MsimeStats::CharsPerMinute(50, 1), 50.0);
+    // 恰好一分钟不受影响；超过下限后回到真实速率。
+    REQUIRE_EQ(MsimeStats::CharsPerMinute(120, MsimeStats::kMinSpeedActiveMs), 120.0);
+    REQUIRE_EQ(MsimeStats::CharsPerMinute(120, MsimeStats::kMinSpeedActiveMs + 60'000), 60.0);
+    REQUIRE_EQ(MsimeStats::CharsPerMinute(1220, 603'977), 1220.0 / (603'977 / 60000.0));
 }

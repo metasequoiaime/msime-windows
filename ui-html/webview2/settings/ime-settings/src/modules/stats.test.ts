@@ -78,6 +78,19 @@ describe('日期与格式化', () => {
     expect(speedOf({ ...quiet, activeMs: 0 })).toBe(0);
   });
 
+  // 分母下限：不足一分钟按一分钟算，与 server 的 kMinSpeedActiveMs 同口径。
+  it('speedOf 活跃时间不足一分钟时按一分钟算', () => {
+    // 真实记录：81 个可读字符 / 1.9 秒活跃，按真实时间外推是 2503 字/分。
+    expect(speedOf({ dayKey: 20250101, cjk: 19, latin: 62, digit: 10, punct: 0, other: 0, activeMs: 1942 })).toBe(81);
+    expect(speedOf({ dayKey: 20250101, cjk: 50, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 30_000 })).toBe(50);
+    expect(speedOf({ dayKey: 20250101, cjk: 50, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 1 })).toBe(50);
+    // 超过下限后回到真实速率。
+    expect(speedOf({ dayKey: 20250101, cjk: 120, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 120_000 })).toBe(60);
+    // 完全没有活跃时间是缺样本，不是样本少，仍为 0。
+    expect(speedOf({ dayKey: 20250101, cjk: 50, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 0 })).toBe(0);
+    expect(speedOf({ dayKey: 20250101, cjk: 0, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 1942 })).toBe(0);
+  });
+
   it('formatNumber 千分位', () => {
     expect(formatNumber(0)).toBe('0');
     expect(formatNumber(1234)).toBe('1,234');

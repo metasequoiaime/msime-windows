@@ -42,6 +42,11 @@ std::pair<int, int64_t> BestDay(const std::vector<DailyRow> &rows)
 
 // FastestDay returns the highest daily speed over days with enough active time
 // to be meaningful. Speed counts readable characters only (DailyRow::Speed).
+// The active-time gate is a separate criterion, not a stricter version of
+// CharsPerMinute's floor. The floor only caps a short day at chars per one
+// credited minute, which still lands inside the range real days report, so a
+// burst-typing day that never accumulated a minute of gaps would still take the
+// ranking with a rate it never sustained.
 std::pair<int, double> FastestDay(const std::vector<DailyRow> &rows)
 {
     int day_key = 0;

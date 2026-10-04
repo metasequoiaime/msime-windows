@@ -92,9 +92,23 @@ export function readableOf(row: StatsDailyRow): number {
   return row.cjk + row.latin;
 }
 
-/** 按日速度：可读字符数 ÷ 活跃分钟。 */
+/** 速度分母下限，与 server/src/statistics/stats_types.h 的 kMinSpeedActiveMs 同值。 */
+const SPEED_MIN_ACTIVE_MS = 60_000;
+
+/**
+ * 按日速度：可读字符数 ÷ 活跃分钟。
+ *
+ * 活跃时间只累加相邻两次上屏之间的间隔，首键之前与末键之后的时间不在其中，零散
+ * 输入的日子分母可能只有几秒。按它外推会得到没人打过的速率，所以不足一分钟时按
+ * 一分钟算；完全没有活跃时间仍然返回 0——那是缺样本，不是样本少。
+ */
 export function speedOf(row: StatsDailyRow): number {
-  return row.activeMs > 0 ? (readableOf(row) / row.activeMs) * 60000 : 0;
+  const readable = readableOf(row);
+  if (readable <= 0 || row.activeMs <= 0) {
+    return 0;
+  }
+  const denominatorMs = Math.max(row.activeMs, SPEED_MIN_ACTIVE_MS);
+  return readable / (denominatorMs / 60000);
 }
 
 export function formatNumber(value: number): string {
