@@ -182,16 +182,43 @@ TEST_CASE(stats_overview_speeds)
         Row(20260918, 120, 0, 0, 0, 0, 120'000),
         // 600 readable chars in 5 min = 120/min; wins.
         Row(20260919, 600, 0, 0, 0, 0, 300'000),
-        // 50 readable chars in 30s: too little active time to compete, but
-        // still counted in the overall average.
+        // 50 readable chars in 30s: too little active time to compete in the
+        // ranking, floored to a minute for today's own speed, and still counted
+        // in the overall average at its real duration.
         Row(kToday, 50, 0, 0, 0, 0, 30'000),
     };
     const Overview overview = MsimeStats::ComputeOverview(rows, {}, kToday);
 
-    REQUIRE(NearlyEqual(overview.today_speed, 100.0));         // 50 / 0.5 min
+    REQUIRE(NearlyEqual(overview.today_speed, 50.0));          // 50 / floored 1 min
     REQUIRE(NearlyEqual(overview.average_speed, 770.0 / 7.5)); // total 7.5 active minutes
     REQUIRE(NearlyEqual(overview.fastest_speed, 120.0));
     REQUIRE_EQ(overview.fastest_day_key, 20260919);
+}
+
+// 零散输入日：分母只按相邻上屏之间的间隔累加，活跃时间可能只有几秒，按它外推会得出
+// 没人打过的速率（真实记录：81 个可读字符 / 1.9 秒活跃 = 2503 字/分）。这组数字取自
+// 本机 stats.db 的 20261004。
+TEST_CASE(stats_overview_today_speed_survives_sparse_typing)
+{
+    const std::vector<DailyRow> rows = {
+        // 10-02 是真实记录里速度最高的一天（约 121 字/分）；10-03 有 31 个可读字符
+        // 但完全没有活跃时间，速度是 0——它进不了最快日，也拉不动平均值。
+        Row(20261002, 747, 473, 1, 81, 0, 603'977),
+        Row(20261003, 0, 31, 0, 0, 0, 0),
+        // 今天零星敲了几个键：2/7/10 点的间隔都超过 kActiveGapLimitMs 被丢掉，
+        // 只有 8 点那 1.9 秒被计入。
+        Row(kToday, 19, 62, 10, 0, 0, 1942),
+    };
+    const Overview overview = MsimeStats::ComputeOverview(rows, {}, kToday);
+
+    REQUIRE_EQ(overview.today_active_ms, 1942);
+    REQUIRE(NearlyEqual(overview.today_speed, 81.0));
+    // 今日速度有了合理值，但这一天仍然不够资格拿下最快日：门槛管的是排名，
+    // 下限管的是数值，两者不能互相替代。
+    REQUIRE_EQ(overview.fastest_day_key, 20261002);
+    REQUIRE(NearlyEqual(overview.fastest_speed, 1220.0 / (603'977 / 60000.0)));
+    // 平均速度用全期累计活跃时长，本来就远离下限，不受今日这 1.9 秒影响。
+    REQUIRE(NearlyEqual(overview.average_speed, 1332.0 / ((603'977 + 1942) / 60000.0)));
 }
 
 // 速度分子只数可读字符（cjk + latin）：标点、数字、其他加量都不提速。
