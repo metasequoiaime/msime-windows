@@ -288,8 +288,14 @@ namespace
 {
 const std::vector<std::string_view> &AiAssistantProviders()
 {
-    static const std::vector<std::string_view> providers{"deepseek", "openai", "siliconflow", "groq"};
+    static const std::vector<std::string_view> providers{"deepseek", "openai", "siliconflow", "groq", "custom"};
     return providers;
+}
+
+// 服务商已下线的旧默认模型。用户配置里残留这些值时按空槽位处理，跟随当前默认值。
+bool IsRetiredAiAssistantDefaultModel(std::string_view provider, std::string_view model)
+{
+    return provider == "groq" && model == "llama-3.3-70b-versatile";
 }
 } // namespace
 
@@ -828,11 +834,14 @@ bool LoadImeConfig()
         {
             const std::string id(provider);
             const auto load_slot = [&](const std::string &key, const std::string &legacy, std::string &target) {
+                // 空值和服务商已下线的旧默认模型都表示「用默认值」：早于 #610 的版本会把默认值原样写盘。
+                const auto usable = [&](const std::string &value) {
+                    return !value.empty() && !(key == "model" && IsRetiredAiAssistantDefaultModel(id, value));
+                };
                 const std::string stored = tbl["ai_assistant"][key + "_" + id].value_or(std::string());
-                // 空的旧版 endpoint/model 和空槽位一样表示「用默认值」。
-                if (!stored.empty())
+                if (usable(stored))
                     target = stored;
-                else if (id == g_ai_assistant.provider && !legacy.empty())
+                else if (id == g_ai_assistant.provider && usable(legacy))
                     target = legacy;
             };
             load_slot("endpoint", g_ai_assistant.endpoint, g_ai_assistant.endpoints[id]);

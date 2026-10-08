@@ -307,6 +307,29 @@ TEST_CASE(ai_provider_configuration_round_trips_without_mixing_credentials)
         REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://openai.example.test/v1/chat/completions"));
         REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-openai"));
 
+        // Custom 槽位的 base_url、API Key、模型独立落盘，切走再切回不串味。
+        REQUIRE(SetConfiguredAiAssistantString("provider", "custom"));
+        REQUIRE(SetConfiguredAiAssistantString("token_custom", "test-custom"));
+        REQUIRE(SetConfiguredAiAssistantString("endpoint", "https://custom.example.test/v1/chat/completions"));
+        REQUIRE(SetConfiguredAiAssistantString("model", "custom-model"));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAiAssistant().provider, std::string("custom"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-custom"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://custom.example.test/v1/chat/completions"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-model"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoints.at("custom"),
+                   std::string("https://custom.example.test/v1/chat/completions"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().models.at("custom"), std::string("custom-model"));
+
+        REQUIRE(SetConfiguredAiAssistantString("provider", "openai"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-openai"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://openai.example.test/v1/chat/completions"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-openai"));
+        REQUIRE(SetConfiguredAiAssistantString("provider", "custom"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-custom"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://custom.example.test/v1/chat/completions"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-model"));
+
         for (const std::string provider : {"siliconflow", "groq"})
         {
             const AiAssistantConfig defaults;
@@ -362,6 +385,28 @@ TEST_CASE(ai_provider_default_values_are_not_pinned_into_slots)
         InitImeConfig();
         REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, defaults.endpoints.at("openai"));
         REQUIRE_EQ(GetConfiguredAiAssistant().model, defaults.models.at("openai"));
+    }
+    fs::remove_all(unique_root, ec);
+}
+
+TEST_CASE(ai_provider_retired_default_model_follows_new_default)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"ai-provider-retired";
+    const fs::path data_dir = unique_root / L"metasequoiaime";
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    SeedTemplate(data_dir);
+    // 早期版本把 Groq 当时的默认模型原样写进了旧版 model 和 model_groq。
+    WriteText(data_dir / L"config.toml", "[ai_assistant]\nprovider = \"groq\"\n"
+                                         "model = \"llama-3.3-70b-versatile\"\n"
+                                         "model_groq = \"llama-3.3-70b-versatile\"\n");
+    {
+        ScopedConfigLocation location(unique_root);
+        const AiAssistantConfig defaults;
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, defaults.models.at("groq"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().models.at("groq"), defaults.models.at("groq"));
     }
     fs::remove_all(unique_root, ec);
 }

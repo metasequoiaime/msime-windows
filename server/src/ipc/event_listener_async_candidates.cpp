@@ -313,6 +313,12 @@ std::vector<WordItem> ReplaceSourceAndDeduplicate(std::vector<WordItem> &items, 
     return unique_candidates;
 }
 
+// Merge query results; NormalizeMixedCandidateOrder determines their final positions.
+void AppendCandidates(std::vector<WordItem> &items, std::vector<WordItem> candidates)
+{
+    items.insert(items.end(), std::make_move_iterator(candidates.begin()), std::make_move_iterator(candidates.end()));
+}
+
 // 首个插到 insert_index（最终位置由 NormalizeMixedCandidateOrder 按来源统一摆），其余追加到末尾。
 void InsertFirstAndAppendRest(std::vector<WordItem> &items, std::vector<WordItem> candidates, size_t insert_index)
 {
@@ -379,14 +385,14 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
     {
         auto emoji = ReplaceSourceAndDeduplicate(items, CandidateSource::Emoji, std::move(result.emoji));
         changed = changed || !emoji.empty();
-        InsertFirstAndAppendRest(items, std::move(emoji), 2);
+        AppendCandidates(items, std::move(emoji));
     }
 
     if (GetConfiguredKaomojiMixedInputEnabled())
     {
         auto kaomoji = ReplaceSourceAndDeduplicate(items, CandidateSource::Kaomoji, std::move(result.kaomoji));
         changed = changed || !kaomoji.empty();
-        InsertFirstAndAppendRest(items, std::move(kaomoji), 3);
+        AppendCandidates(items, std::move(kaomoji));
     }
 
     // 全被去重掉、列表也没少东西时，屏幕上的那页就是对的，不必重画。

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <utility>
 #include "ipc.h"
+#include "ipc/candidate_expansion_policy.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/input_key_policy.h"
 #include "utils/common_utils.h"
@@ -528,17 +529,13 @@ bool ExpandCandidatesKeepingPagePosition()
     {
         return false;
     }
-    const int current_page = ui.page_index;
-    const int current_selection = ui.selected_index_in_page;
     auto expanded = g_inputSession->get_candidates();
     user_dictionary::apply_fixed_positions(
         user_dictionary::default_user_db_path(), CurrentRankingContextKey(), expanded, true,
         [](const std::string &key, const std::string &value) { return g_inputSession->find_candidate(key, value); },
         g_inputSession->has_active_helpcode());
     PlaceQuickPhrases(expanded, g_inputSession->get_pinyin_sequence_with_cases());
-    ui.set_items(std::move(expanded));
-    ui.page_index = current_page;
-    ui.selected_index_in_page = current_selection;
+    FanyImeIpc::SetExpandedCandidatesKeepingPagePosition(ui, std::move(expanded), CurrentEnglishPlacement(ui.items));
     return true;
 }
 

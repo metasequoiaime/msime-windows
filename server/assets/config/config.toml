@@ -55,7 +55,7 @@ cn_en_mixed_input = true
 cn_en_mixed_input_min_chars = 2
 # 在竖排候选窗口中显示中英文互译（每项最多两个简短释义）
 candidate_translations = true
-# 中文输入状态下显示 emoji 前缀候选（第三个候选项，随云候选/AI 联想顺移）
+# 中文输入状态下显示 emoji 前缀候选（排在候选项列表最后）
 emoji_mixed_input = false
 # 中文输入状态下显示颜文字前缀候选（排在 emoji 之后）
 kaomoji_mixed_input = false
@@ -498,6 +498,7 @@ token_deepseek = "<YOUR_OWN_DEEPSEEK_TOKEN>"
 token_openai = ""
 token_siliconflow = ""
 token_groq = ""
+token_custom = ""
 endpoint = "https://api.deepseek.com/chat/completions"
 model = "deepseek-v4-flash"
 # 空槽位使用提供商默认值，旧版 endpoint/model 只归属于当前提供商
@@ -505,10 +506,12 @@ endpoint_deepseek = ""
 endpoint_openai = ""
 endpoint_siliconflow = ""
 endpoint_groq = ""
+endpoint_custom = ""
 model_deepseek = ""
 model_openai = ""
 model_siliconflow = ""
 model_groq = ""
+model_custom = ""
 candidate_limit = 3
 prompt_id = "custom_1"
 prompt = """你是一个中文全拼输入法联想引擎。输入为已经切分好的拼音数组、前文上下文和候选数量。

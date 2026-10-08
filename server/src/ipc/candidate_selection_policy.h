@@ -134,11 +134,12 @@ inline std::optional<size_t> SlottedEnglishIndex(const std::vector<WordItem> &it
 // Keep asynchronous mixed-input candidates in stable priority slots regardless
 // of the order in which their workers finish. English keeps its legacy slotting
 // (promoted ahead of AI unless a cloud result forces it behind cloud+AI), and
-// emoji/kaomoji are placed one slot after the last of cloud/AI/English:
-//   no cloud:         Chinese, English, AI, emoji, kaomoji
-//   cloud:            Chinese, cloud, AI, English, emoji, kaomoji
-//   cloud only:       Chinese, cloud, English, emoji, kaomoji
-//   base:             Chinese, English, emoji, kaomoji
+// emoji/kaomoji are placed at the end of the candidate list so they do not
+// displace normal Chinese candidates:
+//   no cloud:         Chinese..., English, AI, ..., emoji, kaomoji
+//   cloud:            Chinese..., cloud, AI, English, ..., emoji, kaomoji
+//   cloud only:       Chinese..., cloud, English, ..., emoji, kaomoji
+//   base:             Chinese..., English, ..., emoji, kaomoji
 // 日期时间只在 rq / sj / xq 这类唤醒词上出现，用户打它就是要日期，所以它排在所有异步候选前面，
 // 紧跟首个中文候选，展开全部格式的入口紧跟在它后面：Chinese, date/time, 📅日期, cloud, ...
 // The learned English slot (EnglishPlacement) moves the English candidate away
@@ -232,16 +233,6 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
     }
     if (!cloud_candidate && ai_candidate)
         insert_at(slot++, std::move(*ai_candidate));
-    if (!emoji_candidates.empty())
-    {
-        insert_at(slot++, std::move(emoji_candidates.front()));
-        emoji_candidates.erase(emoji_candidates.begin());
-    }
-    if (!kaomoji_candidates.empty())
-    {
-        insert_at(slot++, std::move(kaomoji_candidates.front()));
-        kaomoji_candidates.erase(kaomoji_candidates.begin());
-    }
 
     for (auto &candidate : english_candidates)
         items.push_back(std::move(candidate));
@@ -253,7 +244,7 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
         items.push_back(std::move(candidate));
 
     // 把英文从默认位置挪到学到的槽位；没学过的补全词挪到首页末位。槽位 0 排在最前，但仍在首位
-    // 的快捷短语组后面。后面插入的 AI/emoji/颜文字都在 english_index 之后，下标仍然有效。
+    // 的快捷短语组后面。后面插入的 AI 候选与末尾追加的 emoji/颜文字都在 english_index 之后，下标仍然有效。
     std::optional<size_t> target = english_placement.slot;
     if (!target && completion_takes_slot)
         target = english_placement.page_size > 0 ? english_placement.page_size - 1 : items.size();

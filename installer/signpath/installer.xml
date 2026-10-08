@@ -2,12 +2,13 @@
 <!--
   SignPath artifact configuration "installer". SignPath reads its artifact configurations from the project settings, not from this repository: this file is the reviewed copy, paste it into SignPath when it changes.
   The artifact is the single installer staged by scripts/ci/signpath-files.ps1 -Set Installer; its name carries the version, hence the wildcard.
+  authenticode-sign takes no description or description-url: the SignPath Foundation subscription rejects them because they would override the watermark it generates.
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
     <directory path="Output">
       <pe-file path="MetasequoiaIME_Setup_v*.exe">
-        <authenticode-sign description="Metasequoia IME Setup" description-url="https://github.com/metasequoiaime/MSIME-Windows" />
+        <authenticode-sign />
       </pe-file>
     </directory>
   </zip-file>

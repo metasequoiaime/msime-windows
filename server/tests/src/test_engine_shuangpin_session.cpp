@@ -339,10 +339,13 @@ TEST_CASE(LearnedEnglishSlotMovesEnglishBehindItsDefaultPosition)
     placement.slot = 3;
     placement.input = "ni";
     FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, placement);
-    // 槽位是列表下标：英文挪到下标 3；emoji 留在默认的下一位。
+    // 槽位是列表下标：英文挪到下标 3；emoji 排在候选列表末尾，不挤占中文候选。
     REQUIRE_EQ(items[0].word, std::string("你"));
-    REQUIRE_EQ(items[1].source, CandidateSource::Emoji);
+    REQUIRE_EQ(items[1].word, std::string("呢"));
+    REQUIRE_EQ(items[2].word, std::string("泥"));
     REQUIRE_EQ(items[3].word, std::string("nice"));
+    REQUIRE_EQ(items[4].word, std::string("尼"));
+    REQUIRE_EQ(items[5].source, CandidateSource::Emoji);
     REQUIRE_EQ(*FanyImeIpc::SlottedEnglishIndex(items), size_t{3});
 }
 
@@ -426,7 +429,7 @@ TEST_CASE(FixedEnglishCandidateKeepsItsMixedCandidatePosition)
     REQUIRE_EQ(items[2].word, std::string("GitHub"));
 }
 
-TEST_CASE(EmojiMixedCandidateFollowsEnglishAndShiftsWithCloudAndAi)
+TEST_CASE(EmojiMixedCandidatesStayAtTheEndWithCloudAndAi)
 {
     const auto local = [](std::string word) { return WordItem("ni", std::move(word), 100); };
     const auto english = [] { return WordItem("ni", "nice", 1, CandidateSource::EnglishDictionary); };
@@ -434,13 +437,23 @@ TEST_CASE(EmojiMixedCandidateFollowsEnglishAndShiftsWithCloudAndAi)
     const auto cloud = [] { return WordItem("ni", "云候选", 1, CandidateSource::CloudSuggestion); };
     const auto ai = [] { return WordItem("ni", "AI联想", 1, CandidateSource::AiSuggestion); };
 
-    // Base case: English at slot 2, emoji at slot 3.
+    // 基础情况：英文在第 2 位，中文候选正常排列，emoji 始终追加在末尾。
     std::vector<WordItem> items = {local("你"), emoji(), local("呢"), english()};
     FanyImeIpc::NormalizeMixedCandidateOrder(items);
+    REQUIRE_EQ(items[0].word, std::string("你"));
     REQUIRE_EQ(items[1].source, CandidateSource::EnglishDictionary);
-    REQUIRE_EQ(items[2].source, CandidateSource::Emoji);
+    REQUIRE_EQ(items[2].word, std::string("呢"));
+    REQUIRE_EQ(items[3].source, CandidateSource::Emoji);
 
-    // Cloud + AI occupy slots 2/3; English and emoji shift to slots 4/5.
+    // 纯中文候选 + emoji：emoji 追加在末尾，不挤占任何中文候选。
+    items = {local("你"), local("呢"), local("泥"), emoji()};
+    FanyImeIpc::NormalizeMixedCandidateOrder(items);
+    REQUIRE_EQ(items[0].word, std::string("你"));
+    REQUIRE_EQ(items[1].word, std::string("呢"));
+    REQUIRE_EQ(items[2].word, std::string("泥"));
+    REQUIRE_EQ(items[3].source, CandidateSource::Emoji);
+
+    // 云候选 + AI 联想占第 2/3 位，英文占第 4 位，emoji 落在末尾。
     items = {local("你"), emoji(), english(), ai(), cloud()};
     FanyImeIpc::NormalizeMixedCandidateOrder(items);
     REQUIRE_EQ(items[1].source, CandidateSource::CloudSuggestion);
@@ -448,15 +461,16 @@ TEST_CASE(EmojiMixedCandidateFollowsEnglishAndShiftsWithCloudAndAi)
     REQUIRE_EQ(items[3].source, CandidateSource::EnglishDictionary);
     REQUIRE_EQ(items[4].source, CandidateSource::Emoji);
 
-    // Cloud only: English slot 3, emoji slot 4.
+    // 仅云候选：云占第 2 位，英文占第 3 位，后续中文候选不被挤占，emoji 落在末尾。
     items = {local("你"), emoji(), local("呢"), english(), cloud()};
     FanyImeIpc::NormalizeMixedCandidateOrder(items);
     REQUIRE_EQ(items[1].source, CandidateSource::CloudSuggestion);
     REQUIRE_EQ(items[2].source, CandidateSource::EnglishDictionary);
-    REQUIRE_EQ(items[3].source, CandidateSource::Emoji);
+    REQUIRE_EQ(items[3].word, std::string("呢"));
+    REQUIRE_EQ(items[4].source, CandidateSource::Emoji);
 }
 
-TEST_CASE(KaomojiMixedCandidateSitsRightAfterEmoji)
+TEST_CASE(KaomojiMixedCandidatesFollowEmojiAtTheEnd)
 {
     const auto local = [](std::string word) { return WordItem("ni", std::move(word), 100); };
     const auto english = [] { return WordItem("ni", "nice", 1, CandidateSource::EnglishDictionary); };
@@ -465,14 +479,15 @@ TEST_CASE(KaomojiMixedCandidateSitsRightAfterEmoji)
     const auto cloud = [] { return WordItem("ni", "云候选", 1, CandidateSource::CloudSuggestion); };
     const auto ai = [] { return WordItem("ni", "AI联想", 1, CandidateSource::AiSuggestion); };
 
-    // Base case: English slot 2, emoji slot 3, kaomoji slot 4.
+    // 基础情况：英文在第 2 位，中文候选正常排列，emoji 和颜文字追加在末尾且颜文字紧随 emoji。
     std::vector<WordItem> items = {local("你"), kaomoji(), emoji(), local("呢"), english()};
     FanyImeIpc::NormalizeMixedCandidateOrder(items);
     REQUIRE_EQ(items[1].source, CandidateSource::EnglishDictionary);
-    REQUIRE_EQ(items[2].source, CandidateSource::Emoji);
-    REQUIRE_EQ(items[3].source, CandidateSource::Kaomoji);
+    REQUIRE_EQ(items[2].word, std::string("呢"));
+    REQUIRE_EQ(items[3].source, CandidateSource::Emoji);
+    REQUIRE_EQ(items[4].source, CandidateSource::Kaomoji);
 
-    // Cloud + AI occupy slots 2/3; emoji/kaomoji shift to slots 5/6.
+    // 云候选 + AI 联想占第 2/3 位，英文占第 4 位，emoji 和颜文字排在末尾。
     items = {local("你"), kaomoji(), emoji(), english(), ai(), cloud()};
     FanyImeIpc::NormalizeMixedCandidateOrder(items);
     REQUIRE_EQ(items[1].source, CandidateSource::CloudSuggestion);
@@ -490,7 +505,7 @@ TEST_CASE(DateTimeMixedCandidateLeadsAsyncCandidates)
     const auto emoji = [] { return WordItem("rq", "\xF0\x9F\x98\x80", 1, CandidateSource::Emoji); };
     const auto cloud = [] { return WordItem("rq", "云候选", 1, CandidateSource::CloudSuggestion); };
 
-    // 日期紧跟首个中文候选，排在云、英文、emoji 前面；其余日期格式追加在末尾。
+    // 日期紧跟首个中文候选，排在云、英文前面；中文候选不被 emoji 挤占；emoji 与其余日期格式在末尾。
     std::vector<WordItem> items = {local("人群"), emoji(),       english(),         date("2026年10月2日"),
                                    cloud(),       local("日期"), date("2026-10-02")};
     FanyImeIpc::NormalizeMixedCandidateOrder(items);
@@ -498,8 +513,8 @@ TEST_CASE(DateTimeMixedCandidateLeadsAsyncCandidates)
     REQUIRE_EQ(items[1].word, std::string("2026年10月2日"));
     REQUIRE_EQ(items[2].source, CandidateSource::CloudSuggestion);
     REQUIRE_EQ(items[3].source, CandidateSource::EnglishDictionary);
-    REQUIRE_EQ(items[4].source, CandidateSource::Emoji);
-    REQUIRE_EQ(items[5].word, std::string("日期"));
+    REQUIRE_EQ(items[4].word, std::string("日期"));
+    REQUIRE_EQ(items[5].source, CandidateSource::Emoji);
     REQUIRE_EQ(items.back().word, std::string("2026-10-02"));
 
     // 快捷短语组仍排在日期前面，不被拆开。

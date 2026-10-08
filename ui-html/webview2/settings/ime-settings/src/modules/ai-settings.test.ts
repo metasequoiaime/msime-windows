@@ -8,6 +8,7 @@ vi.mock('./shared', () => ({
 }));
 vi.mock('./config-sync', () => ({ updateConfig: vi.fn() }));
 vi.mock('./credential-test', () => ({ setupCredentialTest: vi.fn() }));
+vi.mock('./model-fetch', () => ({ setupModelFetch: vi.fn(() => vi.fn()) }));
 
 import { applyAiConfig, setupAiSettings } from './ai-settings';
 import { updateConfig } from './config-sync';
@@ -98,4 +99,32 @@ it('reloads provider-specific values from a new config snapshot', () => {
   elements.get('aiProviderMenu')!.select('groq');
   expect(elements.get('aiEndpoint')!.value).toBe('https://groq.example.test/v1/chat/completions');
   expect(elements.get('aiModel')!.value).toBe('custom-groq');
+});
+
+it('keeps the Custom base url, api key and model independent from built-in providers', () => {
+  applyAiConfig({
+    provider: 'deepseek',
+    token: 'deepseek-key',
+    endpoint: 'https://api.deepseek.com/chat/completions',
+    model: 'deepseek-v4-flash'
+  });
+
+  elements.get('aiProviderMenu')!.select('custom');
+  // Custom 槽位没有内置默认值，切过去应为空等待填写。
+  expect(elements.get('aiEndpoint')!.value).toBe('');
+  expect(elements.get('aiModel')!.value).toBe('');
+  expect(elements.get('aiToken')!.value).toBe('');
+
+  elements.get('aiEndpoint')!.value = 'https://my-llm.example.test/v1/chat/completions';
+  elements.get('aiToken')!.value = 'custom-key';
+  elements.get('aiModel')!.value = 'my-model';
+
+  elements.get('aiProviderMenu')!.select('openai');
+  expect(elements.get('aiEndpoint')!.value).toBe('https://api.openai.com/v1/chat/completions');
+  expect(elements.get('aiToken')!.value).toBe('');
+
+  elements.get('aiProviderMenu')!.select('custom');
+  expect(elements.get('aiEndpoint')!.value).toBe('https://my-llm.example.test/v1/chat/completions');
+  expect(elements.get('aiToken')!.value).toBe('custom-key');
+  expect(elements.get('aiModel')!.value).toBe('my-model');
 });

@@ -153,12 +153,14 @@ jobs:
     name: Build TSF ${{ matrix.name }}
     needs: [prepare, dependencies]
     if: ${{ needs.prepare.outputs.should_publish == 'true' }}
-    runs-on: [self-hosted, Windows, X64, msime-windows]
+    # SignPath's open-source plan accepts a signing request only when every job leading up to it ran on a GitHub-hosted runner, so under SignPath the three Windows jobs move off the release machine. The certificate path keeps the self-hosted runner, where the certificate lives.
+    runs-on: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
     env:
       # Each self-hosted runner has a different default vcpkg installation.
       # Keep every matrix job aligned with the registry selected below even
       # when GitHub schedules x64 and Win32 on different runner instances.
-      VCPKG_ROOT: ${{ matrix.vcpkg_root }}
+      # A GitHub-hosted runner has one, at C:\vcpkg on windows-2025 (VCPKG_INSTALLATION_ROOT); the verification step below checks the image still puts it there.
+      VCPKG_ROOT: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'C:\vcpkg' || matrix.vcpkg_root }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -209,28 +211,47 @@ jobs:
           python scripts/apply_version.py
           python scripts/apply_version.py --check
 
+      # Before anything installs into or caches from VCPKG_ROOT: a mismatch found after the cache save would already have stored the wrong root's archives under the -complete key.
+      - name: Verify the selected vcpkg root
+        shell: pwsh
+        env:
+          EXPECTED_VCPKG_ROOT: ${{ vars.WINDOWS_SIGNING_PROVIDER != 'signpath' && matrix.vcpkg_root || '' }}
+        run: |
+          # On a hosted runner the image's own vcpkg is the expected one.
+          $expected = if ($env:EXPECTED_VCPKG_ROOT) { $env:EXPECTED_VCPKG_ROOT } else { $env:VCPKG_INSTALLATION_ROOT }
+          if ($env:VCPKG_ROOT -ne $expected) {
+            throw "VCPKG_ROOT is '$env:VCPKG_ROOT'; expected '$expected' for ${{ matrix.name }} on runner '$env:RUNNER_NAME'"
+          }
+
+      # A hosted runner starts with no vcpkg binaries, so it restores the archives ci.yml's TSF job saves under the same scope. A run on main can read the caches develop's CI wrote, since develop is the default branch.
+      - name: Restore dependency binaries
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        id: vcpkg-cache
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          scope: tip-${{ matrix.triplet }}
+
       - name: Install dependencies
         shell: pwsh
         working-directory: windows
         run: |
           & "$env:VCPKG_ROOT\\vcpkg.exe" install --triplet ${{ matrix.triplet }}
 
+      - name: Save dependency binaries before compiling
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+
       # CMakePresets.json points at a developer machine's vcpkg, so the presets cannot be used
       # here. This mirrors what .github/workflows/ci.yml already does, into the build directory
       # layout that the installer's Prepare-PackageFiles.ps1 expects.
-      - name: Verify the selected vcpkg root
-        shell: pwsh
-        run: |
-          $expected = '${{ matrix.vcpkg_root }}'
-          if ($env:VCPKG_ROOT -ne $expected) {
-            throw "VCPKG_ROOT is '$env:VCPKG_ROOT'; expected '$expected' for ${{ matrix.name }} on runner '$env:RUNNER_NAME'"
-          }
-
       - name: Configure
         shell: pwsh
         run: >
           cmake -S windows -B ${{ matrix.build_dir }} -A ${{ matrix.architecture }}
-          -DCMAKE_TOOLCHAIN_FILE="${{ matrix.vcpkg_root }}/scripts/buildsystems/vcpkg.cmake"
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
 
       - name: Build
@@ -257,10 +278,14 @@ jobs:
     name: Build Server
     needs: [prepare, dependencies]
     if: ${{ needs.prepare.outputs.should_publish == 'true' }}
-    runs-on: [self-hosted, Windows, X64, msime-windows]
+    runs-on: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
     env:
-      VCPKG_INSTALLATION_ROOT: E:\\msime-runner\\vcpkg-3
-    timeout-minutes: 90
+      # windows-2025 already sets this to its own vcpkg; the self-hosted runner's default is replaced with the instance reserved for this job.
+      VCPKG_INSTALLATION_ROOT: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'C:\vcpkg' || 'E:\\msime-runner\\vcpkg-3' }}
+      # Only the GitHub-hosted path compiles through sccache (see Configure); the variable is inert where sccache is not the compiler launcher.
+      SCCACHE_GHA_ENABLED: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'true' || '' }}
+    # A 4-core hosted runner is slower than the release machine; sccache hits from ci.yml's Server job on develop carry most of it.
+    timeout-minutes: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 120 || 90 }}
     steps:
       - name: Check out release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -290,21 +315,80 @@ jobs:
           }
           throw "Could not add $workspace to the global safe.directory list"
 
+      # The job env replaces the image's own VCPKG_INSTALLATION_ROOT, so check C:\vcpkg against the vcpkg the image puts on PATH before install-boost.ps1, the cache key and the toolchain all read it.
+      - name: Verify the hosted vcpkg root
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        shell: pwsh
+        run: |
+          $onPath = Get-Command vcpkg.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+          $imageRoot = if ($onPath) { Split-Path -Parent $onPath.Source } else { '' }
+          if (-not (Test-Path -LiteralPath (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') -PathType Leaf) -or
+              $imageRoot -ne $env:VCPKG_INSTALLATION_ROOT) {
+            throw "VCPKG_INSTALLATION_ROOT is '$env:VCPKG_INSTALLATION_ROOT' but the image's vcpkg is at '$imageRoot'"
+          }
+
+      # The GitHub-hosted steps below are ci.yml's Server job: the same vcpkg cache scope, MSVC environment and sccache, so a release run on main restores what develop's CI saved instead of compiling Boost and the whole server cold on four cores.
+      - name: Restore dependency binaries
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        id: vcpkg-cache
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          scope: server-x64-windows-and-static-md
+
+      - name: Set up MSVC environment
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+
+      - name: Set up sccache
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
       - name: Install Boost
         shell: pwsh
         run: ./scripts/ci/install-boost.ps1
 
+      - name: Save Boost binaries before configuring
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) && steps.vcpkg-cache.outputs.matched-key != format('{0}-boost', steps.vcpkg-cache.outputs.key) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-boost
+
       # The package job stages these outputs into the installer's expected directory.
       - name: Configure
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER != 'signpath' }}
         shell: pwsh
         run: >
           cmake -S server -B server/build-release -A x64
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=x64-windows
 
+      # Ninja Multi-Config because sccache plugs in through CMAKE_<LANG>_COMPILER_LAUNCHER, which the Visual Studio generator ignores; it keeps the --config Release / bin/Release layout the later steps read.
+      - name: Configure with sccache
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        shell: pwsh
+        run: >
+          cmake -S server -B server/build-release -G "Ninja Multi-Config"
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Save dependency binaries before compiling
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+
       - name: Build
         shell: pwsh
         run: cmake --build server/build-release --config Release --parallel
+
+      - name: Report sccache hit rate
+        if: ${{ always() && vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        shell: pwsh
+        run: sccache --show-stats
 
       - name: Check the binaries the installer requires
         shell: pwsh
@@ -387,7 +471,7 @@ jobs:
     # that spends a signature, so the condition that stops it belongs here rather than being a
     # consequence of four other jobs' conditions that a later edit could quietly undo.
     if: ${{ needs.prepare.outputs.should_publish == 'true' }}
-    runs-on: [self-hosted, Windows, X64, msime-windows]
+    runs-on: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
     # A SignPath signing request waits for an approver, twice per release, so that path gets room for both approvals on top of the build.
     timeout-minutes: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 150 || 60 }}
     permissions:
@@ -397,6 +481,8 @@ jobs:
       # one integrity signal a repository admin cannot forge by swapping a release asset.
       id-token: write
       attestations: write
+      # signpath/github-action-submit-signing-request reads this job's details and downloads the artifact it submits with GITHUB_TOKEN; without this the request fails before SignPath sees it.
+      actions: read
     env:
       DICTIONARY_TAG: ${{ needs.dependencies.outputs.dictionary_tag }}
       # download-dictionaries.sh stages MetasequoiaImeDict/out under this root, and
@@ -438,6 +524,12 @@ jobs:
       - name: Verify the release commit is on main
         shell: bash
         run: bash scripts/ci/verify-commit-on-main.sh
+
+      # The hosted image's preinstalled ISCC compiles the installer only after the payload signing request has been approved. Prove now, before any signature is spent, that it resolves the Chinese language file and is new enough (6.6+) for msime_setup.iss.
+      - name: Check the hosted Inno Setup can compile the installer
+        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        shell: pwsh
+        run: ./scripts/ci/check-inno-language.ps1
 
       - name: Download the x64 TSF binary and symbols
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -494,7 +586,7 @@ jobs:
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
           CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT }}
           SIGNING_PROVIDER: ${{ vars.WINDOWS_SIGNING_PROVIDER }}
-          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_TOKEN: ${{ secrets.SIGNPATH_TOKEN }}
           SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
@@ -557,7 +649,7 @@ jobs:
         if: ${{ steps.signing.outputs.signing_provider == 'signpath' }}
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          api-token: ${{ secrets.SIGNPATH_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
@@ -615,7 +707,7 @@ jobs:
         if: ${{ steps.signing.outputs.signing_provider == 'signpath' }}
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          api-token: ${{ secrets.SIGNPATH_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}

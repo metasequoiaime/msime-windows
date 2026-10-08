@@ -44,6 +44,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_ui_action_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_translation_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_ui_state.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_expansion_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_composition_selection_history.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_render_sync.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_selection_replay_guard.cpp"

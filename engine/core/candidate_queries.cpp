@@ -183,8 +183,6 @@ std::vector<WordItem> CandidateQueries::mixed(std::vector<WordItem> candidates, 
         ++priority_slot;
     };
     insert_leading(english_candidates);
-    insert_leading(emoji_candidates);
-    insert_leading(kaomoji_candidates);
 
     for (auto *source : {&english_candidates, &emoji_candidates, &kaomoji_candidates})
     {

@@ -1,6 +1,7 @@
 import { applyDropdownValue, applyToggleState, setupDropdownMenu, setupToggleButton } from './shared';
 import { updateConfig } from './config-sync';
 import { setupCredentialTest } from './credential-test';
+import { setupModelFetch } from './model-fetch';
 
 type ProviderDefaults = { endpoint: string; model: string };
 
@@ -23,11 +24,15 @@ const PROVIDER_DEFAULTS: Record<string, ProviderDefaults> = {
   },
   groq: {
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile'
+    model: 'qwen/qwen3.8-27b'
+  },
+  custom: {
+    endpoint: '',
+    model: ''
   }
 };
 
-const PROVIDERS = ['deepseek', 'openai', 'siliconflow', 'groq'] as const;
+const PROVIDERS = ['deepseek', 'openai', 'siliconflow', 'groq', 'custom'] as const;
 let tokens: Record<string, string> = {};
 let endpoints: Record<string, string> = {};
 let models: Record<string, string> = {};
@@ -78,6 +83,7 @@ function switchProvider(provider: string): void {
   if (token) token.value = tokens[provider] ?? '';
   updateConfig('ai_assistant.provider', provider);
   applyProviderFields(provider);
+  clearModelMenu();
 }
 
 function switchPrompt(id: string): void {
@@ -90,21 +96,35 @@ function switchPrompt(id: string): void {
   if (prompt) prompt.value = customPrompts[id] ?? '';
 }
 
+// 凭据测试和模型列表共用同一份请求配置，空值按服务商默认值补全。
+function currentAiConfig(): Record<string, string> {
+  const defaults = PROVIDER_DEFAULTS[currentProvider];
+  const value = (id: string) =>
+    (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? '';
+  return {
+    provider: currentProvider,
+    token: value('aiToken'),
+    endpoint: value('aiEndpoint') || defaults?.endpoint || '',
+    model: value('aiModel') || defaults?.model || ''
+  };
+}
+
+// 切换服务商后旧的模型列表和在途请求都不再适用，清空等待重新获取。
+let clearModelMenu: () => void = () => {};
+
 export function setupAiSettings(): void {
   setupToggleButton('aiEnabled', value => updateConfig('ai_assistant.enabled', value));
   setupTokenVisibilityToggle();
-  setupCredentialTest('aiCredentialTestButton', 'aiCredentialTestStatus', () => 'ai.assistant', () => {
-    const defaults = PROVIDER_DEFAULTS[currentProvider];
-    const value = (id: string) =>
-      (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? '';
-    return {
-      provider: currentProvider,
-      token: value('aiToken'),
-      endpoint: value('aiEndpoint') || defaults?.endpoint || '',
-      model: value('aiModel') || defaults?.model || ''
-    };
+  setupCredentialTest('aiCredentialTestButton', 'aiCredentialTestStatus', () => 'ai.assistant', currentAiConfig);
+  clearModelMenu = setupModelFetch({
+    buttonId: 'aiModelFetchButton',
+    statusId: 'aiModelFetchStatus',
+    menuId: 'aiModelMenu',
+    service: () => 'ai.assistant',
+    readConfig: currentAiConfig
   });
   setupDropdownMenu('aiProviderBtn', 'aiProviderMenu', 'changeAiProvider', true);
+  setupDropdownMenu('aiModelBtn', 'aiModelMenu', '', true, 'ai_assistant.model');
   setupDropdownMenu('aiPromptSlotBtn', 'aiPromptSlotMenu', 'changeAiPromptSlot', true,
     'ai_assistant.prompt_id');
   document.getElementById('aiProviderMenu')?.addEventListener('click', (event) => {

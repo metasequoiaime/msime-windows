@@ -152,6 +152,94 @@
   display: block;
 }
 
+/* 模型字段：输入框兼作下拉触发器，右侧是「获取模型」按钮。 */
+.ai-model-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.ai-model-row .ai-model-dropdown {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ai-model-row .dropdown-toggle {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 8px 9px 12px;
+}
+
+/* 覆盖 .ai-grid input 的独立输入框外观，让输入框融进下拉按钮。 */
+.ai-grid .ai-model-row .dropdown-toggle input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  font: inherit;
+  cursor: text;
+}
+
+.ai-grid .ai-model-row .dropdown-toggle input:focus {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ai-model-fetch-button {
+  flex: 0 0 auto;
+  padding: 0 12px;
+  color: var(--button-secondary-text);
+  background: var(--button-secondary-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ai-model-fetch-button:hover:not(:disabled) {
+  background: var(--button-secondary-hover);
+}
+
+.ai-model-fetch-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.ai-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+}
+
+.ai-model-fetch-status {
+  min-height: 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ai-model-fetch-status:empty {
+  display: none;
+}
+
+.ai-model-fetch-status[data-kind="success"] {
+  color: #4caf72;
+}
+
+.ai-model-fetch-status[data-kind="error"] {
+  color: #d96767;
+}
+
 .ai-prompt {
   min-height: 280px;
   resize: none;

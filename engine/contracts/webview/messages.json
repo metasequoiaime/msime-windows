@@ -274,6 +274,37 @@
         "additionalProperties": false
       }
     },
+    "apiModelList": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string",
+            "enum": [
+              "ai.assistant"
+            ]
+          },
+          "config": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "requestId",
+          "service",
+          "config"
+        ],
+        "additionalProperties": false
+      }
+    },
     "dictionaryRequest": {
       "surfaces": [
         "settings"
@@ -814,6 +845,31 @@
         },
         "message": {
           "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "ok",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "apiModelListResult": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
