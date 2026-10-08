@@ -8,6 +8,7 @@ vi.mock('./shared', () => ({
 }));
 vi.mock('./config-sync', () => ({ updateConfig: vi.fn() }));
 vi.mock('./credential-test', () => ({ setupCredentialTest: vi.fn() }));
+vi.mock('./model-fetch', () => ({ setupModelFetch: vi.fn() }));
 
 import { applyAiConfig, setupAiSettings } from './ai-settings';
 import { updateConfig } from './config-sync';

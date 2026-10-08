@@ -25,7 +25,21 @@
           </div>
         </div>
       </div>
-      <label><span>模型</span><input id="aiModel" type="text" autocomplete="off" spellcheck="false"></label>
+      <div class="ai-field">
+        <span>模型</span>
+        <div class="ai-model-row">
+          <div class="dropdown ai-model-dropdown">
+            <div class="dropdown-toggle" id="aiModelBtn">
+              <input id="aiModel" type="text" autocomplete="off" spellcheck="false"
+                     aria-label="模型名称" aria-controls="aiModelMenu" aria-autocomplete="list">
+              <div class="arrow"><img src="./assets/arrow.svg" alt=""></div>
+            </div>
+            <div class="dropdown-menu font-dropdown-menu compact-scroll-menu" id="aiModelMenu"></div>
+          </div>
+          <button id="aiModelFetchButton" class="ai-model-fetch-button" type="button" title="按当前服务商和凭据获取可用模型">获取模型</button>
+        </div>
+        <span id="aiModelFetchStatus" class="ai-model-fetch-status" role="status" aria-live="polite"></span>
+      </div>
       <div class="ai-field">
         <label for="aiToken">API Token</label>
         <span class="ai-secret-input">
