@@ -72,10 +72,11 @@ struct AiAssistantConfig
                                                  {"openai", "https://api.openai.com/v1/chat/completions"},
                                                  {"siliconflow", "https://api.siliconflow.cn/v1/chat/completions"},
                                                  {"groq", "https://api.groq.com/openai/v1/chat/completions"}};
+    // Groq 已弃用 llama-3.3-70b-versatile，默认模型改用 qwen/qwen3.8-27b。
     std::map<std::string, std::string> models{{"deepseek", "deepseek-v4-flash"},
                                               {"openai", "gpt-4o-mini"},
                                               {"siliconflow", "Qwen/Qwen3-8B"},
-                                              {"groq", "llama-3.3-70b-versatile"}};
+                                              {"groq", "qwen/qwen3.8-27b"}};
     int candidate_limit = 3;
     // custom_1 | custom_2 | custom_3
     std::string prompt_id = "custom_1";
