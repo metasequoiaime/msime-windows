@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 if ($env:SIGNING_PROVIDER -eq 'signpath') {
     $missing = @(
-        'SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG', 'SIGNPATH_SIGNING_POLICY_SLUG'
+        'SIGNPATH_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG', 'SIGNPATH_SIGNING_POLICY_SLUG'
     ) | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
     if ($missing) {
         throw "WINDOWS_SIGNING_PROVIDER is signpath, but these are not configured: $($missing -join ', ')"
