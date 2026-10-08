@@ -61,8 +61,8 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function setup(): void {
-  setupModelFetch({
+function setup(): () => void {
+  return setupModelFetch({
     buttonId: 'modelButton',
     statusId: 'modelStatus',
     menuId: 'modelMenu',
@@ -118,4 +118,22 @@ it('ignores results that do not match the pending request', () => {
 
   expect(button.disabled).toBe(true);
   expect(menu.children).toEqual([]);
+});
+
+it('drops an in-flight result after reset, such as on a provider switch', () => {
+  const reset = setup();
+  button.dispatchEvent(new Event('click'));
+  const request = JSON.parse(postMessage.mock.calls[0]![0]);
+  reset();
+  expect(button.disabled).toBe(false);
+  expect(button.textContent).toBe('获取模型');
+
+  hostListener?.({ data: {
+    type: 'apiModelListResult', requestId: request.data.requestId,
+    ok: true, message: '获取成功', models: ['llama-3.3-70b-versatile']
+  } } as Event & { data?: unknown });
+
+  expect(menu.children).toEqual([]);
+  expect(menu.classList.contains('open')).toBe(false);
+  expect(status.textContent).toBe('');
 });

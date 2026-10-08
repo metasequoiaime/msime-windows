@@ -109,21 +109,14 @@ function currentAiConfig(): Record<string, string> {
   };
 }
 
-// 切换服务商后旧的模型列表不再适用，清空等待重新获取。
-function clearModelMenu(): void {
-  document.getElementById('aiModelMenu')?.replaceChildren();
-  const status = document.getElementById('aiModelFetchStatus');
-  if (status) {
-    status.textContent = '';
-    delete (status as HTMLElement).dataset.kind;
-  }
-}
+// 切换服务商后旧的模型列表和在途请求都不再适用，清空等待重新获取。
+let clearModelMenu: () => void = () => {};
 
 export function setupAiSettings(): void {
   setupToggleButton('aiEnabled', value => updateConfig('ai_assistant.enabled', value));
   setupTokenVisibilityToggle();
   setupCredentialTest('aiCredentialTestButton', 'aiCredentialTestStatus', () => 'ai.assistant', currentAiConfig);
-  setupModelFetch({
+  clearModelMenu = setupModelFetch({
     buttonId: 'aiModelFetchButton',
     statusId: 'aiModelFetchStatus',
     menuId: 'aiModelMenu',

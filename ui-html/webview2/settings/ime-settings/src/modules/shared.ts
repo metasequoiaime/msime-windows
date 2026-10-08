@@ -211,6 +211,8 @@ function delay(ms: number): Promise<void> {
 async function openDropdownMenu(menu: HTMLElement, menuId: string): Promise<void> {
   const preparer = dropdownPreparers.get(menuId);
   if (!preparer?.isPending()) {
+    // 选项按需灌入的菜单（如获取前的模型列表）为空时不弹出空框。
+    if (!menu.querySelector('.dropdown-item')) return;
     menu.classList.add('open');
     return;
   }
@@ -285,6 +287,8 @@ export function setupDropdownMenu(
 
   btn.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    // 空菜单没有可聚焦的项，方向键留给内嵌输入框移动光标。
+    if (enabledItems().length === 0 && !dropdownPreparers.get(menuId)?.isPending()) return;
     event.preventDefault();
     const direction = event.key === 'ArrowDown' ? 1 : -1;
     void openDropdownMenu(menu, menuId).then(() => focusMenuItem(direction));

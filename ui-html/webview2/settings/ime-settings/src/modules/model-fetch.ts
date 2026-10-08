@@ -16,21 +16,26 @@ let nextRequestId = 0;
 /**
  * 「获取模型」按钮：点一下按当前服务商和凭据拉取模型列表，把结果灌进同字段的下拉菜单。
  * 模型本身仍是可自由输入的文本框，菜单只是候选来源，清空菜单不影响手动填写。
+ *
+ * 返回的 reset 清空菜单和状态，并丢弃尚未返回的请求：切换服务商后旧请求的结果不再适用。
  */
-export function setupModelFetch(options: ModelFetchOptions): void {
+export function setupModelFetch(options: ModelFetchOptions): () => void {
   const button = document.getElementById(options.buttonId) as HTMLButtonElement | null;
   const status = document.getElementById(options.statusId);
   const menu = document.getElementById(options.menuId);
-  if (!button || !menu) return;
+  if (!button || !menu) return () => {};
 
   let pendingRequestId = '';
   const idleLabel = button.textContent?.trim() || '获取模型';
-
-  onHostMessage('apiModelListResult', payload => {
-    if (payload.requestId !== pendingRequestId) return;
+  const settle = (): void => {
     pendingRequestId = '';
     button.disabled = false;
     button.textContent = idleLabel;
+  };
+
+  onHostMessage('apiModelListResult', payload => {
+    if (!pendingRequestId || payload.requestId !== pendingRequestId) return;
+    settle();
 
     if (!payload.ok) {
       setStatus(status, payload.message, 'error');
@@ -62,6 +67,16 @@ export function setupModelFetch(options: ModelFetchOptions): void {
       data: { requestId: pendingRequestId, service: options.service(), config: options.readConfig() }
     }));
   });
+
+  return () => {
+    settle();
+    menu.classList.remove('open');
+    menu.replaceChildren();
+    if (status) {
+      status.textContent = '';
+      delete status.dataset.kind;
+    }
+  };
 }
 
 function renderModels(menu: HTMLElement, models: string[]): void {
