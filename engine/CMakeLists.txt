@@ -188,6 +188,13 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME punctuation_contract COMMAND test_punctuation_contract)
 
+    add_executable(test_japanese_romaji tests/src/test_japanese_romaji.cpp)
+    if(MSVC)
+        target_compile_options(test_japanese_romaji PRIVATE /utf-8)
+    endif()
+    target_link_libraries(test_japanese_romaji PRIVATE MetasequoiaIme::Engine)
+    add_test(NAME japanese_romaji COMMAND test_japanese_romaji)
+
     add_executable(test_nine_key_session tests/src/test_nine_key_session.cpp)
     target_link_libraries(test_nine_key_session PRIVATE MetasequoiaImeEngine)
     add_test(NAME nine_key_session COMMAND test_nine_key_session)
