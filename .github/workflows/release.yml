@@ -468,6 +468,8 @@ jobs:
       # one integrity signal a repository admin cannot forge by swapping a release asset.
       id-token: write
       attestations: write
+      # signpath/github-action-submit-signing-request reads this job's details and downloads the artifact it submits with GITHUB_TOKEN; without this the request fails before SignPath sees it.
+      actions: read
     env:
       DICTIONARY_TAG: ${{ needs.dependencies.outputs.dictionary_tag }}
       # download-dictionaries.sh stages MetasequoiaImeDict/out under this root, and
