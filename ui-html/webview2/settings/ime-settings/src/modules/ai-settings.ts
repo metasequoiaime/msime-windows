@@ -25,10 +25,14 @@ const PROVIDER_DEFAULTS: Record<string, ProviderDefaults> = {
   groq: {
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
     model: 'qwen/qwen3.8-27b'
+  },
+  custom: {
+    endpoint: '',
+    model: ''
   }
 };
 
-const PROVIDERS = ['deepseek', 'openai', 'siliconflow', 'groq'] as const;
+const PROVIDERS = ['deepseek', 'openai', 'siliconflow', 'groq', 'custom'] as const;
 let tokens: Record<string, string> = {};
 let endpoints: Record<string, string> = {};
 let models: Record<string, string> = {};

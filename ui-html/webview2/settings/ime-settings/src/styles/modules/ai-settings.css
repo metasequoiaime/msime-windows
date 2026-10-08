@@ -214,6 +214,13 @@
   opacity: 0.65;
 }
 
+.ai-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+}
+
 .ai-model-fetch-status {
   min-height: 14px;
   color: var(--text-muted);
