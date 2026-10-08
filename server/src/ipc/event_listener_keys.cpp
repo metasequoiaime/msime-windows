@@ -13,6 +13,7 @@
 #include "engine/contracts/direct_helpcode.h"
 #include "engine/contracts/ipc_negotiation.h"
 #include "engine/contracts/mid_sentence_helpcode.h"
+#include "engine/contracts/trilingual_input.h"
 #include "defines/defines.h"
 #include "defines/globals.h"
 #include "utils/common_utils.h"
@@ -35,11 +36,10 @@ bool IsShiftLetterSpecialModeTriggered()
            g_r_mode_triggered;
 }
 
-// 日语模式由配置项决定，和 R 模式（中文里临时切日语）无关：TSF 侧只能看到配置，
-// 两侧必须用同一个判据，否则按键分类会不一致、预编辑会错位。
+// 日语模式使用已同步给 TSF 的实际语言，和 R 模式（中文里临时切日语）无关。
 bool IsJapaneseInputMode()
 {
-    return GetConfiguredInputMode() == "japanese";
+    return GetActiveInputMode() == "japanese";
 }
 
 // 日语模式下 '-' 不翻页，而是长音符（ー）的输入键。空编码时也要起头组合，
@@ -822,6 +822,57 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
     SendCurrentDataToClient(client_id, activation_epoch, request_id);
 }
 
+void HandleTrilingualCycleKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
+{
+    using FanyImeTrilingualInput::Mode;
+    const bool ime_enabled =
+        g_authoritative_cn_mode < 0 ? GetConfiguredDefaultImeMode() != "english" : g_authoritative_cn_mode != 0;
+    const bool japanese = GetActiveInputMode() == "japanese";
+    Mode destination = FanyImeTrilingualInput::Next(ime_enabled, japanese);
+
+    // Match the existing language toggle: retain an already selected word
+    // prefix, then commit the remaining raw spelling without choosing or
+    // learning a candidate.
+    const std::string raw = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
+    const std::wstring commit_text = string_to_wstring(
+        CandidateTextForOutput(GlobalIme::composition.creating_word.word) + (g_r_mode_triggered ? "R" + raw : raw));
+
+    const std::string wanted_mode = destination == Mode::Japanese  ? "japanese"
+                                    : destination == Mode::Chinese ? "chinese"
+                                                                   : GetActiveInputMode();
+    bool native_mode_changed = wanted_mode != GetActiveInputMode();
+    if (native_mode_changed && !SetActiveInputMode(wanted_mode))
+    {
+        // The preference may have changed while this request was in flight.
+        // Commit the raw composition without claiming an inactive destination.
+        destination = !ime_enabled ? Mode::English : japanese ? Mode::Japanese : Mode::Chinese;
+        native_mode_changed = false;
+    }
+    SetEnglishInputMode(false);
+    ClearState();
+    if (g_inputSession->current_scheme_type() != GetConfiguredActiveInputScheme())
+        g_inputSession = CreateInputSessionFromConfig();
+
+    const bool next_ime_enabled = destination != Mode::English;
+    g_authoritative_cn_mode = next_ime_enabled ? 1 : 0;
+    const int remembered = RecallClientStatusSnapshot(client_id);
+    const int packed_state = ((remembered >= 0 ? remembered : 0) & ~0x4) | (g_authoritative_cn_mode << 2);
+    RememberClientStatusSnapshot(client_id, packed_state);
+    PublishStatusSnapshotValue(packed_state);
+    PostMessage(::global_hwnd_ftb, UPDATE_FTB_INPUT_MODE, GetActiveInputMode() == "japanese" ? 1 : 0, 0);
+    // The originating client takes its native-language state from the main
+    // reply, after committing. Other hosts still receive the global language.
+    if (native_mode_changed)
+        BroadcastConfiguredInputModeState(client_id);
+
+    // The exact commit and destination share one correlated reply. TSF applies
+    // them in one edit session before it drains the next key, so a fast Shift then
+    // letter cannot be classified using the old language/compartment.
+    Global::MsgTypeToTsf = Global::DataFromServerMsgType::TrilingualCycle;
+    Global::candidate_ui.selected_text = FanyImeTrilingualInput::BuildPayload(destination, commit_text);
+    SendCurrentDataToClient(client_id, activation_epoch, request_id);
+}
+
 /**
  * @brief
  *
@@ -840,6 +891,14 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     // TSF classifies VK_NUMPAD0..9 as candidate digit keys. Keep the IPC
     // contract symmetric before any selection/composition predicates run.
     Global::Keycode = FanyImeIpc::NormalizeNumpadDigitKey(Global::Keycode);
+
+    if (FanyImeTrilingualInput::IsCycleKey(Global::Keycode, Global::ModifiersDown,
+                                           GetConfiguredTrilingualCycleEnabled()) &&
+        ClientNegotiatedTrilingualCycle(client_id))
+    {
+        HandleTrilingualCycleKey(client_id, activation_epoch, request_id);
+        return;
+    }
 
     if (FanyImeProtocol::IsCharacterSetShortcut(Global::Keycode, Global::ModifiersDown))
     {

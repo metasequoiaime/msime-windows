@@ -154,6 +154,13 @@ bool IsCharacterSetInputModeToggle(UINT code, UINT modifiers)
            FanyUtils::ReadConfiguredSwitchLanguageHotkeys().character_set_ctrl_shift_f;
 }
 
+bool IsTrilingualCycleEnabled()
+{
+    return Global::TrilingualCycleEnabled.load(std::memory_order_relaxed) &&
+           (GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 && (GetAsyncKeyState(VK_RWIN) & 0x8000) == 0 &&
+           SupportsTrilingualCycle();
+}
+
 void PostOwnerMessageWithSyncFallback(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
     if (!window || !IsWindow(window))
@@ -1146,6 +1153,15 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
             // TestKeyDown owned this key. Do not send it as ordinary input.
             return KeyDownDispatchResult::Complete;
         }
+        if (KeystrokeState.Function == FUNCTION_CYCLE_INPUT_MODE && !SupportsTrilingualCycle())
+        {
+            // A reconnect may replace the peer after the language hotkey was queued.
+            // Keep it eaten, but never send a cycle to an unnegotiated Server.
+            // Later keys were projected into its destination, so discard that
+            // queue along with the now-unusable projection.
+            _ResetSessionAfterFailure(DeferredKeyFailureKind::Resync);
+            return KeyDownDispatchResult::Complete;
+        }
 
         Global::Keycode = code;
         Global::wch = wch;
@@ -1197,6 +1213,13 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
         if (KeystrokeState.Function == FUNCTION_SERVER_CANDIDATE_KEY && _msgWndHandle)
         {
             _PostAsyncKeyRequest(WM_AsyncServerCandidateKey, code, wch, requestId, {}, 0, 0, deferredReplayToken);
+            return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
+                                            : KeyDownDispatchResult::Complete;
+        }
+
+        if (KeystrokeState.Function == FUNCTION_CYCLE_INPUT_MODE && _msgWndHandle)
+        {
+            _PostAsyncKeyRequest(WM_AsyncCycleInputMode, code, wch, requestId, {}, 0, 0, deferredReplayToken);
             return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
                                             : KeyDownDispatchResult::Complete;
         }

@@ -332,6 +332,27 @@ HRESULT CCompositionProcessorEngine::SetKeyboardOpenCompartment(_In_ ITfThreadMg
     return result;
 }
 
+HRESULT CCompositionProcessorEngine::SetIMEModeForLanguageCycle(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId,
+                                                                BOOL bOpen)
+{
+    BOOL isOpen = FALSE;
+    CCompartment compartment(pThreadMgr, tfClientId, GUID_COMPARTMENT_KEYBOARD_OPENCLOSE);
+    HRESULT result = compartment._GetCompartmentBOOL(isOpen);
+    if (result != S_OK || isOpen == bOpen)
+    {
+        return result;
+    }
+
+    ReleaseConfiguredImeModeDefense();
+    result = SetKeyboardOpenCompartment(pThreadMgr, tfClientId, bOpen);
+    if (result != S_OK)
+    {
+        return result;
+    }
+    result = compartment._GetCompartmentBOOL(isOpen);
+    return result == S_OK && isOpen != bOpen ? S_FALSE : result;
+}
+
 void CCompositionProcessorEngine::ReleaseConfiguredImeModeDefense()
 {
     if (!_defendConfiguredImeMode)

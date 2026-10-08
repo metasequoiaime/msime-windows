@@ -375,7 +375,24 @@ bool CMetasequoiaIME::_QueueInputHotkey(_In_ ITfContext *pContext, REFGUID hotke
         return false;
     }
 
-    *pIsEaten = _QueueDeferredPreservedKey(pContext, hotkeyGuid) ? TRUE : FALSE;
+    if (_pCompositionProcessorEngine != nullptr &&
+        _pCompositionProcessorEngine->GetPreservedKeyAction(hotkeyGuid) ==
+            CCompositionProcessorEngine::PreservedKeyAction::ToggleImeMode &&
+        !_serverUnavailableFallbackActive && IsTrilingualCycleEnabled())
+    {
+        // Keep the existing configured language-hotkey detection (bare Shift
+        // by default), but replace its binary toggle with the Server-owned
+        // cycle. As in OnPreservedKey, a matched language action is sent as
+        // VK_SHIFT; raw modifier key-downs never enter this path.
+        _KEYSTROKE_STATE cycleState = {};
+        cycleState.Category = CATEGORY_COMPOSING;
+        cycleState.Function = FUNCTION_CYCLE_INPUT_MODE;
+        *pIsEaten = _QueueDeferredKeyDown(pContext, VK_SHIFT, 0, L'\0', 0, cycleState) ? TRUE : FALSE;
+    }
+    else
+    {
+        *pIsEaten = _QueueDeferredPreservedKey(pContext, hotkeyGuid) ? TRUE : FALSE;
+    }
     if (*pIsEaten && _localSessionResetPending.load(std::memory_order_acquire))
     {
         const UINT resetToken = _localSessionResetToken.load(std::memory_order_acquire);

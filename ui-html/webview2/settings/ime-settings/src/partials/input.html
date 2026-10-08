@@ -6,7 +6,7 @@
     <div class="section-header">
       <div>
         <div class="section-title">输入模式</div>
-        <div class="input-setting-description">切换中文或日文输入，并保留各模式上次选择的方案</div>
+        <div class="input-setting-description">保留各语言的输入方案；三语轮换时按语言切换快捷键（默认 Shift）切换中文、日文、英文，有输入时先上屏原始字母</div>
       </div>
     </div>
     <div class="input-option-content input-mode-options">
@@ -14,10 +14,13 @@
         <input type="radio" name="input-mode" value="chinese" checked>
         <span>中文</span>
       </label>
-      <div class="input-option-divider"></div>
       <label class="radio-option">
         <input type="radio" name="input-mode" value="japanese">
         <span>日文</span>
+      </label>
+      <label class="radio-option">
+        <input type="radio" name="input-mode" value="trilingual">
+        <span>三语轮换</span>
       </label>
     </div>
   </div>

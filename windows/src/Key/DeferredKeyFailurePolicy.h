@@ -44,8 +44,16 @@ enum class DeferredKeyFailureKind
     Transport,
 };
 
-inline DeferredKeyFailureKind ResolveDeferredKeyFailure(DeferredKeyFailureReason reason, bool offlineLaneActive)
+inline DeferredKeyFailureKind ResolveDeferredKeyFailure(DeferredKeyFailureReason reason, bool offlineLaneActive,
+                                                        bool serverModeMayHaveChanged = false)
 {
+    // The Server changes language before answering a cycle. If applying that
+    // reply fails, clearing composition on the same token cannot restore the
+    // active native mode: reconnect and receive a fresh settings snapshot.
+    if (serverModeMayHaveChanged && reason != DeferredKeyFailureReason::Superseded && !offlineLaneActive)
+    {
+        return DeferredKeyFailureKind::Transport;
+    }
     switch (reason)
     {
     case DeferredKeyFailureReason::Superseded:

@@ -86,9 +86,14 @@ class CEndCompositionEditSession : public CEditSessionBase
 //
 //----------------------------------------------------------------------------
 
-void CMetasequoiaIME::_TerminateComposition(TfEditCookie ec, _In_ ITfContext *pContext, BOOL isCalledFromDeactivate)
+void CMetasequoiaIME::_TerminateComposition(TfEditCookie ec, _In_ ITfContext *pContext, BOOL isCalledFromDeactivate,
+                                            _Out_opt_ HRESULT *result)
 {
     isCalledFromDeactivate;
+    if (result)
+    {
+        *result = S_OK;
+    }
 
     if (_pComposition != nullptr)
     {
@@ -113,6 +118,22 @@ void CMetasequoiaIME::_TerminateComposition(TfEditCookie ec, _In_ ITfContext *pC
         _ClearCompositionDisplayAttributes(ec, pContext, terminatingComposition);
 
         const HRESULT endResult = SafeEndComposition(terminatingComposition, ec);
+        if (result)
+        {
+            *result = endResult;
+            if (endResult != S_OK)
+            {
+                // Cycle must not change modes after a refused end. Keep the
+                // current composition owned so the normal failure reset can
+                // cancel it; a re-entrant termination already owns its cleanup.
+                if (ownerContext)
+                {
+                    ownerContext->Release();
+                }
+                terminatingComposition->Release();
+                return;
+            }
+        }
         if (FAILED(endResult) && _pComposition == terminatingComposition)
         {
             // if we fail to EndComposition, then we need to close the reverse reading window.

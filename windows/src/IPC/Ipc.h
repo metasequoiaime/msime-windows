@@ -12,6 +12,7 @@
 #include "../../../engine/contracts/windows_ipc.h"
 #include "../../../engine/contracts/direct_helpcode.h"
 #include "../../../engine/contracts/v_mode_input.h"
+#include "../../../engine/contracts/trilingual_input.h"
 
 int InitIpc();
 int InitNamedpipe();
@@ -47,6 +48,7 @@ bool EnsureNamedpipeFocusSessionActivated();
 bool SupportsCharacterSetShortcut();
 bool SupportsCompositionRestore();
 bool SupportsCaretStateIndicator();
+bool SupportsTrilingualCycle();
 bool FlushNamedpipeFocusSessionReset();
 bool FlushNamedpipeImeDeactivation(uint64_t focusToken = 0);
 
@@ -228,6 +230,8 @@ inline std::atomic_bool DirectHelpcodeSlashEnabled{true};
 // 不开。V 后面的数字和 . + - * / ( ) 按 engine/contracts/v_mode_input.h 的规则当编码键吃掉。
 inline std::atomic<FanyImeVModeInput::Trigger> VModeTrigger{FanyImeVModeInput::Trigger::Off};
 inline std::atomic_bool JapaneseInputModeEnabled{false};
+// Enabled only after a supporting Server sends the persisted setting.
+inline std::atomic_bool TrilingualCycleEnabled{false};
 inline std::atomic_bool CapsLockEnabled{false};
 inline std::atomic_bool TsfDiagnosticLogEnabled{false};
 // Default off, like the persisted setting: until the Server sends the switch on

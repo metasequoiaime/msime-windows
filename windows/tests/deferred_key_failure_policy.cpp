@@ -56,6 +56,24 @@ int main()
     if (ClassifyEditSessionFailure(false, false, false) != Reason::HostEditRejected)
         return 16;
 
+    // A failed cycle reply must refresh native mode, which the Server changed
+    // before replying. Ordinary host failures still use the same-token resync.
+    const Reason cycleFailures[] = {Reason::HostEditRejected, Reason::EditSessionRequestFailed,
+                                    Reason::AsyncPostFailed};
+    for (const auto reason : cycleFailures)
+    {
+        if (ResolveDeferredKeyFailure(reason, false, true) != Kind::Transport)
+            return 19;
+        if (ResolveDeferredKeyFailure(reason, false) != Kind::Resync)
+            return 20;
+        // An offline cycle never reached the Server: discard its dependent
+        // queue through Offline while keeping the local raw composition.
+        if (ResolveDeferredKeyFailure(reason, true, true) != Kind::Offline)
+            return 22;
+    }
+    if (ResolveDeferredKeyFailure(Reason::Superseded, false, true) != Kind::Stale)
+        return 21;
+
     // Paging and highlight moves are acknowledgement-only.
     const unsigned int navigationKeys[] = {0x09 /*Tab*/, 0x21 /*PageUp*/, 0x22 /*PageDown*/, 0x26 /*Up*/,
                                            0x28 /*Down*/};

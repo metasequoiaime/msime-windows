@@ -333,9 +333,13 @@ constexpr std::uint32_t ProtocolMismatch = 13;
 // means "caret at the end". NeedToCreateWord and CompositionRestored share the
 // payload parser on the TSF side.
 constexpr std::uint32_t CompositionRestored = 14;
+// Commit the already selected word prefix and remaining raw input before cycling languages.
+// candidate_string = destination ("0" Chinese, "1" Japanese, "2" English) + \t + exact commit text.
+// Only clients negotiating FanyImeProtocol::TrilingualCycle may receive this reply.
+constexpr std::uint32_t TrilingualCycle = 15;
 // Highest opcode a live Server may send. Local-only sentinels are larger and
 // must never be accepted as a Server frame.
-constexpr std::uint32_t MaxKnown = CompositionRestored;
+constexpr std::uint32_t MaxKnown = TrilingualCycle;
 // Local-only result. It is never sent over the pipe and must never be
 // interpreted as candidate text to commit.
 constexpr std::uint32_t TransportUnavailable = static_cast<std::uint32_t>(-1);
@@ -374,7 +378,7 @@ constexpr std::uint32_t UpdateVoiceComposition = 15;
 constexpr std::uint32_t CancelVoiceComposition = 16;
 // Streaming ASR: replace the inline composition with this snapshot and commit.
 constexpr std::uint32_t CommitVoiceComposition = 17;
-// Payload "1" when input.mode is Japanese, otherwise "0".
+// Payload "1" when the active CJK input mode is Japanese, otherwise "0".
 constexpr std::uint32_t InputModeChanged = 18;
 // Payload "1" when Caps Lock is on. Server is the source of truth.
 constexpr std::uint32_t CapsLockChanged = 19;
@@ -430,7 +434,10 @@ constexpr std::uint32_t MidSentenceHelpcodeUppercaseChanged = 31;
 // "2" V or v (quanpin); see FanyImeVModeInput::Trigger. TSF then eats digits and . + - * / ( ) after the prefix
 // (FanyImeVModeInput::AcceptsAt). Single-character payload, same rule as opcode 28.
 constexpr std::uint32_t VModeChanged = 32;
-constexpr std::uint32_t MaxKnown = VModeChanged;
+// Whether language-switch hotkeys commit raw composition, then cycle Chinese/Japanese/English. Payload "0"/"1".
+// Separate from InputModeChanged so old DLLs retain its active-language meaning and ignore this switch.
+constexpr std::uint32_t TrilingualCycleChanged = 33;
+constexpr std::uint32_t MaxKnown = TrilingualCycleChanged;
 // Source compatibility for the Server's historical spellings.
 constexpr std::uint32_t SwitchToEn = SwitchToEnglish;
 constexpr std::uint32_t SwitchToCn = SwitchToChinese;

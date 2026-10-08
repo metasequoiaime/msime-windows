@@ -304,7 +304,7 @@ HRESULT OnControllerCreatedFtbWnd(      //
                 {
                     NotifySmallWindowNavigationReady(floatingToolbarNavigationReady, L"floating-toolbar");
                     ApplyConfiguredFloatingToolbarAppearance();
-                    floatingToolbarState.japanese_input_mode = GetConfiguredInputMode() == "japanese" ? 1 : 0;
+                    floatingToolbarState.japanese_input_mode = GetActiveInputMode() == "japanese" ? 1 : 0;
                     RenderFloatingToolbarState(sender);
                     ApplyConfiguredFloatingToolbarSize();
                     InjectSurfaceViewportLimits(sender, ::global_hwnd_ftb);

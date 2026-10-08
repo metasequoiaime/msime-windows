@@ -152,7 +152,8 @@ HRESULT CMetasequoiaIME::_HandleComplete(TfEditCookie ec, _In_ ITfContext *pCont
     return S_OK;
 }
 
-HRESULT CMetasequoiaIME::_HandleCompleteCommitFirst(TfEditCookie ec, _In_ ITfContext *pContext)
+HRESULT CMetasequoiaIME::_HandleCompleteCommitFirst(TfEditCookie ec, _In_ ITfContext *pContext,
+                                                    bool requireSuccessfulEnd)
 {
     g_toggleImeFallbackBuffer.clear();
     // Same terminal cleanup as _HandleComplete: the accumulated word belongs to
@@ -162,9 +163,10 @@ HRESULT CMetasequoiaIME::_HandleCompleteCommitFirst(TfEditCookie ec, _In_ ITfCon
 
     _DeleteCandidateList(FALSE, pContext);
 
-    _TerminateComposition(ec, pContext);
+    HRESULT endResult = S_OK;
+    _TerminateComposition(ec, pContext, FALSE, requireSuccessfulEnd ? &endResult : nullptr);
 
-    return S_OK;
+    return endResult;
 }
 
 //+---------------------------------------------------------------------------
@@ -292,6 +294,61 @@ HRESULT CMetasequoiaIME::_HandleInsertText(TfEditCookie ec, _In_ ITfContext *pCo
         return hr;
     }
     return _HandleCompleteCommitFirst(ec, pContext);
+}
+
+HRESULT CMetasequoiaIME::_HandleCycleInputMode(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &payload)
+{
+    FanyImeTrilingualInput::Mode destination;
+    std::wstring commitText;
+    if (!_pCompositionProcessorEngine || !FanyImeTrilingualInput::ParsePayload(payload, destination, commitText))
+    {
+        return E_INVALIDARG;
+    }
+
+    const auto expectedDestination =
+        FanyImeTrilingualInput::Next(_pCompositionProcessorEngine->GetIMEMode(_GetThreadMgr(), _GetClientId()) != FALSE,
+                                     Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed));
+    // Keep KEYBOARD_OPENCLOSE unchanged while writing and ending composition.
+    // Closing it before the commit can make Win32 EDIT/CUAS commit twice.
+    if (!commitText.empty())
+    {
+        CStringRange commitString;
+        commitString.Set(commitText.c_str(), commitText.length());
+        // A refused composition write must never fall back to the current
+        // selection, which may no longer cover the same text.
+        const HRESULT result = _pComposition ? _SetCompositionTextAndSelection(ec, pContext, &commitString)
+                                             : _AddCharAndFinalize(ec, pContext, &commitString, true);
+        if (result != S_OK)
+        {
+            return result;
+        }
+    }
+    HRESULT result = _HandleCompleteCommitFirst(ec, pContext, true);
+    if (result != S_OK)
+    {
+        return result;
+    }
+    result = _pCompositionProcessorEngine->SetIMEModeForLanguageCycle(
+        _GetThreadMgr(), _GetClientId(), destination != FanyImeTrilingualInput::Mode::English);
+    if (result != S_OK)
+    {
+        return result;
+    }
+    if (destination != FanyImeTrilingualInput::Mode::English)
+    {
+        Global::JapaneseInputModeEnabled.store(destination == FanyImeTrilingualInput::Mode::Japanese,
+                                               std::memory_order_relaxed);
+    }
+    _ClearPairedPunctuationStack();
+    if (_msgWndHandle && IsWindow(_msgWndHandle))
+    {
+        PostMessage(_msgWndHandle, WM_RefreshLanguageBarTheme, 0, 0);
+        PostMessage(_msgWndHandle, WM_UpdateIMEStatus, 0, 0);
+    }
+    // A configuration change or state mismatch can invalidate the FIFO's
+    // predicted destination. The raw text is committed; discard the
+    // queued keys that depend on that prediction and refresh the active mode.
+    return destination == expectedDestination ? S_OK : S_FALSE;
 }
 
 HRESULT CMetasequoiaIME::_HandleCommitCandidateAndContinue(TfEditCookie ec, _In_ ITfContext *pContext,

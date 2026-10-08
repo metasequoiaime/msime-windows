@@ -104,6 +104,14 @@ struct ConfigValueUpdate
 // 配置状态：定义与初始化顺序都在 ime_config.cpp。
 extern SchemeType g_input_scheme;
 extern std::string g_input_mode;
+enum class ActiveInputMode
+{
+    Configured,
+    Chinese,
+    Japanese
+};
+extern std::atomic<ActiveInputMode> g_active_input_mode;
+extern bool g_trilingual_cycle_enabled;
 extern std::string g_japanese_schema;
 extern std::string g_character_set;
 extern std::string g_default_ime_mode;

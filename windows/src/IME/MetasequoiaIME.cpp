@@ -296,6 +296,7 @@ CMetasequoiaIME::CMetasequoiaIME()
     _nextDeferredKeyReplayToken = 0;
     _deferredKeyProjectionValid = false;
     _deferredProjectedImeOpen = false;
+    _deferredProjectedJapaneseMode = false;
     _deferredProjectedPunctuationOpen = false;
     _deferredProjectedDoubleSingleByteOpen = false;
     _deferredProjectedInputLength = 0;

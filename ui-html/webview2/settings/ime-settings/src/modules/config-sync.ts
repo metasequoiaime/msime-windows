@@ -419,7 +419,8 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
         data?.input?.wubi_fifth_code_top_commit,
         data?.input?.default_ime_mode,
         data?.input?.ime_mode_scope,
-        data?.input?.japanese_schema
+        data?.input?.japanese_schema,
+        data?.input?.trilingual_cycle
       );
       module.applyFrequencyConfig(data?.frequency_adjustment);
       module.applyTencentTmtConfig(data?.tencent_tmt);

@@ -122,6 +122,20 @@ static void ApplySmartPunctuationSubkey(const std::string &path, bool value)
 // [input] 段：输入模式、输入方案、标点行为等
 static void ApplyInputSubkey(const std::string &path, const json::object &data)
 {
+    if (path == "input.trilingual_cycle")
+    {
+        const bool enabled = json::value_to<bool>(data.at("value"));
+        const SchemeType previous_scheme = GetConfiguredActiveInputScheme();
+        if (SetConfiguredTrilingualCycleEnabled(enabled))
+        {
+            if (previous_scheme != GetConfiguredActiveInputScheme())
+                ApplyConfiguredInputScheme();
+            else
+                BroadcastToTsfWorkerThreadViaNamedpipe(
+                    Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged, enabled ? L"1" : L"0");
+            PostSettingsConfig();
+        }
+    }
     if (path == "input.mode")
     {
         const std::string value = json::value_to<std::string>(data.at("value"));
@@ -1627,6 +1641,7 @@ void PostSettingsConfig()
         {"data",
          {{"input",
            {{"mode", GetConfiguredInputMode()},
+            {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()},
             {"schema", GetConfiguredInputSchemeName()},
             {"japanese_schema", GetConfiguredJapaneseSchema()},
             {"character_set", GetConfiguredCharacterSet()},

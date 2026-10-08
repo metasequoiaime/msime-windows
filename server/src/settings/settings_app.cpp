@@ -438,7 +438,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
         {"type", "configSnapshot"},
         {"data",
          {{"input",
-           {{"mode", GetConfiguredInputMode()},
+            {{"mode", GetConfiguredInputMode()},
+             {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()},
             {"schema", GetConfiguredInputSchemeName()},
             {"japanese_schema", GetConfiguredJapaneseSchema()},
             {"character_set", GetConfiguredCharacterSet()},
@@ -758,6 +759,8 @@ bool ApplyConfigUpdate(const json::object &data)
     const std::string path = json::value_to<std::string>(data.at("path"));
     if (path == "input.mode")
         return SetConfiguredInputMode(json::value_to<std::string>(data.at("value")));
+    if (path == "input.trilingual_cycle")
+        return SetConfiguredTrilingualCycleEnabled(json::value_to<bool>(data.at("value")));
     if (path == "input.schema")
         return SetConfiguredInputScheme(json::value_to<std::string>(data.at("value")));
     if (path == "input.japanese_schema")

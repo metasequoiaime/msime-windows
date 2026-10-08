@@ -1,5 +1,32 @@
 #include "ipc/input_key_policy.h"
+#include "engine/contracts/trilingual_input.h"
 #include "tests/includes/test_framework.h"
+
+TEST_CASE(trilingual_shift_cycles_chinese_japanese_english_and_returns_to_chinese)
+{
+    using FanyImeTrilingualInput::Mode;
+    using FanyImeTrilingualInput::Next;
+    REQUIRE(Next(true, false) == Mode::Japanese);
+    REQUIRE(Next(true, true) == Mode::English);
+    // English can retain either native-language scheme; both return to Chinese.
+    REQUIRE(Next(false, true) == Mode::Chinese);
+    REQUIRE(Next(false, false) == Mode::Chinese);
+}
+
+TEST_CASE(trilingual_shift_does_not_intercept_tab_modified_application_shortcuts_or_fixed_modes)
+{
+    using FanyImeTrilingualInput::IsCycleKey;
+    REQUIRE(IsCycleKey(0x10, 0, true));
+    REQUIRE(IsCycleKey(0x10, FanyImeIpc::kModifierUiLess, true));
+    REQUIRE(!IsCycleKey(0x10, 0, false));
+    REQUIRE(!IsCycleKey('A', 0, true));
+    for (unsigned modifiers = 1; modifiers < 8; ++modifiers)
+    {
+        REQUIRE(!IsCycleKey(0x10, modifiers, true));
+        REQUIRE(!IsCycleKey(0x09, modifiers, true));
+    }
+    REQUIRE(!IsCycleKey(0x09, 0, true));
+}
 
 TEST_CASE(pinyin_commit_requires_shift_enter)
 {

@@ -1429,7 +1429,7 @@ HRESULT CMetasequoiaIME::_AddComposingAndChar(TfEditCookie ec, _In_ ITfContext *
 //----------------------------------------------------------------------------
 
 HRESULT CMetasequoiaIME::_AddCharAndFinalize(TfEditCookie ec, _In_ ITfContext *pContext,
-                                             _In_ CStringRange *pstrAddString)
+                                             _In_ CStringRange *pstrAddString, bool requireSelection)
 {
     HRESULT hr = E_FAIL;
 
@@ -1446,7 +1446,7 @@ HRESULT CMetasequoiaIME::_AddCharAndFinalize(TfEditCookie ec, _In_ ITfContext *p
     TF_SELECTION tfSelection;
 
     if ((hr = pContext->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &tfSelection, &fetched)) != S_OK || fetched != 1)
-        return hr;
+        return requireSelection && hr == S_OK ? S_FALSE : hr;
 
     // We use SetText here instead of InsertTextAtSelection because we've already started a composition
     // We don't want to the app to adjust the insertion point inside our composition

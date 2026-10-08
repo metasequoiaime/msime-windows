@@ -391,7 +391,7 @@ bool FloatingToolbarPresenter::Bind(HWND hwnd)
     impl_->window->AdoptExistingHwnd(hwnd);
     impl_->window->SetStealFocusOnClick(false);
     bound_ = impl_->resources.EnsureForComposition(hwnd);
-    impl_->japaneseInputMode = GetConfiguredInputMode() == "japanese" ? 1 : 0;
+    impl_->japaneseInputMode = GetActiveInputMode() == "japanese" ? 1 : 0;
     ApplyTheme();
     FTB_DIAG_LOGF(L"ftb-d2d bind hwnd={:#x} composition={}", reinterpret_cast<uintptr_t>(hwnd), bound_ ? 1 : 0);
     return bound_;

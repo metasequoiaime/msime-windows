@@ -19,6 +19,7 @@ bool IsEnglishInputModeToggle(UINT code, UINT modifiers);
 bool IsTranslationCommitShortcut(UINT code, UINT modifiers);
 bool IsPinyinCommitShortcut(UINT code, UINT modifiers);
 bool IsCharacterSetInputModeToggle(UINT code, UINT modifiers);
+bool IsTrilingualCycleEnabled();
 void PostOwnerMessageWithSyncFallback(HWND window, UINT message, WPARAM wParam = 0, LPARAM lParam = 0);
 bool IsShiftVk(UINT code);
 } // namespace key_event_sink_detail
