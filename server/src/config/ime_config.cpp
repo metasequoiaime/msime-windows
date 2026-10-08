@@ -286,7 +286,7 @@ namespace
 {
 const std::vector<std::string_view> &AiAssistantProviders()
 {
-    static const std::vector<std::string_view> providers{"deepseek", "openai", "siliconflow", "groq"};
+    static const std::vector<std::string_view> providers{"deepseek", "openai", "siliconflow", "groq", "custom"};
     return providers;
 }
 } // namespace

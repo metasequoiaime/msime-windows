@@ -62,7 +62,7 @@ struct VoiceInputConfig
 struct AiAssistantConfig
 {
     bool enabled = false;
-    // deepseek | openai | siliconflow | groq (all use Chat Completions)
+    // deepseek | openai | siliconflow | groq | custom (all use Chat Completions)
     std::string provider = "deepseek";
     std::string token;
     std::map<std::string, std::string> tokens;
@@ -71,12 +71,15 @@ struct AiAssistantConfig
     std::map<std::string, std::string> endpoints{{"deepseek", "https://api.deepseek.com/chat/completions"},
                                                  {"openai", "https://api.openai.com/v1/chat/completions"},
                                                  {"siliconflow", "https://api.siliconflow.cn/v1/chat/completions"},
-                                                 {"groq", "https://api.groq.com/openai/v1/chat/completions"}};
+                                                 {"groq", "https://api.groq.com/openai/v1/chat/completions"},
+                                                 {"custom", ""}};
     // Groq 已弃用 llama-3.3-70b-versatile，默认模型改用 qwen/qwen3.8-27b。
+    // custom 槽位不预设接口地址和模型，全部由用户填写并单独保存。
     std::map<std::string, std::string> models{{"deepseek", "deepseek-v4-flash"},
                                               {"openai", "gpt-4o-mini"},
                                               {"siliconflow", "Qwen/Qwen3-8B"},
-                                              {"groq", "qwen/qwen3.8-27b"}};
+                                              {"groq", "qwen/qwen3.8-27b"},
+                                              {"custom", ""}};
     int candidate_limit = 3;
     // custom_1 | custom_2 | custom_3
     std::string prompt_id = "custom_1";

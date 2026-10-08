@@ -191,6 +191,29 @@ TEST_CASE(ai_provider_configuration_round_trips_without_mixing_credentials)
         REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://openai.example.test/v1/chat/completions"));
         REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-openai"));
 
+        // Custom 槽位的 base_url、API Key、模型独立落盘，切走再切回不串味。
+        REQUIRE(SetConfiguredAiAssistantString("provider", "custom"));
+        REQUIRE(SetConfiguredAiAssistantString("token_custom", "test-custom"));
+        REQUIRE(SetConfiguredAiAssistantString("endpoint", "https://custom.example.test/v1/chat/completions"));
+        REQUIRE(SetConfiguredAiAssistantString("model", "custom-model"));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAiAssistant().provider, std::string("custom"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-custom"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://custom.example.test/v1/chat/completions"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-model"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoints.at("custom"),
+                   std::string("https://custom.example.test/v1/chat/completions"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().models.at("custom"), std::string("custom-model"));
+
+        REQUIRE(SetConfiguredAiAssistantString("provider", "openai"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-openai"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://openai.example.test/v1/chat/completions"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-openai"));
+        REQUIRE(SetConfiguredAiAssistantString("provider", "custom"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-custom"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://custom.example.test/v1/chat/completions"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-model"));
+
         for (const std::string provider : {"siliconflow", "groq"})
         {
             const AiAssistantConfig defaults;
