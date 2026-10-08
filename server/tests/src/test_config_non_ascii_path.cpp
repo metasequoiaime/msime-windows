@@ -273,6 +273,28 @@ TEST_CASE(ai_provider_default_values_are_not_pinned_into_slots)
     fs::remove_all(unique_root, ec);
 }
 
+TEST_CASE(ai_provider_retired_default_model_follows_new_default)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"ai-provider-retired";
+    const fs::path data_dir = unique_root / L"metasequoiaime";
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    SeedTemplate(data_dir);
+    // 早期版本把 Groq 当时的默认模型原样写进了旧版 model 和 model_groq。
+    WriteText(data_dir / L"config.toml", "[ai_assistant]\nprovider = \"groq\"\n"
+                                         "model = \"llama-3.3-70b-versatile\"\n"
+                                         "model_groq = \"llama-3.3-70b-versatile\"\n");
+    {
+        ScopedConfigLocation location(unique_root);
+        const AiAssistantConfig defaults;
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, defaults.models.at("groq"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().models.at("groq"), defaults.models.at("groq"));
+    }
+    fs::remove_all(unique_root, ec);
+}
+
 TEST_CASE(config_recovers_unparseable_file_and_saves)
 {
     namespace fs = std::filesystem;

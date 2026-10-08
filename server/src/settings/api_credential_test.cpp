@@ -20,6 +20,8 @@ namespace
 constexpr long kConnectTimeoutMs = 5000;
 constexpr long kRequestTimeoutMs = 15000;
 constexpr std::size_t kMaxResponseBytes = 256 * 1024;
+// OpenRouter 等聚合服务的 /models 带描述和价格，能到数 MB。
+constexpr std::size_t kMaxModelListBytes = 16 * 1024 * 1024;
 
 struct HttpResponse
 {
@@ -27,6 +29,7 @@ struct HttpResponse
     long status = 0;
     std::string body;
     std::string error;
+    std::size_t max_bytes = kMaxResponseBytes;
 };
 
 std::string Value(const ApiCredentialTest::Request &request, const char *key)
@@ -38,10 +41,10 @@ std::string Value(const ApiCredentialTest::Request &request, const char *key)
 size_t WriteResponse(char *data, size_t size, size_t count, void *user)
 {
     const size_t bytes = size * count;
-    auto *response = static_cast<std::string *>(user);
-    if (bytes > kMaxResponseBytes - (std::min)(response->size(), kMaxResponseBytes))
+    auto *response = static_cast<HttpResponse *>(user);
+    if (bytes > response->max_bytes - (std::min)(response->body.size(), response->max_bytes))
         return 0;
-    response->append(data, bytes);
+    response->body.append(data, bytes);
     return bytes;
 }
 
@@ -82,25 +85,35 @@ std::string ErrorDetail(const HttpResponse &response)
     return "HTTP " + std::to_string(response.status);
 }
 
-HttpResponse PerformJsonPost(const std::string &endpoint, const std::string &token, const std::string &payload)
+// payload 为空指针时发 GET，否则以 JSON body 发 POST。
+HttpResponse PerformJsonRequest(const std::string &endpoint, const std::string &token, const std::string *payload,
+                                std::size_t max_bytes = kMaxResponseBytes)
 {
     InitCurl();
     HttpResponse response;
+    response.max_bytes = max_bytes;
     CURL *curl = curl_easy_init();
     if (!curl)
         return response;
     char error[CURL_ERROR_SIZE] = {};
     curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, payload ? "Content-Type: application/json" : "Accept: application/json");
     const std::string authorization = "Authorization: Bearer " + token;
     headers = curl_slist_append(headers, authorization.c_str());
     curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
     NetworkProxy::ApplyToCurl(curl);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
+    if (payload)
+    {
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload->c_str());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload->size()));
+    }
+    else
+    {
+        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    }
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMs);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, kRequestTimeoutMs);
@@ -113,34 +126,24 @@ HttpResponse PerformJsonPost(const std::string &endpoint, const std::string &tok
     return response;
 }
 
-HttpResponse PerformJsonGet(const std::string &endpoint, const std::string &token)
+// 由 Chat Completions 地址或 base URL 推出 OpenAI 兼容的 /models 地址。
+// 查询串（如 Azure 的 api-version）原样保留，只改写路径部分。
+std::string ModelListEndpoint(const std::string &endpoint)
 {
-    InitCurl();
-    HttpResponse response;
-    CURL *curl = curl_easy_init();
-    if (!curl)
-        return response;
-    char error[CURL_ERROR_SIZE] = {};
-    curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "Accept: application/json");
-    const std::string authorization = "Authorization: Bearer " + token;
-    headers = curl_slist_append(headers, authorization.c_str());
-    curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
-    NetworkProxy::ApplyToCurl(curl);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
-    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMs);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, kRequestTimeoutMs);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    response.code = curl_easy_perform(curl);
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status);
-    response.error = error;
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    return response;
+    const std::size_t query_at = endpoint.find_first_of("?#");
+    std::string path = endpoint.substr(0, query_at);
+    const std::string query = query_at == std::string::npos ? std::string() : endpoint.substr(query_at);
+    while (!path.empty() && path.back() == '/')
+        path.pop_back();
+    const auto ends_with = [&path](std::string_view suffix) {
+        return path.size() >= suffix.size() && path.compare(path.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    constexpr std::string_view kChatSuffix = "/chat/completions";
+    if (ends_with(kChatSuffix))
+        path.resize(path.size() - kChatSuffix.size());
+    if (!ends_with("/models"))
+        path += "/models";
+    return path + query;
 }
 
 ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
@@ -161,7 +164,8 @@ ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
         body["thinking"] = {{"type", "disabled"}};
     else if (provider == "siliconflow")
         body["enable_thinking"] = false;
-    const HttpResponse response = PerformJsonPost(endpoint, token, body.dump());
+    const std::string payload = body.dump();
+    const HttpResponse response = PerformJsonRequest(endpoint, token, &payload);
     if (response.code == CURLE_OK && response.status >= 200 && response.status < 300)
         return {true, "连接成功，API Key 和模型配置有效。"};
     return {false, "测试失败：" + ErrorDetail(response)};
@@ -236,7 +240,7 @@ ApiCredentialTest::Result TestBatchAsr(const ApiCredentialTest::Request &request
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMs);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, kRequestTimeoutMs);
@@ -310,21 +314,16 @@ Result Run(const Request &request)
 
 ModelListResult FetchModels(const Request &request)
 {
+    if (request.service != "ai.assistant")
+        return {false, "不支持的模型列表类型。", {}};
     const std::string token = Value(request, "token");
-    std::string endpoint = Value(request, "endpoint");
+    const std::string endpoint = Value(request, "endpoint");
     if (!CloudTranslation::IsUsableSecret(token))
         return {false, "请先填写有效的 API Key。", {}};
     if (!IsHttpEndpoint(endpoint))
-        return {false, "请先填写有效的 HTTPS 接口地址。", {}};
+        return {false, "请先填写以 http:// 或 https:// 开头的接口地址。", {}};
 
-    constexpr std::string_view kChatSuffix = "/chat/completions";
-    if (endpoint.size() >= kChatSuffix.size() &&
-        endpoint.compare(endpoint.size() - kChatSuffix.size(), kChatSuffix.size(), kChatSuffix) == 0)
-    {
-        endpoint = endpoint.substr(0, endpoint.size() - kChatSuffix.size()) + "/models";
-    }
-
-    const HttpResponse response = PerformJsonGet(endpoint, token);
+    const HttpResponse response = PerformJsonRequest(ModelListEndpoint(endpoint), token, nullptr, kMaxModelListBytes);
     if (response.code != CURLE_OK || response.status < 200 || response.status >= 300)
     {
         return {false, "获取模型列表失败：" + ErrorDetail(response), {}};
