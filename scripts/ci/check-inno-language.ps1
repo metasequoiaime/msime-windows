@@ -9,6 +9,9 @@
 # own belief about where ISCC looks, which is precisely the thing that was wrong. Compiling a script
 # whose only content is a [Languages] entry pointing at compiler:Languages\ChineseSimplified.isl is
 # what makes ISCC answer the question. Seconds on an image that already ships Inno Setup.
+#
+# The probe also carries msime_setup.iss's WizardStyle=modern dynamic, which ISCC older than 6.6
+# rejects, so the same compile answers whether this ISCC can build the real installer.
 $ErrorActionPreference = 'Stop'
 
 & "$PSScriptRoot/install-inno-language.ps1"
@@ -23,6 +26,7 @@ $probe = Join-Path $output 'language-probe.iss'
     'DefaultDirName={autopf}\LanguageProbe'
     "OutputDir=$output"
     'OutputBaseFilename=language-probe'
+    'WizardStyle=modern dynamic'
     '[Languages]'
     'Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"'
 ) | Set-Content -Path $probe -Encoding UTF8
