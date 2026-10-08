@@ -23,9 +23,10 @@ Third-party binaries, such as the libraries vcpkg builds for the Server, are shi
 | Role | Members | What the role may do |
 | --- | --- | --- |
 | Committers and reviewers | [fanlusky](https://github.com/fanlusky), [houko](https://github.com/houko), [jsfaint](https://github.com/jsfaint), [linyanm](https://github.com/linyanm), [Neptrue-Lin](https://github.com/Neptrue-Lin) | Push branches and merge pull requests into `develop` |
-| Approvers | [fanlusky](https://github.com/fanlusky), [houko](https://github.com/houko) | Promote `develop` to `main`, which is what releases a signed build; approve signing requests |
+| Release managers | [fanlusky](https://github.com/fanlusky), [houko](https://github.com/houko) | Promote `develop` to `main`, which is what releases a signed build |
+| Approvers | [houko](https://github.com/houko) | Approve signing requests in SignPath |
 
-Approvers are the members of the `@metasequoiaime/maintainers` team, which owns the release-critical paths in [`.github/CODEOWNERS`](../.github/CODEOWNERS): the workflows, `installer/`, `scripts/`, `product-lock.json` and `version.txt`. The organization account `metasequoiaime-dev` is used only by the release automation and is not a person; it holds no role above. How roles are granted is described in the organization's [GOVERNANCE.md](https://github.com/metasequoiaime/.github/blob/main/GOVERNANCE.md).
+Approvers are the people configured as approvers of the `release-signing` policy in SignPath. Release managers are the members of the `@metasequoiaime/maintainers` team, which owns the release-critical paths in [`.github/CODEOWNERS`](../.github/CODEOWNERS): the workflows, `installer/`, `scripts/`, `product-lock.json` and `version.txt`. The organization account `metasequoiaime-dev` is used only by the release automation and is not a person; it holds no role above. How roles are granted is described in the organization's [GOVERNANCE.md](https://github.com/metasequoiaime/.github/blob/main/GOVERNANCE.md).
 
 Contributors without write access can still propose changes through pull requests. Their changes are reviewed and merged by a committer before they can reach a release.
 
