@@ -113,6 +113,36 @@ HttpResponse PerformJsonPost(const std::string &endpoint, const std::string &tok
     return response;
 }
 
+HttpResponse PerformJsonGet(const std::string &endpoint, const std::string &token)
+{
+    InitCurl();
+    HttpResponse response;
+    CURL *curl = curl_easy_init();
+    if (!curl)
+        return response;
+    char error[CURL_ERROR_SIZE] = {};
+    curl_slist *headers = nullptr;
+    headers = curl_slist_append(headers, "Accept: application/json");
+    const std::string authorization = "Authorization: Bearer " + token;
+    headers = curl_slist_append(headers, authorization.c_str());
+    curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
+    NetworkProxy::ApplyToCurl(curl);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMs);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, kRequestTimeoutMs);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    response.code = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status);
+    response.error = error;
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return response;
+}
+
 ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
 {
     const std::string token = Value(request, "token");
@@ -276,5 +306,71 @@ Result Run(const Request &request)
         return error.empty() ? Result{true, "连接成功，豆包语音识别凭据有效。"} : Result{false, "测试失败：" + error};
     }
     return {false, "不支持的配置测试类型。"};
+}
+
+ModelListResult FetchModels(const Request &request)
+{
+    const std::string token = Value(request, "token");
+    std::string endpoint = Value(request, "endpoint");
+    if (!CloudTranslation::IsUsableSecret(token))
+        return {false, "请先填写有效的 API Key。", {}};
+    if (!IsHttpEndpoint(endpoint))
+        return {false, "请先填写有效的 HTTPS 接口地址。", {}};
+
+    constexpr std::string_view kChatSuffix = "/chat/completions";
+    if (endpoint.size() >= kChatSuffix.size() &&
+        endpoint.compare(endpoint.size() - kChatSuffix.size(), kChatSuffix.size(), kChatSuffix) == 0)
+    {
+        endpoint = endpoint.substr(0, endpoint.size() - kChatSuffix.size()) + "/models";
+    }
+
+    const HttpResponse response = PerformJsonGet(endpoint, token);
+    if (response.code != CURLE_OK || response.status < 200 || response.status >= 300)
+    {
+        return {false, "获取模型列表失败：" + ErrorDetail(response), {}};
+    }
+
+    try
+    {
+        const auto root = nlohmann::json::parse(response.body);
+        std::vector<std::string> model_ids;
+        if (root.contains("data") && root.at("data").is_array())
+        {
+            for (const auto &item : root.at("data"))
+            {
+                if (item.is_object() && item.contains("id") && item.at("id").is_string())
+                {
+                    model_ids.push_back(item.at("id").get<std::string>());
+                }
+            }
+        }
+        else if (root.is_array())
+        {
+            for (const auto &item : root)
+            {
+                if (item.is_object() && item.contains("id") && item.at("id").is_string())
+                {
+                    model_ids.push_back(item.at("id").get<std::string>());
+                }
+                else if (item.is_string())
+                {
+                    model_ids.push_back(item.get<std::string>());
+                }
+            }
+        }
+
+        if (model_ids.empty())
+        {
+            return {false, "获取成功但未解析到可用模型。", {}};
+        }
+
+        std::sort(model_ids.begin(), model_ids.end());
+        model_ids.erase(std::unique(model_ids.begin(), model_ids.end()), model_ids.end());
+        return {true, "获取成功", std::move(model_ids)};
+    }
+    catch (...)
+    {
+        return {false, "解析服务返回的模型列表失败。", {}};
+    }
 }
 } // namespace ApiCredentialTest
