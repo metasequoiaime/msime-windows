@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "directory": "translate-zh_en-1_9",
+      "url": "https://argos-net.com/v1/translate-zh_en-1_9.argosmodel",
+      "bytes": 74481402,
+      "sha256": "62e7af5a3a48b530e47b7b3e5c78c2de79073ecd815750d2bf3ab35b4a67da2d",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "directory": "translate-en_zh-1_9",
+      "url": "https://argos-net.com/v1/translate-en_zh-1_9.argosmodel",
+      "bytes": 70743021,
+      "sha256": "433e7c4f034d87fbe2353161e05f18646d7999452f801a4e1f0378522b9850ab",
+      "license": "CC-BY-4.0"
+    }
+  ]
+}
