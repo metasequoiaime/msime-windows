@@ -2,22 +2,17 @@
 
 在 Vim 或启用 Vim 插件的编辑器中，中文输入完成后按 Esc，编辑器可以正常回到 normal 模式，但水杉仍停留在中文状态。可按应用启用 Vim 模式，让这次 Esc 同时将水杉切到英文，随后直接输入 `hjkl` 等命令。
 
-将 [示例 vim_mode.yaml](../examples/vim-mode/vim_mode.yaml) 复制到水杉数据目录，与 `config.toml` 放在一起，再按需填写应用：
+在数据目录的 `config.toml`（默认 `%LOCALAPPDATA%\metasequoiaime\config.toml`，安装时若选了别的位置就在那里；`METASEQUOIA_IME_DATA_DIR` 环境变量优先）的 `[input]` 段填写要启用的应用：
 
-```yaml
+```toml
+[input]
 # 可执行文件名，不填写路径；ASCII 大小写不敏感。
-app_options:
-  Code.exe:
-    # 在传给编辑器的无修饰键 Esc 后切换英文。
-    vim_mode: true
-  gvim.exe:
-    # 单独为 GUI Vim 启用。
-    vim_mode: true
+vim_mode_apps = ["Code.exe", "gvim.exe"]
 ```
 
-默认数据目录为 `%LOCALAPPDATA%\metasequoiaime`。安装时选择过其他目录的，使用该目录；`METASEQUOIA_IME_DATA_DIR` 环境变量优先。该文件独立于主配置，主配置升级合并不会删除它。它不会自动安装或默认启用。
+出厂值是空列表，即默认关闭。这个键在出厂配置模板里，升级合并会保留你填写的值。
 
-配置修改通常在下一次 Esc 时生效，文件检查间隔最长一秒，无需重新部署或重启编辑器。删除文件、删除应用条目或将 `vim_mode` 改为 `false` 均可关闭。配置读取失败、格式无效或超过 64 KiB 时关闭该功能，保留现有按键行为。
+配置修改通常在下一次 Esc 时生效，文件检查间隔最长一秒，无需重新部署或重启编辑器。从列表中删除应用或改回 `[]` 即可关闭。列表格式无效（不是字符串数组、缺逗号、未闭合等）时整项视为关闭，保留现有按键行为。
 
 行为约定：
 
@@ -36,4 +31,4 @@ app_options:
 4. 修改配置并等待一秒，确认无需重启即可启停；检查默认数据目录和非 ASCII 的自定义数据目录。
 5. 验证 Server 重启、失焦/回焦、中文/英文标点锁定、`app` / `global` 状态范围，以及不先调用 `OnTestKeyDown` 的宿主路径。
 
-自动回归目标 `vim_mode` 验证 YAML 配置解析、按应用匹配、无效配置和按键策略。真实宿主的 normal/insert 状态和 TSF 回调顺序仍需按以上步骤验证。
+自动回归目标 `vim_mode` 验证 `vim_mode_apps` 解析、按应用匹配、无效配置和按键策略。真实宿主的 normal/insert 状态和 TSF 回调顺序仍需按以上步骤验证。

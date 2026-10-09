@@ -3,6 +3,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include "Define.h"
 #include "Globals.h"
@@ -485,7 +486,8 @@ bool ReadConfiguredVimMode()
     {
         ULONGLONG checkedTick = 0;
         FILETIME lastWrite{};
-        DWORD size = 0;
+        DWORD sizeLow = 0;
+        DWORD sizeHigh = 0;
         bool checked = false;
         bool haveStamp = false;
         bool enabled = false;
@@ -500,38 +502,31 @@ bool ReadConfiguredVimMode()
         cache.checkedTick = now;
         try
         {
-            const std::filesystem::path directory = SharedDataDirectory();
-            const std::filesystem::path path = directory / L"vim_mode.yaml";
+            const std::filesystem::path path = SharedConfigPath();
             WIN32_FILE_ATTRIBUTE_DATA attributes{};
-            if (directory.empty() || !GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes))
+            if (path.empty() || !GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes))
             {
                 cache.enabled = false;
                 cache.haveStamp = false;
             }
             else if (!cache.haveStamp || CompareFileTime(&attributes.ftLastWriteTime, &cache.lastWrite) != 0 ||
-                     attributes.nFileSizeLow != cache.size)
+                     attributes.nFileSizeLow != cache.sizeLow || attributes.nFileSizeHigh != cache.sizeHigh)
             {
                 cache.enabled = false;
                 cache.haveStamp = true;
                 cache.lastWrite = attributes.ftLastWriteTime;
-                cache.size = attributes.nFileSizeLow;
-                constexpr DWORD maxConfigBytes = 64 * 1024;
-                if (attributes.nFileSizeHigh == 0 && attributes.nFileSizeLow <= maxConfigBytes)
+                cache.sizeLow = attributes.nFileSizeLow;
+                cache.sizeHigh = attributes.nFileSizeHigh;
+                std::ifstream input(path, std::ios::binary);
+                const std::string config((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+                if (!input.is_open() || input.bad())
                 {
-                    std::ifstream input(path, std::ios::binary);
-                    std::string yaml(maxConfigBytes + 1, '\0');
-                    input.read(yaml.data(), static_cast<std::streamsize>(yaml.size()));
-                    const auto bytesRead = input.gcount();
-                    if (input.bad() || (input.fail() && !input.eof()))
-                    {
-                        // A temporary sharing/read failure must be retried even if the file stamp is unchanged.
-                        cache.haveStamp = false;
-                    }
-                    else if (bytesRead <= maxConfigBytes)
-                    {
-                        yaml.resize(static_cast<size_t>(bytesRead));
-                        cache.enabled = VimMode::EnabledForProcess(yaml, wstring_to_string(GetCurrentProcessName()));
-                    }
+                    // A temporary sharing/read failure must be retried even if the file stamp is unchanged.
+                    cache.haveStamp = false;
+                }
+                else
+                {
+                    cache.enabled = VimMode::EnabledForProcess(config, wstring_to_string(GetCurrentProcessName()));
                 }
             }
         }

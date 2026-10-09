@@ -4,8 +4,9 @@
 
 namespace VimMode
 {
-// YAML app_options, keyed by executable basename. Missing/invalid entries are disabled.
-bool EnabledForProcess(const std::string &yaml, const std::string &processName);
+// config.toml [input] vim_mode_apps, a list of executable basenames. A missing
+// or malformed list disables the feature.
+bool EnabledForProcess(const std::string &configToml, const std::string &processName);
 
 // VK_ESCAPE is 0x1B; the policy stays independent of Windows/TSF for local tests.
 constexpr bool ShouldSwitchToEnglish(unsigned key, bool eaten, bool repeat, unsigned modifiers, bool winDown,

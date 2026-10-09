@@ -13,33 +13,39 @@ bool Check(bool condition, const char *scenario)
 
 int main()
 {
-    const std::string config = R"yaml(
-# Only explicitly enabled executables participate.
-app_options:
-  Code.exe:
-    vim_mode: true
-  gvim.exe: {vim_mode: true}
-  notepad.exe:
-    vim_mode: false
-  missing.exe: {}
-  invalid.exe: {vim_mode: perhaps}
-  wrong-type.exe: true
-)yaml";
+    const std::string config = "\xEF\xBB\xBF[general]\n"
+                               "vim_mode_apps = [\"general.exe\"]\n"
+                               "[input]\n"
+                               "punctuation_lock = \"follow\" # vim_mode_apps = [\"comment.exe\"]\n"
+                               "# vim_mode_apps = [\"commented.exe\"]\n"
+                               "vim_mode_apps = [\n"
+                               "  \"Code.exe\", # VS Code\n"
+                               "  'gvim.exe',\n"
+                               "  \"quoted\\\"name.exe\",\n"
+                               "]\n"
+                               "[keybindings]\n"
+                               "vim_mode_apps = [\"keybindings.exe\"]\n";
     if (!Check(VimMode::EnabledForProcess(config, "Code.exe"), "configured editor") ||
         !Check(VimMode::EnabledForProcess(config, "CODE.EXE"), "executable name case") ||
-        !Check(VimMode::EnabledForProcess(config, "gvim.exe"), "inline YAML mapping") ||
-        !Check(!VimMode::EnabledForProcess(config, "notepad.exe"), "explicitly disabled app") ||
+        !Check(VimMode::EnabledForProcess(config, "gvim.exe"), "literal string") ||
+        !Check(VimMode::EnabledForProcess(config, "quoted\"name.exe"), "escaped quote") ||
         !Check(!VimMode::EnabledForProcess(config, "other.exe"), "unlisted app") ||
         !Check(!VimMode::EnabledForProcess(config, ""), "unknown host") ||
-        !Check(!VimMode::EnabledForProcess(config, "missing.exe"), "missing switch") ||
-        !Check(!VimMode::EnabledForProcess(config, "invalid.exe"), "invalid switch") ||
-        !Check(!VimMode::EnabledForProcess(config, "wrong-type.exe"), "invalid options") ||
+        !Check(!VimMode::EnabledForProcess(config, "comment.exe"), "trailing comment") ||
+        !Check(!VimMode::EnabledForProcess(config, "commented.exe"), "commented-out key") ||
+        !Check(!VimMode::EnabledForProcess(config, "general.exe"), "key in another section") ||
+        !Check(!VimMode::EnabledForProcess(config, "keybindings.exe"), "key after the input section") ||
+        !Check(!VimMode::EnabledForProcess(config, "C:\\editors\\Code.exe"), "only match executable basename") ||
         !Check(!VimMode::EnabledForProcess("", "Code.exe"), "empty file") ||
-        !Check(!VimMode::EnabledForProcess("app_options: [", "Code.exe"), "malformed YAML") ||
-        !Check(!VimMode::EnabledForProcess("app_options: [Code.exe]", "Code.exe"), "invalid app map") ||
-        !Check(!VimMode::EnabledForProcess("[Code.exe]", "Code.exe"), "invalid root") ||
-        !Check(!VimMode::EnabledForProcess("app_options: {Code.exe: {}}", "Code.exe"), "unset switch") ||
-        !Check(!VimMode::EnabledForProcess(config, "C:\\editors\\Code.exe"), "only match executable basename"))
+        !Check(!VimMode::EnabledForProcess("[input]\nvim_mode_apps = []\n", "Code.exe"), "empty list") ||
+        !Check(!VimMode::EnabledForProcess("[input]\nvim_mode_apps = [\"Code.exe\"\n", "Code.exe"), "unclosed list") ||
+        !Check(!VimMode::EnabledForProcess("[input]\nvim_mode_apps = \"Code.exe\"\n", "Code.exe"), "not a list") ||
+        !Check(!VimMode::EnabledForProcess("[input]\nvim_mode_apps = [\"Code.exe\", 1]\n", "Code.exe"),
+               "non-string item") ||
+        !Check(!VimMode::EnabledForProcess("[input]\nvim_mode_apps = [\"Code.exe\" \"gvim.exe\"]\n", "Code.exe"),
+               "missing comma") ||
+        !Check(!VimMode::EnabledForProcess("[input]\nvim_mode_apps = [\"Code.exe\\t\"]\n", "Code.exe"),
+               "unsupported escape"))
     {
         return 1;
     }

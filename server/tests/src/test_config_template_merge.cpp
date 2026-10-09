@@ -101,6 +101,27 @@ TEST_CASE(shipped_tsf_diagnostic_log_survives_template_upgrade)
     REQUIRE(!toml::parse(installed)["general"]["tsf_diagnostic_log"].value_or(true));
 }
 
+TEST_CASE(shipped_vim_mode_apps_survive_template_upgrade)
+{
+    // Only the TSF DLL reads this list; the template is what keeps it across upgrades.
+    std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string installed((std::istreambuf_iterator<char>(input)), {});
+    const auto shipped_config = toml::parse(installed);
+    const auto *shipped = shipped_config["input"]["vim_mode_apps"].as_array();
+    REQUIRE(shipped != nullptr && shipped->empty());
+
+    const std::string configured = "[input]\nvim_mode_apps = [\n  \"Code.exe\", # VS Code\n  \"gvim.exe\",\n]\n";
+    for (const auto &baseline : {std::string(), installed})
+    {
+        const auto merged = toml::parse(MergeConfigIntoTemplate(installed, configured, baseline));
+        const auto *apps = merged["input"]["vim_mode_apps"].as_array();
+        REQUIRE(apps != nullptr && apps->size() == 2);
+        REQUIRE((*apps)[0].value_or(std::string()) == "Code.exe");
+        REQUIRE((*apps)[1].value_or(std::string()) == "gvim.exe");
+    }
+}
+
 TEST_CASE(candidate_key_config_rejects_invalid_groups_without_changing_state)
 {
     const auto keys = GetConfiguredWordToCharacterKeys();

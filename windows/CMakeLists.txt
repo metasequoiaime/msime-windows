@@ -21,8 +21,6 @@ if(MSVC)
     add_link_options("$<$<CONFIG:Release>:/DEBUG>")
 endif()
 
-find_package(yaml-cpp CONFIG REQUIRED)
-
 include(CTest)
 if(BUILD_TESTING)
     add_executable(test_windows_ipc_contract
@@ -196,7 +194,7 @@ add_library(${PROJECT_NAME} SHARED
     "./src/Server.cpp"
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE fmt::fmt-header-only yaml-cpp::yaml-cpp)
+target_link_libraries(${PROJECT_NAME} PRIVATE fmt::fmt-header-only)
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

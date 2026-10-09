@@ -234,6 +234,9 @@ smart_punctuation_repeat_to_chinese = false
 paired_punctuation = true
 # 标点锁定，可选："follow"（随中英文切换）, "chinese"（始终中文标点）, "english"（始终英文标点）
 punctuation_lock = "follow"
+# Vim 模式：在列出的应用里，交给应用的无修饰键 Esc 同时把输入法切到英文。按可执行文件名匹配，不区分大小写，
+# 例如 ["Code.exe", "gvim.exe"]；终端里的 Vim 需填终端宿主，同一终端内的其他程序也会受影响
+vim_mode_apps = []
 # 组合说明：
 #   legacy + shuangpin -> 使用旧版双拼会话实现（当前最稳定）
 #   legacy + quanpin   -> 自动切换为新版引擎全拼会话
