@@ -1,0 +1,132 @@
+# 微信玻璃 WeChat Glass —— 水杉输入法候选窗皮肤
+#
+# 移植自 rime-wechat-glass（MIT, NestDream）：微信绿的配色与紧凑几何。
+# 那份 Rime 主题的招牌是 macOS 的半透明磨砂玻璃（style/translucency: true），
+# 水杉的 skin.toml 不支持透明窗口 / 毛玻璃（硬限制），所以：
+#   · 配色取自参考主题里它自带的「无透明降级方案」（不透明的 wechat 配色）；
+#     深色取自它的 wechat_glass_dark，alpha 压平（45% 半透明在实心窗口上没有意义）。
+#   · 玻璃质感改用 assets/frost.png 这张自绘的磨砂噪点底图近似。
+#
+# Rime 颜色格式 0xAABBGGRR（BGR！）→ CSS 格式 #RRGGBBAA（不透明度在末尾）。
+# 转换示例：0xCCE9F6EC → R=EC G=F6 B=E9 → #E9F6EC + alpha CC → #E9F6ECCC。
+#
+# base = "fluent" 的原因：参考主题的选中项是「淡绿药丸 + 绿字 + 无竖条」。
+# 内置 wechat / graphite 的样式表都硬写了 .first .text { color: … }，
+# 会和注入的 selected_text 撞特异性而失效；只有 fluent 没有这条。
+# 几何（圆角 5 / 线宽 1 / 高亮圆角 4 / soft 阴影）取自参考主题的
+# style/corner_radius: 5 与 style/hilited_corner_radius: 4。
+
+schema_version = 1
+
+id = "wechat_glass"
+name = "微信玻璃 WeChat Glass"
+version = "1.0.0"
+author = "Jia Sui"
+description = "移植自 rime-wechat-glass 的微信绿配色与紧凑几何，磨砂玻璃用自绘噪点底图近似。"
+base = "fluent"
+
+[supports]
+layouts = ["horizontal", "vertical"]
+themes = ["dark", "light"]
+
+[candidate_window]
+min_width_dip = 220              # 参考主题的紧凑横排，给个小底宽
+corner_radius_dip = 5
+border_width_dip = 1
+item_corner_radius_dip = 4
+shadow = "soft"
+# 参考主题的预览里没有翻页箭头；横排紧凑布局下箭头也吃横向空间。
+# 想加改成 true 即可。
+page_arrows = false
+
+# 磨砂玻璃的近似层。图片自身的 alpha 已经只有 10~26/255，所以 opacity 必须保持 1.0；
+# 调小只会把它压到看不见（不是「加强磨砂」）。
+[candidate_window.background]
+image = "assets/frost.png"
+fit = "cover"
+opacity = 1.0
+
+[candidate.dark]
+# 0x731E1E1E → alpha 压平；0x731E1E1E 是 45% 半透明，水杉没有真透明窗口，
+# 留 alpha 只会和窗口底色乱混，直接用不透明值。
+surface = "#1E1E1E"
+border = "#34383A"
+text = "#F0F0F0"                 # 0xFFF0F0F0
+number = "#A0A0A0"               # 0xFFA0A0A0
+translation = "#A0A0A0"
+accent = "#3ECF8E"
+selected = "#1E5A2E"             # 0xCC2E5A1E，参考主题的半透明深绿底
+hover = "#2A2F2C"
+show_selected_bar = false
+candidate_text = "#F0F0F0"       # 0xFFF0F0F0
+preedit_text = "#C8C8C8"         # 0xFFC8C8C8
+preedit_caret = "#3ECF8E"
+selected_text = "#7AE88F"        # 0xFF8FE87A
+selected_number = "#7AE88F"      # 0xFF8FE87A
+selected_translation = "#5FB86F" # 0xFF6FB85F
+selected_bar = "#3ECF8E"
+preedit_background = "#FFFFFF10"
+preedit_divider = "#3ECF8E66"
+
+[candidate.dark.menu]
+background = "#26292A"
+border = "#3A3E40"
+text = "#F0F0F0"
+hover = "#2F3335"
+
+[candidate.light]
+surface = "#F7F7F7"              # 0xFFF7F7F7
+# 参考主题的 border_color 和底色同值（等于没有边框）。但它的观感靠的是背景模糊
+# 产生的阴影，水杉是不透明浮窗，在浅色壁纸上会糊进背景，所以这里给一道淡描边。
+border = "#E1E4E0"
+text = "#333333"                 # 0xFF333333
+number = "#999999"               # 0xFF999999
+translation = "#999999"
+accent = "#07C160"
+selected = "#E9F6EC"             # 0xFFE9F6EC，参考主题的淡绿药丸
+hover = "#EFF5F0"
+show_selected_bar = false
+candidate_text = "#333333"       # 0xFF333333
+preedit_text = "#888888"         # 0xFF888888，预编辑拼音用灰字
+preedit_caret = "#07C160"
+selected_text = "#4FAE2E"        # 0xFF4FAE2E
+selected_number = "#4FAE2E"      # 0xFF4FAE2E
+selected_translation = "#8FCB9F" # 0xFF8FCB9F
+selected_bar = "#07C160"
+preedit_background = "#00000008"
+preedit_divider = "#07C16066"
+
+[candidate.light.menu]
+background = "#FFFFFF"
+border = "#E1E4E0"
+text = "#333333"
+hover = "#EFF5F0"
+
+# 工具栏跟候选窗同一套底色和描边。
+[toolbar]
+corner_radius_dip = 5
+
+[toolbar.dark]
+background = "#1E1E1E"
+border = "#34383A"
+handle = "#3ECF8E"
+divider = "#34383A"
+icon = "#F0F0F0"
+hover = "#FFFFFF14"
+
+[toolbar.light]
+background = "#F7F7F7"
+border = "#E1E4E0"
+handle = "#07C160"
+divider = "#E1E4E0"
+icon = "#333333"
+hover = "#0000000D"
+
+# 输入法不读这张表，分享时该有的礼节。
+[license]
+code = "MIT"
+assets = "自绘（PIL 程序化生成，无外部素材）"
+source = """
+配色移植自 NestDream/rime-wechat-glass（MIT）；该主题的微信绿又来自
+nobodysclown/rime-wechat-keyboard。磨砂噪点底图 frost.png 由 PIL 程序化生成。
+"""

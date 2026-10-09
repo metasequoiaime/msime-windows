@@ -13,6 +13,7 @@
 | [`qq-blue`](qq-blue/) | QQ 经典蓝 | 腾讯 QQ 配色：亮蓝光标与序号，深蓝选中块 |
 | [`sogou`](sogou/) | 搜狗经典 | 搜狗经典配色：白底、蓝色候选、橙红高亮、红色光标 |
 | [`sogou-classic`](sogou-classic/) | 搜狗经典·石墨 | 基于石墨，仿经典搜狗：白底浅蓝边框、蓝字候选、首选红字不铺底色、拼音下方浅蓝分隔线 |
+| [`wechat_glass`](wechat_glass/) | 微信玻璃 | 移植自 rime-wechat-glass 的微信绿配色与紧凑几何，磨砂玻璃用自绘噪点底图近似 |
 
 除 `sogou-classic` 基于 `graphite` 外，其余皮肤均基于 `fluent`；全部支持横排 / 竖排布局以及深色 / 浅色主题。
 
