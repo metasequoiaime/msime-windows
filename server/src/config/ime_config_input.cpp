@@ -20,7 +20,7 @@ SchemeType GetConfiguredInputScheme()
 
 SchemeType GetConfiguredActiveInputScheme()
 {
-    return g_input_mode == "japanese" ? SchemeType::JapaneseRomaji : g_input_scheme;
+    return GetActiveInputMode() == "japanese" ? SchemeType::JapaneseRomaji : g_input_scheme;
 }
 
 std::string GetConfiguredInputSchemeName()
@@ -792,8 +792,58 @@ bool SetConfiguredInputMode(const std::string &mode)
         return false;
     }
     g_input_mode = mode;
+    g_configured_input_mode_japanese.store(mode == "japanese", std::memory_order_relaxed);
+    // Choosing a language in settings is where the next cycle starts from;
+    // the cycle switch itself is independent of it.
+    g_active_input_mode.store(ActiveInputMode::Configured, std::memory_order_relaxed);
     RefreshEffectiveTsfPreeditStyle();
     NotifyImeServerInputSchemeChanged();
+    return true;
+}
+
+bool GetConfiguredTrilingualCycleEnabled()
+{
+    return g_trilingual_cycle_enabled.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredTrilingualCycleEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("keybindings", "trilingual_cycle", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    if (g_trilingual_cycle_enabled.exchange(enabled, std::memory_order_relaxed) != enabled)
+        g_active_input_mode.store(ActiveInputMode::Configured, std::memory_order_relaxed);
+    RefreshEffectiveTsfPreeditStyle();
+    return true;
+}
+
+const std::string &GetActiveInputMode()
+{
+    static const std::string chinese = "chinese";
+    static const std::string japanese = "japanese";
+    switch (g_active_input_mode.load(std::memory_order_relaxed))
+    {
+    case ActiveInputMode::Chinese:
+        return chinese;
+    case ActiveInputMode::Japanese:
+        return japanese;
+    default:
+        // Never hand out g_input_mode itself: a config reload on another
+        // thread may reassign it while the key thread compares the result.
+        return g_configured_input_mode_japanese.load(std::memory_order_relaxed) ? japanese : chinese;
+    }
+}
+
+bool SetActiveInputMode(const std::string &mode)
+{
+    if (!g_trilingual_cycle_enabled.load(std::memory_order_relaxed) || (mode != "chinese" && mode != "japanese"))
+    {
+        return false;
+    }
+    g_active_input_mode.store(mode == "japanese" ? ActiveInputMode::Japanese : ActiveInputMode::Chinese,
+                              std::memory_order_relaxed);
+    RefreshEffectiveTsfPreeditStyle();
     return true;
 }
 

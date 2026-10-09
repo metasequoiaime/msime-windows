@@ -42,4 +42,23 @@ replay an ambiguously delivered toggle; older peers simply omit the optional bit
 
 `tests/windows_ipc_contract.cpp` executes wire-layout/upgrade/framing cases on all Engine CI platforms and both Windows TSF architectures.
 
+`TrilingualCycle` is optional. A supporting client advertises its capability and consumes
+the existing configured language hotkeys only while the Server's `TrilingualCycleChanged`
+setting (`[keybindings] trilingual_cycle`) is enabled. After matching a hotkey through the
+existing shortcut handler, the client sends a normalized `VK_SHIFT` whose `modifiers_down`
+carries `FanyImeTrilingualInput::EncodeCycleRequest(ime_open, japanese)`: an explicit request
+bit plus the client's own OPENCLOSE and native-language state. A plain `VK_SHIFT` is still the
+binary toggle and is never treated as a cycle, and raw Shift key-down events never request one.
+The Server computes the destination from the request's state with
+`FanyImeTrilingualInput::Destination`; if its setting was turned off while the request was in
+flight, it still answers, with the binary-toggle destination.
+The Server retains any already selected word prefix and commits the remaining raw spelling,
+matching the existing language toggle. It replies with `TrilingualCycle`: destination
+(`0` Chinese, `1` Japanese, `2` English),
+a tab separator, and the exact text to commit. The client commits and ends composition before
+applying the destination compartment in the same edit session. The Server must not also send
+a worker candidate commit or compartment switch for that key, and leaves the requester out of
+the `InputModeChanged` broadcast: the reply is that client's language update.
+Clients that did not negotiate the capability retain their existing language toggle.
+
 `backend/protocol.json` 定义 MSIME-Backend 的可选共通 HTTP 服务 API，详见[后端协议与兼容性](backend/README.md)。

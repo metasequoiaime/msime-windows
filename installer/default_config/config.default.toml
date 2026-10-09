@@ -360,6 +360,8 @@ switch_language_shift = true
 switch_language_ctrl = false
 switch_language_ctrl_alt_space = true
 toggle_character_set_ctrl_shift_f = true
+# 中日英循环切换：开启后上面的中英文切换快捷键按中文、日文、英文依次切换，有输入时先上屏原始字母
+trilingual_cycle = false
 
 #
 # Dictionary

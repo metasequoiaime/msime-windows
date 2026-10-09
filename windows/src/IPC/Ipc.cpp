@@ -488,7 +488,8 @@ bool WritePipeHello(HANDLE hPipeHandle, UINT pipeRole)
         const auto hello =
             FanyImeProtocol::Hello(GetPipeClientId(), NextProtocolId(nextRequestId),
                                    FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
-                                       FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator);
+                                       FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
+                                       FanyImeProtocol::TrilingualCycle);
         BOOL ret = WriteFile(hPipeHandle, &hello, sizeof(hello), &bytesWritten, NULL);
         // Never authorize keys from merely writing a hello. An old Server
         // without negotiation times out into the existing raw-input fallback.
@@ -956,6 +957,12 @@ bool SupportsCaretStateIndicator()
 {
     return hPipe && hPipe != INVALID_HANDLE_VALUE &&
            (negotiatedServerCapabilities & FanyImeProtocol::CaretStateIndicator) != 0;
+}
+
+bool SupportsTrilingualCycle()
+{
+    return hPipe && hPipe != INVALID_HANDLE_VALUE &&
+           (negotiatedServerCapabilities & FanyImeProtocol::TrilingualCycle) != 0;
 }
 
 HANDLE GetToTsfWorkerThreadNamedpipe()

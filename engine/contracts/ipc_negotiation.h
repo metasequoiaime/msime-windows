@@ -26,6 +26,9 @@ constexpr std::uint32_t CompositionRestore = 1u << 4;
 // still travels in StatusSnapshot. A client must not send them unless the
 // Server acknowledged this bit.
 constexpr std::uint32_t CaretStateIndicator = 1u << 5;
+// Optional: a matched language-switch hotkey commits raw composition, then applies
+// the destination carried by a TrilingualCycle reply. Older clients retain binary switching.
+constexpr std::uint32_t TrilingualCycle = 1u << 6;
 constexpr std::uint32_t Capabilities = RequestIds | FocusEpochs | FramedVoice;
 constexpr std::uint32_t RequiredCapabilities = RequestIds | FocusEpochs;
 

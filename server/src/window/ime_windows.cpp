@@ -262,26 +262,8 @@ void WarmupHostWindowCloaked(HWND hwnd)
 void ApplyConfiguredInputScheme()
 {
     FanyNamedPipe::EnqueueReloadInputSessionTask();
-    UpdateFtbInputModeState(::webviewFtbWnd, GetConfiguredInputMode() == "japanese" ? 1 : 0);
-    BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::InputModeChanged,
-                                           GetConfiguredInputMode() == "japanese" ? L"1" : L"0");
-    // 句中辅助码只在双拼下有效，换方案或切日语模式都要让 TSF 重新判断反引号。
-    BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::MidSentenceHelpcodeChanged,
-                                           FormatMidSentenceHelpcodeWorkerPayload());
-    BroadcastToTsfWorkerThreadViaNamedpipe(
-        Global::DataFromServerMsgTypeToTsfWorkerThread::MidSentenceHelpcodeSemicolonChanged,
-        FormatMidSentenceHelpcodeSemicolonWorkerPayload());
-    BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeChanged,
-                                           FormatDirectHelpcodeWorkerPayload());
-    BroadcastToTsfWorkerThreadViaNamedpipe(
-        Global::DataFromServerMsgTypeToTsfWorkerThread::MidSentenceHelpcodeUppercaseChanged,
-        FormatMidSentenceHelpcodeUppercaseWorkerPayload());
-    // V 模式只在全拼/双拼下有效，全拼还认小写 v，换方案或切日语模式都要让 TSF 重新判断。
-    BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::VModeChanged,
-                                           FormatVModeWorkerPayload());
-    // 「双拼显示全拼」让原始按键样式在双拼下改由 Server 回包驱动，换方案时 TSF 要跟着换。
-    BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::PagingCommaPeriodChanged,
-                                           FormatPagingCommaPeriodWorkerPayload());
+    UpdateFtbInputModeState(::webviewFtbWnd, GetActiveInputMode() == "japanese" ? 1 : 0);
+    BroadcastConfiguredInputModeState();
 }
 
 void ApplyConfiguredShuangpinSchema()

@@ -1,6 +1,7 @@
 #include "tests/includes/test_framework.h"
 
 #include "config/ime_config.h"
+#include "global/globals.h"
 
 #include <windows.h>
 
@@ -138,6 +139,132 @@ TEST_CASE(config_round_trips_under_non_ascii_profile_path)
         REQUIRE(SetConfiguredCandidateFallbackFonts({}));
         InitImeConfig();
         REQUIRE(GetConfiguredCandidateFallbackFonts().empty());
+    }
+
+    fs::remove_all(unique_root, ec);
+}
+
+TEST_CASE(trilingual_runtime_language_preserves_preferences_without_writing_config)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"trilingual";
+    const fs::path data_dir = unique_root / L"metasequoiaime";
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    SeedTemplate(data_dir);
+
+    {
+        ScopedConfigLocation location(unique_root);
+        InitImeConfig();
+        REQUIRE(!GetConfiguredTrilingualCycleEnabled());
+        REQUIRE(SetConfiguredInputScheme("wubi"));
+        REQUIRE(SetConfiguredTrilingualCycleEnabled(true));
+        const fs::path config_path = GetImeConfigPath();
+        const std::string before_cycle = ReadText(config_path);
+        const auto before_cycle_write_time = fs::last_write_time(config_path);
+        // Prevent replacement of the config file: language switching must not
+        // need write access, even while another process holds the file open.
+        const HANDLE config_guard =
+            CreateFileW(config_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+        REQUIRE(config_guard != INVALID_HANDLE_VALUE);
+        const bool switched = SetActiveInputMode("japanese");
+        CloseHandle(config_guard);
+        REQUIRE(switched);
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
+        REQUIRE_EQ(GetConfiguredInputMode(), std::string("chinese"));
+        REQUIRE_EQ(GetActiveInputMode(), std::string("japanese"));
+        REQUIRE(GetConfiguredActiveInputScheme() == SchemeType::JapaneseRomaji);
+        REQUIRE_EQ(GetConfiguredInputSchemeName(), std::string("wubi"));
+        REQUIRE_EQ(ReadText(config_path), before_cycle);
+        REQUIRE(fs::last_write_time(config_path) == before_cycle_write_time);
+
+        // Generic settings/file-watcher reloads must preserve the runtime language.
+        REQUIRE(SetConfiguredCandidateFontSize(18));
+        InvalidateImeConfigWriteTime();
+        REQUIRE(ReloadImeConfigIfChanged());
+        REQUIRE_EQ(GetActiveInputMode(), std::string("japanese"));
+        REQUIRE_EQ(GetConfiguredInputMode(), std::string("chinese"));
+        REQUIRE(GetConfiguredActiveInputScheme() == SchemeType::JapaneseRomaji);
+
+        REQUIRE(SetActiveInputMode("chinese"));
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
+        REQUIRE(GetConfiguredActiveInputScheme() == SchemeType::Wubi);
+        REQUIRE(!SetActiveInputMode("english"));
+        REQUIRE_EQ(GetConfiguredInputMode(), std::string("chinese"));
+        REQUIRE_EQ(GetActiveInputMode(), std::string("chinese"));
+
+        // Choosing a language in settings restarts the cycle from it, but the
+        // cycle switch is a separate shortcut setting and stays on.
+        REQUIRE(SetActiveInputMode("japanese"));
+        REQUIRE(SetConfiguredInputMode("chinese"));
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
+        REQUIRE_EQ(GetActiveInputMode(), std::string("chinese"));
+        REQUIRE(GetConfiguredActiveInputScheme() == SchemeType::Wubi);
+        REQUIRE(SetConfiguredInputMode("japanese"));
+        InitImeConfig();
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
+        REQUIRE_EQ(GetConfiguredInputMode(), std::string("japanese"));
+        REQUIRE_EQ(GetActiveInputMode(), std::string("japanese"));
+        REQUIRE(SetActiveInputMode("chinese"));
+        REQUIRE(SetConfiguredInputMode("chinese"));
+        InitImeConfig();
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
+        REQUIRE_EQ(GetActiveInputMode(), std::string("chinese"));
+        REQUIRE(GetConfiguredActiveInputScheme() == SchemeType::Wubi);
+        // The switch is stored with the other language hotkeys, and only there.
+        const std::string stored = ReadText(config_path);
+        const auto keybindings_position = stored.find("\n[keybindings]");
+        REQUIRE(keybindings_position != std::string::npos);
+        REQUIRE(stored.find("trilingual_cycle") > keybindings_position);
+        REQUIRE(stored.find("trilingual_cycle = true", keybindings_position) != std::string::npos);
+
+        REQUIRE(SetConfiguredTrilingualCycleEnabled(true));
+        REQUIRE(SetActiveInputMode("japanese"));
+        // Disabling the cycle preference also drops its runtime override.
+        REQUIRE(SetConfiguredTrilingualCycleEnabled(false));
+        REQUIRE_EQ(GetActiveInputMode(), std::string("chinese"));
+        REQUIRE(!SetActiveInputMode("japanese"));
+
+        REQUIRE(SetConfiguredTrilingualCycleEnabled(true));
+        REQUIRE(SetActiveInputMode("japanese"));
+        // A process initialization starts from the stored preference.
+        InitImeConfig();
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
+        REQUIRE_EQ(GetActiveInputMode(), std::string("chinese"));
+        REQUIRE(GetConfiguredActiveInputScheme() == SchemeType::Wubi);
+
+        // A preference edit made by another process resets the runtime language.
+        REQUIRE(SetActiveInputMode("chinese"));
+        std::string external_config = ReadText(config_path);
+        const auto mode_position = external_config.find("\nmode = \"chinese\"");
+        REQUIRE(mode_position != std::string::npos);
+        external_config.replace(mode_position, std::string("\nmode = \"chinese\"").size(), "\nmode = \"japanese\"");
+        WriteText(config_path, external_config);
+        InvalidateImeConfigWriteTime();
+        REQUIRE(ReloadImeConfigIfChanged());
+        REQUIRE_EQ(GetActiveInputMode(), std::string("japanese"));
+        REQUIRE(SetActiveInputMode("chinese"));
+        external_config = ReadText(config_path);
+        const auto cycle_position = external_config.find("trilingual_cycle = true");
+        REQUIRE(cycle_position != std::string::npos);
+        external_config.replace(cycle_position, std::string("trilingual_cycle = true").size(),
+                                "trilingual_cycle = false");
+        WriteText(config_path, external_config);
+        InvalidateImeConfigWriteTime();
+        REQUIRE(ReloadImeConfigIfChanged());
+        REQUIRE_EQ(GetActiveInputMode(), std::string("japanese"));
+        REQUIRE(!GetConfiguredTrilingualCycleEnabled());
+
+        REQUIRE(SetConfiguredInputMode("chinese"));
+        REQUIRE(SetConfiguredInputScheme("shuangpin"));
+        REQUIRE(SetConfiguredTsfPreeditStyle("raw"));
+        REQUIRE(SetConfiguredTsfPreeditShuangpinQuanpin(true));
+        REQUIRE(SetConfiguredTrilingualCycleEnabled(true));
+        REQUIRE_EQ(GlobalSettings::getTsfPreeditStyle(), std::string("pinyin"));
+        REQUIRE(SetActiveInputMode("japanese"));
+        REQUIRE_EQ(GlobalSettings::getTsfPreeditStyle(), std::string("raw"));
+        REQUIRE(SetActiveInputMode("chinese"));
+        REQUIRE_EQ(GlobalSettings::getTsfPreeditStyle(), std::string("pinyin"));
     }
 
     fs::remove_all(unique_root, ec);

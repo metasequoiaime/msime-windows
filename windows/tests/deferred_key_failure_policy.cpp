@@ -56,6 +56,39 @@ int main()
     if (ClassifyEditSessionFailure(false, false, false) != Reason::HostEditRejected)
         return 16;
 
+    // A failed cycle reply must refresh native mode, which the Server changed
+    // before replying. Ordinary host failures still use the same-token resync.
+    const Reason cycleFailures[] = {Reason::HostEditRejected, Reason::EditSessionRequestFailed,
+                                    Reason::AsyncPostFailed};
+    for (const auto reason : cycleFailures)
+    {
+        if (ResolveDeferredKeyFailure(reason, false, true) != Kind::Transport)
+            return 19;
+        if (ResolveDeferredKeyFailure(reason, false) != Kind::Resync)
+            return 20;
+        // An offline cycle never reached the Server: discard its dependent
+        // queue through Offline while keeping the local raw composition.
+        if (ResolveDeferredKeyFailure(reason, true, true) != Kind::Offline)
+            return 22;
+    }
+    // The Server already switched language and left the requester out of the
+    // broadcast: an unapplied cycle reply needs a fresh snapshot even when a
+    // newer token superseded it.
+    if (ResolveDeferredKeyFailure(Reason::Superseded, false, true) != Kind::Transport)
+        return 21;
+    if (ResolveDeferredKeyFailure(Reason::Superseded, false) != Kind::Stale)
+        return 23;
+    // A cycle answered as the binary toggle was applied on both sides; only
+    // the keys queued behind it are wrong.
+    if (ResolveDeferredKeyFailure(Reason::ProjectionInvalidated, false, true) != Kind::Resync)
+        return 24;
+    if (ResolveDeferredKeyFailure(Reason::ProjectionInvalidated, true, true) != Kind::Offline)
+        return 25;
+    if (ClassifyEditSessionFailure(false, false, false, true) != Reason::ProjectionInvalidated)
+        return 26;
+    if (ClassifyEditSessionFailure(false, false, true, true) != Reason::TransportBroken)
+        return 27;
+
     // Paging and highlight moves are acknowledgement-only.
     const unsigned int navigationKeys[] = {0x09 /*Tab*/, 0x21 /*PageUp*/, 0x22 /*PageDown*/, 0x26 /*Up*/,
                                            0x28 /*Down*/};

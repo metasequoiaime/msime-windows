@@ -13,6 +13,7 @@
 #include "engine/contracts/direct_helpcode.h"
 #include "engine/contracts/ipc_negotiation.h"
 #include "engine/contracts/mid_sentence_helpcode.h"
+#include "engine/contracts/trilingual_input.h"
 #include "defines/defines.h"
 #include "defines/globals.h"
 #include "utils/common_utils.h"
@@ -35,11 +36,10 @@ bool IsShiftLetterSpecialModeTriggered()
            g_r_mode_triggered;
 }
 
-// 日语模式由配置项决定，和 R 模式（中文里临时切日语）无关：TSF 侧只能看到配置，
-// 两侧必须用同一个判据，否则按键分类会不一致、预编辑会错位。
+// 日语模式使用已同步给 TSF 的实际语言，和 R 模式（中文里临时切日语）无关。
 bool IsJapaneseInputMode()
 {
-    return GetConfiguredInputMode() == "japanese";
+    return GetActiveInputMode() == "japanese";
 }
 
 // 日语模式下 '-' 不翻页，而是长音符（ー）的输入键。空编码时也要起头组合，
@@ -822,6 +822,81 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
     SendCurrentDataToClient(client_id, activation_epoch, request_id);
 }
 
+// Switches g_inputSession to the active language's scheme. The outgoing session
+// is parked rather than dropped, so cycling back reuses it instead of building
+// a new engine (and reopening msime.db) while the client waits for the reply.
+void SwitchSessionForLanguageCycle()
+{
+    const SchemeType wanted = GetConfiguredActiveInputScheme();
+    if (g_inputSession && g_inputSession->current_scheme_type() == wanted)
+        return;
+    std::shared_ptr<IInputSession> next;
+    if (g_language_cycle_parked_session && g_language_cycle_parked_session->current_scheme_type() == wanted)
+        next = std::move(g_language_cycle_parked_session);
+    else
+        next = CreateInputSessionFromConfig();
+    g_language_cycle_parked_session = std::move(g_inputSession);
+    g_inputSession = std::move(next);
+}
+
+void HandleTrilingualCycleKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id,
+                              bool requester_ime_enabled, bool requester_japanese)
+{
+    using FanyImeTrilingualInput::Mode;
+    // Cycle from the requester's own state. With ime_mode_scope=app the Server's
+    // global CN/EN mode can describe another host. When the switch was turned
+    // off while this request was queued, the active language is the configured
+    // one again and the request is answered as the binary toggle.
+    Mode destination =
+        FanyImeTrilingualInput::Destination(requester_ime_enabled, requester_japanese,
+                                            GetConfiguredTrilingualCycleEnabled(), GetActiveInputMode() == "japanese");
+
+    // Match the existing language toggle: retain an already selected word
+    // prefix, then commit the remaining raw spelling without choosing or
+    // learning a candidate.
+    const std::string raw = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
+    const std::wstring commit_text = string_to_wstring(
+        CandidateTextForOutput(GlobalIme::composition.creating_word.word) + (g_r_mode_triggered ? "R" + raw : raw));
+
+    bool native_mode_changed = false;
+    if (destination != Mode::English)
+    {
+        const std::string wanted_mode = destination == Mode::Japanese ? "japanese" : "chinese";
+        if (wanted_mode != GetActiveInputMode())
+        {
+            native_mode_changed = SetActiveInputMode(wanted_mode);
+            if (!native_mode_changed)
+            {
+                // The switch was turned off after Destination() read it. Never
+                // claim a language the Server is not in.
+                destination = GetActiveInputMode() == "japanese" ? Mode::Japanese : Mode::Chinese;
+            }
+        }
+    }
+    SetEnglishInputMode(false);
+    ClearState();
+    SwitchSessionForLanguageCycle();
+
+    const bool next_ime_enabled = destination != Mode::English;
+    g_authoritative_cn_mode = next_ime_enabled ? 1 : 0;
+    const int remembered = RecallClientStatusSnapshot(client_id);
+    const int packed_state = ((remembered >= 0 ? remembered : 0) & ~0x4) | (g_authoritative_cn_mode << 2);
+    RememberClientStatusSnapshot(client_id, packed_state);
+    PublishStatusSnapshotValue(packed_state);
+    PostMessage(::global_hwnd_ftb, UPDATE_FTB_INPUT_MODE, GetActiveInputMode() == "japanese" ? 1 : 0, 0);
+    // The originating client takes its native-language state from the main
+    // reply, after committing. Other hosts still receive the global language.
+    if (native_mode_changed)
+        BroadcastConfiguredInputModeState(client_id);
+
+    // The exact commit and destination share one correlated reply. TSF applies
+    // them in one edit session before it drains the next key, so a fast Shift then
+    // letter cannot be classified using the old language/compartment.
+    Global::MsgTypeToTsf = Global::DataFromServerMsgType::TrilingualCycle;
+    Global::candidate_ui.selected_text = FanyImeTrilingualInput::BuildPayload(destination, commit_text);
+    SendCurrentDataToClient(client_id, activation_epoch, request_id);
+}
+
 /**
  * @brief
  *
@@ -840,6 +915,19 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     // TSF classifies VK_NUMPAD0..9 as candidate digit keys. Keep the IPC
     // contract symmetric before any selection/composition predicates run.
     Global::Keycode = FanyImeIpc::NormalizeNumpadDigitKey(Global::Keycode);
+
+    // Only the explicit request bit cycles: a plain VK_SHIFT is still the binary
+    // toggle, which the client also uses when it decides not to cycle.
+    const UINT cycle_request = Global::ModifiersDown & FanyImeTrilingualInput::CycleRequestMask;
+    Global::ModifiersDown &= ~FanyImeTrilingualInput::CycleRequestMask;
+    if (FanyImeTrilingualInput::IsCycleRequest(Global::Keycode, Global::ModifiersDown | cycle_request) &&
+        ClientNegotiatedTrilingualCycle(client_id))
+    {
+        HandleTrilingualCycleKey(client_id, activation_epoch, request_id,
+                                 FanyImeTrilingualInput::CycleRequestImeEnabled(cycle_request),
+                                 FanyImeTrilingualInput::CycleRequestJapanese(cycle_request));
+        return;
+    }
 
     if (FanyImeProtocol::IsCharacterSetShortcut(Global::Keycode, Global::ModifiersDown))
     {

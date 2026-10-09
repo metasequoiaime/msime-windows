@@ -332,6 +332,7 @@ LRESULT CALLBACK WndProcSettingsWindow(HWND hwnd, UINT message, WPARAM wParam, L
         else if (wParam == TIMER_ID_CONFIG_SYNC)
         {
             const SchemeType previous_input_scheme = GetConfiguredActiveInputScheme();
+            const bool previous_trilingual_cycle = GetConfiguredTrilingualCycleEnabled();
             const std::string previous_shuangpin_schema = GetConfiguredShuangpinSchema();
             const std::string previous_character_set = GetConfiguredCharacterSet();
             const std::string previous_layout = GetConfiguredCandidateWindowLayout();
@@ -384,6 +385,9 @@ LRESULT CALLBACK WndProcSettingsWindow(HWND hwnd, UINT message, WPARAM wParam, L
                 {
                     ApplyConfiguredShuangpinSchema();
                 }
+                if (previous_input_scheme == GetConfiguredActiveInputScheme() &&
+                    previous_trilingual_cycle != GetConfiguredTrilingualCycleEnabled())
+                    BroadcastTrilingualCycleState();
                 if (previous_character_set != GetConfiguredCharacterSet())
                 {
                     UpdateFtbCharacterSetState(::webviewFtbWnd);

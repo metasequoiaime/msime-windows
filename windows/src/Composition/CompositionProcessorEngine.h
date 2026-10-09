@@ -117,6 +117,8 @@ class CCompositionProcessorEngine
     // Toggle IME Mode
     void ToggleIMEMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId);
     void SetIMEMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId, BOOL bOpen);
+    // Cycle replies require confirmed compartment state before the FIFO advances.
+    HRESULT SetIMEModeForLanguageCycle(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId, BOOL bOpen);
     BOOL CCompositionProcessorEngine::GetIMEMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId);
     // Apply CN/EN compartment change deferred until after composition commit.
     // Closing KEYBOARD_OPENCLOSE before EndComposition makes CUAS/Win32 EDIT

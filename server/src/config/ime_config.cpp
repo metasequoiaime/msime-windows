@@ -43,6 +43,9 @@ namespace ime_config_detail
 {
 SchemeType g_input_scheme = SchemeType::Shuangpin;
 std::string g_input_mode = "chinese";
+std::atomic<bool> g_configured_input_mode_japanese{false};
+std::atomic<ActiveInputMode> g_active_input_mode{ActiveInputMode::Configured};
+std::atomic<bool> g_trilingual_cycle_enabled{false};
 std::string g_japanese_schema = "romaji";
 std::string g_character_set = "simplified";
 std::string g_default_ime_mode = "chinese";
@@ -412,7 +415,16 @@ bool LoadImeConfig()
         g_input_scheme = ParseScheme(tbl["input"]["schema"].value_or(std::string("shuangpin")));
         {
             const std::string mode = tbl["input"]["mode"].value_or(std::string("chinese"));
-            g_input_mode = mode == "japanese" ? "japanese" : "chinese";
+            const std::string configured_mode = mode == "japanese" ? "japanese" : "chinese";
+            const bool trilingual_cycle = tbl["keybindings"]["trilingual_cycle"].value_or(false);
+            // An unrelated settings reload must not undo a runtime language cycle.
+            // Explicit language/cycle preference changes start from the saved mode.
+            if (!trilingual_cycle || trilingual_cycle != g_trilingual_cycle_enabled.load(std::memory_order_relaxed) ||
+                configured_mode != g_input_mode)
+                g_active_input_mode.store(ActiveInputMode::Configured, std::memory_order_relaxed);
+            g_input_mode = configured_mode;
+            g_configured_input_mode_japanese.store(configured_mode == "japanese", std::memory_order_relaxed);
+            g_trilingual_cycle_enabled.store(trilingual_cycle, std::memory_order_relaxed);
         }
         {
             const std::string schema = tbl["input"]["japanese_schema"].value_or(std::string("romaji"));
@@ -985,6 +997,7 @@ void InvalidateImeConfigWriteTime()
 
 void InitImeConfig()
 {
+    g_active_input_mode.store(ActiveInputMode::Configured, std::memory_order_relaxed);
     // Build the path from the wide accessor: std::filesystem::path(std::string) decodes with the
     // system ANSI code page, which corrupts a non-ASCII (e.g. Chinese) user profile path on a
     // non-UTF-8 ACP machine and makes every config read/write fail ("设置保存失败").

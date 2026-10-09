@@ -129,6 +129,8 @@ bool ClientNegotiatedCompositionRestore(uint64_t client_id);
 // True only for a versioned client that advertised CaretStateIndicator, i.e.
 // its character-set shortcut KeyEvent carries a caret anchor in point[].
 bool ClientNegotiatedCaretStateIndicator(uint64_t client_id);
+// Only clients that advertised the dedicated cycle reply can receive it.
+bool ClientNegotiatedTrilingualCycle(uint64_t client_id);
 uint64_t RegisterToTsfWorkerThreadPipeClient(uint64_t client_id, HANDLE pipe);
 uint64_t BeginPipeClientHandler(HANDLE pipe);
 void EndPipeClientHandler(uint64_t handler_id);
@@ -175,7 +177,14 @@ void SendToTsfViaNamedpipe(UINT msg_type, const std::wstring &pipeData);
 void SendToTsfWorkerThreadViaNamedpipe(UINT msg_type, const std::wstring &pipeData);
 // Config-style notifications must reach every connected TIP, not only the
 // currently focused client (settings UI often steals activation).
-void BroadcastToTsfWorkerThreadViaNamedpipe(UINT msg_type, const std::wstring &pipeData);
+void BroadcastToTsfWorkerThreadViaNamedpipe(UINT msg_type, const std::wstring &pipeData,
+                                            uint64_t excluded_client_id = 0);
+// Sends active language and scheme-dependent key policies without reloading a session.
+void BroadcastConfiguredInputModeState(uint64_t excluded_input_mode_client_id = 0);
+// TrilingualCycleChanged goes only to clients that negotiated TrilingualCycle.
+// A non-zero activation_epoch also requires that activation to be current.
+bool SendTrilingualCycleState(uint64_t client_id, uint64_t activation_epoch = 0);
+void BroadcastTrilingualCycleState();
 
 namespace Global
 {

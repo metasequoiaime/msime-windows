@@ -24,7 +24,7 @@ add_executable(portable_tests
     "${SERVER_ROOT}/src/webview2/skin_css_policy.cpp"
 )
 
-target_include_directories(portable_tests PRIVATE "${SERVER_ROOT}" "${SERVER_ROOT}/src")
+target_include_directories(portable_tests PRIVATE "${SERVER_ROOT}" "${SERVER_ROOT}/src" "${SERVER_ROOT}/..")
 
 if(MSIME_PORTABLE_TESTS_SANITIZE AND NOT MSVC)
     target_compile_options(portable_tests PRIVATE

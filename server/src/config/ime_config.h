@@ -205,6 +205,12 @@ std::string GetConfiguredInputSchemeName();
 bool SetConfiguredInputScheme(const std::string &scheme);
 const std::string &GetConfiguredInputMode();
 bool SetConfiguredInputMode(const std::string &mode);
+bool GetConfiguredTrilingualCycleEnabled();
+bool SetConfiguredTrilingualCycleEnabled(bool enabled);
+// Runtime language during cycling; the saved preference remains GetConfiguredInputMode().
+const std::string &GetActiveInputMode();
+// Changes memory only. The key handler applies the session and publishes in request order.
+bool SetActiveInputMode(const std::string &mode);
 const std::string &GetConfiguredJapaneseSchema();
 bool SetConfiguredJapaneseSchema(const std::string &schema);
 const std::string &GetConfiguredCharacterSet();

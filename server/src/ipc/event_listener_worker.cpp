@@ -151,6 +151,7 @@ struct Task
     std::string session_pinyin;
     std::string session_word;
     bool session_pinyin_is_canonical = false;
+    std::shared_ptr<IInputSession> phrase_session;
     int candidate_one_based_index = 0;
     int fixed_position = 0;
     int page_steps = 0;
@@ -373,7 +374,7 @@ void WorkerThread()
                 FanyImePipeFlags::DecodeImeSwitchCapsLockSnapshot(task.pipe_data.modifiers_down);
             const bool capsLockEnabled =
                 capsLockSnapshot.has_value() ? *capsLockSnapshot : GetServerCapsLockState() != 0;
-            const bool japaneseMode = GetConfiguredInputMode() == "japanese";
+            const bool japaneseMode = GetActiveInputMode() == "japanese";
             if (FanyImeUi::ShouldShowInputModeEvent(trigger, GetConfiguredCaretStateIndicatorOnFocus(), capsLockEnabled,
                                                     imeEnabled, japaneseMode))
             {
@@ -385,7 +386,7 @@ void WorkerThread()
 
         case TaskType::PuncSwitch: {
             PostCaretStateBadge(FanyImeUi::PunctuationBadge(task.pipe_data.keycode != 0, task.pipe_data.wch != 0,
-                                                            GetConfiguredInputMode() == "japanese"),
+                                                            GetActiveInputMode() == "japanese"),
                                 task.pipe_data.point[0], task.pipe_data.point[1]);
             break;
         }
@@ -424,7 +425,7 @@ void WorkerThread()
         }
 
         case TaskType::StoreUserPhrase: {
-            const auto session = PersistentInputSession();
+            const auto session = task.phrase_session;
             if (task.session_pinyin_is_canonical)
             {
                 session->store_user_phrase_from_canonical_pinyin(task.session_pinyin, task.session_word);
@@ -741,6 +742,7 @@ void WorkerThread()
         case TaskType::ReloadInputSession: {
             ClearState();
             Global::candidate_ui.page_size = GetConfiguredCandidatePageSize();
+            g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
             PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
@@ -760,6 +762,7 @@ void WorkerThread()
             }
             ClearState();
             Global::candidate_ui.page_size = GetConfiguredCandidatePageSize();
+            g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
             PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
@@ -954,6 +957,9 @@ void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &wo
         task.session_pinyin = pinyin;
         task.session_word = word;
         task.session_pinyin_is_canonical = pinyin_is_canonical;
+        // A language cycle can replace the active language session before this
+        // queued learning task runs. Store into the session that chose the word.
+        task.phrase_session = PersistentInputSession();
         taskQueue.push(std::move(task));
     }
     pipe_queueCv.notify_one();
