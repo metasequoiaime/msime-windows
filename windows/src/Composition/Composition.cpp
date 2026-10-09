@@ -1266,28 +1266,29 @@ void CMetasequoiaIME::_SetComposition(_In_ ITfComposition *pComposition)
 // teardown ordering. Any failure is silent.
 //----------------------------------------------------------------------------
 
-void CMetasequoiaIME::_CaptureCompositionStats(TfEditCookie ec, _In_ ITfComposition *pComposition)
+bool CMetasequoiaIME::_CaptureCompositionStats(TfEditCookie ec, _In_ ITfComposition *pComposition,
+                                               _Out_opt_ MsimeStats::CharClassCounts *deferredCounts)
 {
     if (!Global::StatisticsEnabled.load(std::memory_order_relaxed))
     {
         // Nothing to capture while the switch is off: no range read, no
         // classification, no pipe. The capture flag stays untouched so a
         // composition that spans a settings change is simply not counted.
-        return;
+        return false;
     }
     if (_compositionStatsCaptured.exchange(true, std::memory_order_acq_rel))
     {
-        return;
+        return false;
     }
     if (pComposition == nullptr)
     {
-        return;
+        return false;
     }
 
     ITfRange *pCompositionRange = nullptr;
     if (FAILED(pComposition->GetRange(&pCompositionRange)) || pCompositionRange == nullptr)
     {
-        return;
+        return false;
     }
     // The walk below shifts the range start, so it must never touch what the
     // host handed back: a host that returns the live composition range would
@@ -1298,7 +1299,7 @@ void CMetasequoiaIME::_CaptureCompositionStats(TfEditCookie ec, _In_ ITfComposit
     pCompositionRange->Release();
     if (FAILED(cloneResult) || pRange == nullptr)
     {
-        return;
+        return false;
     }
 
     // Hosts may hand back fewer units than requested, so read in small blocks
@@ -1343,7 +1344,15 @@ void CMetasequoiaIME::_CaptureCompositionStats(TfEditCookie ec, _In_ ITfComposit
     }
 
     pRange->Release();
-    MsimeStats::QueueStatisticsEvent(counts);
+    if (deferredCounts)
+    {
+        *deferredCounts = counts;
+    }
+    else
+    {
+        MsimeStats::QueueStatisticsEvent(counts);
+    }
+    return true;
 }
 
 //+---------------------------------------------------------------------------

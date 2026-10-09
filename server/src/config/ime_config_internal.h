@@ -110,8 +110,11 @@ enum class ActiveInputMode
     Chinese,
     Japanese
 };
+// The key thread reads the language without the config lock. These mirror
+// g_input_mode and [keybindings] trilingual_cycle for those lock-free reads.
+extern std::atomic<bool> g_configured_input_mode_japanese;
 extern std::atomic<ActiveInputMode> g_active_input_mode;
-extern bool g_trilingual_cycle_enabled;
+extern std::atomic<bool> g_trilingual_cycle_enabled;
 extern std::string g_japanese_schema;
 extern std::string g_character_set;
 extern std::string g_default_ime_mode;

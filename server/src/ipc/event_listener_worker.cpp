@@ -742,6 +742,7 @@ void WorkerThread()
         case TaskType::ReloadInputSession: {
             ClearState();
             Global::candidate_ui.page_size = GetConfiguredCandidatePageSize();
+            g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
             PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
@@ -761,6 +762,7 @@ void WorkerThread()
             }
             ClearState();
             Global::candidate_ui.page_size = GetConfiguredCandidatePageSize();
+            g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
             PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);

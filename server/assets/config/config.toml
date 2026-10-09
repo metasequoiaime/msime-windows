@@ -245,8 +245,6 @@ punctuation_lock = "follow"
 session_backend = "engine"
 # 输入模式，可选："chinese", "japanese"。切换模式时保留各语言上次使用的方案。
 mode = "chinese"
-# 三语轮换：语言切换快捷键（默认 Shift）先上屏原始输入，再依次切换中文、日文、英文
-trilingual_cycle = false
 # 输入方案，可选："quanpin", "shuangpin", "wubi"
 schema = "shuangpin"
 # schema = "quanpin"
@@ -362,6 +360,8 @@ switch_language_ctrl = false
 switch_language_ctrl_alt_space = true
 # Only active in Chinese mode.
 toggle_character_set_ctrl_shift_f = true
+# 中日英循环切换：开启后上面的中英文切换快捷键按中文、日文、英文依次切换，有输入时先上屏原始字母
+trilingual_cycle = false
 
 #
 # Dictionary

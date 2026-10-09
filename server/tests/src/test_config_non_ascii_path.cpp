@@ -193,19 +193,30 @@ TEST_CASE(trilingual_runtime_language_preserves_preferences_without_writing_conf
         REQUIRE_EQ(GetConfiguredInputMode(), std::string("chinese"));
         REQUIRE_EQ(GetActiveInputMode(), std::string("chinese"));
 
-        REQUIRE(SetActiveInputMode("japanese"));
-        REQUIRE(SetConfiguredInputMode("japanese"));
-        InitImeConfig();
-        REQUIRE(!GetConfiguredTrilingualCycleEnabled());
-        REQUIRE_EQ(GetConfiguredInputMode(), std::string("japanese"));
-        REQUIRE_EQ(GetActiveInputMode(), std::string("japanese"));
-        REQUIRE(SetConfiguredTrilingualCycleEnabled(true));
+        // Choosing a language in settings restarts the cycle from it, but the
+        // cycle switch is a separate shortcut setting and stays on.
         REQUIRE(SetActiveInputMode("japanese"));
         REQUIRE(SetConfiguredInputMode("chinese"));
-        InitImeConfig();
-        REQUIRE(!GetConfiguredTrilingualCycleEnabled());
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
         REQUIRE_EQ(GetActiveInputMode(), std::string("chinese"));
         REQUIRE(GetConfiguredActiveInputScheme() == SchemeType::Wubi);
+        REQUIRE(SetConfiguredInputMode("japanese"));
+        InitImeConfig();
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
+        REQUIRE_EQ(GetConfiguredInputMode(), std::string("japanese"));
+        REQUIRE_EQ(GetActiveInputMode(), std::string("japanese"));
+        REQUIRE(SetActiveInputMode("chinese"));
+        REQUIRE(SetConfiguredInputMode("chinese"));
+        InitImeConfig();
+        REQUIRE(GetConfiguredTrilingualCycleEnabled());
+        REQUIRE_EQ(GetActiveInputMode(), std::string("chinese"));
+        REQUIRE(GetConfiguredActiveInputScheme() == SchemeType::Wubi);
+        // The switch is stored with the other language hotkeys, and only there.
+        const std::string stored = ReadText(config_path);
+        const auto keybindings_position = stored.find("\n[keybindings]");
+        REQUIRE(keybindings_position != std::string::npos);
+        REQUIRE(stored.find("trilingual_cycle") > keybindings_position);
+        REQUIRE(stored.find("trilingual_cycle = true", keybindings_position) != std::string::npos);
 
         REQUIRE(SetConfiguredTrilingualCycleEnabled(true));
         REQUIRE(SetActiveInputMode("japanese"));

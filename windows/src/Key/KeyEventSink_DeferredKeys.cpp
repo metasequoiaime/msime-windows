@@ -240,6 +240,8 @@ const wchar_t *DeferredKeyFailureReasonName(DeferredKeyFailureReason reason)
         return L"transport-broken";
     case DeferredKeyFailureReason::DeliveryAmbiguous:
         return L"delivery-ambiguous";
+    case DeferredKeyFailureReason::ProjectionInvalidated:
+        return L"projection-invalidated";
     default:
         return L"unknown";
     }

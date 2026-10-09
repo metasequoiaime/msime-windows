@@ -350,7 +350,14 @@ HRESULT CCompositionProcessorEngine::SetIMEModeForLanguageCycle(_In_ ITfThreadMg
         return result;
     }
     result = compartment._GetCompartmentBOOL(isOpen);
-    return result == S_OK && isOpen != bOpen ? S_FALSE : result;
+    if (result != S_OK || isOpen != bOpen)
+    {
+        return result == S_OK ? S_FALSE : result;
+    }
+    // Same punctuation follow-up as the binary toggle (OnPreservedKey), and the
+    // same rule the deferred FIFO projected for the keys behind this one.
+    SyncPunctuationWithImeMode(pThreadMgr, tfClientId, bOpen);
+    return S_OK;
 }
 
 void CCompositionProcessorEngine::ReleaseConfiguredImeModeDefense()

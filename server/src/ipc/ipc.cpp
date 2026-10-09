@@ -1607,15 +1607,6 @@ bool SendWorkerPacket(uint64_t client_id, uint64_t activation_epoch, bool requir
         std::lock_guard lock(g_pipe_clients_mutex);
         auto it = g_pipe_clients.find(client_id);
         const bool route_is_current = !require_active || g_active_client_state.matches(client_id, activation_epoch);
-        if (msg_type == Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged &&
-            (it == g_pipe_clients.end() || it->second.protocol.legacy ||
-             (it->second.protocol.capabilities & FanyImeProtocol::TrilingualCycle) == 0))
-        {
-            // During an upgrade, host processes can retain an older loaded
-            // DLL. Before Main hello negotiates this bit, activation will
-            // re-send the setting later; skipping it is a successful no-op.
-            return true;
-        }
         if (client_id != 0 && route_is_current && it != g_pipe_clients.end() && it->second.to_tsf_worker_thread_pipe &&
             it->second.to_tsf_worker_thread_registration_id != 0 && it->second.to_tsf_worker_thread_ready)
         {
@@ -1737,8 +1728,6 @@ void BroadcastConfiguredInputModeState(uint64_t excluded_input_mode_client_id)
     BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::InputModeChanged,
                                            GetActiveInputMode() == "japanese" ? L"1" : L"0",
                                            excluded_input_mode_client_id);
-    BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged,
-                                           GetConfiguredTrilingualCycleEnabled() ? L"1" : L"0");
     BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::MidSentenceHelpcodeChanged,
                                            FormatMidSentenceHelpcodeWorkerPayload());
     BroadcastToTsfWorkerThreadViaNamedpipe(
@@ -1773,5 +1762,44 @@ void BroadcastToTsfWorkerThreadViaNamedpipe(UINT msg_type, const std::wstring &p
     for (const uint64_t client_id : client_ids)
     {
         SendToTsfWorkerThreadClientViaNamedpipe(client_id, msg_type, pipeData);
+    }
+}
+
+bool SendTrilingualCycleState(uint64_t client_id, uint64_t activation_epoch)
+{
+    // During an upgrade a host can keep an older DLL loaded. It ignores this
+    // opcode anyway, and a client that has not negotiated yet gets the
+    // setting again on activation.
+    if (!ClientNegotiatedTrilingualCycle(client_id))
+    {
+        return false;
+    }
+    const std::wstring payload = GetConfiguredTrilingualCycleEnabled() ? L"1" : L"0";
+    return activation_epoch != 0
+               ? SendToTsfWorkerThreadClientViaNamedpipe(
+                     client_id, activation_epoch,
+                     Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged, payload)
+               : SendToTsfWorkerThreadClientViaNamedpipe(
+                     client_id, Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged, payload);
+}
+
+void BroadcastTrilingualCycleState()
+{
+    std::vector<uint64_t> client_ids;
+    {
+        std::lock_guard lock(g_pipe_clients_mutex);
+        client_ids.reserve(g_pipe_clients.size());
+        for (const auto &[client_id, session] : g_pipe_clients)
+        {
+            if (client_id != 0 && session.to_tsf_worker_thread_pipe &&
+                session.to_tsf_worker_thread_registration_id != 0 && session.to_tsf_worker_thread_ready)
+            {
+                client_ids.push_back(client_id);
+            }
+        }
+    }
+    for (const uint64_t client_id : client_ids)
+    {
+        SendTrilingualCycleState(client_id);
     }
 }

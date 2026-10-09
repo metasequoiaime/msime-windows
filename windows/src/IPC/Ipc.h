@@ -134,6 +134,9 @@ inline bool IsDeliveredServerRequestId(uint64_t requestId)
 // request was delivered. The key is dropped with the composition and never
 // sent again (DeferredKeyFailureReason::DeliveryAmbiguous).
 constexpr HRESULT FANY_E_COMMIT_REPLY_AMBIGUOUS = __HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+// A key handler applied its key, but the result differs from what the deferred
+// FIFO projected for the keys queued behind it. Maps to ProjectionInvalidated.
+constexpr HRESULT FANY_S_PROJECTION_INVALIDATED = MAKE_HRESULT(SEVERITY_SUCCESS, FACILITY_ITF, 0x0301);
 
 //
 // Modifiers:

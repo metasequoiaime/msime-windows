@@ -13,19 +13,37 @@ TEST_CASE(trilingual_shift_cycles_chinese_japanese_english_and_returns_to_chines
     REQUIRE(Next(false, false) == Mode::Chinese);
 }
 
-TEST_CASE(trilingual_shift_does_not_intercept_tab_modified_application_shortcuts_or_fixed_modes)
+TEST_CASE(trilingual_cycle_needs_an_explicit_request_not_a_plain_shift)
 {
-    using FanyImeTrilingualInput::IsCycleKey;
-    REQUIRE(IsCycleKey(0x10, 0, true));
-    REQUIRE(IsCycleKey(0x10, FanyImeIpc::kModifierUiLess, true));
-    REQUIRE(!IsCycleKey(0x10, 0, false));
-    REQUIRE(!IsCycleKey('A', 0, true));
+    using FanyImeTrilingualInput::EncodeCycleRequest;
+    using FanyImeTrilingualInput::IsCycleRequest;
+    // The binary toggle (Win held, fallback, setting not yet delivered) still
+    // sends a plain VK_SHIFT; the Server must not turn it into a cycle.
+    REQUIRE(!IsCycleRequest(0x10, 0));
+    REQUIRE(!IsCycleRequest(0x10, FanyImeIpc::kModifierUiLess));
+    REQUIRE(IsCycleRequest(0x10, EncodeCycleRequest(true, false)));
+    REQUIRE(IsCycleRequest(0x10, EncodeCycleRequest(false, false) | FanyImeIpc::kModifierUiLess));
+    REQUIRE(!IsCycleRequest('A', EncodeCycleRequest(true, false)));
     for (unsigned modifiers = 1; modifiers < 8; ++modifiers)
     {
-        REQUIRE(!IsCycleKey(0x10, modifiers, true));
-        REQUIRE(!IsCycleKey(0x09, modifiers, true));
+        REQUIRE(!IsCycleRequest(0x10, EncodeCycleRequest(true, false) | modifiers));
+        REQUIRE(!IsCycleRequest(0x09, EncodeCycleRequest(true, false) | modifiers));
     }
-    REQUIRE(!IsCycleKey(0x09, 0, true));
+}
+
+TEST_CASE(trilingual_cycle_starts_from_the_requesting_client_state)
+{
+    using FanyImeTrilingualInput::Destination;
+    using FanyImeTrilingualInput::Mode;
+    // ime_mode_scope=app: one host is English while another is Chinese. The
+    // request's own state decides; the configured language does not.
+    REQUIRE(Destination(false, false, true, true) == Mode::Chinese);
+    REQUIRE(Destination(true, false, true, true) == Mode::Japanese);
+    REQUIRE(Destination(true, true, true, false) == Mode::English);
+    // Switch turned off while the request was queued: binary toggle reply.
+    REQUIRE(Destination(true, false, false, false) == Mode::English);
+    REQUIRE(Destination(false, true, false, false) == Mode::Chinese);
+    REQUIRE(Destination(false, false, false, true) == Mode::Japanese);
 }
 
 TEST_CASE(pinyin_commit_requires_shift_enter)

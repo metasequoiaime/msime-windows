@@ -47,6 +47,7 @@ bool g_jianpin_mode_triggered = false;
 bool g_y_mode_triggered = false;
 bool g_r_mode_triggered = false;
 std::shared_ptr<IInputSession> g_r_mode_original_session;
+std::shared_ptr<IInputSession> g_language_cycle_parked_session;
 bool g_english_input_mode = false;
 } // namespace event_listener_detail
 

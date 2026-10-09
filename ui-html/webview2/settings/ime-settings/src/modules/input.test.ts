@@ -17,12 +17,9 @@ vi.mock('./credential-test', () => ({ setupCredentialTest: vi.fn() }));
 
 import { updateConfig } from './config-sync';
 import { setSmartPunctuationOptionsDisabled } from './shared';
-import { applyInputConfig, setupInput } from './input';
+import { setupInput } from './input';
 
 class StubElement extends EventTarget {
-  hidden = false;
-  checked = false;
-  value = '';
   classes = new Set<string>();
   attributes = new Map<string, string>();
   classList = {
@@ -38,33 +35,15 @@ class StubElement extends EventTarget {
 
 let expand: StubElement;
 let details: StubElement;
-let modeRadios: StubElement[];
-let chineseSettings: StubElement;
-let japaneseSettings: StubElement;
 
 beforeEach(() => {
   toggles.clear();
   vi.clearAllMocks();
   expand = new StubElement();
   details = new StubElement();
-  modeRadios = ['chinese', 'japanese', 'trilingual'].map((value) => {
-    const radio = new StubElement();
-    radio.value = value;
-    return radio;
-  });
-  chineseSettings = new StubElement();
-  japaneseSettings = new StubElement();
   vi.stubGlobal('document', {
-    querySelectorAll: (selector: string) => {
-      if (selector === 'input[name="input-mode"]') return modeRadios;
-      if (selector === '.chinese-scheme-settings') return [chineseSettings];
-      if (selector === '.japanese-scheme-settings') return [japaneseSettings];
-      return [];
-    },
-    querySelector: (selector: string) => {
-      const value = selector.match(/^input\[name="input-mode"\]\[value="([^"]+)"\]$/)?.[1];
-      return modeRadios.find((radio) => radio.value === value) ?? null;
-    },
+    querySelectorAll: () => [],
+    querySelector: () => null,
     getElementById: (id: string) => {
       if (id === 'smartPunctuationExpand') return expand;
       if (id === 'smartPunctuationDetails') return details;
@@ -77,41 +56,6 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
-
-it.each(['chinese', 'japanese'])('restores trilingual selection while %s is active', (activeMode) => {
-  applyInputConfig(activeMode, 'quanpin', 'simplified', 'xiaohe', 'wubi86', false, 'wildcard', false, false, 'chinese', 'app', 'romaji', true);
-  expect(modeRadios[2].checked).toBe(true);
-  expect(chineseSettings.hidden).toBe(false);
-  expect(japaneseSettings.hidden).toBe(false);
-  expect(updateConfig).not.toHaveBeenCalled();
-  expect(window.chrome?.webview?.postMessage).not.toHaveBeenCalled();
-});
-
-it.each(['chinese', 'japanese'])('keeps the fixed %s mode when cycling is disabled', (mode) => {
-  applyInputConfig(mode, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, false);
-  expect(modeRadios.find((radio) => radio.value === mode)?.checked).toBe(true);
-  expect(chineseSettings.hidden).toBe(mode === 'japanese');
-  expect(japaneseSettings.hidden).toBe(mode === 'chinese');
-});
-
-it('enables cycling with one settings update and exposes both language schemes', () => {
-  const radio = modeRadios[2];
-  radio.checked = true;
-  radio.dispatchEvent(new Event('change'));
-  expect(updateConfig).toHaveBeenCalledExactlyOnceWith('input.trilingual_cycle', true);
-  expect(chineseSettings.hidden).toBe(false);
-  expect(japaneseSettings.hidden).toBe(false);
-});
-
-it.each(['chinese', 'japanese'])('leaves cycling through the existing fixed %s mode update', (mode) => {
-  applyInputConfig('chinese', undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, true);
-  const radio = modeRadios.find((item) => item.value === mode)!;
-  radio.checked = true;
-  radio.dispatchEvent(new Event('change'));
-  expect(updateConfig).toHaveBeenCalledExactlyOnceWith('input.mode', mode);
-  expect(chineseSettings.hidden).toBe(mode === 'japanese');
-  expect(japaneseSettings.hidden).toBe(mode === 'chinese');
-});
 
 it('reports every smart punctuation sub-switch to its config path', () => {
   const options: [string, string][] = [

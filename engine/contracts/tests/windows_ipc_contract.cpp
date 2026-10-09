@@ -128,14 +128,40 @@ int main()
         CHECK(FanyImeTrilingualInput::Next(true, true) == Mode::English);
         CHECK(FanyImeTrilingualInput::Next(false, true) == Mode::Chinese);
         CHECK(FanyImeTrilingualInput::Next(false, false) == Mode::Chinese);
+        // A plain VK_SHIFT is the binary toggle; only the explicit request bit cycles.
+        CHECK(!FanyImeTrilingualInput::IsCycleRequest(0x10, 0));
+        CHECK(!FanyImeTrilingualInput::IsCycleRequest(0x10, FanyImePipeFlags::UiLess));
         for (unsigned modifiers = 0; modifiers < 8; ++modifiers)
         {
-            CHECK(FanyImeTrilingualInput::IsCycleKey(0x10, modifiers, true) == (modifiers == 0));
-            CHECK(!FanyImeTrilingualInput::IsCycleKey(0x09, modifiers, true));
+            const auto request = FanyImeTrilingualInput::EncodeCycleRequest(true, false) | modifiers;
+            CHECK(FanyImeTrilingualInput::IsCycleRequest(0x10, request) == (modifiers == 0));
+            CHECK(!FanyImeTrilingualInput::IsCycleRequest(0x09, request));
         }
-        CHECK(FanyImeTrilingualInput::IsCycleKey(0x10, FanyImePipeFlags::UiLess, true));
-        CHECK(!FanyImeTrilingualInput::IsCycleKey(0x10, 0, false));
-        CHECK(!FanyImeTrilingualInput::IsCycleKey(0x20, 0, true));
+        CHECK(FanyImeTrilingualInput::IsCycleRequest(0x10, FanyImeTrilingualInput::EncodeCycleRequest(false, true) |
+                                                               FanyImePipeFlags::UiLess));
+        CHECK(!FanyImeTrilingualInput::IsCycleRequest(0x20, FanyImeTrilingualInput::EncodeCycleRequest(true, true)));
+        // The request bits stay clear of the Shift/Ctrl/Alt bits and every pipe flag.
+        CHECK((FanyImeTrilingualInput::CycleRequestMask & 7u) == 0);
+        CHECK((FanyImeTrilingualInput::CycleRequestMask &
+               (FanyImePipeFlags::UiLess | FanyImePipeFlags::ImeSwitchCapsSnapshotPresent |
+                FanyImePipeFlags::ImeSwitchCapsSnapshotEnabled)) == 0);
+        for (const bool ime : {false, true})
+        {
+            for (const bool japanese : {false, true})
+            {
+                const auto request = FanyImeTrilingualInput::EncodeCycleRequest(ime, japanese);
+                CHECK(FanyImeTrilingualInput::CycleRequestImeEnabled(request) == ime);
+                CHECK(FanyImeTrilingualInput::CycleRequestJapanese(request) == japanese);
+                // The requester's state, not a Server global, picks the destination.
+                CHECK(FanyImeTrilingualInput::Destination(ime, japanese, true, !japanese) ==
+                      FanyImeTrilingualInput::Next(ime, japanese));
+            }
+        }
+        // Turned off while queued: answer as the binary toggle.
+        CHECK(FanyImeTrilingualInput::Destination(true, true, false, false) == Mode::English);
+        CHECK(FanyImeTrilingualInput::Destination(true, false, false, true) == Mode::English);
+        CHECK(FanyImeTrilingualInput::Destination(false, true, false, false) == Mode::Chinese);
+        CHECK(FanyImeTrilingualInput::Destination(false, false, false, true) == Mode::Japanese);
         Mode destination = Mode::Chinese;
         std::wstring text;
         CHECK(FanyImeTrilingualInput::ParsePayload(FanyImeTrilingualInput::BuildPayload(Mode::Japanese, L"你好"),

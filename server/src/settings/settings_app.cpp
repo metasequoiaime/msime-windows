@@ -438,8 +438,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
         {"type", "configSnapshot"},
         {"data",
          {{"input",
-            {{"mode", GetConfiguredInputMode()},
-             {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()},
+           {{"mode", GetConfiguredInputMode()},
             {"schema", GetConfiguredInputSchemeName()},
             {"japanese_schema", GetConfiguredJapaneseSchema()},
             {"character_set", GetConfiguredCharacterSet()},
@@ -538,7 +537,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
            {{"switch_language_shift", GetConfiguredSwitchLanguageShiftEnabled()},
             {"switch_language_ctrl", GetConfiguredSwitchLanguageCtrlEnabled()},
             {"switch_language_ctrl_alt_space", GetConfiguredSwitchLanguageCtrlAltSpaceEnabled()},
-            {"toggle_character_set_ctrl_shift_f", GetConfiguredCharacterSetShortcutEnabled()}}},
+            {"toggle_character_set_ctrl_shift_f", GetConfiguredCharacterSetShortcutEnabled()},
+            {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()}}},
           {"frequency_adjustment",
            {{"mode", frequency.mode},
             {"trigger_count", frequency.trigger_count},
@@ -759,8 +759,6 @@ bool ApplyConfigUpdate(const json::object &data)
     const std::string path = json::value_to<std::string>(data.at("path"));
     if (path == "input.mode")
         return SetConfiguredInputMode(json::value_to<std::string>(data.at("value")));
-    if (path == "input.trilingual_cycle")
-        return SetConfiguredTrilingualCycleEnabled(json::value_to<bool>(data.at("value")));
     if (path == "input.schema")
         return SetConfiguredInputScheme(json::value_to<std::string>(data.at("value")));
     if (path == "input.japanese_schema")
@@ -981,6 +979,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredSwitchLanguageCtrlAltSpaceEnabled(json::value_to<bool>(data.at("value")));
     if (path == "keybindings.toggle_character_set_ctrl_shift_f")
         return SetConfiguredCharacterSetShortcutEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "keybindings.trilingual_cycle")
+        return SetConfiguredTrilingualCycleEnabled(json::value_to<bool>(data.at("value")));
     if (path.rfind("frequency_adjustment.", 0) == 0)
     {
         const std::string key = path.substr(21);

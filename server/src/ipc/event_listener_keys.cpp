@@ -822,13 +822,34 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
     SendCurrentDataToClient(client_id, activation_epoch, request_id);
 }
 
-void HandleTrilingualCycleKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
+// Switches g_inputSession to the active language's scheme. The outgoing session
+// is parked rather than dropped, so cycling back reuses it instead of building
+// a new engine (and reopening msime.db) while the client waits for the reply.
+void SwitchSessionForLanguageCycle()
+{
+    const SchemeType wanted = GetConfiguredActiveInputScheme();
+    if (g_inputSession && g_inputSession->current_scheme_type() == wanted)
+        return;
+    std::shared_ptr<IInputSession> next;
+    if (g_language_cycle_parked_session && g_language_cycle_parked_session->current_scheme_type() == wanted)
+        next = std::move(g_language_cycle_parked_session);
+    else
+        next = CreateInputSessionFromConfig();
+    g_language_cycle_parked_session = std::move(g_inputSession);
+    g_inputSession = std::move(next);
+}
+
+void HandleTrilingualCycleKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id,
+                              bool requester_ime_enabled, bool requester_japanese)
 {
     using FanyImeTrilingualInput::Mode;
-    const bool ime_enabled =
-        g_authoritative_cn_mode < 0 ? GetConfiguredDefaultImeMode() != "english" : g_authoritative_cn_mode != 0;
-    const bool japanese = GetActiveInputMode() == "japanese";
-    Mode destination = FanyImeTrilingualInput::Next(ime_enabled, japanese);
+    // Cycle from the requester's own state. With ime_mode_scope=app the Server's
+    // global CN/EN mode can describe another host. When the switch was turned
+    // off while this request was queued, the active language is the configured
+    // one again and the request is answered as the binary toggle.
+    Mode destination =
+        FanyImeTrilingualInput::Destination(requester_ime_enabled, requester_japanese,
+                                            GetConfiguredTrilingualCycleEnabled(), GetActiveInputMode() == "japanese");
 
     // Match the existing language toggle: retain an already selected word
     // prefix, then commit the remaining raw spelling without choosing or
@@ -837,21 +858,24 @@ void HandleTrilingualCycleKey(uint64_t client_id, uint64_t activation_epoch, uin
     const std::wstring commit_text = string_to_wstring(
         CandidateTextForOutput(GlobalIme::composition.creating_word.word) + (g_r_mode_triggered ? "R" + raw : raw));
 
-    const std::string wanted_mode = destination == Mode::Japanese  ? "japanese"
-                                    : destination == Mode::Chinese ? "chinese"
-                                                                   : GetActiveInputMode();
-    bool native_mode_changed = wanted_mode != GetActiveInputMode();
-    if (native_mode_changed && !SetActiveInputMode(wanted_mode))
+    bool native_mode_changed = false;
+    if (destination != Mode::English)
     {
-        // The preference may have changed while this request was in flight.
-        // Commit the raw composition without claiming an inactive destination.
-        destination = !ime_enabled ? Mode::English : japanese ? Mode::Japanese : Mode::Chinese;
-        native_mode_changed = false;
+        const std::string wanted_mode = destination == Mode::Japanese ? "japanese" : "chinese";
+        if (wanted_mode != GetActiveInputMode())
+        {
+            native_mode_changed = SetActiveInputMode(wanted_mode);
+            if (!native_mode_changed)
+            {
+                // The switch was turned off after Destination() read it. Never
+                // claim a language the Server is not in.
+                destination = GetActiveInputMode() == "japanese" ? Mode::Japanese : Mode::Chinese;
+            }
+        }
     }
     SetEnglishInputMode(false);
     ClearState();
-    if (g_inputSession->current_scheme_type() != GetConfiguredActiveInputScheme())
-        g_inputSession = CreateInputSessionFromConfig();
+    SwitchSessionForLanguageCycle();
 
     const bool next_ime_enabled = destination != Mode::English;
     g_authoritative_cn_mode = next_ime_enabled ? 1 : 0;
@@ -892,11 +916,16 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     // contract symmetric before any selection/composition predicates run.
     Global::Keycode = FanyImeIpc::NormalizeNumpadDigitKey(Global::Keycode);
 
-    if (FanyImeTrilingualInput::IsCycleKey(Global::Keycode, Global::ModifiersDown,
-                                           GetConfiguredTrilingualCycleEnabled()) &&
+    // Only the explicit request bit cycles: a plain VK_SHIFT is still the binary
+    // toggle, which the client also uses when it decides not to cycle.
+    const UINT cycle_request = Global::ModifiersDown & FanyImeTrilingualInput::CycleRequestMask;
+    Global::ModifiersDown &= ~FanyImeTrilingualInput::CycleRequestMask;
+    if (FanyImeTrilingualInput::IsCycleRequest(Global::Keycode, Global::ModifiersDown | cycle_request) &&
         ClientNegotiatedTrilingualCycle(client_id))
     {
-        HandleTrilingualCycleKey(client_id, activation_epoch, request_id);
+        HandleTrilingualCycleKey(client_id, activation_epoch, request_id,
+                                 FanyImeTrilingualInput::CycleRequestImeEnabled(cycle_request),
+                                 FanyImeTrilingualInput::CycleRequestJapanese(cycle_request));
         return;
     }
 

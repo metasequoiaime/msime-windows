@@ -340,15 +340,21 @@ HRESULT CMetasequoiaIME::_HandleCycleInputMode(TfEditCookie ec, _In_ ITfContext 
                                                std::memory_order_relaxed);
     }
     _ClearPairedPunctuationStack();
+    // CN <-> JP leaves OPENCLOSE alone, so no compartment callback announces
+    // it. Badge every cycle like the binary toggle does; the Server already
+    // switched its language and picks the Japanese/Chinese label itself.
+    _pCompositionProcessorEngine->SendCaretStateSwitchEvent(FanyImePipeEventType::IMESwitch,
+                                                            destination != FanyImeTrilingualInput::Mode::English);
     if (_msgWndHandle && IsWindow(_msgWndHandle))
     {
         PostMessage(_msgWndHandle, WM_RefreshLanguageBarTheme, 0, 0);
         PostMessage(_msgWndHandle, WM_UpdateIMEStatus, 0, 0);
     }
-    // A configuration change or state mismatch can invalidate the FIFO's
-    // predicted destination. The raw text is committed; discard the
-    // queued keys that depend on that prediction and refresh the active mode.
-    return destination == expectedDestination ? S_OK : S_FALSE;
+    // The Server answers as the binary toggle when the switch was turned off
+    // while this request was queued. Both sides now agree on the destination,
+    // but the keys queued behind it were classified for the cycle's: drop them
+    // without reconnecting.
+    return destination == expectedDestination ? S_OK : FANY_S_PROJECTION_INVALIDATED;
 }
 
 HRESULT CMetasequoiaIME::_HandleCommitCandidateAndContinue(TfEditCookie ec, _In_ ITfContext *pContext,

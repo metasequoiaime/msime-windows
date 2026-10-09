@@ -34,6 +34,7 @@ STDAPI CKeyHandlerEditSession::DoEditSession(TfEditCookie ec)
         bool superseded = true;
         bool deliveryAmbiguous = false;
         bool transportBroken = false;
+        bool projectionInvalidated = false;
         ~DeferredReplayCompletion()
         {
             if (textService && token != 0)
@@ -44,8 +45,9 @@ STDAPI CKeyHandlerEditSession::DoEditSession(TfEditCookie ec)
                 }
                 else
                 {
-                    textService->_FailDeferredKey(
-                        token, ClassifyEditSessionFailure(superseded, deliveryAmbiguous, transportBroken));
+                    textService->_FailDeferredKey(token,
+                                                  ClassifyEditSessionFailure(superseded, deliveryAmbiguous,
+                                                                             transportBroken, projectionInvalidated));
                 }
             }
         }
@@ -104,6 +106,7 @@ STDAPI CKeyHandlerEditSession::DoEditSession(TfEditCookie ec)
         deferredReplayCompletion.applied = hResult == S_OK;
         deferredReplayCompletion.deliveryAmbiguous = hResult == FANY_E_COMMIT_REPLY_AMBIGUOUS;
         deferredReplayCompletion.transportBroken = hResult == HRESULT_FROM_WIN32(ERROR_BROKEN_PIPE);
+        deferredReplayCompletion.projectionInvalidated = hResult == FANY_S_PROJECTION_INVALIDATED;
 
         pKeyStateCategory->Release();
     }

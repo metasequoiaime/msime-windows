@@ -4,6 +4,7 @@
 #include "MetasequoiaIMEBaseStructure.h"
 #include "Ipc.h"
 #include "DeferredKeyFailurePolicy.h"
+#include "char_classify.h"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -260,8 +261,11 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     void _SaveCompositionContext(_In_ ITfContext *pContext);
     // Reads the committed text of a terminating composition and queues one
     // statistics event for it. Safe to call from both composition exits; only
-    // the first observer captures, and any failure is silent.
-    void _CaptureCompositionStats(TfEditCookie ec, _In_ ITfComposition *pComposition);
+    // the first observer captures, and any failure is silent. With deferredCounts
+    // the event is not queued: the caller queues it once the end succeeded, and
+    // the return value says whether anything was captured.
+    bool _CaptureCompositionStats(TfEditCookie ec, _In_ ITfComposition *pComposition,
+                                  _Out_opt_ MsimeStats::CharClassCounts *deferredCounts = nullptr);
 
     // key event handlers for composition/candidate/phrase common objects.
     HRESULT _HandleComplete(TfEditCookie ec, _In_ ITfContext *pContext);

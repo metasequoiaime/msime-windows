@@ -192,9 +192,7 @@ void SendInputModeState(const PipeClientActivation &activation)
     SendToTsfWorkerThreadClientViaNamedpipe(activation.client_id, activation.epoch,
                                             Global::DataFromServerMsgTypeToTsfWorkerThread::InputModeChanged,
                                             GetActiveInputMode() == "japanese" ? L"1" : L"0");
-    SendToTsfWorkerThreadClientViaNamedpipe(activation.client_id, activation.epoch,
-                                            Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged,
-                                            GetConfiguredTrilingualCycleEnabled() ? L"1" : L"0");
+    SendTrilingualCycleState(activation.client_id, activation.epoch);
 }
 
 bool IsKnownMainPipeEvent(UINT event_type)
@@ -860,9 +858,7 @@ void RegisteredPipeMonitorThread(HANDLE clientPipe, UINT pipeRole, uint64_t hand
             SendToTsfWorkerThreadClientViaNamedpipe(hello.client_id,
                                                     Global::DataFromServerMsgTypeToTsfWorkerThread::InputModeChanged,
                                                     GetActiveInputMode() == "japanese" ? L"1" : L"0");
-            SendToTsfWorkerThreadClientViaNamedpipe(
-                hello.client_id, Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged,
-                GetConfiguredTrilingualCycleEnabled() ? L"1" : L"0");
+            SendTrilingualCycleState(hello.client_id);
             SendToTsfWorkerThreadClientViaNamedpipe(hello.client_id,
                                                     Global::DataFromServerMsgTypeToTsfWorkerThread::CapsLockChanged,
                                                     GetServerCapsLockState() != 0 ? L"1" : L"0");

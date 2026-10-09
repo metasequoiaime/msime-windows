@@ -41,6 +41,11 @@ extern bool g_jianpin_mode_triggered;
 extern bool g_y_mode_triggered;
 extern bool g_r_mode_triggered;
 extern std::shared_ptr<IInputSession> g_r_mode_original_session;
+// The other native language's session, parked by a language cycle so switching
+// back neither rebuilds the engine nor reopens msime.db on the key path. Worker
+// thread only, like g_inputSession; a task that recreates the session from
+// config drops it, since a scheme or profile change makes it stale.
+extern std::shared_ptr<IInputSession> g_language_cycle_parked_session;
 extern bool g_english_input_mode;
 // Glosses are a cache keyed by TranslationIdentity, not the current page's
 // results: the next keystroke's page mostly repeats the same words, and

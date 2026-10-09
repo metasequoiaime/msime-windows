@@ -7,7 +7,7 @@ import { onHostMessage } from '../utils/host-messages';
 import { hoistOverlay } from '../utils/overlay-host';
 
 type InputScheme = 'quanpin' | 'shuangpin' | 'wubi';
-type InputMode = 'chinese' | 'japanese' | 'trilingual';
+type InputMode = 'chinese' | 'japanese';
 
 type TranslationProvider = 'tencent' | 'niutrans' | 'custom';
 
@@ -91,6 +91,13 @@ export function applyCustomShuangpinSchemas(schemas: unknown, directory: unknown
   }
 }
 
+function updateInputConfig(path: string, value: string): void {
+  window.chrome?.webview?.postMessage(serializeHostMessage({
+    type: 'configUpdate',
+    data: { path, value }
+  }));
+}
+
 export function applyInputConfig(
   inputMode: string | undefined,
   schema: string | undefined,
@@ -103,12 +110,11 @@ export function applyInputConfig(
   wubiFifthCodeTopCommit?: boolean | undefined,
   defaultImeMode?: string | undefined,
   imeModeScope?: string | undefined,
-  japaneseSchema?: string | undefined,
-  trilingualCycle?: boolean | undefined
+  japaneseSchema?: string | undefined
 ): void {
   applyingInputConfig = true;
   try {
-    const mode: InputMode = trilingualCycle === true ? 'trilingual' : inputMode === 'japanese' ? 'japanese' : 'chinese';
+    const mode: InputMode = inputMode === 'japanese' ? 'japanese' : 'chinese';
   const modeRadio = document.querySelector<HTMLInputElement>(`input[name="input-mode"][value="${mode}"]`);
   if (modeRadio) modeRadio.checked = true;
   syncInputModeView(mode);
@@ -148,11 +154,12 @@ export function applyInputConfig(
 }
 
 function syncInputModeView(mode: InputMode): void {
+  const japanese = mode === 'japanese';
   document.querySelectorAll<HTMLElement>('.chinese-scheme-settings').forEach((element) => {
-    element.hidden = mode === 'japanese';
+    element.hidden = japanese;
   });
   document.querySelectorAll<HTMLElement>('.japanese-scheme-settings').forEach((element) => {
-    element.hidden = mode === 'chinese';
+    element.hidden = !japanese;
   });
 }
 
@@ -276,21 +283,17 @@ export function setupInput(): void {
   document.querySelectorAll<HTMLInputElement>('input[name="input-mode"]').forEach((radio) => {
     radio.addEventListener('change', () => {
       if (applyingInputConfig) return;
-      if (!radio.checked || (radio.value !== 'chinese' && radio.value !== 'japanese' && radio.value !== 'trilingual')) return;
+      if (!radio.checked || (radio.value !== 'chinese' && radio.value !== 'japanese')) return;
       const mode = radio.value as InputMode;
       syncInputModeView(mode);
-      if (mode === 'trilingual') {
-        updateConfig('input.trilingual_cycle', true);
-      } else {
-        updateConfig('input.mode', mode);
-      }
+      updateInputConfig('input.mode', mode);
     });
   });
 
   document.querySelectorAll<HTMLInputElement>('input[name="japanese-input-method"]').forEach((radio) => {
     radio.addEventListener('change', () => {
       if (radio.checked && radio.value === 'romaji' && !applyingInputConfig) {
-        updateConfig('input.japanese_schema', radio.value);
+        updateInputConfig('input.japanese_schema', radio.value);
       }
     });
   });
@@ -305,7 +308,7 @@ export function setupInput(): void {
         return;
       }
       const schema = radio.value as InputScheme;
-      updateConfig('input.schema', schema);
+      updateInputConfig('input.schema', schema);
       updateCandidatePreviewHelpcode({ input_schema: schema });
     });
   });

@@ -387,9 +387,7 @@ LRESULT CALLBACK WndProcSettingsWindow(HWND hwnd, UINT message, WPARAM wParam, L
                 }
                 if (previous_input_scheme == GetConfiguredActiveInputScheme() &&
                     previous_trilingual_cycle != GetConfiguredTrilingualCycleEnabled())
-                    BroadcastToTsfWorkerThreadViaNamedpipe(
-                        Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged,
-                        GetConfiguredTrilingualCycleEnabled() ? L"1" : L"0");
+                    BroadcastTrilingualCycleState();
                 if (previous_character_set != GetConfiguredCharacterSet())
                 {
                     UpdateFtbCharacterSetState(::webviewFtbWnd);

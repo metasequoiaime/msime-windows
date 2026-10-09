@@ -2,6 +2,7 @@
 #include "Globals.h"
 #include "EditSession.h"
 #include "MetasequoiaIME.h"
+#include "stats_collector.h"
 #include <debugapi.h>
 #include <fmt/xchar.h>
 
@@ -111,8 +112,12 @@ void CMetasequoiaIME::_TerminateComposition(TfEditCookie ec, _In_ ITfContext *pC
 
         // Read the committed text before any COM call below can change or end
         // the composition. The cancel path has already wiped the range, so a
-        // cancelled composition classifies to zero and does not count.
-        _CaptureCompositionStats(ec, terminatingComposition);
+        // cancelled composition classifies to zero and does not count. The
+        // strict path counts only once the host has accepted the end: a refused
+        // end is cancelled by the failure reset and never reaches the document.
+        MsimeStats::CharClassCounts deferredStats;
+        const bool statsDeferred =
+            _CaptureCompositionStats(ec, terminatingComposition, result ? &deferredStats : nullptr);
 
         // remove the display attribute from the composition range.
         _ClearCompositionDisplayAttributes(ec, pContext, terminatingComposition);
@@ -132,6 +137,10 @@ void CMetasequoiaIME::_TerminateComposition(TfEditCookie ec, _In_ ITfContext *pC
                 }
                 terminatingComposition->Release();
                 return;
+            }
+            if (statsDeferred)
+            {
+                MsimeStats::QueueStatisticsEvent(deferredStats);
             }
         }
         if (FAILED(endResult) && _pComposition == terminatingComposition)

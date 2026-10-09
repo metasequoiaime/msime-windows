@@ -181,6 +181,10 @@ void BroadcastToTsfWorkerThreadViaNamedpipe(UINT msg_type, const std::wstring &p
                                             uint64_t excluded_client_id = 0);
 // Sends active language and scheme-dependent key policies without reloading a session.
 void BroadcastConfiguredInputModeState(uint64_t excluded_input_mode_client_id = 0);
+// TrilingualCycleChanged goes only to clients that negotiated TrilingualCycle.
+// A non-zero activation_epoch also requires that activation to be current.
+bool SendTrilingualCycleState(uint64_t client_id, uint64_t activation_epoch = 0);
+void BroadcastTrilingualCycleState();
 
 namespace Global
 {

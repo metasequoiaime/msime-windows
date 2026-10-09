@@ -1166,6 +1166,15 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
         Global::Keycode = code;
         Global::wch = wch;
         Global::ModifiersDown = capturedModifiers;
+        if (KeystrokeState.Function == FUNCTION_CYCLE_INPUT_MODE)
+        {
+            // Mark the request explicitly and carry this host's own state: the
+            // Server cycles from it, not from whichever host it last heard from.
+            // Every key before this one has been applied, so it is current.
+            Global::ModifiersDown |= FanyImeTrilingualInput::EncodeCycleRequest(
+                _pCompositionProcessorEngine->GetIMEMode(_pThreadMgr, _tfClientId) != FALSE,
+                Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed));
+        }
 
         // The character-set shortcut carries the caret anchor for its badge.
         // An unresolved anchor is sent explicitly as {0, INVALID_Y}; the packet

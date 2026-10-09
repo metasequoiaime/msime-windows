@@ -5,6 +5,7 @@ export function applyShortcutConfig(config: {
   switch_language_ctrl?: boolean;
   switch_language_ctrl_alt_space?: boolean;
   toggle_character_set_ctrl_shift_f?: boolean;
+  trilingual_cycle?: boolean;
 } | undefined): void {
   if (!config) {
     return;
@@ -13,6 +14,7 @@ export function applyShortcutConfig(config: {
   const ctrl = document.getElementById('switchLanguageCtrlCheckbox') as HTMLInputElement | null;
   const ctrlAltSpace = document.getElementById('switchLanguageCtrlAltSpaceCheckbox') as HTMLInputElement | null;
   const characterSet = document.getElementById('characterSetShortcutCheckbox') as HTMLInputElement | null;
+  const trilingualCycle = document.getElementById('trilingualCycleCheckbox') as HTMLInputElement | null;
   if (characterSet && typeof config.toggle_character_set_ctrl_shift_f === 'boolean') {
     characterSet.checked = config.toggle_character_set_ctrl_shift_f;
   }
@@ -25,12 +27,19 @@ export function applyShortcutConfig(config: {
   if (ctrlAltSpace && typeof config.switch_language_ctrl_alt_space === 'boolean') {
     ctrlAltSpace.checked = config.switch_language_ctrl_alt_space;
   }
+  if (trilingualCycle && typeof config.trilingual_cycle === 'boolean') {
+    trilingualCycle.checked = config.trilingual_cycle;
+  }
 }
 
 export function setupShortcut(): void {
   const characterSet = document.getElementById('characterSetShortcutCheckbox') as HTMLInputElement | null;
   characterSet?.addEventListener('change', () => {
     updateConfig('keybindings.toggle_character_set_ctrl_shift_f', characterSet.checked);
+  });
+  const trilingualCycle = document.getElementById('trilingualCycleCheckbox') as HTMLInputElement | null;
+  trilingualCycle?.addEventListener('change', () => {
+    updateConfig('keybindings.trilingual_cycle', trilingualCycle.checked);
   });
   const mapping: Record<string, string> = {
     shift: 'keybindings.switch_language_shift',
