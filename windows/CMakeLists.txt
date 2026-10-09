@@ -21,6 +21,8 @@ if(MSVC)
     add_link_options("$<$<CONFIG:Release>:/DEBUG>")
 endif()
 
+find_package(yaml-cpp CONFIG REQUIRED)
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(test_windows_ipc_contract
@@ -148,6 +150,10 @@ add_library(${PROJECT_NAME} SHARED
     # Key
     "./src/Key/DeferredKeyFailurePolicy.h"
     "./src/Key/KeyEventSink.cpp"
+    "./src/Key/KeyEventSink_Classify.cpp"
+    "./src/Key/KeyEventSink_Dispatch.cpp"
+    "./src/Key/VimMode.cpp"
+    "./src/Key/VimMode.h"
     "./src/Key/KeyEventSink_DeferredKeys.cpp"
     "./src/Key/KeyEventSink_Hotkeys.cpp"
     "./src/Key/KeyEventSinkInternal.h"
@@ -192,7 +198,7 @@ add_library(${PROJECT_NAME} SHARED
     "./src/Server.cpp"
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE fmt::fmt-header-only)
+target_link_libraries(${PROJECT_NAME} PRIVATE fmt::fmt-header-only yaml-cpp::yaml-cpp)
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

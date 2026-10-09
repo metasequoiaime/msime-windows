@@ -1,0 +1,9 @@
+# Optional file: copy beside config.toml in the IME data directory.
+# Keys are executable basenames; ASCII case is ignored. Unlisted apps are disabled.
+app_options:
+  Code.exe:
+    # Switch the IME to English when a bare Esc is passed to the editor.
+    vim_mode: true
+  gvim.exe:
+    # Enable for GUI Vim. Terminal sessions are matched by their host executable.
+    vim_mode: true
