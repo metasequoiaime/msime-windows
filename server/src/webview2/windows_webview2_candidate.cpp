@@ -410,39 +410,6 @@ void UpdateCandidateSlotsWithJavaScript(ComPtr<ICoreWebView2> webview, const std
     SubmitCandidateSlotScript(webview, payload, std::move(onComplete), contentOnly);
 }
 
-std::wstring BuildCandidateSlotPayloadJson(const std::wstring &commaSeparated, bool contentOnly)
-{
-    std::vector<std::wstring> words = SplitCandidateTemplatePayload(commaSeparated);
-    nlohmann::json payload;
-    payload["preedit"] = words.empty() ? std::string{} : wstring_to_string(words[0]);
-    payload["items"] = nlohmann::json::array();
-    // Preserve slot indices: do not compress out empty tokens.
-    // The WebView DOM renderer expects wrapper<->slot index alignment.
-    uint16_t nonEmptyMask = 0;
-    for (size_t i = 1; i < words.size(); ++i)
-    {
-        if (i <= 9 && !words[i].empty())
-        {
-            nonEmptyMask |= static_cast<uint16_t>(1u) << static_cast<uint16_t>(i - 1);
-        }
-        payload["items"].push_back(wstring_to_string(words[i]));
-    }
-    if (nonEmptyMask == 0 && !words.empty())
-    {
-        CAND_DIAG_LOGF(L"candidate-slot payload all-empty words_sz={} content_only={} preedit_len={}", words.size(),
-                       contentOnly ? 1 : 0, words[0].size());
-    }
-    payload["selected"] = Global::candidate_ui.selected_index_in_page;
-    payload["preeditVisible"] = GetConfiguredCandidateWindowPreeditStyle() != "empty";
-    payload["applyMargins"] = !contentOnly;
-    payload["resetHover"] = !contentOnly;
-    if (!contentOnly)
-    {
-        payload["marginTop"] = Global::MarginTop;
-        payload["marginLeft"] = Global::MarginLeft;
-    }
-    return string_to_wstring(payload.dump());
-}
 } // namespace
 
 std::pair<double, double> LastCandidateSlotMeasuredSize()
@@ -456,7 +423,7 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
 }
 
 void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::wstring &newContent,
-                                     std::function<void()> onComplete)
+                                     std::function<void()> onComplete, const std::vector<CandidateViewItem> *items)
 {
     if (!webview)
     {
@@ -478,6 +445,41 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
     script.append(L"document.getElementById('realContainer').innerHTML = `");
     script.append(escaped);
     script.append(L"`;\n");
+    if (items)
+    {
+        nlohmann::json candidateItems = nlohmann::json::array();
+        for (const CandidateViewItem &item : *items)
+        {
+            candidateItems.push_back({{"text", item.text},
+                                      {"annotation", item.annotation},
+                                      {"badge", item.badge},
+                                      {"translation", item.translation},
+                                      {"fixedPosition", item.fixed_position}});
+        }
+        script.append(LR"(
+(function (root, items) {
+  if (!root) return;
+  root.querySelectorAll('.row-wrapper').forEach((wrapper, index) => {
+    const slot = wrapper.querySelector('.cand-content');
+    const item = items[index];
+    if (!slot || !item) return;
+    const label = document.createElement('span');
+    label.textContent = item.text + item.annotation + item.badge;
+    if (item.fixedPosition) label.style.color = '#379AD3';
+    slot.replaceChildren(label);
+    if (item.translation) {
+      const translation = document.createElement('span');
+      translation.className = 'cand-translation';
+      translation.textContent = item.translation;
+      slot.append(translation);
+    }
+  });
+}
+)");
+        script.append(L")(document.getElementById('realContainer'), ");
+        script.append(string_to_wstring(candidateItems.dump()));
+        script.append(L");\n");
+    }
     script.append(L"window.ClearState();\n");
     script.append(kInstallCandidateHoverLockScript);
     DisarmCandidatePointerHover();
@@ -690,34 +692,36 @@ window.mouseBlockTimeout = setTimeout(() => {
     }
 }
 
-void InflateCandWnd(std::wstring &str)
+std::vector<std::wstring> CandidateTemplateSlots(const std::wstring &preedit, const Global::CandidatePageSnapshot &page,
+                                                 bool measuring)
 {
-    InflateCandWnd(str, nullptr);
+    std::wstring visiblePreedit = preedit;
+    if (measuring)
+    {
+        visiblePreedit.erase(std::remove(visiblePreedit.begin(), visiblePreedit.end(), L'\uE000'),
+                             visiblePreedit.end());
+    }
+    std::vector<std::wstring> slots;
+    slots.reserve(page.page_views.size() + 1);
+    slots.push_back(EscapeCandidateTemplateText(visiblePreedit));
+    for (const CandidateViewItem &view : page.page_views)
+    {
+        slots.push_back(measuring ? string_to_wstring(CandidateViewHtml(view)) : L" ");
+    }
+    return slots;
 }
 
-void InflateCandWnd(std::wstring &str, std::function<void()> onComplete)
+void InflateCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete)
 {
-    std::wstring result = InflateCandidateTemplate(BodyStringCandWnd, str);
-    UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete));
+    const std::wstring result =
+        InflateCandidateTemplate(BodyStringCandWnd, CandidateTemplateSlots(content.preedit, content.page, false));
+    UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete), &content.page.page_views);
 }
 
-void InflateCandWnd(std::wstring &str, std::function<void()> onComplete, bool contentOnly)
+void InflateMeasureDivCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete)
 {
-    (void)contentOnly;
-    std::wstring result = InflateCandidateTemplate(BodyStringCandWnd, str);
-    UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete));
-}
-
-void InflateMeasureDivCandWnd(std::wstring &str)
-{
-    InflateMeasureDivCandWnd(str, nullptr);
-}
-
-void InflateMeasureDivCandWnd(std::wstring &str, std::function<void()> onComplete)
-{
-    str.erase(std::remove(str.begin(), str.end(), L'\uE000'), str.end());
-    std::wstring result = InflateCandidateTemplate(::MeasureStringCandWnd, str);
-
+    const std::wstring result =
+        InflateCandidateTemplate(::MeasureStringCandWnd, CandidateTemplateSlots(content.preedit, content.page, true));
     UpdateMeasureContentWithJavaScript(webviewCandWnd, result, std::move(onComplete));
 }
 
@@ -1073,7 +1077,8 @@ HRESULT OnControllerCreatedCandWnd(     //
                             const std::wstring preedit = GetConfiguredCandidateWindowPreeditStyle() == "empty"
                                                              ? std::wstring{}
                                                              : GetPreeditWithCaretMarker();
-                            std::wstring measurement = preedit + L"," + Global::CandidateString;
+                            const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
+                            CandidateWindowContent measurement{preedit, *page};
                             InflateMeasureDivCandWnd(measurement, [hwnd]() { FineTuneWindow(hwnd); });
                         }
                         else if (type == "candidate")
@@ -1156,7 +1161,8 @@ HRESULT OnControllerCreatedCandWnd(     //
                     const std::wstring preedit = GetConfiguredCandidateWindowPreeditStyle() == "empty"
                                                      ? std::wstring{}
                                                      : GetPreeditWithCaretMarker();
-                    std::wstring str = preedit + L"," + Global::CandidateString;
+                    const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
+                    CandidateWindowContent str{preedit, *page};
                     InflateMeasureDivCandWnd(str, [hwnd]() {
                         if (!::is_global_wnd_cand_shown)
                         {

@@ -175,7 +175,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         }
         RaiseCandidateHostForShow(L"show-candidate");
 
-        std::wstring str = preedit + L"," + candidatePage->candidate_string;
+        CandidateWindowContent str{preedit, *candidatePage};
         const bool sameCaret = g_last_placed_caret_x == layoutCaret.x && g_last_placed_caret_y == layoutCaret.y;
         const bool alreadyVisible = IsCandidateHostPaintedVisible(hwnd);
         const bool layoutInflight = g_candidate_layout_inflight.load();
