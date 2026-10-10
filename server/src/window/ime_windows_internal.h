@@ -16,10 +16,8 @@
 #define WEBVIEW_DIAG_LOGF(...) DIAG_LOGF(__VA_ARGS__)
 
 constexpr UINT_PTR TIMER_ID_INIT_WEBVIEW_MENU = 2;
-constexpr UINT_PTR TIMER_ID_MOVE_WEBVIEW_SETTINGS = 3;
 constexpr UINT_PTR TIMER_ID_MOVE_WEBVIEW_FTB = 4;
 constexpr UINT_PTR TIMER_ID_CONFIG_SYNC = 7;
-constexpr UINT_PTR TIMER_ID_SETTINGS_ACTIVATION_RETRY = 8;
 constexpr UINT_PTR TIMER_ID_FTB_VISIBILITY_RECONCILE = 9;
 // Remeasure FTB after live DPI / display-mode changes (mirrors menu's INIT timer).
 constexpr UINT_PTR TIMER_ID_FTB_DPI_REMEASURE = 10;
@@ -52,7 +50,6 @@ constexpr UINT kCandidateShowDedupWindowMs = 250;
 // Long enough fallback when the page never posts ready (old HTML / failed JS).
 // Page-ready normally ends the grace earlier; until then the toolbar stays shown.
 constexpr UINT kFloatingToolbarPaintGraceMs = 6000;
-constexpr UINT WM_ACTIVATE_SETTINGS_WINDOW = WM_APP + 110;
 
 int FineTuneWindow(HWND hwnd);
 int FineTuneWindow(HWND hwnd, UINT firstFlag, UINT secondFlag);

@@ -127,8 +127,6 @@ ICoreWebView2Controller *ControllerForHost(HWND hwnd)
         return webviewControllerMenuWnd.Get();
     if (hwnd == ::global_hwnd_ftb)
         return webviewControllerFtbWnd.Get();
-    if (hwnd == ::global_hwnd_settings)
-        return webviewControllerSettingsWnd.Get();
     return nullptr;
 }
 
@@ -1368,35 +1366,23 @@ void ShutdownWebviews()
     {
         webviewControllerFtbWnd->Close();
     }
-    if (webviewControllerSettingsWnd)
-    {
-        webviewControllerSettingsWnd->Close();
-    }
 
     webviewController2CandWnd.Reset();
     webviewController3CandWnd.Reset();
     webviewController2MenuWnd.Reset();
     webviewController2FtbWnd.Reset();
-    webviewController2SettingsWnd.Reset();
 
     webview3CandWnd.Reset();
     webview3MenuWnd.Reset();
     webview3FtbWnd.Reset();
-    webview3SettingsWnd.Reset();
 
     webviewCandWnd.Reset();
     webviewMenuWnd.Reset();
     webviewFtbWnd.Reset();
-    webviewSettingsWnd.Reset();
 
-    webviewCompositionControllerSettingsWnd.Reset();
     webviewControllerCandWnd.Reset();
     webviewControllerMenuWnd.Reset();
     webviewControllerFtbWnd.Reset();
-    webviewControllerSettingsWnd.Reset();
 
-    dcompRootVisualSettingsWnd.Reset();
-    dcompTargetSettingsWnd.Reset();
-    dcompDeviceSettingsWnd.Reset();
     smallWindowWebviewEnvironment.Reset();
 }

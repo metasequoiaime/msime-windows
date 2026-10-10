@@ -178,27 +178,6 @@ void SyncMenuFloatingToolbarToggle();
 void ResetMenuInputSchemeSubmenu();
 
 //
-// settings 窗口 webview
-//
-inline ComPtr<ICoreWebView2Controller> webviewControllerSettingsWnd;
-inline ComPtr<ICoreWebView2CompositionController> webviewCompositionControllerSettingsWnd;
-inline ComPtr<ICoreWebView2> webviewSettingsWnd;
-inline ComPtr<ICoreWebView2_3> webview3SettingsWnd;
-inline ComPtr<ICoreWebView2Controller2> webviewController2SettingsWnd;
-inline ComPtr<IDCompositionDevice> dcompDeviceSettingsWnd;
-inline ComPtr<IDCompositionTarget> dcompTargetSettingsWnd;
-inline ComPtr<IDCompositionVisual> dcompRootVisualSettingsWnd;
-inline RECT maximizeButtonRectSettingsWnd{};
-inline bool hasMaximizeButtonRectSettingsWnd = false;
-inline bool isMaximizeButtonHoverSettingsWnd = false;
-
-inline std::wstring HTMLStringSettingsWnd = LR"()";
-
-void InitWebviewSettingsWnd(HWND hwnd);
-void PostSettingsWindowState(HWND hwnd);
-void PostSettingsConfig();
-
-//
 // floating toolbar 窗口 webview
 //
 inline ComPtr<ICoreWebView2Controller> webviewControllerFtbWnd;

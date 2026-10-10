@@ -246,7 +246,6 @@ HRESULT OnControllerCreatedMenuWnd(     //
                         if (SetConfiguredFloatingToolbarEnabled(needShown))
                         {
                             ApplyConfiguredFloatingToolbarVisibility(L"tray-menu-toggle");
-                            PostSettingsConfig();
                         }
                     }
                     else if (type == "settings")
@@ -298,7 +297,6 @@ HRESULT OnControllerCreatedMenuWnd(     //
                         if (scheme != GetConfiguredInputSchemeName() && SetConfiguredInputScheme(scheme))
                         {
                             ApplyConfiguredInputScheme();
-                            PostSettingsConfig();
                         }
                     }
                     else if (type == "contentTruncated")

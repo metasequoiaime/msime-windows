@@ -428,7 +428,6 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         UpdateFtbCharacterSetState(::webviewFtbWnd);
         FloatingToolbarPresenter::Instance().ApplyTheme();
         FanyNamedPipe::EnqueueRefreshCandidatePageTask();
-        PostSettingsConfig();
         return 0;
     }
 

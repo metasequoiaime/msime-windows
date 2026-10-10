@@ -570,16 +570,6 @@ int PrepareHtmlForWnds()
         ReadHtmlFileWithFallback(entireHtmlPathMenuWnd, assetPath + L"/html/webview2/menu/default.html");
 
     //
-    // settings 窗口
-    // 这里暂时没有用到，因为 settings 窗口使用的是映射 url 导航
-    //
-    /*
-    std::wstring htmlSettingsWnd = L"/html/webview2/settings/default.html";
-    std::wstring entireHtmlPathSettingsWnd = assetPath + htmlSettingsWnd;
-    ::HTMLStringSettingsWnd = ReadHtmlFile(entireHtmlPathSettingsWnd);
-    */
-
-    //
     // floating toolbar 窗口
     //
     const bool ftbLight = ResolveConfiguredTheme(GetConfiguredThemeFtb()) == "light";

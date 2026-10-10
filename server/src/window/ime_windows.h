@@ -10,8 +10,6 @@ inline WCHAR szWindowClass[] = L"metasequoiaime_windows";
 inline WCHAR lpWindowNameCand[] = L"metaseuqoiaimecandwnd";
 /* 菜单窗口 */
 inline WCHAR lpWindowNameMenu[] = L"metaseuqoiaimemenuwnd";
-/* settings 窗口 */
-inline WCHAR lpWindowNameSettings[] = L"Settings";
 /* floating toolbar 窗口 */
 inline WCHAR lpWindowNameFtb[] = L"metaseuqoiaimeftbwnd";
 inline WCHAR lpWindowNameCaretState[] = L"metasequoiaimecaretstatewnd";
@@ -24,11 +22,8 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
 LRESULT CALLBACK WndProcMenuWindow(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 // Last language-bar icon rectangle, retained for menu remeasurement and DPI changes
 RECT GetTrayMenuAnchorRect();
-LRESULT CALLBACK WndProcSettingsWindow(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK WndProcFtbWindow(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK WndProcCaretStateWindow(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
-bool ActivateSettingsWindow(HWND hwnd);
-void RequestSettingsWindowActivation(HWND hwnd);
 void SetCandidateHostCloaked(bool cloaked);
 // reason identifies the trigger in the floating-toolbar diagnostic trace. The
 // whole class of bugs here is "nothing ever called this", so the caller has to

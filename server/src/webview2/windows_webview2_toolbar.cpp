@@ -452,10 +452,7 @@ HRESULT OnControllerCreatedFtbWnd(      //
                     {
                         const std::string next =
                             GetConfiguredCharacterSet() == "traditional" ? "simplified" : "traditional";
-                        if (SetConfiguredCharacterSet(next))
-                        {
-                            PostSettingsConfig();
-                        }
+                        SetConfiguredCharacterSet(next);
                     }
                     else if (type == "openSettings")
                     {

@@ -514,10 +514,7 @@ void FloatingToolbarPresenter::RebuildScene()
         const bool traditional = GetConfiguredCharacterSet() == "traditional";
         addGlyph(traditional ? kIconTraditional : kIconSimplified, []() {
             const std::string next = GetConfiguredCharacterSet() == "traditional" ? "simplified" : "traditional";
-            if (SetConfiguredCharacterSet(next))
-            {
-                PostSettingsConfig();
-            }
+            SetConfiguredCharacterSet(next);
         });
     }
     if (items.emoji)

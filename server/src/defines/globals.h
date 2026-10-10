@@ -54,15 +54,6 @@ inline HWND global_hwnd_menu = NULL;
 inline bool is_global_wnd_menu_shown = false;
 
 //
-// settings 窗口
-//
-inline int SETTINGS_WINDOW_WIDTH = 900;
-inline int SETTINGS_WINDOW_HEIGHT = 680;
-
-inline HWND global_hwnd_settings = NULL;
-inline bool is_global_wnd_settings_shown = false;
-
-//
 // 悬浮工具栏窗口
 //
 inline int FTB_WND_WIDTH = 207;

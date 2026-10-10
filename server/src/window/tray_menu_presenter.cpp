@@ -233,7 +233,6 @@ void TrayMenuPresenter::RebuildScene()
         if (SetConfiguredFloatingToolbarEnabled(on))
         {
             ApplyConfiguredFloatingToolbarVisibility(L"tray-menu-toggle");
-            PostSettingsConfig();
         }
     });
 
@@ -260,7 +259,6 @@ void TrayMenuPresenter::RebuildScene()
             if (scheme != GetConfiguredInputSchemeName() && SetConfiguredInputScheme(scheme))
             {
                 ApplyConfiguredInputScheme();
-                PostSettingsConfig();
             }
         });
         schemeStack->AddChild(item);

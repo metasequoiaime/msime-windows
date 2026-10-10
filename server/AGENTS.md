@@ -2,7 +2,7 @@
 
 组织级约定见 [组织 AGENTS.md](https://github.com/metasequoiaime/.github/blob/main/AGENTS.md)，仓库地图和组件之间的边界见[仓库根 AGENTS.md](../AGENTS.md)。本文件补充本组件的实现、数据和验证规则，路径都相对于 `server/`。
 
-本组件是常驻后端进程：输入引擎与候选状态、配置、词典、Named Pipe 服务，以及候选窗、悬浮工具栏、托盘菜单、设置窗口的原生宿主与 WebView2 控制器。
+本组件是常驻后端进程：输入引擎与候选状态、配置、词典、Named Pipe 服务，以及候选窗、悬浮工具栏、托盘菜单的原生宿主与 WebView2 控制器。设置页（`MetasequoiaImeSettings.exe`）由本组件的 `server/src/settings/` 单独构成一个进程，不在服务端进程内。
 
 ## vcpkg_installed 的解析
 
@@ -76,7 +76,8 @@ Boost 是静态链接但没有写进 `vcpkg.json`，所以只能用 classic 模�
 - 候选内容和输入状态的权威仍在 Server/引擎，网页只负责展示与发出用户动作；不要在网页侧复制
   候选选择、翻页、输入模式或配置持久化的核心状态机。
 - 设置页前端位于 `ui-html/webview2/settings/ime-settings/`，其中包含 Vite/TypeScript
-  工程；设置窗口的原生创建、激活、WebView2 承载及与配置系统的桥接仍由 Server 负责。
+  工程；设置窗口的原生创建、激活、WebView2 承载及与配置系统的桥接都在本组件的独立进程
+  `MetasequoiaImeSettings.exe`（`server/src/settings/`）里，服务端进程内没有内嵌的设置宿主。
 
 ### 尺寸、坐标与 DPI
 
