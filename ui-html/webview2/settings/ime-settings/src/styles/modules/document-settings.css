@@ -348,6 +348,13 @@
   font-size: 16px;
 }
 
+.about-link-detail {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .about-grid {
   margin-top: 0;
 }
@@ -462,6 +469,47 @@
     grid-template-columns: 1fr;
     gap: 5px;
   }
+}
+
+.help-link {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.help-link:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+/* 帮助页的默认输入法：说明与状态在左，两个按钮在右 */
+.default-ime-section {
+  margin-top: 24px;
+  padding: 20px 24px;
+}
+
+.default-ime-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.default-ime-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.default-ime-status {
+  margin-top: 8px;
+}
+
+.default-ime-status[data-kind="success"] {
+  color: var(--accent-color);
+}
+
+.default-ime-status[data-kind="error"] {
+  color: var(--danger-text);
 }
 
 /* 帮助页的网络代理：与其他设置页同款的卡片与单选组，地址输入沿用 AI 页的输入框外观 */

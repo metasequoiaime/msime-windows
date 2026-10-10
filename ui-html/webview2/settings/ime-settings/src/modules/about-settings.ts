@@ -8,7 +8,8 @@ const UPDATE_MANIFEST_URL = 'https://msime.app/update.json';
 const RELEASES_PAGE_URL = 'https://github.com/metasequoiaime/MSIME-Windows/releases';
 // msime.app's download mirror (Aliyun OSS, Hong Kong). GitHub release downloads from mainland China often run at tens of KB/s.
 const DOWNLOAD_MIRROR_PREFIX = 'https://dl.msime.app/gh/';
-const LICENSE_URL = 'https://github.com/metasequoiaime/MSIME-Windows/blob/main/LICENSE';
+const WEBSITE_URL = 'https://msime.app/';
+const LICENSE_URL ='https://github.com/metasequoiaime/MSIME-Windows/blob/main/LICENSE';
 const PRIVACY_URL = 'https://github.com/metasequoiaime/MSIME-Windows/blob/main/PRIVACY.md';
 const REQUEST_TIMEOUT_MS = 10000;
 
@@ -77,6 +78,7 @@ export function setupAboutSettings(): void {
   // policy that did nothing when pressed. They are wired to the documents that actually govern the
   // software; the terms a user agrees to for an open-source product are its licence.
   for (const [id, url] of [
+    ['about-website-link', WEBSITE_URL],
     ['about-license-link', LICENSE_URL],
     ['about-privacy-link', PRIVACY_URL],
   ] as const) {

@@ -6,6 +6,7 @@
 #include "settings/settings_launcher.h"
 #include "settings/api_credential_test.h"
 #include "settings/collocation_model.h"
+#include "settings/default_input_method.h"
 #include "settings/settings_splash.h"
 #include "settings/dictionary_manager.h"
 #include "settings/serial_task_queue.h"
@@ -1566,6 +1567,41 @@ void HandleWebMessage(HWND hwnd, ICoreWebView2WebMessageReceivedEventArgs *args)
                 return [message = std::move(message)] {
                     if (g_webview)
                         g_webview->PostWebMessageAsJson(message.c_str());
+                };
+            });
+        }
+        else if (type == "defaultImeRequest")
+        {
+            const auto &data = value.at("data").as_object();
+            const std::string request_id = json::value_to<std::string>(data.at("requestId"));
+            const std::string action = json::value_to<std::string>(data.at("action"));
+            if (action == "openSystemSettings")
+                default_input_method::OpenSystemSettings(hwnd);
+            // 设为默认会调用 input.dll 并复核注册表，放到工作线程，避免卡住设置窗口。
+            g_worker->Submit([request_id, action]() -> SerialTaskQueue::Completion {
+                bool ok = true;
+                std::string message;
+                if (action == "setDefault")
+                {
+                    ok = default_input_method::SetAsDefault(message);
+                    if (ok)
+                        message = "已设为默认输入法，新打开的窗口会使用水杉输入法。";
+                }
+                const default_input_method::Status status = default_input_method::QueryStatus();
+                json::value response = {{"type", "defaultImeResponse"},
+                                        {"requestId", request_id},
+                                        {"action", action},
+                                        {"ok", ok},
+                                        {"message", message},
+                                        {"enabled", status.enabled},
+                                        {"isDefault", status.is_default},
+                                        {"protocolVersion", metasequoia::webview::Version}};
+                if (!metasequoia::webview::Validate(response, "server"))
+                    throw std::runtime_error("Invalid default IME response");
+                auto serialized = string_to_wstring(json::serialize(response));
+                return [serialized = std::move(serialized)] {
+                    if (g_webview)
+                        g_webview->PostWebMessageAsJson(serialized.c_str());
                 };
             });
         }

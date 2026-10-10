@@ -441,6 +441,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/api_credential_test.h"
     "./src/settings/collocation_model.cpp"
     "./src/settings/collocation_model.h"
+    "./src/settings/default_input_method.cpp"
+    "./src/settings/default_input_method.h"
     "./src/settings/settings_splash.cpp"
     "./src/settings/settings_splash.h"
     "./src/settings/settings_launcher.cpp"

@@ -3,6 +3,7 @@
 
   <div class="section help-document help-simple-document">
     <p>水杉输入法是一款 Windows 平台的中文输入法。目前支持 Windows11/Windows10 平台。</p>
+    <p>完整的使用说明见 <a class="help-link" href="https://github.com/metasequoiaime/msime-windows/wiki">Wiki</a>，遇到问题可以先查看 <a class="help-link" href="https://github.com/metasequoiaime/msime-windows/wiki/FAQ">常见问题（FAQ）</a>。</p>
 
     <div class="help-simple-section">
       <div class="section-title">快速上手</div>
@@ -14,6 +15,20 @@
       <p>支持全拼、双拼和五笔。可以在设置窗口下的输入功能分区进行切换。全拼和双拼均支持辅助码。辅助码方案目前支持自然码辅助码、蓝天小雨点、首右2.0、首右plus、小鹤和拼音加加，也可以把自己的辅助码文件放进数据目录下的 helpcodes\custom 文件夹导入。可以在设置的辅助码分区进行辅助码的开关和切换。打字过程中，全拼使用辅助码需要用大写的字母唤起单码和双码辅助。双拼在开启辅助码的状态下默认使用单码辅助，第二个码是大写字母的情况下，则会使用完整双码进行筛选。</p>
       <p>语音识别和 AI 联想需要自行填入 API 和 token。内测期间，将默认使用开发者个人的 api 和 token，仅供测试使用。云联想目前支持谷歌的云接口，请用户注意网络问题，需要时可在下方设置网络代理。</p>
       <p>更多功能欢迎自由探索~</p>
+    </div>
+  </div>
+
+  <div class="section default-ime-section">
+    <div class="default-ime-row">
+      <div>
+        <div class="section-title">默认输入法</div>
+        <div class="input-setting-description">设为默认后，新打开的窗口会直接使用水杉输入法，不必每次按 Win + Space 切换。等同于系统设置「高级键盘设置 → 替代默认输入法」</div>
+        <div id="defaultImeStatus" class="input-setting-description default-ime-status" role="status" aria-live="polite">正在检查…</div>
+      </div>
+      <div class="default-ime-actions">
+        <button id="defaultImeSetButton" type="button" class="restart-server-button" disabled>设为默认</button>
+        <button id="defaultImeSystemButton" type="button" class="restart-server-button">系统设置</button>
+      </div>
     </div>
   </div>
 
