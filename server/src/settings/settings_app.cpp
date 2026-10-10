@@ -125,6 +125,36 @@ void TraceStartup(const char *stage)
     }
 }
 
+// WebView2 起不来时设置窗口只剩一块空白（运行时缺失时同步失败、回调根本不来，splash 会一直转），
+// 用户看不出是怎么回事。把原因和下载地址说清楚，然后退出，不留一个空窗口。
+void ReportWebViewStartupFailure(HWND hwnd, const wchar_t *stage, HRESULT hr)
+{
+    static bool reported = false;
+    if (reported)
+        return;
+    reported = true;
+    TraceStartup("ui: webview startup failed");
+    SettingsSplash::Dismiss();
+
+    wchar_t message[1024]{};
+    swprintf_s(message,
+               L"设置页面需要 Microsoft Edge WebView2 Runtime，但它没能启动（%s，错误码 0x%08X）。\r\n"
+               L"The settings page needs the Microsoft Edge WebView2 Runtime, but it could not start "
+               L"(%s, error 0x%08X).\r\n\r\n"
+               L"输入法打字不受影响，只有设置页面需要它。\r\n"
+               L"Typing is not affected; only the settings page needs it.\r\n\r\n"
+               L"请安装或修复 WebView2 Runtime 后重新打开设置：\r\n"
+               L"Install or repair the WebView2 Runtime, then open the settings again:\r\n"
+               L"%s\r\n\r\n"
+               L"是否现在打开下载链接？\r\nOpen the download link now?",
+               stage, static_cast<unsigned>(hr), stage, static_cast<unsigned>(hr),
+               CommonUtils::kWebView2RuntimeDownloadUrl);
+    if (MessageBoxW(hwnd, message, L"水杉输入法 / Metasequoia IME", MB_YESNO | MB_ICONERROR | MB_SETFOREGROUND) ==
+        IDYES)
+        ShellExecuteW(hwnd, L"open", CommonUtils::kWebView2RuntimeDownloadUrl, nullptr, nullptr, SW_SHOWNORMAL);
+    DestroyWindow(hwnd);
+}
+
 nlohmann::json CandidateColorsToJson(const CandidateSkinCatalog::CandidateColors &colors)
 {
     nlohmann::json json = nlohmann::json::object();
@@ -1737,31 +1767,42 @@ void InitWebView(HWND hwnd)
                                             L"--disable-sync "
                                             L"--disable-prompt-on-repost "
                                             L"--no-first-run");
-    CreateCoreWebView2EnvironmentWithOptions(
+    const HRESULT create_result = CreateCoreWebView2EnvironmentWithOptions(
         nullptr, user_data.c_str(), options.Get(),
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [hwnd](HRESULT result, ICoreWebView2Environment *environment) -> HRESULT {
                 TraceStartup("ui: environment created");
                 if (FAILED(result) || !environment)
                 {
-                    SettingsSplash::Dismiss();
-                    return FAILED(result) ? result : E_FAIL;
+                    const HRESULT hr = FAILED(result) ? result : E_FAIL;
+                    ReportWebViewStartupFailure(hwnd, L"environment", hr);
+                    return hr;
                 }
+                // ICoreWebView2Environment3 需要较新的运行时，过旧的 WebView2 会停在这里。
                 ComPtr<ICoreWebView2Environment3> environment3;
                 if (FAILED(environment->QueryInterface(IID_PPV_ARGS(&environment3))))
                 {
-                    SettingsSplash::Dismiss();
+                    ReportWebViewStartupFailure(hwnd, L"environment3", E_NOINTERFACE);
                     return E_NOINTERFACE;
                 }
-                return environment3->CreateCoreWebView2CompositionController(
+                const HRESULT controller_request = environment3->CreateCoreWebView2CompositionController(
                     hwnd,
                     Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
                         [hwnd](HRESULT controller_result, ICoreWebView2CompositionController *controller) -> HRESULT {
-                            return OnControllerCreated(hwnd, controller_result, controller);
+                            const HRESULT hr = OnControllerCreated(hwnd, controller_result, controller);
+                            if (FAILED(hr))
+                                ReportWebViewStartupFailure(hwnd, L"controller", hr);
+                            return hr;
                         })
                         .Get());
+                if (FAILED(controller_request))
+                    ReportWebViewStartupFailure(hwnd, L"controller", controller_request);
+                return controller_request;
             })
             .Get());
+    // 运行时缺失时这里同步返回失败，上面的回调不会被调用。
+    if (FAILED(create_result))
+        ReportWebViewStartupFailure(hwnd, L"environment", create_result);
 }
 
 UINT32 MouseKeys(WPARAM w_param)

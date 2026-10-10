@@ -535,6 +535,9 @@ const std::string &GetConfiguredUiBackend();
 bool SetConfiguredUiBackend(const std::string &backend);
 // Process-lifetime renderer chosen at InitImeConfig. Independent of later reloads.
 bool UseD2dSmallWindowUi();
+// Switch this process to the D2D renderer without touching the configured value, so the user's
+// choice comes back on the next start. Only valid before the candidate window is created.
+void FallBackToD2dSmallWindowUi();
 // "fluent" | "wechat" | "graphite" | "willow_green" | "autumn_osmanthus" | "microsoft"
 // — candidate-window and floating-toolbar skin.
 const std::string &GetConfiguredCandidateSkin();

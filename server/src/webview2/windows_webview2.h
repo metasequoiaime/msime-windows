@@ -99,6 +99,9 @@ std::pair<double, double> LastCandidateSlotMeasuredSize();
 void InflateMeasureDivCandWnd(std::wstring &str);
 void InflateMeasureDivCandWnd(std::wstring &str, std::function<void()> onComplete);
 void InitSmallWindowWebviews(HWND candHwnd, HWND menuHwnd, HWND ftbHwnd);
+// appearance.ui_backend = "webview2" but no usable WebView2 Runtime: run this process on the D2D
+// renderer so typing still works. Call after InitImeConfig and before CreateCandidateWindow.
+void FallBackToD2dIfWebView2RuntimeMissing();
 void ShutdownWebviews();
 void UpdateSmallWindowWebviewVisibility(HWND hwnd, bool visible);
 // Kick (or retry) shared small-window WebView2 init. Returns true when the menu

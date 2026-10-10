@@ -116,6 +116,7 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
 
     // Initialize config
     InitImeConfig();
+    FallBackToD2dIfWebView2RuntimeMissing();
     VoiceInput::Initialize();
     Global::candidate_ui.page_size = GetConfiguredCandidatePageSize();
 
