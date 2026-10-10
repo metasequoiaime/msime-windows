@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 // Built once on the candidate worker. Renderers only adapt this presentation data;
 // they do not query dictionaries, derive helpcodes or decide which source gets a badge.
@@ -68,4 +69,19 @@ inline std::string CandidateViewHtml(const CandidateViewItem &item)
     if (!item.translation.empty())
         html += "<span class=\"cand-translation\">" + EscapeCandidateViewHtml(item.translation) + "</span>";
     return html;
+}
+
+// Identity of a rendered page, used to drop duplicate repaints. Items keep raw commas, so a ',' join cannot tell
+// ["a,b", "c"] from ["a", "b,c"]; length-prefix each item instead.
+inline std::string CandidatePageSignature(const std::vector<CandidateViewItem> &views)
+{
+    std::string signature;
+    for (const CandidateViewItem &view : views)
+    {
+        const std::string html = CandidateViewHtml(view);
+        signature += std::to_string(html.size());
+        signature += ':';
+        signature += html;
+    }
+    return signature;
 }

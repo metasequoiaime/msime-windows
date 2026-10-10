@@ -89,10 +89,11 @@ void DisableMouseForAWhileWhenShownCandWnd(ComPtr<ICoreWebView2> webview);
 // has actually moved (GetCursorPos), not after a Chromium mouse event.
 void DisarmCandidatePointerHover();
 void MaybeArmCandidatePointerHover();
+// Owns what it renders: the measure and FineTune callbacks outlive the locals that build it.
 struct CandidateWindowContent
 {
-    const std::wstring &preedit;
-    const Global::CandidatePageSnapshot &page;
+    std::wstring preedit;
+    Global::CandidatePageSnapshotPtr page;
     bool show_preedit;
 };
 

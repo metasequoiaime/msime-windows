@@ -559,7 +559,7 @@ int FineTuneWindow(HWND hwnd)
             // This callback runs long after the worker posted the show request, so take the published page instead of
             // the vectors it may already be rebuilding.
             const Global::CandidatePageSnapshotPtr candidatePage = Global::LoadCandidatePageSnapshot();
-            CandidateWindowContent str{preedit, *candidatePage, showPreedit};
+            CandidateWindowContent str{preedit, candidatePage, showPreedit};
             // Empty composition with no candidates means the session already ended.
             if (GlobalIme::composition.raw_input_with_cases.empty() && candidatePage->page_views.empty())
             {

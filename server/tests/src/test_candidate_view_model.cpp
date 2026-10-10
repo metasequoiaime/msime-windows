@@ -24,6 +24,17 @@ TEST_CASE(candidate_view_keeps_commas_and_private_use_characters)
                std::string("a,\xEF\x80\x80<span class=\"cand-translation\">b,\xEF\x80\x80</span>"));
 }
 
+TEST_CASE(candidate_page_signature_distinguishes_comma_split_between_items)
+{
+    CandidateViewItem ab, c, a, bc;
+    ab.text = "a,b";
+    c.text = "c";
+    a.text = "a";
+    bc.text = "b,c";
+    REQUIRE(CandidatePageSignature({ab, c}) != CandidatePageSignature({a, bc}));
+    REQUIRE_EQ(CandidatePageSignature({ab, c}), CandidatePageSignature({ab, c}));
+}
+
 TEST_CASE(fixed_position_candidates_get_pin_badge_visible_in_both_backends)
 {
     CandidateViewItem item;
