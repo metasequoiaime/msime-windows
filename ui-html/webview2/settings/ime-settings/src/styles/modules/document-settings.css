@@ -500,6 +500,50 @@
   gap: 8px;
 }
 
+/* 与关于页、反馈页的按钮同一套次要按钮配色；「设为默认」用强调色作为主操作 */
+.default-ime-button {
+  min-width: 92px;
+  padding: 7px 14px;
+  color: var(--text-color);
+  background: var(--button-secondary-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, transform .05s ease;
+}
+
+.default-ime-button:hover:not(:disabled) {
+  background: var(--button-secondary-hover);
+  border-color: var(--border-strong);
+}
+
+.default-ime-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.default-ime-button:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.default-ime-button:disabled {
+  cursor: default;
+  opacity: .5;
+}
+
+.default-ime-primary {
+  color: #fff;
+  background: var(--accent-strong);
+  border-color: transparent;
+}
+
+.default-ime-primary:hover:not(:disabled) {
+  background: var(--accent-color);
+  border-color: transparent;
+}
+
 .default-ime-status {
   margin-top: 8px;
 }
