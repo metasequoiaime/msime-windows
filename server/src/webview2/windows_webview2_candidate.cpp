@@ -501,7 +501,8 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
         script.append(L"); }\n");
     }
     script.append(L"if (window.SetCandidatePreeditVisible) { window.SetCandidatePreeditVisible(");
-    script.append(GetConfiguredCandidateWindowPreeditStyle() == "empty" ? L"false" : L"true");
+    script.append(content ? (content->show_preedit ? L"true" : L"false")
+                          : (GetConfiguredCandidateWindowPreeditStyle() == "empty" ? L"false" : L"true"));
     script.append(L"); }\n");
     script.append(L"if (window.SetPreeditCaret) { window.SetPreeditCaret(); }\n");
     if (content)
@@ -520,7 +521,7 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
     else
     {
         const nlohmann::json stickyKey =
-            wstring_to_string(GetPreeditWithCaretMarker()) + "#" + std::to_string(content->page.page_index);
+            wstring_to_string(content->preedit) + "#" + std::to_string(content->page.page_index);
         script.append(L"window.MsimeStickyCandidateCard(false, ");
         script.append(string_to_wstring(stickyKey.dump()));
         script.append(L");\n");
@@ -697,19 +698,18 @@ window.mouseBlockTimeout = setTimeout(() => {
     }
 }
 
-std::vector<std::wstring> CandidateTemplateSlots(const std::wstring &preedit, const Global::CandidatePageSnapshot &page,
-                                                 bool measuring)
+std::vector<std::wstring> CandidateTemplateSlots(const CandidateWindowContent &content, bool measuring)
 {
-    std::wstring visiblePreedit = preedit;
+    std::wstring visiblePreedit = content.show_preedit ? content.preedit : std::wstring{};
     if (measuring)
     {
         visiblePreedit.erase(std::remove(visiblePreedit.begin(), visiblePreedit.end(), L'\uE000'),
                              visiblePreedit.end());
     }
     std::vector<std::wstring> slots;
-    slots.reserve(page.page_views.size() + 1);
+    slots.reserve(content.page.page_views.size() + 1);
     slots.push_back(EscapeCandidateTemplateText(visiblePreedit));
-    for (const CandidateViewItem &view : page.page_views)
+    for (const CandidateViewItem &view : content.page.page_views)
     {
         slots.push_back(measuring ? string_to_wstring(CandidateViewHtml(view)) : L" ");
     }
@@ -718,15 +718,13 @@ std::vector<std::wstring> CandidateTemplateSlots(const std::wstring &preedit, co
 
 void InflateCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete)
 {
-    const std::wstring result =
-        InflateCandidateTemplate(BodyStringCandWnd, CandidateTemplateSlots(content.preedit, content.page, false));
+    const std::wstring result = InflateCandidateTemplate(BodyStringCandWnd, CandidateTemplateSlots(content, false));
     UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete), &content);
 }
 
 void InflateMeasureDivCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete)
 {
-    const std::wstring result =
-        InflateCandidateTemplate(::MeasureStringCandWnd, CandidateTemplateSlots(content.preedit, content.page, true));
+    const std::wstring result = InflateCandidateTemplate(::MeasureStringCandWnd, CandidateTemplateSlots(content, true));
     UpdateMeasureContentWithJavaScript(webviewCandWnd, result, std::move(onComplete));
 }
 
@@ -1079,11 +1077,10 @@ HRESULT OnControllerCreatedCandWnd(     //
                         }
                         else if (type == "contextMenuClosed")
                         {
-                            const std::wstring preedit = GetConfiguredCandidateWindowPreeditStyle() == "empty"
-                                                             ? std::wstring{}
-                                                             : GetPreeditWithCaretMarker();
+                            const bool showPreedit = GetConfiguredCandidateWindowPreeditStyle() != "empty";
+                            const std::wstring preedit = GetPreeditWithCaretMarker();
                             const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
-                            CandidateWindowContent measurement{preedit, *page};
+                            CandidateWindowContent measurement{preedit, *page, showPreedit};
                             InflateMeasureDivCandWnd(measurement, [hwnd]() { FineTuneWindow(hwnd); });
                         }
                         else if (type == "candidate")
@@ -1163,11 +1160,10 @@ HRESULT OnControllerCreatedCandWnd(     //
                 }
                 if (success && ::is_global_wnd_cand_shown)
                 {
-                    const std::wstring preedit = GetConfiguredCandidateWindowPreeditStyle() == "empty"
-                                                     ? std::wstring{}
-                                                     : GetPreeditWithCaretMarker();
+                    const bool showPreedit = GetConfiguredCandidateWindowPreeditStyle() != "empty";
+                    const std::wstring preedit = GetPreeditWithCaretMarker();
                     const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
-                    CandidateWindowContent str{preedit, *page};
+                    CandidateWindowContent str{preedit, *page, showPreedit};
                     InflateMeasureDivCandWnd(str, [hwnd]() {
                         if (!::is_global_wnd_cand_shown)
                         {

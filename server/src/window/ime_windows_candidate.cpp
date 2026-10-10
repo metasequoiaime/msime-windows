@@ -112,14 +112,14 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             (void)0;
         }
         const POINT layoutCaret = GetCandidateLayoutCaret();
-        const std::wstring preedit =
-            GetConfiguredCandidateWindowPreeditStyle() == "empty" ? std::wstring{} : GetPreeditWithCaretMarker();
+        const bool showPreedit = GetConfiguredCandidateWindowPreeditStyle() != "empty";
+        const std::wstring preedit = GetPreeditWithCaretMarker();
         // Suppress a repaint that would reproduce the frame already on screen.
         // g_candidate_force_layout marks the cases (DPI / display change) where
         // the same content must still be re-laid out, so never dedup through it.
         const std::wstring frameSignature =
-            fmt::format(L"{}|{}|{},{}|{}", preedit, candidatePage->candidate_string, layoutCaret.x, layoutCaret.y,
-                        candidatePage->selected_index_in_page);
+            fmt::format(L"{}|{}|{},{}|{}", showPreedit ? preedit : std::wstring{}, candidatePage->candidate_string,
+                        layoutCaret.x, layoutCaret.y, candidatePage->selected_index_in_page);
         if (::is_global_wnd_cand_shown && !g_candidate_force_layout.load() &&
             frameSignature == g_last_rendered_candidate_signature &&
             updateStartedTick - g_last_rendered_candidate_tick < kCandidateShowDedupWindowMs)
@@ -175,7 +175,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         }
         RaiseCandidateHostForShow(L"show-candidate");
 
-        CandidateWindowContent str{preedit, *candidatePage};
+        CandidateWindowContent str{preedit, *candidatePage, showPreedit};
         const bool sameCaret = g_last_placed_caret_x == layoutCaret.x && g_last_placed_caret_y == layoutCaret.y;
         const bool alreadyVisible = IsCandidateHostPaintedVisible(hwnd);
         const bool layoutInflight = g_candidate_layout_inflight.load();

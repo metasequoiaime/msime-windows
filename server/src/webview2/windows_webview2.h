@@ -93,6 +93,7 @@ struct CandidateWindowContent
 {
     const std::wstring &preedit;
     const Global::CandidatePageSnapshot &page;
+    bool show_preedit;
 };
 
 void InflateCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete = nullptr);
