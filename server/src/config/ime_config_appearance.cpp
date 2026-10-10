@@ -231,6 +231,11 @@ bool UseD2dSmallWindowUi()
            UiBackendPolicy::Backend::Native;
 }
 
+void FallBackToD2dSmallWindowUi()
+{
+    g_ui_backend_active = "d2d";
+}
+
 const std::string &GetConfiguredCandidateSkin()
 {
     return g_candidate_skin;

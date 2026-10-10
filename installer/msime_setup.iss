@@ -200,9 +200,15 @@ const
     下载页也统一给简体中文版，省得用户落到英文页上再自己切。}
   WebView2DownloadUrl =
     'https://developer.microsoft.com/zh-cn/microsoft-edge/webview2';
+  { Evergreen Bootstrapper 直链，点开就是安装器。}
+  WebView2DirectUrl = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703';
   VCRuntimeKey = 'Software\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
   VCRuntimeDownloadUrl =
     'https://learn.microsoft.com/zh-cn/cpp/windows/latest-supported-vc-redist?view=msvc-170';
+  { 微软给的「最新受支持 v14 x64 运行库」固定直链。}
+  VCRuntimeDirectUrl = 'https://aka.ms/vc14/vc_redist.x64.exe';
+  { 见 VCRuntimeInstalledInView 上方的说明。}
+  VCRuntimeMinMinor = 40;
 
 var
   VersionDirName: String;
@@ -215,9 +221,10 @@ var
   DataDirAdoptedEmpty: Boolean;
 
 { WebView2 Runtime 与 VC 运行库都不随包分发：前者有自己的 Evergreen 更新通道，
-  后者是系统级共享组件，安装器不该替用户装。但缺了任何一个，输入法装完就是坏的，
-  而故障现场在安装结束之后——Server 直接起不来，或者候选窗一片空白，用户看不到
-  任何解释。所以在安装开始前查一遍，把原因当场说清楚。
+  后者是系统级共享组件，安装器不该替用户装。缺 VC 运行库 Server 直接起不来；
+  缺 WebView2 设置页打不开（默认 D2D 候选窗照常可用，选了 WebView2 渲染的
+  Server 启动时会临时退回 D2D）。故障现场都在安装结束之后，用户看不到任何解释，
+  所以在安装开始前查一遍，把原因当场说清楚。
 
   返回空串表示没装；否则是 pv 里的版本号。}
 function ReadWebView2Version: String;
@@ -244,9 +251,11 @@ end;
 // {sysnative} 对 64 位安装器又不可用。注册表访问没有这个问题，HKLM32 / HKLM64
 // 两个视图都是显式指定的。
 //
-// x64 redist 的安装状态就记在这个键里。要求 14.20 以上（VC++ 2019 起）：server_exe
-// 里每个 exe 都导入了 vcruntime140_1.dll，而它是从那一版才开始随 redist 分发的，
-// 只装了 2015/2017 版的机器同样有 Installed=1，却照样起不来。
+// x64 redist 的安装状态就记在这个键里。要求 14.40 以上：server_exe 里的 exe 都用
+// MSVC 14.40+（VS 2022 17.10 起）编译并导入 msvcp140.dll，这一版起 std::mutex 的
+// 构造函数改成了 constexpr，配上 14.40 之前的 msvcp140.dll 会在第一次加锁时访问冲突，
+// 进程无声闪退（设置页打不开就是这个样子）。装了 2019 / 早期 2022 运行库的机器
+// 同样有 Installed=1，所以必须比版本号，不能只看装没装。
 // 32 位 TSF DLL 用的是静态 CRT（windows/CMakeLists.txt 里的
 // CMAKE_MSVC_RUNTIME_LIBRARY），所以不必检查 x86 redist。
 // 注意：Inno Setup 的花括号注释不能嵌套，上面提到的常量会提前闭合 { } 注释，
@@ -262,7 +271,7 @@ begin
     (Installed = 1) and
     RegQueryDWordValue(RootKey, VCRuntimeKey, 'Major', Major) and
     RegQueryDWordValue(RootKey, VCRuntimeKey, 'Minor', Minor) and
-    ((Major > 14) or ((Major = 14) and (Minor >= 20)));
+    ((Major > 14) or ((Major = 14) and (Minor >= VCRuntimeMinMinor)));
 end;
 
 { redist 的安装包是 32 位的，键通常落在 WOW6432Node 下，但较新的版本两个视图都写，
@@ -273,7 +282,7 @@ begin
     VCRuntimeInstalledInView(HKLM32) or VCRuntimeInstalledInView(HKLM64);
 end;
 
-{ 只用于写日志，不参与判定。}
+{ 只用于日志和提示文字，不参与判定。}
 function ReadVCRuntimeVersion: String;
 begin
   Result := '';
@@ -298,6 +307,7 @@ var
   WebView2Version: String;
   NeedsWebView2: Boolean;
   NeedsVCRuntime: Boolean;
+  VCRuntimeVersion: String;
   Prompt: String;
 begin
   Result := True;
@@ -310,29 +320,43 @@ begin
     Log('WebView2 Runtime found: ' + WebView2Version);
 
   NeedsVCRuntime := not VCRuntimeIsInstalled;
+  { 有版本号却没通过判定，就是装了但太旧，提示里要和「没装」分开说。}
+  VCRuntimeVersion := ReadVCRuntimeVersion;
   if NeedsVCRuntime then
-    Log('Prerequisite missing: Visual C++ 2015-2022 Redistributable (x64).')
+    Log('Prerequisite missing or outdated: Visual C++ 2015-2022 Redistributable (x64), found "' +
+      VCRuntimeVersion + '", need 14.' + IntToStr(VCRuntimeMinMinor) + ' or later.')
   else
-    Log('Visual C++ runtime found: ' + ReadVCRuntimeVersion);
+    Log('Visual C++ runtime found: ' + VCRuntimeVersion);
 
   if not (NeedsWebView2 or NeedsVCRuntime) then
     exit;
 
-  Prompt := '这台电脑缺少输入法运行所需的系统组件：' + #13#10;
+  Prompt := '这台电脑缺少输入法用到的系统组件，或版本过旧：' + #13#10;
   if NeedsVCRuntime then
+  begin
     Prompt := Prompt + #13#10 +
-      '● Visual C++ 2015-2022 可再发行组件包（x64）' + #13#10 +
-      '   缺少它输入法主程序根本无法启动（提示找不到 VCRUNTIME140.dll 之类）。' + #13#10 +
-      '   下载：' + VCRuntimeDownloadUrl + #13#10 +
-      '   直链：https://aka.ms/vs/17/release/vc_redist.x64.exe' + #13#10;
+      '● Visual C++ 2015-2022 可再发行组件包（x64），需要 14.' +
+      IntToStr(VCRuntimeMinMinor) + ' 或更高版本' + #13#10;
+    if VCRuntimeVersion <> '' then
+      Prompt := Prompt +
+        '   当前已安装 ' + VCRuntimeVersion + '，版本过旧，设置页等程序会启动即闪退。' + #13#10
+    else
+      Prompt := Prompt +
+        '   缺少它输入法主程序根本无法启动（提示找不到 VCRUNTIME140.dll 之类）。' + #13#10;
+    Prompt := Prompt +
+      '   直接下载：' + VCRuntimeDirectUrl + #13#10 +
+      '   说明页面：' + VCRuntimeDownloadUrl + #13#10;
+  end;
   if NeedsWebView2 then
     Prompt := Prompt + #13#10 +
       '● Microsoft Edge WebView2 Runtime' + #13#10 +
-      '   缺少它候选窗口、设置页和表情 / 手写 / 键盘面板都打不开。' + #13#10 +
-      '   下载：' + WebView2DownloadUrl + #13#10;
+      '   缺少它设置页面打不开。默认的 D2D 候选窗不依赖它，打字不受影响；' + #13#10 +
+      '   选了 WebView2 渲染的候选窗会临时改用 D2D，装好后自动恢复。' + #13#10 +
+      '   直接下载：' + WebView2DirectUrl + #13#10 +
+      '   说明页面：' + WebView2DownloadUrl + #13#10;
   Prompt := Prompt + #13#10 +
-    '点击「是」打开下载页面并结束本次安装，装好组件后重新运行本安装程序；' + #13#10 +
-    '点击「否」继续安装（装完仍需自行补齐上述组件，输入法才能正常工作）。';
+    '点击「是」直接下载上述组件并结束本次安装，装好后重新运行本安装程序；' + #13#10 +
+    '点击「否」继续安装（装完仍需自行补齐上述组件，对应功能才能正常使用）。';
 
   { 静默安装（CI、企业批量部署）不该被一个对话框卡住：默认继续，缺什么已经写进日志了。}
   if
@@ -340,9 +364,9 @@ begin
   then
   begin
     if NeedsVCRuntime then
-      OpenDownloadPage(VCRuntimeDownloadUrl);
+      OpenDownloadPage(VCRuntimeDirectUrl);
     if NeedsWebView2 then
-      OpenDownloadPage(WebView2DownloadUrl);
+      OpenDownloadPage(WebView2DirectUrl);
     Result := False;
   end;
 end;

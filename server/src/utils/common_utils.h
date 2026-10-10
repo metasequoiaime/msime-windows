@@ -12,6 +12,8 @@ void SendImeInputs(std::wstring words);
 
 namespace CommonUtils
 {
+// Evergreen Bootstrapper 的官方直链，点开即下载安装器，用户不用在文档页里自己找。
+inline constexpr wchar_t kWebView2RuntimeDownloadUrl[] = L"https://go.microsoft.com/fwlink/p/?LinkId=2124703";
 std::wstring get_local_appdata_path_w();
 std::wstring get_ime_data_path_w();
 // Directory holding config.toml. Same as the data directory unless METASEQUOIA_IME_CONFIG_DIR

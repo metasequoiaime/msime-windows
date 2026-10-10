@@ -494,9 +494,9 @@ void ReportSmallWindowWebviewUnavailable(HRESULT last_hr, SmallWindowWebviewFail
                           L"shown for now: {}.\r\n\r\n"
                           L"请安装或修复 Microsoft Edge WebView2 Runtime 后重新登录：\r\n"
                           L"Install or repair the Microsoft Edge WebView2 Runtime, then sign in again:\r\n"
-                          L"https://developer.microsoft.com/microsoft-edge/webview2/\r\n\r\n"
+                          L"{}\r\n\r\n"
                           L"错误码 / error: {:#x}",
-                          hosts_zh, hosts_en, static_cast<unsigned>(last_hr))
+                          hosts_zh, hosts_en, CommonUtils::kWebView2RuntimeDownloadUrl, static_cast<unsigned>(last_hr))
             : fmt::format(L"WebView2 运行时已启动，但{}没能创建，暂时无法显示。\r\n"
                           L"The WebView2 Runtime started, but the following could not be created and cannot be "
                           L"shown for now: {}.\r\n\r\n"
@@ -1290,6 +1290,30 @@ void InitSmallWindowWebviews(HWND candHwnd, HWND menuHwnd, HWND ftbHwnd)
         return;
     }
     BeginSmallWindowWebviewEnvironmentCreate();
+}
+
+// The WebView2 hosts are shown cloaked and only uncloak after their first paint, so without a
+// Runtime the candidate window never appears and the IME cannot be used at all. The D2D renderer
+// has no such dependency. The configured value is left alone: once the Runtime is installed, the
+// next Server start goes back to WebView2 on its own.
+void FallBackToD2dIfWebView2RuntimeMissing()
+{
+    if (UseD2dSmallWindowUi())
+    {
+        return;
+    }
+    LPWSTR version = nullptr;
+    const HRESULT hr = GetAvailableCoreWebView2BrowserVersionString(nullptr, &version);
+    const bool available = SUCCEEDED(hr) && version && version[0] != L'\0';
+    CoTaskMemFree(version);
+    if (available)
+    {
+        return;
+    }
+    FallBackToD2dSmallWindowUi();
+    TraceSmallWindowWebview(fmt::format(L"edge webview runtime not found (hr={:#x}); ui_backend=webview2 falls back "
+                                        L"to d2d for this session",
+                                        static_cast<unsigned>(hr)));
 }
 
 bool PrepareTrayMenuWebviewForShow()
