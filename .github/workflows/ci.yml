@@ -211,6 +211,8 @@ jobs:
     needs: lock
     runs-on: windows-2025
     timeout-minutes: 60
+    env:
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -221,12 +223,17 @@ jobs:
         uses: ./.github/actions/vcpkg-cache
         with:
           scope: engine-x64-windows
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - name: Configure
         shell: pwsh
         run: >
-          cmake -S engine -B engine/build -A x64
+          cmake -S engine -B engine/build -G "Ninja Multi-Config"
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
           -DBUILD_TESTING=ON
       - name: Save dependency binaries before compiling
         if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
@@ -237,6 +244,10 @@ jobs:
       - name: Build
         shell: pwsh
         run: cmake --build engine/build --config Release --parallel
+      - name: Report sccache hit rate
+        if: always()
+        shell: pwsh
+        run: sccache --show-stats
       - name: Test with the product's exact data
         shell: pwsh
         env:
