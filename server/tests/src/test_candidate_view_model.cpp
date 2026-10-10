@@ -10,10 +10,29 @@ TEST_CASE(candidate_view_escapes_text_and_translation_without_turning_them_into_
     item.badge = " cloud";
     item.translation = "<gloss>,";
     item.fixed_position = true;
-    REQUIRE_EQ(CandidateViewHtml(item),
-               std::string("<span style=\"color:#379AD3\">&lt;&amp;\xEF\x80\x80&quot; AB cloud</span>"
-                           "<span class=\"cand-translation\">&lt;gloss&gt;\xEF\x80\x80</span>"));
+    REQUIRE_EQ(CandidateViewHtml(item), std::string("<span style=\"color:#379AD3\">&lt;&amp;,&quot; AB cloud</span>"
+                                                    "<span class=\"cand-translation\">&lt;gloss&gt;,</span>"));
     REQUIRE_EQ(item.text, std::string("<&,\""));
+}
+
+TEST_CASE(candidate_view_keeps_commas_and_private_use_characters)
+{
+    CandidateViewItem item;
+    item.text = "a,\xEF\x80\x80";
+    item.translation = "b,\xEF\x80\x80";
+    REQUIRE_EQ(CandidateViewHtml(item),
+               std::string("a,\xEF\x80\x80<span class=\"cand-translation\">b,\xEF\x80\x80</span>"));
+}
+
+TEST_CASE(candidate_page_signature_distinguishes_comma_split_between_items)
+{
+    CandidateViewItem ab, c, a, bc;
+    ab.text = "a,b";
+    c.text = "c";
+    a.text = "a";
+    bc.text = "b,c";
+    REQUIRE(CandidatePageSignature({ab, c}) != CandidatePageSignature({a, bc}));
+    REQUIRE_EQ(CandidatePageSignature({ab, c}), CandidatePageSignature({ab, c}));
 }
 
 TEST_CASE(fixed_position_candidates_get_pin_badge_visible_in_both_backends)

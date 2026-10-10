@@ -318,6 +318,9 @@ jobs:
         working-directory: ui-html/webview2/settings/ime-settings
         run: pnpm test
 
+      - name: Test candidate DOM rendering
+        run: node --test server/tests/test-candidate-dom-render.cjs
+
       # Same command the release workflow runs. Until it was added here it was only ever exercised
       # during a release, so a break surfaced while cutting a version.
       - name: Build

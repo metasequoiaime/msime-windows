@@ -2,34 +2,41 @@
 
 #include <fmt/xchar.h>
 
-#include <algorithm>
-#include <sstream>
 #include <string>
 #include <vector>
 
 // Candidate template arguments use slot 0 for the preedit text and slots 1-9
 // for the candidates on the current page.
-//
-// Candidates are joined with ',' in the payload. Kaomoji (and rarely other
-// text) legitimately contain ASCII commas, so the writer escapes them with
-// \uF000; split here first and restore the comma afterwards.
-inline std::vector<std::wstring> SplitCandidateTemplatePayload(const std::wstring &text)
+inline std::wstring EscapeCandidateTemplateText(const std::wstring &text)
 {
-    std::wstringstream input(text);
-    std::wstring token;
-    std::vector<std::wstring> words;
-    while (std::getline(input, token, L','))
+    std::wstring escaped;
+    escaped.reserve(text.size());
+    for (wchar_t ch : text)
     {
-        std::replace(token.begin(), token.end(), L'\uF000', L',');
-        words.push_back(std::move(token));
+        switch (ch)
+        {
+        case L'&':
+            escaped += L"&amp;";
+            break;
+        case L'<':
+            escaped += L"&lt;";
+            break;
+        case L'>':
+            escaped += L"&gt;";
+            break;
+        case L'"':
+            escaped += L"&quot;";
+            break;
+        default:
+            escaped += ch;
+            break;
+        }
     }
-    return words;
+    return escaped;
 }
 
-inline std::wstring InflateCandidateTemplate(const std::wstring &templ, const std::wstring &text)
+inline std::wstring InflateCandidateTemplate(const std::wstring &templ, std::vector<std::wstring> words)
 {
-    std::vector<std::wstring> words = SplitCandidateTemplatePayload(text);
-
     const int size = static_cast<int>(words.size());
     while (words.size() < 10)
     {

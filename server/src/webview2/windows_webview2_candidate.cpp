@@ -118,6 +118,27 @@ html:not(.msime-hover-armed) #realContainer.hover-active .cand:not(.first):hover
 })();
 )";
 
+constexpr wchar_t kRenderCandidateItemsScript[] = LR"MSIME_JS(
+function RenderCandidateItems(root, items) {
+  if (!root) return;
+  root.querySelectorAll('.row-wrapper').forEach((wrapper, index) => {
+    const slot = wrapper.querySelector('.cand-content');
+    const item = items[index];
+    if (!slot || !item) return;
+    const label = document.createElement('span');
+    label.textContent = item.text + item.annotation + item.badge;
+    if (item.fixedPosition) label.style.color = '#379AD3';
+    slot.replaceChildren(label);
+    if (item.translation) {
+      const translation = document.createElement('span');
+      translation.className = 'cand-translation';
+      translation.textContent = item.translation;
+      slot.append(translation);
+    }
+  });
+}
+)MSIME_JS";
+
 // Late additions to the page (translations, cloud/AI/English merges) resize the
 // card between two frames of the same input, which reads as flicker even
 // though each frame is complete. For one input (preedit + caret + page, the
@@ -410,39 +431,6 @@ void UpdateCandidateSlotsWithJavaScript(ComPtr<ICoreWebView2> webview, const std
     SubmitCandidateSlotScript(webview, payload, std::move(onComplete), contentOnly);
 }
 
-std::wstring BuildCandidateSlotPayloadJson(const std::wstring &commaSeparated, bool contentOnly)
-{
-    std::vector<std::wstring> words = SplitCandidateTemplatePayload(commaSeparated);
-    nlohmann::json payload;
-    payload["preedit"] = words.empty() ? std::string{} : wstring_to_string(words[0]);
-    payload["items"] = nlohmann::json::array();
-    // Preserve slot indices: do not compress out empty tokens.
-    // The WebView DOM renderer expects wrapper<->slot index alignment.
-    uint16_t nonEmptyMask = 0;
-    for (size_t i = 1; i < words.size(); ++i)
-    {
-        if (i <= 9 && !words[i].empty())
-        {
-            nonEmptyMask |= static_cast<uint16_t>(1u) << static_cast<uint16_t>(i - 1);
-        }
-        payload["items"].push_back(wstring_to_string(words[i]));
-    }
-    if (nonEmptyMask == 0 && !words.empty())
-    {
-        CAND_DIAG_LOGF(L"candidate-slot payload all-empty words_sz={} content_only={} preedit_len={}", words.size(),
-                       contentOnly ? 1 : 0, words[0].size());
-    }
-    payload["selected"] = Global::candidate_ui.selected_index_in_page;
-    payload["preeditVisible"] = GetConfiguredCandidateWindowPreeditStyle() != "empty";
-    payload["applyMargins"] = !contentOnly;
-    payload["resetHover"] = !contentOnly;
-    if (!contentOnly)
-    {
-        payload["marginTop"] = Global::MarginTop;
-        payload["marginLeft"] = Global::MarginLeft;
-    }
-    return string_to_wstring(payload.dump());
-}
 } // namespace
 
 std::pair<double, double> LastCandidateSlotMeasuredSize()
@@ -456,7 +444,7 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
 }
 
 void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::wstring &newContent,
-                                     std::function<void()> onComplete)
+                                     std::function<void()> onComplete, const CandidateWindowContent *content)
 {
     if (!webview)
     {
@@ -478,6 +466,23 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
     script.append(L"document.getElementById('realContainer').innerHTML = `");
     script.append(escaped);
     script.append(L"`;\n");
+    if (content)
+    {
+        nlohmann::json candidateItems = nlohmann::json::array();
+        for (const CandidateViewItem &item : content->page->page_views)
+        {
+            candidateItems.push_back({{"text", item.text},
+                                      {"annotation", item.annotation},
+                                      {"badge", item.badge},
+                                      {"translation", item.translation},
+                                      {"fixedPosition", item.fixed_position}});
+        }
+        script.append(kRenderCandidateItemsScript);
+        script.append(L"RenderCandidateItems(document.getElementById('realContainer'), ");
+        // Translation glosses come from external endpoints and are not UTF-8 validated; the default handler throws.
+        script.append(string_to_wstring(candidateItems.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)));
+        script.append(L");\n");
+    }
     script.append(L"window.ClearState();\n");
     script.append(kInstallCandidateHoverLockScript);
     DisarmCandidatePointerHover();
@@ -490,30 +495,34 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
     script.append(std::to_wstring(Global::MarginLeft));
     script.append(L"px\";\n");
     script.append(L"}\n");
-    script.append(L"if (window.SetCandidateSelection) { window.SetCandidateSelection(");
-    script.append(std::to_wstring(Global::candidate_ui.selected_index_in_page));
-    script.append(L"); }\n");
+    if (content)
+    {
+        script.append(L"if (window.SetCandidateSelection) { window.SetCandidateSelection(");
+        script.append(std::to_wstring(content->page->selected_index_in_page));
+        script.append(L"); }\n");
+    }
     script.append(L"if (window.SetCandidatePreeditVisible) { window.SetCandidatePreeditVisible(");
-    script.append(GetConfiguredCandidateWindowPreeditStyle() == "empty" ? L"false" : L"true");
+    script.append(content ? (content->show_preedit ? L"true" : L"false")
+                          : (GetConfiguredCandidateWindowPreeditStyle() == "empty" ? L"false" : L"true"));
     script.append(L"); }\n");
     script.append(L"if (window.SetPreeditCaret) { window.SetPreeditCaret(); }\n");
+    if (content)
     {
         // 翻页箭头随模板一起被 innerHTML 换掉了，每帧重新标一次可用状态；皮肤关掉箭头时页面只是不显示它。
-        const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
         script.append(L"if (window.SetCandidatePager) { window.SetCandidatePager(");
-        script.append(page->has_previous_page ? L"true, " : L"false, ");
-        script.append(page->has_next_page ? L"true" : L"false");
+        script.append(content->page->has_previous_page ? L"true, " : L"false, ");
+        script.append(content->page->has_next_page ? L"true" : L"false");
         script.append(L"); }\n");
     }
     script.append(kStickyCandidateCardScript);
-    if (newContent.empty())
+    if (newContent.empty() || !content)
     {
         script.append(L"window.MsimeStickyCandidateCard(true);\n");
     }
     else
     {
         const nlohmann::json stickyKey =
-            wstring_to_string(GetPreeditWithCaretMarker()) + "#" + std::to_string(Global::candidate_ui.page_index);
+            wstring_to_string(content->preedit) + "#" + std::to_string(content->page->page_index);
         script.append(L"window.MsimeStickyCandidateCard(false, ");
         script.append(string_to_wstring(stickyKey.dump()));
         script.append(L");\n");
@@ -690,34 +699,33 @@ window.mouseBlockTimeout = setTimeout(() => {
     }
 }
 
-void InflateCandWnd(std::wstring &str)
+std::vector<std::wstring> CandidateTemplateSlots(const CandidateWindowContent &content, bool measuring)
 {
-    InflateCandWnd(str, nullptr);
+    std::wstring visiblePreedit = content.show_preedit ? content.preedit : std::wstring{};
+    if (measuring)
+    {
+        visiblePreedit.erase(std::remove(visiblePreedit.begin(), visiblePreedit.end(), L'\uE000'),
+                             visiblePreedit.end());
+    }
+    std::vector<std::wstring> slots;
+    slots.reserve(content.page->page_views.size() + 1);
+    slots.push_back(EscapeCandidateTemplateText(visiblePreedit));
+    for (const CandidateViewItem &view : content.page->page_views)
+    {
+        slots.push_back(measuring ? string_to_wstring(CandidateViewHtml(view)) : L" ");
+    }
+    return slots;
 }
 
-void InflateCandWnd(std::wstring &str, std::function<void()> onComplete)
+void InflateCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete)
 {
-    std::wstring result = InflateCandidateTemplate(BodyStringCandWnd, str);
-    UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete));
+    const std::wstring result = InflateCandidateTemplate(BodyStringCandWnd, CandidateTemplateSlots(content, false));
+    UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete), &content);
 }
 
-void InflateCandWnd(std::wstring &str, std::function<void()> onComplete, bool contentOnly)
+void InflateMeasureDivCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete)
 {
-    (void)contentOnly;
-    std::wstring result = InflateCandidateTemplate(BodyStringCandWnd, str);
-    UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete));
-}
-
-void InflateMeasureDivCandWnd(std::wstring &str)
-{
-    InflateMeasureDivCandWnd(str, nullptr);
-}
-
-void InflateMeasureDivCandWnd(std::wstring &str, std::function<void()> onComplete)
-{
-    str.erase(std::remove(str.begin(), str.end(), L'\uE000'), str.end());
-    std::wstring result = InflateCandidateTemplate(::MeasureStringCandWnd, str);
-
+    const std::wstring result = InflateCandidateTemplate(::MeasureStringCandWnd, CandidateTemplateSlots(content, true));
     UpdateMeasureContentWithJavaScript(webviewCandWnd, result, std::move(onComplete));
 }
 
@@ -1070,10 +1078,10 @@ HRESULT OnControllerCreatedCandWnd(     //
                         }
                         else if (type == "contextMenuClosed")
                         {
-                            const std::wstring preedit = GetConfiguredCandidateWindowPreeditStyle() == "empty"
-                                                             ? std::wstring{}
-                                                             : GetPreeditWithCaretMarker();
-                            std::wstring measurement = preedit + L"," + Global::CandidateString;
+                            const bool showPreedit = GetConfiguredCandidateWindowPreeditStyle() != "empty";
+                            const std::wstring preedit = GetPreeditWithCaretMarker();
+                            const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
+                            CandidateWindowContent measurement{preedit, page, showPreedit};
                             InflateMeasureDivCandWnd(measurement, [hwnd]() { FineTuneWindow(hwnd); });
                         }
                         else if (type == "candidate")
@@ -1153,10 +1161,10 @@ HRESULT OnControllerCreatedCandWnd(     //
                 }
                 if (success && ::is_global_wnd_cand_shown)
                 {
-                    const std::wstring preedit = GetConfiguredCandidateWindowPreeditStyle() == "empty"
-                                                     ? std::wstring{}
-                                                     : GetPreeditWithCaretMarker();
-                    std::wstring str = preedit + L"," + Global::CandidateString;
+                    const bool showPreedit = GetConfiguredCandidateWindowPreeditStyle() != "empty";
+                    const std::wstring preedit = GetPreeditWithCaretMarker();
+                    const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
+                    CandidateWindowContent str{preedit, page, showPreedit};
                     InflateMeasureDivCandWnd(str, [hwnd]() {
                         if (!::is_global_wnd_cand_shown)
                         {

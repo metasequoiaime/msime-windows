@@ -422,6 +422,7 @@ void PublishBuiltCandidatePage(const std::wstring &candidate_string)
     snapshot->page_views = ui.page_views;
     snapshot->page_words = ui.page_words;
     snapshot->candidate_string = candidate_string;
+    snapshot->page_index = ui.page_index;
     snapshot->selected_index_in_page = ui.selected_index_in_page;
     snapshot->page_count = ui.current_page_count();
     snapshot->page_item_count = ui.cur_page_item_cnt;

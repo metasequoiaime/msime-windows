@@ -554,14 +554,14 @@ int FineTuneWindow(HWND hwnd)
                               halfLimits.monitor.right, halfLimits.monitor.bottom, properPos->first, properPos->second,
                               Global::MarginTop);
 
-            std::wstring preedit =
-                GetConfiguredCandidateWindowPreeditStyle() == "empty" ? std::wstring{} : GetPreeditWithCaretMarker();
+            const bool showPreedit = GetConfiguredCandidateWindowPreeditStyle() != "empty";
+            const std::wstring preedit = GetPreeditWithCaretMarker();
             // This callback runs long after the worker posted the show request, so take the published page instead of
             // the vectors it may already be rebuilding.
             const Global::CandidatePageSnapshotPtr candidatePage = Global::LoadCandidatePageSnapshot();
-            std::wstring str = preedit + L"," + candidatePage->candidate_string;
+            CandidateWindowContent str{preedit, candidatePage, showPreedit};
             // Empty composition with no candidates means the session already ended.
-            if (GlobalIme::composition.raw_input_with_cases.empty() && candidatePage->candidate_string.empty())
+            if (GlobalIme::composition.raw_input_with_cases.empty() && candidatePage->page_views.empty())
             {
                 (void)0;
                 EndCandidateLayoutIfCurrent(generation);

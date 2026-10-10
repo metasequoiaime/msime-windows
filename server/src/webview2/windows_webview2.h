@@ -41,11 +41,9 @@ void UpdateHtmlContentWithJavaScript( //
     ComPtr<ICoreWebView2> webview,    //
     const std::wstring &newContent    //
 );                                    //
-void UpdateHtmlContentWithJavaScript( //
-    ComPtr<ICoreWebView2> webview,    //
-    const std::wstring &newContent,   //
-    std::function<void()> onComplete  //
-);                                    //
+struct CandidateWindowContent;
+void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::wstring &newContent,
+                                     std::function<void()> onComplete, const CandidateWindowContent *content = nullptr);
 
 //
 // 候选窗口 webview
@@ -91,13 +89,18 @@ void DisableMouseForAWhileWhenShownCandWnd(ComPtr<ICoreWebView2> webview);
 // has actually moved (GetCursorPos), not after a Chromium mouse event.
 void DisarmCandidatePointerHover();
 void MaybeArmCandidatePointerHover();
-void InflateCandWnd(std::wstring &str);
-void InflateCandWnd(std::wstring &str, std::function<void()> onComplete);
-void InflateCandWnd(std::wstring &str, std::function<void()> onComplete, bool contentOnly);
+// Owns what it renders: the measure and FineTune callbacks outlive the locals that build it.
+struct CandidateWindowContent
+{
+    std::wstring preedit;
+    Global::CandidatePageSnapshotPtr page;
+    bool show_preedit;
+};
+
+void InflateCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete = nullptr);
 // DIP size of #realContainer from the last slot-update script, or {0,0}.
 std::pair<double, double> LastCandidateSlotMeasuredSize();
-void InflateMeasureDivCandWnd(std::wstring &str);
-void InflateMeasureDivCandWnd(std::wstring &str, std::function<void()> onComplete);
+void InflateMeasureDivCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete = nullptr);
 void InitSmallWindowWebviews(HWND candHwnd, HWND menuHwnd, HWND ftbHwnd);
 void ShutdownWebviews();
 void UpdateSmallWindowWebviewVisibility(HWND hwnd, bool visible);
