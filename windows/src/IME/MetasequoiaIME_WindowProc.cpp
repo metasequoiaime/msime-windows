@@ -907,6 +907,14 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         SendCurrentImeStatusSnapshot(pIME);
         break;
     }
+    case WM_SyncCapsLockPunctuation: {
+        CCompositionProcessorEngine *engine = pIME->GetCompositionProcessorEngine();
+        if (engine)
+        {
+            engine->SyncPunctuationWithCapsLock(pIME->_GetThreadMgr(), pIME->_GetClientId(), wParam != 0);
+        }
+        break;
+    }
     case WM_PairedPunctuationCaretMove: {
         const uint64_t focusToken = static_cast<uint64_t>(static_cast<uint32_t>(wParam)) |
                                     (static_cast<uint64_t>(static_cast<uint32_t>(lParam)) << 32);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "KeyEventSendResult.h"
+#include "CapsLockPunctuationPolicy.h"
 #include "VoiceCompositionPipe.h"
 #include <Windows.h>
 #include <atomic>
@@ -236,6 +237,13 @@ inline std::atomic_bool JapaneseInputModeEnabled{false};
 // Enabled only after a supporting Server sends the persisted setting.
 inline std::atomic_bool TrilingualCycleEnabled{false};
 inline std::atomic_bool CapsLockEnabled{false};
+
+// The punctuation the mode-following paths select; a configured lock still wins.
+inline BOOL ResolveFollowedPunctuationOpen(BOOL imeOpen)
+{
+    return ResolvePunctuationOpen(
+        FollowedPunctuationOpen(imeOpen != FALSE, CapsLockEnabled.load(std::memory_order_relaxed)) ? TRUE : FALSE);
+}
 inline std::atomic_bool TsfDiagnosticLogEnabled{false};
 // Default off, like the persisted setting: until the Server sends the switch on
 // connect, the capture paths classify nothing and never touch the stats pipe.

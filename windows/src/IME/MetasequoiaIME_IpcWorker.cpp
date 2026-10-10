@@ -684,11 +684,14 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
         }
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CapsLockChanged)
         {
-            Global::CapsLockEnabled.store(buf.data[0] == L'1', std::memory_order_relaxed);
+            const bool capsLockEnabled = buf.data[0] == L'1';
+            Global::CapsLockEnabled.store(capsLockEnabled, std::memory_order_relaxed);
             const HWND ownerWindow = pIME->_msgWndHandle;
             if (ownerWindow && IsWindow(ownerWindow))
             {
                 PostMessage(ownerWindow, WM_RefreshLanguageBarTheme, 1, 0);
+                // Covers the threads whose key sink did not see the press.
+                PostMessage(ownerWindow, WM_SyncCapsLockPunctuation, capsLockEnabled ? 1 : 0, 0);
             }
         }
     }

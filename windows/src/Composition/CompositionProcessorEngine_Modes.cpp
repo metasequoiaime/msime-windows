@@ -372,7 +372,24 @@ void CCompositionProcessorEngine::ReleaseConfiguredImeModeDefense()
 void CCompositionProcessorEngine::SyncPunctuationWithImeMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId,
                                                              BOOL isOpen)
 {
-    SetPunctuationMode(pThreadMgr, tfClientId, isOpen);
+    SetPunctuationMode(pThreadMgr, tfClientId,
+                       FollowedPunctuationOpen(isOpen != FALSE, Global::CapsLockEnabled.load(std::memory_order_relaxed))
+                           ? TRUE
+                           : FALSE);
+}
+
+void CCompositionProcessorEngine::SyncPunctuationWithCapsLock(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId,
+                                                              bool capsLockEnabled)
+{
+    if (!ShouldResyncPunctuationForCapsLock(_capsLockPunctuationKnown, _capsLockPunctuationApplied, capsLockEnabled))
+    {
+        return;
+    }
+    _capsLockPunctuationKnown = true;
+    _capsLockPunctuationApplied = capsLockEnabled;
+    SetPunctuationMode(pThreadMgr, tfClientId,
+                       FollowedPunctuationOpen(GetIMEMode(pThreadMgr, tfClientId) != FALSE, capsLockEnabled) ? TRUE
+                                                                                                             : FALSE);
 }
 
 void CCompositionProcessorEngine::ApplyPendingImeModeAfterCompositionCommit(_In_ ITfThreadMgr *pThreadMgr,
@@ -531,7 +548,9 @@ void CCompositionProcessorEngine::InitializeMetasequoiaIMECompartment(_In_ ITfTh
                                              Global::MetasequoiaIMEGuidCompartmentDoubleSingleByte);
     CompartmentDoubleSingleByte._SetCompartmentBOOL(FALSE);
 
-    SetPunctuationMode(pThreadMgr, tfClientId, openChinese);
+    _capsLockPunctuationKnown = true;
+    _capsLockPunctuationApplied = Global::CapsLockEnabled.load(std::memory_order_relaxed);
+    SyncPunctuationWithImeMode(pThreadMgr, tfClientId, openChinese);
 
     PrivateCompartmentsUpdated(pThreadMgr);
 }
@@ -655,7 +674,7 @@ HRESULT CCompositionProcessorEngine::CompartmentCallback(_In_ void *pv, REFGUID 
         CCompartment CompartmentPunctuation(pThreadMgr, fakeThis->_tfClientId,
                                             Global::MetasequoiaIMEGuidCompartmentPunctuation);
         CompartmentPunctuation._GetCompartmentBOOL(isPunctuation);
-        const BOOL desiredPunctuation = Global::ResolvePunctuationOpen(isOpen);
+        const BOOL desiredPunctuation = Global::ResolveFollowedPunctuationOpen(isOpen);
         if (desiredPunctuation != isPunctuation)
         {
             CompartmentPunctuation._SetCompartmentBOOL(desiredPunctuation);

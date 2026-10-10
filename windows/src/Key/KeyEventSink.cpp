@@ -6,7 +6,6 @@
 #include "KeyHandlerEditSession.h"
 #include "KeyFocusRecovery.h"
 #include "KeyRepeatGuard.h"
-#include "CapsLockPunctuationPolicy.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -249,8 +248,17 @@ void CMetasequoiaIME::_ApplyCapsLockKeyDownSideEffects(bool capsLockEnabled)
 {
     Global::CapsLockEnabled.store(capsLockEnabled, std::memory_order_relaxed);
     _RequestLanguageBarCapsIconRefresh();
+    if (_deferredKeyProjectionValid)
+    {
+        // Keys queued before this edge keep their classification; keys after
+        // it classify against the punctuation the edge selects.
+        FanyUtils::RefreshPunctuationLockFromConfig();
+        _deferredProjectedPunctuationOpen =
+            Global::ResolveFollowedPunctuationOpen(_deferredProjectedImeOpen ? TRUE : FALSE) != FALSE;
+    }
     if (_pCompositionProcessorEngine)
     {
+        _pCompositionProcessorEngine->SyncPunctuationWithCapsLock(_GetThreadMgr(), _GetClientId(), capsLockEnabled);
         const bool imeOpen = _pCompositionProcessorEngine->GetIMEMode(_GetThreadMgr(), _GetClientId()) != FALSE;
         _pCompositionProcessorEngine->SendCaretStateSwitchEvent(
             FanyImePipeEventType::IMESwitch, imeOpen, FanyImeCaretStateTrigger::CapsLockEdge, capsLockEnabled);
@@ -412,13 +420,6 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
         // - start of input: don't eat
         // - middle of input: eat
         if (isCapsLockOn && isUppercaseAlphabet && !isInputInProgress)
-        {
-            return isTouchKeyboardSpecialKeys;
-        }
-
-        if (ShouldPassThroughCapsLockPunctuation(
-                isCapsLockOn, Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed), isInputInProgress,
-                pCompositionProcessorEngine->IsPunctuation(wch) != FALSE))
         {
             return isTouchKeyboardSpecialKeys;
         }
