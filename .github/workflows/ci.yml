@@ -211,6 +211,12 @@ jobs:
     needs: lock
     runs-on: windows-2025
     timeout-minutes: 60
+    # Same sccache setup as the Server job. SCCACHE_IGNORE_SERVER_IO_ERROR lets a compile fall back
+    # to plain cl.exe when the sccache server is unreachable, so a GitHub cache outage costs time
+    # instead of failing this required check.
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -221,12 +227,21 @@ jobs:
         uses: ./.github/actions/vcpkg-cache
         with:
           scope: engine-x64-windows
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Set up sccache
+        id: sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Keep Ninja Multi-Config: CMake ignores CMAKE_<LANG>_COMPILER_LAUNCHER under the Visual
+      # Studio generator, so switching back to -A x64 would silently disable sccache.
       - name: Configure
         shell: pwsh
         run: >
-          cmake -S engine -B engine/build -A x64
+          cmake -S engine -B engine/build -G "Ninja Multi-Config"
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
           -DBUILD_TESTING=ON
       - name: Save dependency binaries before compiling
         if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
@@ -237,6 +252,10 @@ jobs:
       - name: Build
         shell: pwsh
         run: cmake --build engine/build --config Release --parallel
+      - name: Report sccache hit rate
+        if: ${{ !cancelled() && steps.sccache.outcome == 'success' }}
+        shell: pwsh
+        run: sccache --show-stats
       - name: Test with the product's exact data
         shell: pwsh
         env:
