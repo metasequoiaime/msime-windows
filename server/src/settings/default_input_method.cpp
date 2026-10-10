@@ -17,6 +17,9 @@ constexpr wchar_t kUserProfileKey[] = L"Control Panel\\International\\User Profi
 
 using InstallLayoutOrTipFn = BOOL(WINAPI *)(LPCWSTR, DWORD);
 using SetDefaultLayoutOrTipFn = BOOL(WINAPI *)(LPCWSTR, DWORD);
+// bcp47langs.dll 的导出，系统设置的「替代默认输入法」与 Set-WinDefaultInputMethodOverride
+// 都经由它写 InputMethodOverride。签名取自 Microsoft.InternationalSettings.Commands 的 P/Invoke 声明。
+using SetInputMethodOverrideFn = HRESULT(WINAPI *)(LPCWSTR);
 
 bool IsOurProfile(const wchar_t *id)
 {
@@ -119,16 +122,17 @@ Status QueryStatus()
 bool SetAsDefault(std::string &error)
 {
     HMODULE input = LoadLibraryExW(L"input.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!input)
-    {
-        error = "无法加载系统输入法组件，请在系统设置中手动设置。";
-        return false;
-    }
-    const auto install = reinterpret_cast<InstallLayoutOrTipFn>(GetProcAddress(input, "InstallLayoutOrTip"));
-    const auto set_default = reinterpret_cast<SetDefaultLayoutOrTipFn>(GetProcAddress(input, "SetDefaultLayoutOrTip"));
+    HMODULE languages = LoadLibraryExW(L"bcp47langs.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    const auto install =
+        input ? reinterpret_cast<InstallLayoutOrTipFn>(GetProcAddress(input, "InstallLayoutOrTip")) : nullptr;
+    const auto set_default =
+        input ? reinterpret_cast<SetDefaultLayoutOrTipFn>(GetProcAddress(input, "SetDefaultLayoutOrTip")) : nullptr;
+    const auto set_override =
+        languages ? reinterpret_cast<SetInputMethodOverrideFn>(GetProcAddress(languages, "SetInputMethodOverride"))
+                  : nullptr;
 
     bool ok = false;
-    if (!install || !set_default)
+    if (!install || (!set_override && !set_default))
     {
         error = "当前系统不支持自动设置默认输入法，请在系统设置中手动设置。";
     }
@@ -136,7 +140,7 @@ bool SetAsDefault(std::string &error)
     {
         error = "无法把水杉输入法加入键盘列表，请确认已安装中文（简体）语言。";
     }
-    else if (!set_default(kProfileId, 0))
+    else if (set_override ? FAILED(set_override(kProfileId)) : !set_default(kProfileId, 0))
     {
         error = "系统拒绝了设置默认输入法的请求，请在系统设置中手动设置。";
     }
@@ -148,7 +152,10 @@ bool SetAsDefault(std::string &error)
     {
         ok = true;
     }
-    FreeLibrary(input);
+    if (languages)
+        FreeLibrary(languages);
+    if (input)
+        FreeLibrary(input);
     return ok;
 }
 
