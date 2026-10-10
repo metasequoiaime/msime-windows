@@ -17,6 +17,7 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 //
 //
@@ -794,6 +795,24 @@ static void ApplyStatisticsSubkey(const std::string &path, const json::object &d
 }
 
 // [tencent_tmt] 段：腾讯翻译开关
+static void ApplyAiAssistantSubkey(const std::string &path, const json::object &data)
+{
+    constexpr std::string_view prefix = "ai_assistant.";
+    if (path.rfind(prefix, 0) != 0)
+        return;
+    const std::string key = path.substr(prefix.size());
+    const json::value &value = data.at("value");
+    bool changed = false;
+    if (value.is_bool())
+        changed = SetConfiguredAiAssistantBool(key, json::value_to<bool>(value));
+    else if (value.is_string())
+        changed = SetConfiguredAiAssistantString(key, json::value_to<std::string>(value));
+    else if (value.is_int64())
+        changed = SetConfiguredAiAssistantInt(key, static_cast<int>(value.as_int64()));
+    if (changed)
+        PostSettingsConfig();
+}
+
 static void ApplyTencentTmtSubkey(const std::string &path, const json::object &data)
 {
     if (path.rfind("tencent_tmt.", 0) == 0)
@@ -1516,6 +1535,7 @@ HRESULT OnControllerCreatedSettingsWnd(            //
                             ApplyAppearanceSubkey(path, data);
                             ApplyGeneralSubkey(path, data);
                             ApplyStatisticsSubkey(path, data);
+                            ApplyAiAssistantSubkey(path, data);
                             ApplyTencentTmtSubkey(path, data);
                             ApplyCustomTranslationSubkey(path, data);
                             ApplyNetworkSubkey(path, data);
@@ -1633,6 +1653,7 @@ void PostSettingsConfig()
     }
 
     const FloatingToolbarItemsConfig &toolbar = GetConfiguredFloatingToolbarItems();
+    const AiAssistantConfig &ai = GetConfiguredAiAssistant();
     const TencentTmtConfig &tencent_tmt = GetConfiguredTencentTmt();
     const CustomTranslationConfig &custom_translation = GetConfiguredCustomTranslation();
     const NetworkProxyConfig network_proxy = GetConfiguredNetworkProxy();
@@ -1733,6 +1754,22 @@ void PostSettingsConfig()
             {"switch_language_ctrl_alt_space", GetConfiguredSwitchLanguageCtrlAltSpaceEnabled()},
             {"toggle_character_set_ctrl_shift_f", GetConfiguredCharacterSetShortcutEnabled()},
             {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()}}},
+          {"ai_assistant",
+           {{"enabled", ai.enabled},
+            {"provider", ai.provider},
+            {"codex_executable", ai.codex_executable},
+            {"token", ai.token},
+            {"tokens", ai.tokens},
+            {"endpoint", ai.endpoint},
+            {"model", ai.model},
+            {"endpoints", ai.endpoints},
+            {"models", ai.models},
+            {"candidate_limit", ai.candidate_limit},
+            {"prompt", ai.prompt},
+            {"prompt_id", ai.prompt_id},
+            {"prompt_custom_1", ai.prompt_custom_1},
+            {"prompt_custom_2", ai.prompt_custom_2},
+            {"prompt_custom_3", ai.prompt_custom_3}}},
           {"tencent_tmt",
            {{"secret_id", tencent_tmt.secret_id},
             {"secret_key", tencent_tmt.secret_key},

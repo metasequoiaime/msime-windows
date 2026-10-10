@@ -74,6 +74,29 @@ If you want to build and run in **one step**, run the following command,
 .\scripts\llaunch.ps1
 ```
 
+## Codex CLI backend integration
+
+The AI assistant accepts `provider = "codex"` as a separate backend. It launches
+the Codex CLI using its existing `codex login` session rather than a Chat
+Completions API token. In `[ai_assistant]`, `codex_executable` defaults to `codex`
+from PATH and also accepts the full executable path. `model` is the active model;
+`model_codex` stores its provider-specific value. An empty Codex model leaves the
+choice to the CLI's built-in default model. The subprocess ignores user config
+and profiles. Switching to an API provider restores that
+provider's model and credentials.
+
+Codex inference remains online, sends the composition and preceding context to
+Codex, and consumes Codex allowance. The settings connection probe also makes
+one online request with synthetic input. Token and endpoint fields are unused
+for this backend; model-list fetching remains an API-provider operation.
+
+Both settings hosts expose `ai_assistant.codex_executable` in `configSnapshot`
+and accept it through the existing `configUpdate` contract. The setting and the
+Codex model slot must stay in both configuration templates so installer upgrades
+preserve them. Configuration isolation and provider-switch round trips are
+covered in `test_config_non_ascii_path.cpp`; settings visibility and probe
+payloads are covered by `ai-settings.test.ts`.
+
 ## Watchdog
 
 `MetasequoiaImeWatchdog.exe` is built next to the server. Starting the server directly also starts the watchdog,

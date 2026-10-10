@@ -7,8 +7,9 @@
     </div>
   </div>
   <div class="section ai-section">
-    <div class="section-title ai-heading">API 配置</div>
-    <div class="ai-description ai-api-description">DeepSeek、OpenAI、SiliconFlow、Groq 均使用 OpenAI 兼容的 Chat Completions 接口。Custom 用于接入任意兼容服务，填写自己的接口地址与模型。每个提供商的接口地址、Token 和模型分开保存。</div>
+    <div class="section-title ai-heading">服务配置</div>
+    <div class="ai-description ai-api-description">DeepSeek、OpenAI、SiliconFlow、Groq 与 Custom 使用 OpenAI 兼容接口。Codex CLI 沿用已有登录。每个提供商的模型分开保存。</div>
+    <div id="aiCodexHelp" class="ai-description ai-api-description" hidden>先安装 Codex CLI 并运行 codex login。无需填写 API Key；推理仍在线运行，会将拼音和前文发送给 Codex 并使用 Codex 额度。测试连接也会发起一次在线请求。</div>
     <div class="ai-grid">
       <div class="ai-field">
         <span>服务提供商</span>
@@ -23,6 +24,7 @@
             <div class="dropdown-item" data-value="siliconflow">SiliconFlow</div>
             <div class="dropdown-item" data-value="groq">Groq</div>
             <div class="dropdown-item" data-value="custom">Custom</div>
+            <div class="dropdown-item" data-value="codex">Codex CLI</div>
           </div>
         </div>
       </div>
@@ -45,7 +47,7 @@
         </div>
         <span id="aiModelFetchStatus" class="ai-model-fetch-status" role="status" aria-live="polite"></span>
       </div>
-      <div class="ai-field">
+      <div class="ai-field" id="aiTokenField">
         <label for="aiToken">API Token</label>
         <span class="ai-secret-input">
           <input id="aiToken" type="password" autocomplete="off" spellcheck="false">
@@ -63,7 +65,8 @@
         </span>
       </div>
       <label><span>候选数量</span><input id="aiCandidateLimit" type="number" min="1" max="10" autocomplete="off"></label>
-      <label class="ai-wide"><span>接口地址</span><input id="aiEndpoint" type="url" autocomplete="off" spellcheck="false"></label>
+      <label class="ai-wide" id="aiEndpointField"><span>接口地址</span><input id="aiEndpoint" type="url" autocomplete="off" spellcheck="false"></label>
+      <label class="ai-wide" id="aiCodexField" hidden><span>Codex CLI 可执行路径</span><input id="aiCodexExecutable" type="text" value="codex" placeholder="codex 或可执行文件的完整路径" autocomplete="off" spellcheck="false"></label>
     </div>
   </div>
   <div class="section ai-section">

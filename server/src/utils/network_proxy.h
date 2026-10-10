@@ -17,6 +17,7 @@
 #include <winhttp.h>
 
 #include <string>
+#include <optional>
 
 namespace NetworkProxy
 {
@@ -26,6 +27,10 @@ HINTERNET OpenWinHttpSession(const wchar_t *user_agent);
 
 // 给 curl 句柄设好 CURLOPT_PROXY / CURLOPT_NOPROXY。
 void ApplyToCurl(CURL *curl);
+
+// Same [network] selection for child-process clients: nullopt inherits the environment,
+// an empty URL explicitly disables proxies, otherwise use the selected HTTP proxy.
+std::optional<std::string> ProxyForChildProcess();
 
 // 从 Windows 代理字符串（"host:port" 或 "http=a:1;https=b:2;socks=c:3"）里挑出给 HTTPS
 // 请求用的 HTTP 代理，返回 host:port；没有可用项时返回空串。暴露出来供测试。

@@ -64,3 +64,13 @@ TEST_CASE(ai_suggestion_cache_misses_when_candidate_limit_changes)
     REQUIRE(AiAssistant::detail::BuildSuggestionCacheKey(request) !=
             AiAssistant::detail::BuildSuggestionCacheKey(changed_request));
 }
+
+TEST_CASE(ai_suggestion_cache_misses_when_codex_executable_changes)
+{
+    auto request = MakeRequest();
+    request.config.provider = "codex";
+    auto changed = request;
+    changed.config.codex_executable = "different-codex.exe";
+    REQUIRE(AiAssistant::detail::BuildSuggestionCacheKey(request) !=
+            AiAssistant::detail::BuildSuggestionCacheKey(changed));
+}

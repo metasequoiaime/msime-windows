@@ -137,4 +137,17 @@ void ApplyToCurl(CURL *curl)
     curl_easy_setopt(curl, CURLOPT_NOPROXY, kCurlNoProxy);
 }
 
+std::optional<std::string> ProxyForChildProcess()
+{
+    const NetworkProxyConfig config = GetConfiguredNetworkProxy();
+    std::string server = CustomServer(config);
+    if (server.empty() && config.mode == "none")
+        return std::string();
+    if (server.empty())
+        server = SystemStaticProxy();
+    if (server.empty())
+        return std::nullopt;
+    return "http://" + server;
+}
+
 } // namespace NetworkProxy

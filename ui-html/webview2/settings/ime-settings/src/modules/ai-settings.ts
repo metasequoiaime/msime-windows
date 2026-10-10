@@ -6,7 +6,7 @@ import { setupModelFetch } from './model-fetch';
 type ProviderDefaults = { endpoint: string; model: string };
 
 const fields: Record<string, string> = {
-  aiToken: 'token', aiEndpoint: 'endpoint', aiModel: 'model'
+  aiToken: 'token', aiEndpoint: 'endpoint', aiModel: 'model', aiCodexExecutable: 'codex_executable'
 };
 
 const PROVIDER_DEFAULTS: Record<string, ProviderDefaults> = {
@@ -29,6 +29,10 @@ const PROVIDER_DEFAULTS: Record<string, ProviderDefaults> = {
   custom: {
     endpoint: '',
     model: ''
+  },
+  codex: {
+    endpoint: '',
+    model: ''
   }
 };
 
@@ -49,8 +53,17 @@ function applyProviderFields(provider: string): void {
   if (endpoint) endpoint.value = endpoints[provider] || defaults.endpoint;
   if (model) {
     model.value = models[provider] || defaults.model;
-    model.placeholder = defaults.model;
+    model.placeholder = provider === 'codex' ? '留空使用 Codex CLI 内置默认模型' : defaults.model;
   }
+  const codex = provider === 'codex';
+  ['aiTokenField', 'aiEndpointField', 'aiModelFetchButton', 'aiModelFetchStatus'].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) element.hidden = codex;
+  });
+  ['aiCodexField', 'aiCodexHelp'].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) element.hidden = !codex;
+  });
 }
 
 function readProviderMap(raw: unknown, provider: string, legacyValue: string): Record<string, string> {
@@ -66,13 +79,14 @@ function readProviderMap(raw: unknown, provider: string, legacyValue: string): R
 
 function switchProvider(provider: string): void {
   const token = document.getElementById('aiToken') as HTMLInputElement | null;
-  if (token) {
+  if (token && currentProvider !== 'codex') {
     tokens[currentProvider] = token.value.trim();
     updateConfig(`ai_assistant.token_${currentProvider}`, tokens[currentProvider]);
   }
   for (const [id, key, slots] of [
     ['aiEndpoint', 'endpoint', endpoints], ['aiModel', 'model', models]
   ] as const) {
+    if (key === 'endpoint' && currentProvider === 'codex') continue;
     const input = document.getElementById(id) as HTMLInputElement | null;
     if (input) {
       slots[currentProvider] = input.value;
@@ -101,6 +115,13 @@ function currentAiConfig(): Record<string, string> {
   const defaults = PROVIDER_DEFAULTS[currentProvider];
   const value = (id: string) =>
     (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? '';
+  if (currentProvider === 'codex') {
+    return {
+      provider: currentProvider,
+      codex_executable: value('aiCodexExecutable') || 'codex',
+      model: value('aiModel')
+    };
+  }
   return {
     provider: currentProvider,
     token: value('aiToken'),
@@ -140,6 +161,11 @@ export function setupAiSettings(): void {
   Object.entries(fields).forEach(([id, key]) => {
     const element = document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | null;
     element?.addEventListener('change', () => {
+      if (id === 'aiCodexExecutable') {
+        element.value = element.value.trim() || 'codex';
+        updateConfig('ai_assistant.codex_executable', element.value);
+        return;
+      }
       if (id === 'aiToken') {
         tokens[currentProvider] = element.value.trim();
         updateConfig(`ai_assistant.token_${currentProvider}`, tokens[currentProvider]);
@@ -200,9 +226,10 @@ export function applyAiConfig(config: Record<string, unknown>): void {
   const token = document.getElementById('aiToken') as HTMLInputElement | null;
   if (token) token.value = tokens[currentProvider] ?? '';
   applyDropdownValue('aiProviderBtn', 'aiProviderMenu', currentProvider);
-  const defaults = PROVIDER_DEFAULTS[currentProvider];
-  const model = document.getElementById('aiModel') as HTMLInputElement | null;
-  if (model && defaults) model.placeholder = defaults.model;
+  const executable = document.getElementById('aiCodexExecutable') as HTMLInputElement | null;
+  if (executable) executable.value = typeof config.codex_executable === 'string' && config.codex_executable
+    ? config.codex_executable : 'codex';
+  applyProviderFields(currentProvider);
   currentPromptId = typeof config.prompt_id === 'string' ? config.prompt_id : 'custom_1';
   customPrompts = {
     custom_1: typeof config.prompt_custom_1 === 'string'

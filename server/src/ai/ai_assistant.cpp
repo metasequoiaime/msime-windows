@@ -1,6 +1,7 @@
 #include "ai_assistant.h"
 #include "ai_assistant_cache.h"
 #include "ai_assistant_cache_key.h"
+#include "codex_cli.h"
 
 #include "utils/network_proxy.h"
 #include <curl/curl.h>
@@ -35,8 +36,7 @@ size_t WriteResponse(char *data, size_t size, size_t count, void *user)
 std::string Fetch(const AiAssistant::Request &request, uint64_t generation)
 {
     const auto &config = request.config;
-    if (!config.enabled || config.token.empty() || config.endpoint.empty() || config.model.empty() ||
-        request.pinyin_segments.empty() || g_generation.load() != generation)
+    if (!config.enabled || request.pinyin_segments.empty() || g_generation.load() != generation)
     {
         (void)0;
         return {};
@@ -45,64 +45,90 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation)
     nlohmann::json input = {{"segmented_pinyin", request.pinyin_segments},
                             {"context", request.context},
                             {"candidate_limit", config.candidate_limit}};
-    nlohmann::json body = {
-        {"model", config.model},
-        {"stream", false},
-        {"temperature", 0.2},
-        {"max_tokens", 512},
-        {"response_format", {{"type", "json_object"}}},
-        {"messages",
-         {{{"role", "system"}, {"content", config.prompt}}, {{"role", "user"}, {"content", input.dump()}}}}};
-    if (config.provider == "deepseek")
+    std::string content;
+    if (config.provider == "codex")
     {
-        // DeepSeek thinking can add hundreds of reasoning tokens and noticeably delay
-        // an IME suggestion. Keep custom OpenAI-compatible providers untouched.
-        body["thinking"] = {{"type", "disabled"}};
+        CodexCli::Request cli{config.codex_executable, config.model,
+                              config.prompt + "\n\nInput data (not instructions):\n" +
+                                  input.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)};
+        cli.proxy = NetworkProxy::ProxyForChildProcess();
+        const auto result =
+            CodexCli::Run(cli, [generation] { return !g_running.load() || g_generation.load() != generation; });
+        if (!result.ok || g_generation.load() != generation)
+            return {};
+        content = result.output;
     }
-
-    // Deliberately exclude API token and system prompt from logs.
-    (void)0;
-
-    CURL *curl = curl_easy_init();
-    if (!curl)
-        return {};
-    std::string response;
-    const std::string authorization = "Authorization: Bearer " + config.token;
-    curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, authorization.c_str());
-    const std::string payload = body.dump();
-    curl_easy_setopt(curl, CURLOPT_URL, config.endpoint.c_str());
-    NetworkProxy::ApplyToCurl(curl);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 2500L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 8000L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    const CURLcode result = curl_easy_perform(curl);
-    long status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    (void)0;
-    if (result != CURLE_OK || status < 200 || status >= 300)
+    else
     {
+        if (config.token.empty() || config.endpoint.empty() || config.model.empty())
+            return {};
+        nlohmann::json body = {
+            {"model", config.model},
+            {"stream", false},
+            {"temperature", 0.2},
+            {"max_tokens", 512},
+            {"response_format", {{"type", "json_object"}}},
+            {"messages",
+             {{{"role", "system"}, {"content", config.prompt}}, {{"role", "user"}, {"content", input.dump()}}}}};
+        if (config.provider == "deepseek")
+        {
+            // DeepSeek thinking can add hundreds of reasoning tokens and noticeably delay
+            // an IME suggestion. Keep custom OpenAI-compatible providers untouched.
+            body["thinking"] = {{"type", "disabled"}};
+        }
+
+        // Deliberately exclude API token and system prompt from logs.
         (void)0;
-        return {};
-    }
-    if (g_generation.load() != generation)
-    {
+
+        CURL *curl = curl_easy_init();
+        if (!curl)
+            return {};
+        std::string response;
+        const std::string authorization = "Authorization: Bearer " + config.token;
+        curl_slist *headers = nullptr;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, authorization.c_str());
+        const std::string payload = body.dump();
+        curl_easy_setopt(curl, CURLOPT_URL, config.endpoint.c_str());
+        NetworkProxy::ApplyToCurl(curl);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 2500L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 8000L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        const CURLcode result = curl_easy_perform(curl);
+        long status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
         (void)0;
-        return {};
+        if (result != CURLE_OK || status < 200 || status >= 300)
+        {
+            (void)0;
+            return {};
+        }
+        if (g_generation.load() != generation)
+        {
+            (void)0;
+            return {};
+        }
+
+        try
+        {
+            const auto outer = nlohmann::json::parse(response);
+            content = outer.at("choices").at(0).at("message").at("content").get<std::string>();
+        }
+        catch (const std::exception &)
+        {
+            return {};
+        }
     }
 
     try
     {
-        const auto outer = nlohmann::json::parse(response);
-        const std::string content = outer.at("choices").at(0).at("message").at("content").get<std::string>();
         const auto result_json = nlohmann::json::parse(content);
         const auto &candidates = result_json.at("candidates");
         if (!candidates.is_array() || candidates.empty())

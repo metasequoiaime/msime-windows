@@ -391,7 +391,7 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
     if (key == "provider")
     {
         const std::string provider = VoiceInput::NormalizeProviderId(value);
-        if (AiAssistantTokenSlotKey(provider).empty())
+        if (provider != "codex" && AiAssistantTokenSlotKey(provider).empty())
             return false;
         const std::string previous = g_ai_assistant.provider;
         const std::string token = g_ai_assistant.tokens[provider];
@@ -417,6 +417,8 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
     }
     if (key == "endpoint" || key == "model")
     {
+        if (key == "endpoint" && g_ai_assistant.provider == "codex" && !value.empty())
+            return false;
         const std::string effective = AiAssistantEffectiveValue(key, g_ai_assistant.provider, value);
         const std::string escaped =
             EscapeTomlBasicString(AiAssistantStoredValue(key, g_ai_assistant.provider, effective));
@@ -450,6 +452,10 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
     }
 
     std::string *target = nullptr;
+    if (key == "codex_executable")
+        return persist(key, value.empty() ? std::string("codex") : value, g_ai_assistant.codex_executable);
+    if (key == "token" && g_ai_assistant.provider == "codex" && !value.empty())
+        return false;
     if (key == "token")
         target = &g_ai_assistant.token;
     else if (key == "prompt_id")
@@ -479,7 +485,8 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
     {
         const std::string slot = AiAssistantTokenSlotKey(g_ai_assistant.provider);
         g_ai_assistant.tokens[g_ai_assistant.provider] = value;
-        WriteConfiguredValue("ai_assistant", slot, EscapeTomlBasicString(value));
+        if (!slot.empty())
+            WriteConfiguredValue("ai_assistant", slot, EscapeTomlBasicString(value));
     }
     return true;
 }

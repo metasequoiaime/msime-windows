@@ -41,6 +41,8 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant_cache_key.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_assistant_cache.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant_cache.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_codex_cli.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ai/codex_cli.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_ui_action_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_translation_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_ui_state.cpp"
@@ -148,6 +150,14 @@ target_compile_definitions(${TEST_EXECUTABLE_NAME}
 )
 
 add_dependencies(${TEST_EXECUTABLE_NAME} ${DICTIONARY_REPLAY_EXECUTABLE_NAME})
+
+# A real child process exercises argv/stdin, deadlines, and descendant cleanup without API access.
+add_executable(test_ai_codex_cli_child src/ai_codex_cli_child.cpp)
+target_link_libraries(test_ai_codex_cli_child PRIVATE nlohmann_json::nlohmann_json)
+target_compile_features(test_ai_codex_cli_child PRIVATE cxx_std_17)
+target_compile_definitions(${TEST_EXECUTABLE_NAME} PRIVATE
+    "MSIME_CODEX_CLI_TEST_EXE=\"$<TARGET_FILE:test_ai_codex_cli_child>\"")
+add_dependencies(${TEST_EXECUTABLE_NAME} test_ai_codex_cli_child)
 
 target_link_libraries(${TEST_EXECUTABLE_NAME}
     PRIVATE

@@ -2,6 +2,10 @@
   padding: 20px 24px;
 }
 
+#ai-assistant-settings [hidden] {
+  display: none !important;
+}
+
 .ai-heading {
   margin-bottom: 18px;
 }

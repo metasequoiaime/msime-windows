@@ -496,6 +496,9 @@ v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，
 [ai_assistant]
 enabled = true
 provider = "deepseek"
+# codex uses the existing `codex login` session and online Codex allowance, without an API Token.
+# Use "codex" from PATH or the full path to the Codex CLI executable.
+codex_executable = "codex"
 token = "<YOUR_OWN_DEEPSEEK_TOKEN>"
 token_deepseek = "<YOUR_OWN_DEEPSEEK_TOKEN>"
 token_openai = ""
@@ -510,11 +513,14 @@ endpoint_openai = ""
 endpoint_siliconflow = ""
 endpoint_groq = ""
 endpoint_custom = ""
+endpoint_codex = ""
 model_deepseek = ""
 model_openai = ""
 model_siliconflow = ""
 model_groq = ""
 model_custom = ""
+# Empty uses the Codex CLI's built-in default model; user config and profiles are ignored.
+model_codex = ""
 candidate_limit = 3
 prompt_id = "custom_1"
 prompt = """你是一个中文全拼输入法联想引擎。输入为已经切分好的拼音数组、前文上下文和候选数量。

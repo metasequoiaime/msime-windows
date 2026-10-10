@@ -354,6 +354,55 @@ TEST_CASE(ai_provider_configuration_round_trips_without_mixing_credentials)
     fs::remove_all(unique_root, ec);
 }
 
+TEST_CASE(codex_configuration_round_trips_with_an_independent_optional_model)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"codex-provider";
+    const fs::path data_dir = unique_root / L"metasequoiaime";
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    SeedTemplate(data_dir);
+    WriteText(data_dir / L"config.toml", "[ai_assistant]\nprovider = \"openai\"\n"
+                                         "token_openai = \"test-openai\"\nmodel = \"custom-openai\"\n");
+    {
+        ScopedConfigLocation location(unique_root);
+        InitImeConfig();
+        REQUIRE(SetConfiguredAiAssistantString("provider", "codex"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().codex_executable, std::string("codex"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string());
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string());
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string());
+        REQUIRE(!SetConfiguredAiAssistantString("token_codex", "test-codex"));
+        REQUIRE(!SetConfiguredAiAssistantString("token", "test-codex"));
+        REQUIRE(!SetConfiguredAiAssistantString("endpoint", "https://example.test"));
+        REQUIRE(SetConfiguredAiAssistantString("codex_executable", "C:\\Tools\\codex.exe"));
+        REQUIRE(SetConfiguredAiAssistantString("model", "custom-codex"));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAiAssistant().codex_executable, std::string("C:\\Tools\\codex.exe"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-codex"));
+        REQUIRE(SetConfiguredAiAssistantString("provider", "openai"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-openai"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-openai"));
+        REQUIRE(SetConfiguredAiAssistantString("provider", "codex"));
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-codex"));
+        REQUIRE(SetConfiguredAiAssistantString("model", ""));
+        REQUIRE(SetConfiguredAiAssistantString("codex_executable", ""));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string());
+        REQUIRE_EQ(GetConfiguredAiAssistant().codex_executable, std::string("codex"));
+        WriteText(data_dir / L"config.toml", "[ai_assistant]\nprovider = \"codex\"\n");
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string());
+        REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string());
+        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string());
+        WriteText(data_dir / L"config.toml", "[ai_assistant]\nprovider = \"codex\"\n"
+                                             "model = \"model-from-api\"\nmodel_codex = \"\"\n");
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string());
+    }
+    fs::remove_all(unique_root, ec);
+}
+
 TEST_CASE(ai_provider_default_values_are_not_pinned_into_slots)
 {
     namespace fs = std::filesystem;

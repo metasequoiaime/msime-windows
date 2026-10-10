@@ -151,6 +151,8 @@ set(SRC_FILES
     "./src/ai/ai_assistant_cache.h"
     "./src/ai/ai_assistant_cache_key.cpp"
     "./src/ai/ai_assistant_cache_key.h"
+    "./src/ai/codex_cli.cpp"
+    "./src/ai/codex_cli.h"
     "./src/clipboard/clipboard_history.cpp"
     "./src/clipboard/clipboard_history.h"
     "./src/cloud/cloud_ime.cpp"
@@ -438,6 +440,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 set(SETTINGS_EXECUTABLE_NAME "MetasequoiaImeSettings")
 add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
+    "./src/ai/codex_cli.cpp"
+    "./src/ai/codex_cli.h"
     "./src/settings/settings_app.cpp"
     "./src/settings/api_credential_test.cpp"
     "./src/settings/api_credential_test.h"

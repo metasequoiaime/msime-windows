@@ -12,10 +12,12 @@ vi.mock('./model-fetch', () => ({ setupModelFetch: vi.fn(() => vi.fn()) }));
 
 import { applyAiConfig, setupAiSettings } from './ai-settings';
 import { updateConfig } from './config-sync';
+import { setupCredentialTest } from './credential-test';
 
 class StubElement {
   value = '';
   placeholder = '';
+  hidden = false;
   listeners = new Map<string, (event: unknown) => void>();
   addEventListener(type: string, listener: (event: unknown) => void): void {
     this.listeners.set(type, listener);
@@ -29,7 +31,11 @@ let elements: Map<string, StubElement>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  elements = new Map(['aiToken', 'aiEndpoint', 'aiModel', 'aiProviderMenu'].map(id => [id, new StubElement()]));
+  elements = new Map([
+    'aiToken', 'aiEndpoint', 'aiModel', 'aiProviderMenu', 'aiCodexExecutable',
+    'aiTokenField', 'aiEndpointField', 'aiCodexField', 'aiCodexHelp',
+    'aiModelFetchButton', 'aiModelFetchStatus'
+  ].map(id => [id, new StubElement()]));
   vi.stubGlobal('document', { getElementById: (id: string) => elements.get(id) ?? null });
   setupAiSettings();
 });
@@ -127,4 +133,48 @@ it('keeps the Custom base url, api key and model independent from built-in provi
   expect(elements.get('aiEndpoint')!.value).toBe('https://my-llm.example.test/v1/chat/completions');
   expect(elements.get('aiToken')!.value).toBe('custom-key');
   expect(elements.get('aiModel')!.value).toBe('my-model');
+});
+
+it('uses the Codex login without credentials and restores API settings when switching back', () => {
+  applyAiConfig({
+    provider: 'openai', token: 'test-openai',
+    endpoint: 'https://openai.example.test/v1/chat/completions', model: 'custom-openai',
+    codex_executable: 'C:\\Tools\\codex.exe'
+  });
+  elements.get('aiProviderMenu')!.select('codex');
+  expect(elements.get('aiModel')!.value).toBe('');
+  expect(elements.get('aiModel')!.placeholder).toContain('CLI 内置默认模型');
+  expect(elements.get('aiTokenField')!.hidden).toBe(true);
+  expect(elements.get('aiEndpointField')!.hidden).toBe(true);
+  expect(elements.get('aiModelFetchButton')!.hidden).toBe(true);
+  expect(elements.get('aiCodexField')!.hidden).toBe(false);
+  expect(elements.get('aiCodexHelp')!.hidden).toBe(false);
+
+  const readConfig = vi.mocked(setupCredentialTest).mock.calls[0][3];
+  expect(readConfig()).toEqual({
+    provider: 'codex', codex_executable: 'C:\\Tools\\codex.exe', model: ''
+  });
+  elements.get('aiModel')!.value = 'custom-codex';
+  elements.get('aiProviderMenu')!.select('openai');
+  expect(elements.get('aiModel')!.value).toBe('custom-openai');
+  expect(elements.get('aiToken')!.value).toBe('test-openai');
+  expect(elements.get('aiEndpoint')!.value).toBe('https://openai.example.test/v1/chat/completions');
+  expect(elements.get('aiTokenField')!.hidden).toBe(false);
+  expect(elements.get('aiCodexField')!.hidden).toBe(true);
+  expect(updateConfig).not.toHaveBeenCalledWith('ai_assistant.token_codex', expect.anything());
+  elements.get('aiProviderMenu')!.select('codex');
+  expect(elements.get('aiModel')!.value).toBe('custom-codex');
+});
+
+it('keeps an empty Codex model and executable fallback after reloading or editing', () => {
+  applyAiConfig({ provider: 'codex', model: '', codex_executable: '', models: { codex: '' } });
+  expect(elements.get('aiModel')!.value).toBe('');
+  expect(elements.get('aiCodexExecutable')!.value).toBe('codex');
+  const executable = elements.get('aiCodexExecutable')!;
+  executable.value = '';
+  executable.listeners.get('change')?.({});
+  expect(updateConfig).toHaveBeenCalledWith('ai_assistant.codex_executable', 'codex');
+  elements.get('aiModel')!.listeners.get('change')?.({});
+  expect(updateConfig).toHaveBeenCalledWith('ai_assistant.model', '');
+  expect(elements.get('aiModel')!.value).toBe('');
 });

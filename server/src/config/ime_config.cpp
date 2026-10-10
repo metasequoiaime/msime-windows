@@ -289,7 +289,8 @@ namespace
 {
 const std::vector<std::string_view> &AiAssistantProviders()
 {
-    static const std::vector<std::string_view> providers{"deepseek", "openai", "siliconflow", "groq", "custom"};
+    static const std::vector<std::string_view> providers{"deepseek", "openai", "siliconflow",
+                                                         "groq",     "custom", "codex"};
     return providers;
 }
 
@@ -305,6 +306,8 @@ namespace ime_config_detail
 std::string AiAssistantTokenSlotKey(std::string_view provider)
 {
     const std::string id = VoiceInput::NormalizeProviderId(provider);
+    if (id == "codex")
+        return {};
     for (const auto known : AiAssistantProviders())
     {
         if (id == known)
@@ -811,25 +814,33 @@ bool LoadImeConfig()
         g_ai_assistant.enabled = tbl["ai_assistant"]["enabled"].value_or(false);
         g_ai_assistant.provider =
             VoiceInput::NormalizeProviderId(tbl["ai_assistant"]["provider"].value_or(std::string("deepseek")));
-        if (AiAssistantTokenSlotKey(g_ai_assistant.provider).empty())
+        if (g_ai_assistant.provider != "codex" && AiAssistantTokenSlotKey(g_ai_assistant.provider).empty())
             g_ai_assistant.provider = "deepseek";
+        g_ai_assistant.codex_executable = tbl["ai_assistant"]["codex_executable"].value_or(std::string("codex"));
+        if (g_ai_assistant.codex_executable.empty())
+            g_ai_assistant.codex_executable = "codex";
         g_ai_assistant.token = tbl["ai_assistant"]["token"].value_or(std::string());
         g_ai_assistant.tokens.clear();
         for (const auto provider : AiAssistantProviders())
         {
             const std::string id(provider);
+            if (id == "codex")
+                continue;
             g_ai_assistant.tokens[id] =
                 VoiceInput::UsableToken(tbl["ai_assistant"][AiAssistantTokenSlotKey(id)].value_or(std::string()));
         }
         {
             std::string &stored = g_ai_assistant.tokens[g_ai_assistant.provider];
-            if (stored.empty())
+            if (g_ai_assistant.provider == "codex")
+                stored.clear();
+            else if (stored.empty())
                 stored = VoiceInput::UsableToken(g_ai_assistant.token);
             g_ai_assistant.token = stored;
         }
         g_ai_assistant.endpoint =
             tbl["ai_assistant"]["endpoint"].value_or(std::string("https://api.deepseek.com/chat/completions"));
-        g_ai_assistant.model = tbl["ai_assistant"]["model"].value_or(std::string("deepseek-v4-flash"));
+        g_ai_assistant.model = tbl["ai_assistant"]["model"].value_or(
+            g_ai_assistant.provider == "codex" ? std::string() : std::string("deepseek-v4-flash"));
         const AiAssistantConfig ai_defaults;
         g_ai_assistant.endpoints = ai_defaults.endpoints;
         g_ai_assistant.models = ai_defaults.models;
@@ -837,9 +848,22 @@ bool LoadImeConfig()
         {
             const std::string id(provider);
             const auto load_slot = [&](const std::string &key, const std::string &legacy, std::string &target) {
+                if (id == "codex" && key == "model")
+                {
+                    const auto stored = tbl["ai_assistant"]["model_codex"].value<std::string>();
+                    if (stored)
+                    {
+                        // An explicit empty Codex slot selects the CLI's built-in default model.
+                        target = *stored;
+                        return;
+                    }
+                }
                 // 空值和服务商已下线的旧默认模型都表示「用默认值」：早于 #610 的版本会把默认值原样写盘。
                 const auto usable = [&](const std::string &value) {
-                    return !value.empty() && !(key == "model" && IsRetiredAiAssistantDefaultModel(id, value));
+                    // Template replay can fill a missing active model with the API default.
+                    // That value must not turn an unconfigured Codex slot into an API model.
+                    return !value.empty() && !(key == "model" && IsRetiredAiAssistantDefaultModel(id, value)) &&
+                           !(id == "codex" && key == "model" && value == ai_defaults.model);
                 };
                 const std::string stored = tbl["ai_assistant"][key + "_" + id].value_or(std::string());
                 if (usable(stored))
@@ -847,7 +871,8 @@ bool LoadImeConfig()
                 else if (id == g_ai_assistant.provider && usable(legacy))
                     target = legacy;
             };
-            load_slot("endpoint", g_ai_assistant.endpoint, g_ai_assistant.endpoints[id]);
+            if (id != "codex")
+                load_slot("endpoint", g_ai_assistant.endpoint, g_ai_assistant.endpoints[id]);
             load_slot("model", g_ai_assistant.model, g_ai_assistant.models[id]);
         }
         g_ai_assistant.endpoint = g_ai_assistant.endpoints[g_ai_assistant.provider];

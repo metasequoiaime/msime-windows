@@ -1,5 +1,6 @@
 #include "api_credential_test.h"
 
+#include "ai/codex_cli.h"
 #include "cloud/custom_translation.h"
 #include "cloud/niutrans_translation.h"
 #include "cloud/tencent_tmt.h"
@@ -171,6 +172,37 @@ ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
     return {false, "测试失败：" + ErrorDetail(response)};
 }
 
+ApiCredentialTest::Result TestCodex(const ApiCredentialTest::Request &request)
+{
+    CodexCli::Request probe;
+    const std::string executable = Value(request, "codex_executable");
+    probe.executable = executable.empty() ? "codex" : executable;
+    probe.model = Value(request, "model");
+    probe.timeout = std::chrono::milliseconds(kRequestTimeoutMs);
+    probe.proxy = NetworkProxy::ProxyForChildProcess();
+    probe.prompt =
+        R"({"instruction":"This is a synthetic IME connection test. Return exactly one Chinese candidate with text 测试, type chinese and confidence 1.0. Do not use tools.","pinyin":["ce","shi"],"context":"","limit":1})";
+    const CodexCli::Result result = CodexCli::Run(probe);
+    if (!result.ok)
+        return {false, "Codex CLI 测试失败：" + result.error};
+    try
+    {
+        const auto root = nlohmann::json::parse(result.output);
+        const auto &candidates = root.at("candidates");
+        if (!candidates.is_array() || candidates.empty())
+            return {false, "Codex CLI 已响应，但未返回有效候选。"};
+        const auto &candidate = candidates.front();
+        if (candidate.at("text").get<std::string>() != "测试" || candidate.at("type").get<std::string>() != "chinese" ||
+            !candidate.at("confidence").is_number())
+            return {false, "Codex CLI 已响应，但测试候选格式无效。"};
+        return {true, "连接成功，Codex CLI 登录和模型配置有效。"};
+    }
+    catch (...)
+    {
+        return {false, "Codex CLI 已响应，但未返回有效的候选 JSON。"};
+    }
+}
+
 void AppendLe16(std::vector<unsigned char> &out, std::uint16_t value)
 {
     out.push_back(static_cast<unsigned char>(value));
@@ -294,6 +326,8 @@ Result Run(const Request &request)
 {
     if (request.service.rfind("translation.", 0) == 0)
         return TestTranslation(request);
+    if (request.service == "ai.assistant" && Value(request, "provider") == "codex")
+        return TestCodex(request);
     if (request.service == "voice.polish" || request.service == "ai.assistant")
         return TestChat(request);
     if (request.service == "voice.asr")
@@ -316,6 +350,8 @@ ModelListResult FetchModels(const Request &request)
 {
     if (request.service != "ai.assistant")
         return {false, "不支持的模型列表类型。", {}};
+    if (Value(request, "provider") == "codex")
+        return {false, "Codex CLI 模型可留空使用 CLI 内置默认模型，或手动填写模型名。", {}};
     const std::string token = Value(request, "token");
     const std::string endpoint = Value(request, "endpoint");
     if (!CloudTranslation::IsUsableSecret(token))
