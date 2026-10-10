@@ -58,7 +58,8 @@
       gap: calc(var(--ftb-gap) * var(--ftb-scale));
 
       border: 1.4px solid rgba(0, 0, 0, 0.12);
-      box-shadow: 4px 4px 8px rgba(0, 0, 0, 0.12);
+      /* 候选窗阴影的近接层；宿主只在右下留 8px（FTB_WND_SHADOW_WIDTH），放不下 24px 的扩散层。 */
+      box-shadow: 2px 3px 5px rgba(0, 0, 0, 0.10);
       backdrop-filter: blur(8px);
     }
 

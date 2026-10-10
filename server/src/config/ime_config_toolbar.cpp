@@ -184,3 +184,16 @@ bool SetConfiguredFloatingToolbarAutoHideDelay(int seconds)
     g_floating_toolbar_auto_hide_delay = seconds;
     return true;
 }
+
+bool GetConfiguredFloatingToolbarShadow()
+{
+    return g_floating_toolbar_shadow;
+}
+
+bool SetConfiguredFloatingToolbarShadow(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "floating_toolbar_shadow", enabled ? "true" : "false"))
+        return false;
+    g_floating_toolbar_shadow = enabled;
+    return true;
+}

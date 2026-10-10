@@ -126,6 +126,7 @@ double g_floating_toolbar_scale = 1.0;
 int g_floating_toolbar_font_size = kFloatingToolbarFontSizeDefault;
 bool g_floating_toolbar_auto_hide = false;
 int g_floating_toolbar_auto_hide_delay = kFloatingToolbarAutoHideDelayDefault;
+bool g_floating_toolbar_shadow = true;
 bool g_english_candidates_enabled = false;
 bool g_candidate_translations_enabled = true;
 int g_english_mixed_input_min_chars = kEnglishMixedInputMinCharsDefault;
@@ -544,6 +545,7 @@ bool LoadImeConfig()
                                                          auto_hide_delay <= kFloatingToolbarAutoHideDelayMax
                                                      ? auto_hide_delay
                                                      : kFloatingToolbarAutoHideDelayDefault;
+            g_floating_toolbar_shadow = tbl["general"]["floating_toolbar_shadow"].value_or(true);
         }
         g_english_candidates_enabled = tbl["general"]["cn_en_mixed_input"].value_or(false);
         g_candidate_translations_enabled = tbl["general"]["candidate_translations"].value_or(true);

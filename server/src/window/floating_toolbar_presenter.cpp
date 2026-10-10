@@ -42,10 +42,18 @@ D2D1_COLOR_F ColorFromRgb(UINT rgb, float alpha = 1.0f)
     return D2D1::ColorF(((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f, alpha);
 }
 
-constexpr float kShadowPadLeft = 18.0f;
-constexpr float kShadowPadTop = 16.0f;
-constexpr float kShadowPadRight = 18.0f;
-constexpr float kShadowPadBottom = 20.0f;
+// Same reserve as the WebView2 candidate host (CANDIDATE_SHADOW_PAD_*): about 2σ
+// of the candidate shadow below, biased to the lower right like the shadow is.
+constexpr float kShadowPadLeft = 16.0f;
+constexpr float kShadowPadTop = 14.0f;
+constexpr float kShadowPadRight = 32.0f;
+constexpr float kShadowPadBottom = 34.0f;
+constexpr float kToolbarStrokeWidth = 1.4f;
+// D2D centres the stroke on the card edge, so half of it lies outside the card.
+// Without the shadow margin the host still needs that half plus its antialiased
+// fringe, or the window edge clips the border.
+constexpr float kNoShadowPad = 1.0f;
+static_assert(kNoShadowPad >= kToolbarStrokeWidth * 0.5f);
 constexpr float kToolbarGlyphFontSizeFactor = 0.82f;
 constexpr float kToolbarUnderlinedTextFontSizeFactor = 0.58f;
 // Every toolbar icon carries a text fallback: "Segoe Fluent Icons" ships with
@@ -356,6 +364,7 @@ struct FloatingToolbarPresenter::Impl
     D2D1_COLOR_F handle = ColorFromRgb(0x8E8CD8);
     float radius = 8.0f;
     float iconRadius = 6.0f;
+    bool light = false;
     int cnEn = 1;
     int doubleSingleByte = 0;
     int punctuation = 1;
@@ -536,14 +545,31 @@ void FloatingToolbarPresenter::RebuildScene()
     msimeui::Brush brush;
     brush.fill = impl_->fill;
     brush.stroke = impl_->border;
-    brush.strokeWidth = 1.4f;
+    brush.strokeWidth = kToolbarStrokeWidth;
     brush.radiusX = radius;
     brush.radiusY = radius;
     impl_->card = std::make_shared<msimeui::Card>(brush, 0.0f);
-    impl_->card->SetShadowScale(0.45f);
+    // 与候选窗同一对柔和阴影（candidate_presenter.cpp）：light α .18/.10，dark α .34/.22。
+    // 关掉阴影时透明边距只留描边外沿，工具栏本体才能贴住屏幕边缘。
+    const bool shadow = GetConfiguredFloatingToolbarShadow();
+    impl_->card->SetShadowEnabled(shadow);
+    if (shadow)
+    {
+        impl_->card->SetShadowPasses({
+            {12.0f, impl_->light ? 0.18f : 0.34f, 8.0f, 10.0f},
+            {4.0f, impl_->light ? 0.10f : 0.22f, 2.0f, 3.0f},
+        });
+    }
     impl_->card->AddChild(row);
     impl_->frame = std::make_shared<msimeui::Container>();
-    impl_->frame->SetPadding({kShadowPadLeft, kShadowPadTop, kShadowPadRight, kShadowPadBottom});
+    if (shadow)
+    {
+        impl_->frame->SetPadding({kShadowPadLeft, kShadowPadTop, kShadowPadRight, kShadowPadBottom});
+    }
+    else
+    {
+        impl_->frame->SetPadding(kNoShadowPad);
+    }
     impl_->frame->SetChild(impl_->card);
     impl_->root = std::make_shared<msimeui::StackPanel>(0.0f);
     impl_->root->AddChild(impl_->frame);
@@ -581,6 +607,7 @@ void FloatingToolbarPresenter::ApplyTheme()
     impl_->handle = skin.handle;
     impl_->radius = skin.radius;
     impl_->iconRadius = skin.iconRadius;
+    impl_->light = light;
     ApplyAppearance();
 }
 

@@ -465,6 +465,7 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
         data?.general?.floating_toolbar_auto_hide,
         data?.general?.floating_toolbar_auto_hide_delay
       );
+      module.applyFloatingToolbarShadowConfig(data?.general?.floating_toolbar_shadow);
     });
   }
   if (applies('stats')) {

@@ -522,6 +522,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"floating_toolbar_font_size", GetConfiguredFloatingToolbarFontSize()},
             {"floating_toolbar_auto_hide", GetConfiguredFloatingToolbarAutoHide()},
             {"floating_toolbar_auto_hide_delay", GetConfiguredFloatingToolbarAutoHideDelay()},
+            {"floating_toolbar_shadow", GetConfiguredFloatingToolbarShadow()},
             {"cn_en_mixed_input", GetConfiguredEnglishCandidatesEnabled()},
             {"candidate_translations", GetConfiguredCandidateTranslationsEnabled()},
             {"cn_en_mixed_input_min_chars", GetConfiguredEnglishMixedInputMinChars()},
@@ -926,6 +927,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredFloatingToolbarAutoHide(json::value_to<bool>(data.at("value")));
     if (path == "general.floating_toolbar_auto_hide_delay")
         return SetConfiguredFloatingToolbarAutoHideDelay(static_cast<int>(data.at("value").as_int64()));
+    if (path == "general.floating_toolbar_shadow")
+        return SetConfiguredFloatingToolbarShadow(json::value_to<bool>(data.at("value")));
     constexpr std::string_view toolbar_prefix = "general.floating_toolbar_";
     if (path.rfind(toolbar_prefix, 0) == 0)
         return SetConfiguredFloatingToolbarItemEnabled(path.substr(toolbar_prefix.size()),

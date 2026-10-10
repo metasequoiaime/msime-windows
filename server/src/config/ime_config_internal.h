@@ -175,6 +175,7 @@ extern double g_floating_toolbar_scale;
 extern int g_floating_toolbar_font_size;
 extern bool g_floating_toolbar_auto_hide;
 extern int g_floating_toolbar_auto_hide_delay;
+extern bool g_floating_toolbar_shadow;
 extern bool g_english_candidates_enabled;
 extern bool g_candidate_translations_enabled;
 extern int g_english_mixed_input_min_chars;

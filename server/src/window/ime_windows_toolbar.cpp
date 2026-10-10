@@ -145,7 +145,9 @@ void LayoutFloatingToolbar(HWND hwnd, bool reset_to_default_corner, FLOAT scaleO
         static_cast<int>(std::ceil(ClampWidthDipToHalfScreen(static_cast<double>(::FTB_WND_WIDTH), limits)));
     ::FTB_WND_HEIGHT =
         static_cast<int>(std::ceil(ClampHeightDipToHalfScreen(static_cast<double>(::FTB_WND_HEIGHT), limits)));
-    const int shadowWidth = d2d ? 0 : ::FTB_WND_SHADOW_WIDTH;
+    // D2D measures its shadow margin into the scene. With the shadow off the
+    // WebView2 host drops its margin too, so the bar can sit flush with an edge.
+    const int shadowWidth = d2d || !GetConfiguredFloatingToolbarShadow() ? 0 : ::FTB_WND_SHADOW_WIDTH;
     const int width = static_cast<int>(std::ceil((::FTB_WND_WIDTH + shadowWidth) * static_cast<double>(scale)));
     const int height = static_cast<int>(std::ceil((::FTB_WND_HEIGHT + shadowWidth) * static_cast<double>(scale)));
     const int cornerInset = static_cast<int>(std::lround(10.0 * static_cast<double>(scale)));

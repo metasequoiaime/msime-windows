@@ -52,6 +52,12 @@ export function setupFloatingToolbar(): void {
   });
   setupAutoHideDelayStepper();
 
+  setupToggleButton('ftbShadowToggleBtn', (active) => {
+    updateConfig('general.floating_toolbar_shadow', active);
+    document.getElementById('ftbShadowToggleBtn')?.setAttribute('aria-checked', String(active));
+    setPreviewShadow(active);
+  });
+
   setupToggleButton('caretStateIndicatorToggleBtn', (active) => {
     updateConfig('general.caret_state_indicator', active);
     document.getElementById('caretStateIndicatorToggleBtn')?.setAttribute('aria-checked', String(active));
@@ -150,6 +156,16 @@ export function applyFloatingToolbarAutoHideConfig(enabled?: boolean, delay?: nu
     autoHideDelay = clampAutoHideDelay(delay);
     renderAutoHideDelay();
   }
+}
+
+export function applyFloatingToolbarShadowConfig(enabled?: boolean): void {
+  if (typeof enabled !== 'boolean') return;
+  applyToggleState('ftbShadowToggleBtn', enabled);
+  setPreviewShadow(enabled);
+}
+
+function setPreviewShadow(enabled: boolean): void {
+  document.getElementById('ftbPreviewHost')?.classList.toggle('no-shadow', !enabled);
 }
 
 function setAutoHideDelayDisabled(disabled: boolean): void {
