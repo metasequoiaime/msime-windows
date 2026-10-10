@@ -118,6 +118,27 @@ html:not(.msime-hover-armed) #realContainer.hover-active .cand:not(.first):hover
 })();
 )";
 
+constexpr wchar_t kRenderCandidateItemsScript[] = LR"MSIME_JS(
+function RenderCandidateItems(root, items) {
+  if (!root) return;
+  root.querySelectorAll('.row-wrapper').forEach((wrapper, index) => {
+    const slot = wrapper.querySelector('.cand-content');
+    const item = items[index];
+    if (!slot || !item) return;
+    const label = document.createElement('span');
+    label.textContent = item.text + item.annotation + item.badge;
+    if (item.fixedPosition) label.style.color = '#379AD3';
+    slot.replaceChildren(label);
+    if (item.translation) {
+      const translation = document.createElement('span');
+      translation.className = 'cand-translation';
+      translation.textContent = item.translation;
+      slot.append(translation);
+    }
+  });
+}
+)MSIME_JS";
+
 // Late additions to the page (translations, cloud/AI/English merges) resize the
 // card between two frames of the same input, which reads as flicker even
 // though each frame is complete. For one input (preedit + caret + page, the
@@ -423,7 +444,7 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
 }
 
 void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::wstring &newContent,
-                                     std::function<void()> onComplete, const std::vector<CandidateViewItem> *items)
+                                     std::function<void()> onComplete, const CandidateWindowContent *content)
 {
     if (!webview)
     {
@@ -445,10 +466,10 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
     script.append(L"document.getElementById('realContainer').innerHTML = `");
     script.append(escaped);
     script.append(L"`;\n");
-    if (items)
+    if (content)
     {
         nlohmann::json candidateItems = nlohmann::json::array();
-        for (const CandidateViewItem &item : *items)
+        for (const CandidateViewItem &item : content->page.page_views)
         {
             candidateItems.push_back({{"text", item.text},
                                       {"annotation", item.annotation},
@@ -456,27 +477,8 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
                                       {"translation", item.translation},
                                       {"fixedPosition", item.fixed_position}});
         }
-        script.append(LR"(
-(function (root, items) {
-  if (!root) return;
-  root.querySelectorAll('.row-wrapper').forEach((wrapper, index) => {
-    const slot = wrapper.querySelector('.cand-content');
-    const item = items[index];
-    if (!slot || !item) return;
-    const label = document.createElement('span');
-    label.textContent = item.text + item.annotation + item.badge;
-    if (item.fixedPosition) label.style.color = '#379AD3';
-    slot.replaceChildren(label);
-    if (item.translation) {
-      const translation = document.createElement('span');
-      translation.className = 'cand-translation';
-      translation.textContent = item.translation;
-      slot.append(translation);
-    }
-  });
-}
-)");
-        script.append(L")(document.getElementById('realContainer'), ");
+        script.append(kRenderCandidateItemsScript);
+        script.append(L"RenderCandidateItems(document.getElementById('realContainer'), ");
         script.append(string_to_wstring(candidateItems.dump()));
         script.append(L");\n");
     }
@@ -492,30 +494,33 @@ void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::w
     script.append(std::to_wstring(Global::MarginLeft));
     script.append(L"px\";\n");
     script.append(L"}\n");
-    script.append(L"if (window.SetCandidateSelection) { window.SetCandidateSelection(");
-    script.append(std::to_wstring(Global::candidate_ui.selected_index_in_page));
-    script.append(L"); }\n");
+    if (content)
+    {
+        script.append(L"if (window.SetCandidateSelection) { window.SetCandidateSelection(");
+        script.append(std::to_wstring(content->page.selected_index_in_page));
+        script.append(L"); }\n");
+    }
     script.append(L"if (window.SetCandidatePreeditVisible) { window.SetCandidatePreeditVisible(");
     script.append(GetConfiguredCandidateWindowPreeditStyle() == "empty" ? L"false" : L"true");
     script.append(L"); }\n");
     script.append(L"if (window.SetPreeditCaret) { window.SetPreeditCaret(); }\n");
+    if (content)
     {
         // 翻页箭头随模板一起被 innerHTML 换掉了，每帧重新标一次可用状态；皮肤关掉箭头时页面只是不显示它。
-        const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
         script.append(L"if (window.SetCandidatePager) { window.SetCandidatePager(");
-        script.append(page->has_previous_page ? L"true, " : L"false, ");
-        script.append(page->has_next_page ? L"true" : L"false");
+        script.append(content->page.has_previous_page ? L"true, " : L"false, ");
+        script.append(content->page.has_next_page ? L"true" : L"false");
         script.append(L"); }\n");
     }
     script.append(kStickyCandidateCardScript);
-    if (newContent.empty())
+    if (newContent.empty() || !content)
     {
         script.append(L"window.MsimeStickyCandidateCard(true);\n");
     }
     else
     {
         const nlohmann::json stickyKey =
-            wstring_to_string(GetPreeditWithCaretMarker()) + "#" + std::to_string(Global::candidate_ui.page_index);
+            wstring_to_string(GetPreeditWithCaretMarker()) + "#" + std::to_string(content->page.page_index);
         script.append(L"window.MsimeStickyCandidateCard(false, ");
         script.append(string_to_wstring(stickyKey.dump()));
         script.append(L");\n");
@@ -715,7 +720,7 @@ void InflateCandWnd(const CandidateWindowContent &content, std::function<void()>
 {
     const std::wstring result =
         InflateCandidateTemplate(BodyStringCandWnd, CandidateTemplateSlots(content.preedit, content.page, false));
-    UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete), &content.page.page_views);
+    UpdateHtmlContentWithJavaScript(webviewCandWnd, result, std::move(onComplete), &content);
 }
 
 void InflateMeasureDivCandWnd(const CandidateWindowContent &content, std::function<void()> onComplete)

@@ -421,6 +421,7 @@ struct CandidatePageSnapshot
     std::vector<CandidateViewItem> page_views;
     std::vector<std::wstring> page_words;
     std::wstring candidate_string;
+    int page_index = 0;
     int selected_index_in_page = 0;
     // page_count mirrors current_page_count() and page_item_count mirrors cur_page_item_cnt. Both are carried because
     // the height estimate prefers the derived count and only falls back to the rendered one.

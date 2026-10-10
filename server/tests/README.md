@@ -1,5 +1,14 @@
 # Tests
 
+Run the candidate DOM test from the repository root:
+
+```sh
+node --test server/tests/test-candidate-dom-render.cjs
+```
+
+The test runs the JavaScript renderer from `windows_webview2_candidate.cpp`.
+It checks text, order, badges, translations, and fixed candidate color.
+
 This project now includes a lightweight regression test target wired into the main CMake build.
 
 ## What It Covers

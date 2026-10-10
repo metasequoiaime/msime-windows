@@ -41,9 +41,9 @@ void UpdateHtmlContentWithJavaScript( //
     ComPtr<ICoreWebView2> webview,    //
     const std::wstring &newContent    //
 );                                    //
+struct CandidateWindowContent;
 void UpdateHtmlContentWithJavaScript(ComPtr<ICoreWebView2> webview, const std::wstring &newContent,
-                                     std::function<void()> onComplete,
-                                     const std::vector<CandidateViewItem> *items = nullptr);
+                                     std::function<void()> onComplete, const CandidateWindowContent *content = nullptr);
 
 //
 // 候选窗口 webview
