@@ -71,14 +71,15 @@ RomajiConversion ConvertRomaji(std::string_view input)
                 continue;
             }
             const char next = normalized[index + 1];
-            if (next == '\'')
+            // Both spellings complete one nasal; the next key starts a new syllable.
+            if (next == '\'' || next == 'n')
             {
                 result.hiragana += "ん";
                 index += 2;
                 continue;
             }
             // 长音符 '-' 不是元音，和辅音一样让前面的 n 收成 ん。
-            if (next == 'n' || next == '-' || (IsConsonant(next) && next != 'y'))
+            if (next == '-' || (IsConsonant(next) && next != 'y'))
             {
                 result.hiragana += "ん";
                 ++index;

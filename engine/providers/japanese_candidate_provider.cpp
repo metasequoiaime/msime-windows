@@ -107,14 +107,12 @@ std::vector<WordItem> JapaneseCandidateProvider::query(const QueryRequest &reque
         const auto pending_kana = japanese::KanaForRomajiPrefix(conversion.pending);
         if (!conversion.hiragana.empty() && !conversion.pending.empty())
         {
-            const std::string typed = request.raw_input;
             for (const auto &kana : pending_kana)
             {
+                // The kana prefix already matches the typed reading. Converting it
+                // back to one romaji spelling would reject nn/n' and other aliases.
                 for (const auto &lemma : sentence_decoder_->PrefixLemmas(conversion.hiragana + kana, 24))
                 {
-                    const std::string romaji = japanese::HiraganaToRomaji(lemma.reading);
-                    if (romaji.size() < typed.size() || romaji.compare(0, typed.size(), typed) != 0)
-                        continue;
                     AppendUnique(candidates, seen, request.raw_input_with_cases, lemma.surface,
                                  980000 - lemma.word_cost, CandidateSource::Database);
                 }

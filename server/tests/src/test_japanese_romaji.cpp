@@ -66,7 +66,9 @@ std::filesystem::path CreateJapaneseDatabase()
 TEST_CASE(JapaneseRomajiConvertsCommonImeSpellings)
 {
     REQUIRE_EQ(japanese::ConvertRomaji("nihongo").hiragana, std::string("にほんご"));
-    REQUIRE_EQ(japanese::ConvertRomaji("konnichiha").hiragana, std::string("こんにちは"));
+    REQUIRE_EQ(japanese::ConvertRomaji("konnnichiha").hiragana, std::string("こんにちは"));
+    REQUIRE_EQ(japanese::ConvertRomaji("kon'nichiha").hiragana, std::string("こんにちは"));
+    REQUIRE_EQ(japanese::ConvertRomaji("konnichiha").hiragana, std::string("こんいちは"));
     REQUIRE_EQ(japanese::ConvertRomaji("gakkou").hiragana, std::string("がっこう"));
     REQUIRE_EQ(japanese::ConvertRomaji("shin'you").hiragana, std::string("しんよう"));
     REQUIRE_EQ(japanese::HiraganaToKatakana("にほんご"), std::string("ニホンゴ"));
