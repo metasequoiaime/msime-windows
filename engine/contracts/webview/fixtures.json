@@ -786,5 +786,61 @@
     "direction": "client",
     "surface": "settings",
     "valid": false
+  },
+  {
+    "name": "default ime set request",
+    "message": {
+      "type": "defaultImeRequest",
+      "protocolVersion": 1,
+      "data": {
+        "requestId": "default-ime-1",
+        "action": "setDefault"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "default ime request rejects unknown action",
+    "message": {
+      "type": "defaultImeRequest",
+      "data": {
+        "requestId": "default-ime-1",
+        "action": "unregister"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": false
+  },
+  {
+    "name": "default ime request rejected from toolbar",
+    "message": {
+      "type": "defaultImeRequest",
+      "data": {
+        "requestId": "default-ime-1",
+        "action": "status"
+      }
+    },
+    "direction": "client",
+    "surface": "toolbar",
+    "valid": false
+  },
+  {
+    "name": "default ime status response",
+    "message": {
+      "type": "defaultImeResponse",
+      "protocolVersion": 1,
+      "requestId": "default-ime-1",
+      "action": "status",
+      "ok": true,
+      "message": "",
+      "enabled": true,
+      "isDefault": false
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": true
   }
 ]

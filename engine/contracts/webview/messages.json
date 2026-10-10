@@ -405,6 +405,32 @@
         "additionalProperties": false
       }
     },
+    "defaultImeRequest": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "setDefault",
+              "openSystemSettings"
+            ]
+          }
+        },
+        "required": [
+          "requestId",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
     "openKeyboardPanel": {
       "surfaces": [
         "settings",
@@ -849,6 +875,35 @@
       },
       "required": [
         "requestId",
+        "ok",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "defaultImeResponse": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "isDefault": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "requestId",
+        "action",
         "ok",
         "message"
       ],
