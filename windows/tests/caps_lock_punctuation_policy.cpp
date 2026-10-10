@@ -3,28 +3,43 @@
 
 int main()
 {
-    // Fixed contract table: bits are Caps Lock, Japanese, active input, punctuation.
-    // Include overlapping exclusions (for example Japanese AND active input).
-    // Only idle, non-Japanese punctuation with Caps Lock ON may pass through.
-    constexpr bool expected[16] = {false, false, false, false, false, false, false, false,
-                                   false, true,  false, false, false, false, false, false};
     int failures = 0;
-    for (unsigned state = 0; state < 16; ++state)
+
+    // Bits are IME open, Caps Lock. Only Chinese mode without Caps Lock follows into
+    // Chinese punctuation; Caps Lock makes the followed punctuation English.
+    constexpr bool expectedFollowed[4] = {false, false, true, false};
+    for (unsigned state = 0; state < 4; ++state)
     {
-        const bool capsLock = (state & 8) != 0;
-        const bool japanese = (state & 4) != 0;
-        const bool inputActive = (state & 2) != 0;
-        const bool punctuation = (state & 1) != 0;
-        const bool actual = ShouldPassThroughCapsLockPunctuation(capsLock, japanese, inputActive, punctuation);
-        if (actual != expected[state])
+        const bool imeOpen = (state & 2) != 0;
+        const bool capsLock = (state & 1) != 0;
+        const bool actual = FollowedPunctuationOpen(imeOpen, capsLock);
+        if (actual != expectedFollowed[state])
         {
-            std::fprintf(stderr, "FAIL caps=%d japanese=%d active=%d punctuation=%d: expected=%d actual=%d\n", capsLock,
-                         japanese, inputActive, punctuation, expected[state], actual);
+            std::fprintf(stderr, "FAIL followed ime=%d caps=%d: expected=%d actual=%d\n", imeOpen, capsLock,
+                         expectedFollowed[state], actual);
             ++failures;
         }
     }
+
+    // Bits are known, last applied, Caps Lock. The first report always syncs; afterwards
+    // only a changed Caps Lock state does, so a repeated report keeps a manual toggle.
+    constexpr bool expectedResync[8] = {true, true, true, true, false, true, true, false};
+    for (unsigned state = 0; state < 8; ++state)
+    {
+        const bool known = (state & 4) != 0;
+        const bool lastApplied = (state & 2) != 0;
+        const bool capsLock = (state & 1) != 0;
+        const bool actual = ShouldResyncPunctuationForCapsLock(known, lastApplied, capsLock);
+        if (actual != expectedResync[state])
+        {
+            std::fprintf(stderr, "FAIL resync known=%d last=%d caps=%d: expected=%d actual=%d\n", known, lastApplied,
+                         capsLock, expectedResync[state], actual);
+            ++failures;
+        }
+    }
+
     if (failures != 0)
         return 1;
-    std::puts("PASS: all 16 Caps Lock punctuation policy combinations");
+    std::puts("PASS: Caps Lock punctuation follow and resync policy");
     return 0;
 }

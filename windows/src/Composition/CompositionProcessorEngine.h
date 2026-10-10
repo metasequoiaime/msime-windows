@@ -125,6 +125,9 @@ class CCompositionProcessorEngine
     // finalize the same preedit twice (Chrome/TSF-only hosts are unaffected).
     void ApplyPendingImeModeAfterCompositionCommit(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId);
     void SetPunctuationMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId, BOOL bOpen);
+    // Re-applies the mode-following punctuation after a Caps Lock edge. Repeated
+    // reports of the same edge are ignored so they cannot undo a manual toggle.
+    void SyncPunctuationWithCapsLock(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId, bool capsLockEnabled);
     BOOL GetPunctuationMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId);
     void SetDoubleSingleByteMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId, BOOL bOpen);
     BOOL GetDoubleSingleByteMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId);
@@ -313,6 +316,9 @@ class CCompositionProcessorEngine
     CMetasequoiaIME *_pTextService;
     BOOL _keyboardOpen;
     BOOL _keyboardOpenKnown;
+    // The Caps Lock state punctuation was last synced for.
+    bool _capsLockPunctuationKnown = false;
+    bool _capsLockPunctuationApplied = false;
     BOOL _suppressKeyboardCloseCommit;
     // After Activate applies input.default_ime_mode, Chromium (and Electron)
     // often rewrites TF_CONVERSIONMODE_* (NATIVE / SYMBOL / FULLSHAPE) while

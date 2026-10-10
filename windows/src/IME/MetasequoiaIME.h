@@ -52,6 +52,7 @@ const DWORD WM_CancelVoiceComposition = WM_USER + 26;
 const DWORD WM_ApplyPunctuationLock = WM_USER + 27;
 const DWORD WM_CommitCandidateAndContinue = WM_USER + 28;
 const DWORD WM_AsyncCycleInputMode = WM_USER + 29;
+const DWORD WM_SyncCapsLockPunctuation = WM_USER + 30;
 constexpr ULONG_PTR SMART_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535050u;
 constexpr ULONG_PTR PAIRED_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535051u;
 // Synthetic input that this tip generates carries a marker meaning "this tip
