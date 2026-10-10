@@ -71,9 +71,9 @@ std::vector<ConfigEntry> ReadCredentialEntries(const std::string &path, bool &op
 } // namespace
 
 // The shipped default config must not contain anything the runtime mistakes for a real credential.
-// ai_assistant.enabled, voice_input.voice_input and tencent_tmt.enabled all default to true, so a
-// placeholder that reads as usable turns a fresh install into one that sends the composition, the
-// recorded audio or the candidate text to a third party before the user has configured anything.
+// ai_assistant.enabled, voice_input.voice_input and tencent_tmt.enabled now ship off, but a user who
+// switches one on before filling in a key must not end up sending the composition, the recorded
+// audio or the candidate text to a third party under a placeholder that reads as usable.
 // This reads the file the installer actually ships rather than restating today's placeholder
 // spellings, so introducing a fourth spelling fails here instead of in someone's traffic log.
 TEST_CASE(default_config_ships_no_usable_credentials)

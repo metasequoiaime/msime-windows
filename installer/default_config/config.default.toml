@@ -38,8 +38,6 @@ floating_toolbar_font_size = 24
 floating_toolbar_auto_hide = false
 # 自动隐藏延时（秒），可选：1–60
 floating_toolbar_auto_hide_delay = 5
-# Emoji
-enable_emoji = true
 # 翻页方式
 paging_minus_equal = true
 paging_comma_period = true
@@ -102,7 +100,7 @@ sentence_collocation_rerank_weight = 0.05
 # 腾讯云机器翻译（竖排候选项本地词库未命中时的补全）
 #
 [tencent_tmt]
-enabled = true
+enabled = false
 # 请自行填写腾讯云密钥，不要把真实密钥写进仓库。
 secret_id = "<YOUR_TENCENT_SECRET_ID>"
 secret_key = "<YOUR_TENCENT_SECRET_KEY>"
@@ -215,7 +213,7 @@ tsf_preedit_shuangpin_quanpin = false
 [input]
 character_set = "simplified" # 候选输出字形，可选："simplified", "traditional"
 # 启动/从其他输入法切换到本输入法时的默认中英文，可选："chinese", "english"
-default_ime_mode = "english"
+default_ime_mode = "chinese"
 # 中英文状态范围，可选："app"（按应用分别记忆）, "global"（所有应用保持统一）
 ime_mode_scope = "app"
 # 以词定字：开启后，[ 上屏高亮候选的首个汉字，] 上屏末个汉字
@@ -387,8 +385,8 @@ skin_name = "default"
 # 语音输入
 #
 [voice_input]
-# 语音输入
-voice_input = true
+# 语音输入（默认关闭：未填 Token 时按快捷键只会弹出提示，右 Alt 还会占用 AltGr）
+voice_input = false
 # 全局语音快捷键（可分别启用或关闭）
 hotkey_ralt = true
 hotkey_ctrl_f9 = true
@@ -420,7 +418,7 @@ asr_resource_id = "volc.seedasr.sauc.duration"
 # 豆包识别选项：数字格式化（ITN）、标点预测默认开启，语义顺滑（DDC）默认关闭。
 doubao_enable_itn = true
 doubao_enable_punc = true
-doubao_enable_ddc = true
+doubao_enable_ddc = false
 # 在豆包语音控制台“自学习平台 -> 热词管理”创建词表后，将热词 ID 填在这里；留空则不使用。
 doubao_boosting_table_id = ""
 # OpenAI 兼容识别模型。豆包流式不使用此项；留空则按提供商填默认值。
@@ -484,8 +482,8 @@ date_time_candidates = false # 全拼/双拼下输入 rq / riqi / date、sj / sh
 date_time_menu = true # 日期时间混入候选时，在第三位放一个「📅日期」入口，选中后候选框换成全部日期格式（与 Shift+T 模式相同）
 unicode_mode = true # Shift+U 进入 Unicode 码位输入模式
 date_time_mode = true # Shift+T 进入日期与时间快捷输入模式
-emoji_mode = true # Shift+E 进入 Emoji 快捷输入模式（支持全拼/简拼/双拼/英文）
-kaomoji_mode = true # Shift+M 进入颜文字快捷输入模式（支持全拼/简拼/双拼/英文）
+emoji_mode = false # Shift+E 进入 Emoji 快捷输入模式（支持全拼/简拼/双拼/英文）；默认关闭，避免截走大写 E 开头的英文
+kaomoji_mode = false # Shift+M 进入颜文字快捷输入模式（支持全拼/简拼/双拼/英文）
 jianpin_mode = true # Shift+J 进入超级简拼模式（每个字母作为简拼；双拼按方案转换 zh/ch/sh）
 y_mode = true # Shift+Y 进入临时英文模式（中文状态下直接打英文，上屏后回到中文）
 r_mode = true # Shift+R 进入临时日语模式（中文状态下使用罗马字输入日语，上屏后回到中文）
@@ -496,7 +494,7 @@ v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，
 # AI 辅助
 #
 [ai_assistant]
-enabled = true
+enabled = false
 provider = "deepseek"
 # 请自行填写各提供商的 API Token，不要把真实密钥写进仓库。
 token = "FAKESECRET_e1f2g3h4i5j6k7l8m9n0"

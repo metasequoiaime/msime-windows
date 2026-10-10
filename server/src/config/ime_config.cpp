@@ -154,8 +154,8 @@ bool g_mixed_candidates_enabled = true;
 bool g_date_time_candidates_enabled = false;
 bool g_date_time_menu_enabled = true;
 bool g_date_time_mode_enabled = true;
-bool g_emoji_mode_enabled = true;
-bool g_kaomoji_mode_enabled = true;
+bool g_emoji_mode_enabled = false;
+bool g_kaomoji_mode_enabled = false;
 bool g_jianpin_mode_enabled = true;
 bool g_y_mode_enabled = true;
 bool g_r_mode_enabled = true;
@@ -577,8 +577,8 @@ bool LoadImeConfig()
         g_date_time_candidates_enabled = tbl["utility"]["date_time_candidates"].value_or(false);
         g_date_time_menu_enabled = tbl["utility"]["date_time_menu"].value_or(true);
         g_date_time_mode_enabled = tbl["utility"]["date_time_mode"].value_or(true);
-        g_emoji_mode_enabled = tbl["utility"]["emoji_mode"].value_or(true);
-        g_kaomoji_mode_enabled = tbl["utility"]["kaomoji_mode"].value_or(true);
+        g_emoji_mode_enabled = tbl["utility"]["emoji_mode"].value_or(false);
+        g_kaomoji_mode_enabled = tbl["utility"]["kaomoji_mode"].value_or(false);
         g_jianpin_mode_enabled = tbl["utility"]["jianpin_mode"].value_or(true);
         g_y_mode_enabled = tbl["utility"]["y_mode"].value_or(true);
         g_r_mode_enabled = tbl["utility"]["r_mode"].value_or(true);
@@ -715,7 +715,7 @@ bool LoadImeConfig()
         }
         // Parse into a local and publish it in one step, so readers never observe half-rewritten strings or maps.
         VoiceInputConfig voice;
-        voice.enabled = tbl["voice_input"]["voice_input"].value_or(true);
+        voice.enabled = tbl["voice_input"]["voice_input"].value_or(false);
         voice.hotkey_ralt = tbl["voice_input"]["hotkey_ralt"].value_or(true);
         voice.hotkey_ctrl_f9 = tbl["voice_input"]["hotkey_ctrl_f9"].value_or(true);
         voice.hotkey_ctrl_win = tbl["voice_input"]["hotkey_ctrl_win"].value_or(false);
@@ -867,7 +867,7 @@ bool LoadImeConfig()
         g_ai_assistant.prompt = g_ai_assistant.prompt_id == "custom_2"   ? g_ai_assistant.prompt_custom_2
                                 : g_ai_assistant.prompt_id == "custom_3" ? g_ai_assistant.prompt_custom_3
                                                                          : g_ai_assistant.prompt_custom_1;
-        g_tencent_tmt.enabled = tbl["tencent_tmt"]["enabled"].value_or(true);
+        g_tencent_tmt.enabled = tbl["tencent_tmt"]["enabled"].value_or(false);
         g_tencent_tmt.secret_id = tbl["tencent_tmt"]["secret_id"].value_or(std::string());
         g_tencent_tmt.secret_key = tbl["tencent_tmt"]["secret_key"].value_or(std::string());
         g_tencent_tmt.region = tbl["tencent_tmt"]["region"].value_or(std::string("ap-guangzhou"));

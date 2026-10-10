@@ -11,7 +11,7 @@
 
 struct VoiceInputConfig
 {
-    bool enabled = true;
+    bool enabled = false;
     bool hotkey_ralt = true;
     bool hotkey_ctrl_f9 = true;
     bool hotkey_ctrl_win = false;
@@ -111,7 +111,7 @@ struct AiAssistantConfig
 
 struct TencentTmtConfig
 {
-    bool enabled = true;
+    bool enabled = false;
     std::string secret_id;
     std::string secret_key;
     std::string region = "ap-guangzhou";

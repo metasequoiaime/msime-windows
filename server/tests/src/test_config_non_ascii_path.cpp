@@ -499,12 +499,13 @@ TEST_CASE(config_migrates_legacy_acp_mangled_path)
     fs::create_directories(mangled_dir, ec);
     REQUIRE(!ec);
     const std::string stock = ReadText(data_dir / L"config.default.toml");
-    const std::string from = "mode = \"chinese\"";
+    // 锚定行首：default_ime_mode = "chinese" 也包含这个子串，且在模板里排在 [input] mode 之前。
+    const std::string from = "\nmode = \"chinese\"";
     const auto pos = stock.find(from);
     REQUIRE(pos != std::string::npos);
     WriteText(data_dir / L"config.toml", stock + "\n# leftover-installer-marker\n");
     std::string leftover = stock;
-    leftover.replace(pos, from.size(), "mode = \"japanese\"");
+    leftover.replace(pos, from.size(), "\nmode = \"japanese\"");
     WriteText(mangled_dir / L"config.toml", leftover);
 
     {
