@@ -77,10 +77,13 @@ clean_mode = false
 sentence_wordlattice = true
 # Google 解码器整句联想
 sentence_google = true
-# 神经网络模型整句（效果优先 / desktop）：内部生成最多 12 条 Trigram 备选并挑选，不依赖 sentence_wordlattice 开关
-sentence_neural_desktop = false
 # 神经网络模型整句（速度优先 / keyboard）：同上；与 desktop 同时开启时各自独立给出结果
 sentence_neural_keyboard = true
+# 神经网络模型整句（效果优先 / desktop）：需先下载模型，内部生成最多 12 条 Trigram 备选并挑选，不依赖 sentence_wordlattice 开关
+# 模型 id（默认留空 = 未选择任何模型），下载后激活以启用效果优先整句
+sentence_neural_desktop_model = ""
+# 神经网络效果优先模型开关：激活的模型就绪时生效
+sentence_neural_desktop_enabled = false
 # 某个模型的首选与已有候选重复时，改为显示该模型排名最高的下一条不同结果
 sentence_show_next_on_duplicate = false
 # 在候选窗的整句候选后显示来源标签（〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕〔八股〕〔墨奇〕）
@@ -103,12 +106,12 @@ sentence_collocation_rerank_weight = 0.05
 # 腾讯云机器翻译（候选项本地词库未命中时的补全）
 #
 [tencent_tmt]
-enabled = true
-secret_id = ""
-secret_key = ""
-region = "ap-guangzhou"
+enabled = false
+secret_id = “”
+secret_key = “”
+region = “ap-guangzhou”
 # 候选词翻译/背单词目标语种：en / fr / ja / es / ru / de / ko / th / vi / it
-target_language = "en"
+target_language = “en”
 
 #
 # 自定义 DeepLX 兼容翻译服务。endpoint 必须填写完整的 POST 接口地址。
@@ -116,17 +119,17 @@ target_language = "en"
 #
 [custom_translation]
 enabled = false
-endpoint = ""
-api_key = ""
+endpoint = “”
+api_key = “”
 
 #
-# 小牛翻译（NiuTrans）机器翻译。app_id 与 apikey 在“控制台->API应用”中查看。
+# 小牛翻译（NiuTrans）机器翻译。app_id 与 apikey 在”控制台->API应用”中查看。
 # enabled = true 时优先于腾讯云与自定义 DeepLX。
 #
 [niutrans]
-enabled = false
-app_id = ""
-apikey = ""
+enabled = true
+app_id = “”
+apikey = “”
 
 #
 # 网络代理：云输入、模型下载、AI 联想、翻译、语音识别等需要联网的功能共用。
