@@ -80,7 +80,11 @@ try {
     $installer = Join-Path $fixture 'installer'
     New-Item -ItemType Directory -Force $installer | Out-Null
     [IO.File]::WriteAllText((Join-Path $installer 'Prepare-PackageFiles.ps1'), "throw 'Reached package staging after failure'")
-    function global:pnpm { $global:LASTEXITCODE = 23 }
+    function global:pnpm {
+        # 只让 'pnpm run build' 失败，允许 'pnpm install' 成功（用于首次依赖安装）
+        if ($args -contains 'build') { $global:LASTEXITCODE = 23 }
+        else { $global:LASTEXITCODE = 0 }
+    }
     Copy-Item (Join-Path $source 'installer/Invoke-LocalTest.ps1') $installer
     foreach ($entry in @('test.ps1', 'test-light.ps1', 'test-symbols.ps1')) {
         Copy-Item (Join-Path $source "installer/$entry") $installer
