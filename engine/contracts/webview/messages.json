@@ -82,6 +82,45 @@
         "settings"
       ]
     },
+    "neuralModelDownload": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "neuralModelDelete": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "neuralModelStatusRequest": {
+      "surfaces": [
+        "settings"
+      ]
+    },
     "openHandwritingPanel": {
       "surfaces": [
         "settings"

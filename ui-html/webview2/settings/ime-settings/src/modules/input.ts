@@ -461,6 +461,12 @@ export function setupInput(): void {
   setupToggleButton('sentenceSourceBadgeToggleBtn', (active) => {
     updateConfig('association.sentence_source_badge', active);
   });
+  // 神经网络模型整句（效果优先）开关：激活的模型就绪时生效
+  setupToggleButton('sentenceNeuralDesktopEnabledToggleBtn', (active) => {
+    updateConfig('association.sentence_neural_desktop_enabled', active);
+  });
+  // 模型列表行（下载/删除）由 shared.seedNeuralModelRow 创建；状态文本、控件可用态与轮询由
+  // shared.applyNeuralModelStatus 随配置快照驱动（config-sync 调用）。
   // octagram 语法模型总开关：一并接入解码期搭配加成与 n-best 重排，引擎侧不再分两个开关。
   setupToggleButton('sentenceCollocationToggleBtn', (active) => {
     updateConfig('association.sentence_collocation_enabled', active);

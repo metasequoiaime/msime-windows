@@ -1,6 +1,7 @@
 // 升级时以安装包出厂模板为骨架重建用户配置：模板合并、凭证兜底重放、损坏配置的留证与抢救，
 // 以及旧 ACP 乱码目录的配置找回。
 #include "config/ime_config_internal.h"
+#include "config/credential_encryption.h"
 #include <fmt/xchar.h>
 #include <Windows.h>
 #include <filesystem>
@@ -56,7 +57,7 @@ bool AssignmentHoldsRealCredential(const std::string &assignment_id, const std::
 
 // 把用户填过真值的凭证逐条重放到 text 上：有键改值，无键则在其分节里插入。幂等——重放已经等于
 // 目标值的凭证不改变结果。既给正常合并兜底（新模板漏掉某个凭证键的模板漂移），也给损坏配置的抢救
-// 路径兜底（整体合并失败、只能回退到出厂模板时，仍保住 token）。
+// 路径兜底（整体合并失败、只能回退到出厂模板时，仍保住 token）。升级时自动加密明文凭证。
 std::string ReapplyRealCredentials(std::string text, const std::map<std::string, std::string> &user_values)
 {
     for (const auto &entry : user_values)
@@ -68,9 +69,18 @@ std::string ReapplyRealCredentials(std::string text, const std::map<std::string,
         const size_t separator = entry.first.find('\x01');
         const std::string section = separator == std::string::npos ? std::string() : entry.first.substr(0, separator);
         const std::string key = separator == std::string::npos ? entry.first : entry.first.substr(separator + 1);
-        if (!ReplaceTomlValuePreservingFormatting(text, section, key, entry.second))
+
+        // Unquote the TOML value to get plaintext, then encrypt if not already encrypted.
+        std::string raw_value = entry.second;
+        std::string plaintext = UnquoteTomlScalar(raw_value);
+        std::string encrypted = CredentialEncryption::Encrypt(plaintext);
+
+        // Quote the encrypted value as a TOML string.
+        std::string toml_value = "\"" + encrypted + "\"";
+
+        if (!ReplaceTomlValuePreservingFormatting(text, section, key, toml_value))
         {
-            InsertTomlValuePreservingFormatting(text, section, key, entry.second);
+            InsertTomlValuePreservingFormatting(text, section, key, toml_value);
         }
     }
     return text;

@@ -1,6 +1,7 @@
 // 在线服务配置：语音输入（识别与润色的提供商、凭证槽位、热键）、AI 助手、翻译服务（腾讯 TMT、自定义翻译、小牛翻译）
 // 和这些服务共用的网络代理。
 #include "config/ime_config_internal.h"
+#include "config/credential_encryption.h"
 #include <algorithm>
 #include <cctype>
 #include <mutex>

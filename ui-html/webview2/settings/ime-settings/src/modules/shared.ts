@@ -198,6 +198,100 @@ export function applyCollocationModelStatus(
   }
 }
 
+// ---- 神经网络模型（效果优先）状态 ----
+
+let neuralPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function neuralModelStatusText(status: CollocationModelStatus | undefined): string {
+  const state = status?.state ?? 'absent';
+  if (state === 'ready') return '模型已就绪';
+  if (state === 'downloading') return `下载中 ${status?.progress ?? 0}%`;
+  if (state === 'error') return `下载失败：${status?.error || '未知原因'}`;
+  return '未下载';
+}
+
+function setNeuralTogglesDisabled(disabled: boolean): void {
+  const toggle = document.getElementById('sentenceNeuralDesktopEnabledToggleBtn');
+  toggle?.setAttribute('aria-disabled', String(disabled));
+  if (toggle) toggle.tabIndex = disabled ? -1 : 0;
+}
+
+function seedNeuralModelRow(): void {
+  const list = document.getElementById('neuralDesktopModelList');
+  if (!list || list.children.length > 0) return;
+
+  const row = document.createElement('div');
+  row.className = 'neural-model-row';
+  row.dataset.modelId = 'desktop';
+
+  const info = document.createElement('div');
+  info.className = 'neural-model-info';
+  const name = document.createElement('div');
+  name.className = 'neural-model-name';
+  name.textContent = '效果优先模型';
+  const status = document.createElement('div');
+  status.className = 'input-setting-description neural-model-status';
+  info.appendChild(name);
+  info.appendChild(status);
+
+  const actions = document.createElement('div');
+  actions.className = 'neural-model-actions';
+  const download = document.createElement('button');
+  download.type = 'button';
+  download.className = 'restart-server-button neural-model-download';
+  download.textContent = '下载';
+  download.addEventListener('click', () => {
+    window.chrome?.webview?.postMessage(serializeHostMessage({
+      type: 'neuralModelDownload', data: { modelId: 'desktop' }
+    }));
+  });
+  actions.appendChild(download);
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'restart-server-button neural-model-delete';
+  remove.textContent = '删除';
+  remove.addEventListener('click', () => {
+    window.chrome?.webview?.postMessage(serializeHostMessage({
+      type: 'neuralModelDelete', data: { modelId: 'desktop' }
+    }));
+  });
+  actions.appendChild(remove);
+
+  row.appendChild(info);
+  row.appendChild(actions);
+  list.appendChild(row);
+}
+
+export function applyNeuralModelStatus(
+  status: CollocationModelStatus | undefined
+): void {
+  seedNeuralModelRow();
+
+  const isBusy = status?.state === 'downloading';
+  const row = document.querySelector<HTMLElement>('.neural-model-row');
+  if (!row) return;
+
+  const text = row.querySelector<HTMLElement>('.neural-model-status');
+  if (text) text.textContent = neuralModelStatusText(status);
+
+  const download = row.querySelector<HTMLButtonElement>('.neural-model-download');
+  if (download) download.disabled = status?.state === 'ready' || isBusy;
+
+  const remove = row.querySelector<HTMLButtonElement>('.neural-model-delete');
+  if (remove) remove.hidden = status?.state !== 'ready';
+
+  setNeuralTogglesDisabled(status?.state !== 'ready');
+
+  if (isBusy && neuralPollTimer === null) {
+    neuralPollTimer = setInterval(() => {
+      window.chrome?.webview?.postMessage(serializeHostMessage({ type: 'neuralModelStatusRequest' }));
+    }, 2000);
+  } else if (!isBusy && neuralPollTimer !== null) {
+    clearInterval(neuralPollTimer);
+    neuralPollTimer = null;
+  }
+}
+
 function nextPaint(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));

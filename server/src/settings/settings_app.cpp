@@ -6,6 +6,7 @@
 #include "settings/settings_launcher.h"
 #include "settings/api_credential_test.h"
 #include "settings/collocation_model.h"
+#include "settings/neural_model.h"
 #include "settings/default_input_method.h"
 #include "settings/settings_splash.h"
 #include "settings/dictionary_manager.h"
@@ -539,8 +540,14 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"association",
            {{"sentence_wordlattice", GetConfiguredAssocSentenceWordLattice()},
             {"sentence_google", GetConfiguredAssocSentenceGoogle()},
-            {"sentence_neural_desktop", GetConfiguredAssocSentenceNeuralDesktop()},
             {"sentence_neural_keyboard", GetConfiguredAssocSentenceNeuralKeyboard()},
+            {"sentence_neural_desktop_model", GetConfiguredAssocSentenceNeuralDesktopModel()},
+            {"sentence_neural_desktop_enabled", GetConfiguredAssocSentenceNeuralDesktopEnabled()},
+            {"sentence_neural_desktop_model_status", [] {
+                 const auto status = neural_model::GetModelStatus();
+                 return nlohmann::json{{"state", status.state}, {"progress", status.progress},
+                                       {"error", status.error}};
+             }()},
             {"sentence_show_next_on_duplicate", GetConfiguredAssocSentenceShowNextOnDuplicate()},
             {"sentence_source_badge", GetConfiguredAssocSentenceSourceBadge()},
             {"sentence_collocation_enabled", GetConfiguredAssocSentenceCollocationEnabled()},
@@ -951,10 +958,12 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredAssocSentenceWordLattice(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_google")
         return SetConfiguredAssocSentenceGoogle(json::value_to<bool>(data.at("value")));
-    if (path == "association.sentence_neural_desktop")
-        return SetConfiguredAssocSentenceNeuralDesktop(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_neural_keyboard")
         return SetConfiguredAssocSentenceNeuralKeyboard(json::value_to<bool>(data.at("value")));
+    if (path == "association.sentence_neural_desktop_model")
+        return SetConfiguredAssocSentenceNeuralDesktopModel(json::value_to<std::string>(data.at("value")));
+    if (path == "association.sentence_neural_desktop_enabled")
+        return SetConfiguredAssocSentenceNeuralDesktopEnabled(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_show_next_on_duplicate")
         return SetConfiguredAssocSentenceShowNextOnDuplicate(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_source_badge")
@@ -1460,6 +1469,26 @@ void HandleWebMessage(HWND hwnd, ICoreWebView2WebMessageReceivedEventArgs *args)
             PostConfig(false);
         }
         else if (type == "collocationModelStatusRequest")
+        {
+            PostConfig(false);
+        }
+        else if (type == "neuralModelDownload")
+        {
+            // 后台线程下载，进度随下一次配置快照回给页面；页面在下载态轮询 configRequest。
+            neural_model::StartDownload();
+            PostConfig(false);
+        }
+        else if (type == "neuralModelDelete")
+        {
+            // 删除已下载的神经网络效果优先模型文件，同时清空激活值。
+            if (neural_model::DeleteModel())
+            {
+                SetConfiguredAssocSentenceNeuralDesktopModel("");
+                SetConfiguredAssocSentenceNeuralDesktopEnabled(false);
+            }
+            PostConfig(false);
+        }
+        else if (type == "neuralModelStatusRequest")
         {
             PostConfig(false);
         }

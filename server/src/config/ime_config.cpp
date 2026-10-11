@@ -2,6 +2,7 @@
 #include "window/caret_state_indicator_policy.h"
 #include "ime_config.h"
 #include "config/ime_config_internal.h"
+#include "config/credential_encryption.h"
 #include <Windows.h>
 #include <algorithm>
 #include <atomic>
@@ -134,9 +135,11 @@ bool g_cloud_candidates_enabled = true;
 // 整句候选来源与去重补位开关：词格、Google 和神经速度档默认开，神经效果档与去重补位默认关。
 bool g_assoc_sentence_wordlattice = true;
 bool g_assoc_sentence_google = true;
-bool g_assoc_sentence_neural_desktop = false;
 bool g_assoc_sentence_neural_keyboard = true;
 bool g_assoc_sentence_show_next_on_duplicate = false;
+// 神经网络模型整句（效果优先 / desktop）：需先下载模型。
+std::string g_assoc_sentence_neural_desktop_model;
+bool g_assoc_sentence_neural_desktop_enabled = false;
 // octagram 语法模型（八股文 .gram）：总开关默认关；模型 id 默认空（空 = 未选择任何模型）。
 // 权重不进设置页，供配置文件高级调参。
 bool g_assoc_sentence_collocation_enabled = false;
@@ -560,8 +563,10 @@ bool LoadImeConfig()
         g_cloud_candidates_enabled = tbl["general"]["cloud_candidates"].value_or(true);
         g_assoc_sentence_wordlattice = tbl["association"]["sentence_wordlattice"].value_or(true);
         g_assoc_sentence_google = tbl["association"]["sentence_google"].value_or(true);
-        g_assoc_sentence_neural_desktop = tbl["association"]["sentence_neural_desktop"].value_or(false);
         g_assoc_sentence_neural_keyboard = tbl["association"]["sentence_neural_keyboard"].value_or(true);
+        g_assoc_sentence_neural_desktop_model =
+            tbl["association"]["sentence_neural_desktop_model"].value_or(std::string());
+        g_assoc_sentence_neural_desktop_enabled = tbl["association"]["sentence_neural_desktop_enabled"].value_or(false);
         g_assoc_sentence_show_next_on_duplicate = tbl["association"]["sentence_show_next_on_duplicate"].value_or(false);
         g_assoc_sentence_collocation_enabled = tbl["association"]["sentence_collocation_enabled"].value_or(false);
         g_assoc_sentence_collocation_model = tbl["association"]["sentence_collocation_model"].value_or(std::string());
@@ -818,13 +823,13 @@ bool LoadImeConfig()
             VoiceInput::NormalizeProviderId(tbl["ai_assistant"]["provider"].value_or(std::string("deepseek")));
         if (AiAssistantTokenSlotKey(g_ai_assistant.provider).empty())
             g_ai_assistant.provider = "deepseek";
-        g_ai_assistant.token = tbl["ai_assistant"]["token"].value_or(std::string());
+        g_ai_assistant.token = CredentialEncryption::Decrypt(tbl["ai_assistant"]["token"].value_or(std::string()));
         g_ai_assistant.tokens.clear();
         for (const auto provider : AiAssistantProviders())
         {
             const std::string id(provider);
-            g_ai_assistant.tokens[id] =
-                VoiceInput::UsableToken(tbl["ai_assistant"][AiAssistantTokenSlotKey(id)].value_or(std::string()));
+            g_ai_assistant.tokens[id] = VoiceInput::UsableToken(
+                CredentialEncryption::Decrypt(tbl["ai_assistant"][AiAssistantTokenSlotKey(id)].value_or(std::string())));
         }
         {
             std::string &stored = g_ai_assistant.tokens[g_ai_assistant.provider];

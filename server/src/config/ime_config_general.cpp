@@ -181,20 +181,6 @@ bool SetConfiguredAssocSentenceGoogle(bool enabled)
     return true;
 }
 
-bool GetConfiguredAssocSentenceNeuralDesktop()
-{
-    return g_assoc_sentence_neural_desktop;
-}
-bool SetConfiguredAssocSentenceNeuralDesktop(bool enabled)
-{
-    if (!WriteConfiguredValue("association", "sentence_neural_desktop", enabled ? "true" : "false"))
-    {
-        return false;
-    }
-    g_assoc_sentence_neural_desktop = enabled;
-    return true;
-}
-
 bool GetConfiguredAssocSentenceNeuralKeyboard()
 {
     return g_assoc_sentence_neural_keyboard;
@@ -206,6 +192,34 @@ bool SetConfiguredAssocSentenceNeuralKeyboard(bool enabled)
         return false;
     }
     g_assoc_sentence_neural_keyboard = enabled;
+    return true;
+}
+
+std::string GetConfiguredAssocSentenceNeuralDesktopModel()
+{
+    return g_assoc_sentence_neural_desktop_model;
+}
+bool SetConfiguredAssocSentenceNeuralDesktopModel(const std::string &model_id)
+{
+    if (!WriteConfiguredValue("association", "sentence_neural_desktop_model", EscapeTomlBasicString(model_id)))
+    {
+        return false;
+    }
+    g_assoc_sentence_neural_desktop_model = model_id;
+    return true;
+}
+
+bool GetConfiguredAssocSentenceNeuralDesktopEnabled()
+{
+    return g_assoc_sentence_neural_desktop_enabled;
+}
+bool SetConfiguredAssocSentenceNeuralDesktopEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("association", "sentence_neural_desktop_enabled", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_assoc_sentence_neural_desktop_enabled = enabled;
     return true;
 }
 

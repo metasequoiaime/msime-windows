@@ -1,6 +1,6 @@
 import { onHostMessage } from '../utils/host-messages';
 import { serializeHostMessage } from '../../../../shared/messages';
-import { applyCollocationModelStatus, applyCandidateArrange, applyDropdownValue as applyDropdown, applyToggleState as applyToggle, setFuzzyRuleOptionsDisabled, setMixedCandidateOptionsDisabled, setSmartPunctuationOptionsDisabled } from './shared';
+import { applyCollocationModelStatus, applyNeuralModelStatus, applyCandidateArrange, applyDropdownValue as applyDropdown, applyToggleState as applyToggle, setFuzzyRuleOptionsDisabled, setMixedCandidateOptionsDisabled, setSmartPunctuationOptionsDisabled } from './shared';
 
 let lastSnapshot: Record<string, any> | null = null;
 const readyModules = new Set<string>();
@@ -227,6 +227,12 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
   );
   if (typeof data?.association?.sentence_collocation_enabled === 'boolean') {
     applyToggleState('sentenceCollocationToggleBtn', data.association.sentence_collocation_enabled);
+  }
+  applyNeuralModelStatus(
+    data?.association?.sentence_neural_desktop_model_status
+  );
+  if (typeof data?.association?.sentence_neural_desktop_enabled === 'boolean') {
+    applyToggleState('sentenceNeuralDesktopEnabledToggleBtn', data.association.sentence_neural_desktop_enabled);
   }
   if (typeof data?.utility?.unicode_mode === 'boolean') {
     applyToggleState('unicodeModeToggleBtn', data.utility.unicode_mode);
