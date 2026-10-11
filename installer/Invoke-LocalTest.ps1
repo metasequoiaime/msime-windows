@@ -53,6 +53,11 @@ try {
 
     Push-Location $settingsDir
     try {
+        # 首次运行或 node_modules 缺失时需要安装依赖
+        if (-not (Test-Path -LiteralPath 'node_modules' -PathType Container)) {
+            pnpm install
+            if ($LASTEXITCODE -ne 0) { throw "Settings page dependencies installation failed ($LASTEXITCODE)" }
+        }
         pnpm run build
         if ($LASTEXITCODE -ne 0) { throw "Settings page build failed ($LASTEXITCODE)" }
     } finally { Pop-Location }
@@ -64,8 +69,13 @@ try {
         & (Join-Path $repoRoot 'scripts\build-language-model.ps1')
         # 词库同理：从本仓同级的 msime-dictionary 构建，不下载 Release。源数据提交和构建脚本
         # 都没变、工作区干净时直接跳过；有变化就整套重建（约 45 秒）。
+        # 词库构建需要 pypinyin，首次运行时自动安装。
+        python -m pip install -q pypinyin
+        if ($LASTEXITCODE -ne 0) { throw "安装 pypinyin 依赖失败（$LASTEXITCODE）" }
         python (Join-Path $repoRoot 'scripts\build-dictionary.py') --if-stale
         if ($LASTEXITCODE -ne 0) { throw "从 msime-dictionary 构建词库失败（$LASTEXITCODE）" }
+        # 神经整句模型：从 chinese-ime-lm Release 下载。幂等脚本，摘要对上时直接返回。
+        & (Join-Path $repoRoot 'scripts\download-neural-model.ps1')
     }
 
     & (Join-Path $PSScriptRoot 'Prepare-PackageFiles.ps1') -Light:$Light -IncludeSymbols:$IncludeSymbols `
