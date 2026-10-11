@@ -54,6 +54,36 @@ bool FloatingToolbarItemsEqual(const FloatingToolbarItemsConfig &left, const Flo
 
 namespace
 {
+// Transparent shadow margin that may hang off a screen edge, so the visible bar
+// can sit flush with it like the Windows language bar. ClipWindowToVisibleScreens
+// then keeps that overhang from drawing or swallowing clicks over the taskbar.
+RECT FloatingToolbarShadowInsetsPx(int hostWidthPx, int hostHeightPx, FLOAT scale)
+{
+    if (FloatingToolbarPresenter::Instance().IsBound())
+    {
+        return FloatingToolbarPresenter::Instance().ShadowInsetsPx(hostWidthPx, hostHeightPx, scale);
+    }
+    if (scale <= 0.0f)
+    {
+        return {};
+    }
+    // The page pins .status-bar (border included) to the top-left, so the margin
+    // is right/bottom only: the host minus the bar, shadow and the 1-DIP
+    // rounding pad included.
+    double barWidthDip = ::FTB_CONTENT_WIDTH_DIP;
+    double barHeightDip = ::FTB_CONTENT_HEIGHT_DIP;
+    if (barWidthDip <= 1.0 || barHeightDip <= 1.0)
+    {
+        const int shadowWidth = GetConfiguredFloatingToolbarShadow() ? ::FTB_WND_SHADOW_WIDTH : 0;
+        barWidthDip = static_cast<double>(hostWidthPx) / scale - shadowWidth;
+        barHeightDip = static_cast<double>(hostHeightPx) / scale - shadowWidth;
+    }
+    const auto inset = [scale](int hostPx, double barDip) {
+        return (std::max)(0L, static_cast<LONG>(hostPx - std::ceil(barDip * static_cast<double>(scale))));
+    };
+    return {0, 0, inset(hostWidthPx, barWidthDip), inset(hostHeightPx, barHeightDip)};
+}
+
 void KeepFloatingToolbarInsideVisibleScreens(HWND hwnd)
 {
     RECT rect{};
@@ -68,12 +98,16 @@ void KeepFloatingToolbarInsideVisibleScreens(HWND hwnd)
     // primary) snap back to the screen it came from.
     const RECT before = rect;
     HMONITOR monitor = nullptr;
-    if (!KeepRectOnVisibleScreens(rect, ScreenArea::WorkArea, &monitor))
+    if (!KeepRectOnVisibleScreens(
+            rect, ScreenArea::WorkArea, &monitor,
+            FloatingToolbarShadowInsetsPx(rect.right - rect.left, rect.bottom - rect.top, GetWindowScale(hwnd))))
     {
+        ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea);
         return;
     }
 
     SetWindowPos(hwnd, nullptr, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea);
     SyncHostWebViewBounds(::webviewControllerFtbWnd.Get(), hwnd);
 
     MONITORINFO info{sizeof(info)};
@@ -151,21 +185,26 @@ void LayoutFloatingToolbar(HWND hwnd, bool reset_to_default_corner, FLOAT scaleO
     const int width = static_cast<int>(std::ceil((::FTB_WND_WIDTH + shadowWidth) * static_cast<double>(scale)));
     const int height = static_cast<int>(std::ceil((::FTB_WND_HEIGHT + shadowWidth) * static_cast<double>(scale)));
     const int cornerInset = static_cast<int>(std::lround(10.0 * static_cast<double>(scale)));
+    const RECT shadowInsets = FloatingToolbarShadowInsetsPx(width, height, scale);
     int posX = 0;
     int posY = 0;
     if (reset_to_default_corner)
     {
+        // The inset is measured from the visible bar, not the shadow margin.
         MonitorCoordinates coordinates = GetMainMonitorCoordinates();
         const int taskbarHeight = GetTaskbarHeight();
-        posX = coordinates.right - width - cornerInset;
-        posY = coordinates.bottom - height - taskbarHeight - cornerInset;
+        posX = coordinates.right - width + shadowInsets.right - cornerInset;
+        posY = coordinates.bottom - height + shadowInsets.bottom - taskbarHeight - cornerInset;
     }
     else
     {
         // When optional buttons are added, the toolbar grows to the right from
         // the existing top-left; keep the resized host reachable without
         // pinning it to the monitor it currently sits on.
-        const POINT pos = PlaceResizedHost(hwnd, width, height, suggestedRect);
+        // Toggling the shadow changes the margin, not the bar: the previous
+        // insets keep the bar itself in place and inside the work area.
+        const POINT pos = PlaceResizedHost(hwnd, width, height, suggestedRect, shadowInsets,
+                                           ::FTB_HOST_INSETS_VALID ? &::FTB_HOST_INSETS_PX : nullptr);
         posX = pos.x;
         posY = pos.y;
     }
@@ -173,6 +212,9 @@ void LayoutFloatingToolbar(HWND hwnd, bool reset_to_default_corner, FLOAT scaleO
     // for the toolbar is owned by EnsureSmallWindowsTopmost / lazy pin order.
     SetLastError(0);
     const BOOL ok = SetWindowPos(hwnd, nullptr, posX, posY, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+    ::FTB_HOST_INSETS_PX = shadowInsets;
+    ::FTB_HOST_INSETS_VALID = true;
+    ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea);
     if (!d2d)
     {
         SyncHostWebViewBounds(::webviewControllerFtbWnd.Get(), hwnd);
@@ -688,6 +730,17 @@ LRESULT CALLBACK WndProcFtbWindow(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         }
         KeepFloatingToolbarInsideVisibleScreens(hwnd);
         return 0;
+
+    case WM_WINDOWPOSCHANGED: {
+        // Follow the caption drag live, so the shadow shows again as soon as the
+        // bar leaves an edge and is trimmed as soon as it reaches one.
+        const auto *pos = reinterpret_cast<const WINDOWPOS *>(lParam);
+        if (pos && (pos->flags & (SWP_NOMOVE | SWP_NOSIZE)) != (SWP_NOMOVE | SWP_NOSIZE))
+        {
+            ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea);
+        }
+        return DefWindowProc(hwnd, message, wParam, lParam);
+    }
 
     case WM_DPICHANGED: {
         const FLOAT scale = HIWORD(wParam) / 96.0f;

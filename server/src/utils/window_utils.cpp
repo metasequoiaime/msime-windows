@@ -131,9 +131,15 @@ bool IsRectInsideVisibleScreens(const RECT &rect, ScreenArea area)
 }
 } // namespace
 
-bool KeepRectOnVisibleScreens(RECT &rect, ScreenArea area, HMONITOR *monitor)
+bool KeepRectOnVisibleScreens(RECT &rect, ScreenArea area, HMONITOR *monitor, const RECT &offscreenInsets)
 {
-    if (IsRectInsideVisibleScreens(rect, area))
+    RECT content{rect.left + offscreenInsets.left, rect.top + offscreenInsets.top, rect.right - offscreenInsets.right,
+                 rect.bottom - offscreenInsets.bottom};
+    if (content.right <= content.left || content.bottom <= content.top)
+    {
+        content = rect;
+    }
+    if (IsRectInsideVisibleScreens(content, area))
     {
         return false;
     }
@@ -141,7 +147,8 @@ bool KeepRectOnVisibleScreens(RECT &rect, ScreenArea area, HMONITOR *monitor)
     // Nearest monitor of the rect's center instead of MonitorFromRect: a host
     // straddling a seam must keep the side the user dropped it on, and a host
     // beyond every screen must come back towards where it was pushed.
-    const POINT center{rect.left + (rect.right - rect.left) / 2, rect.top + (rect.bottom - rect.top) / 2};
+    const POINT center{content.left + (content.right - content.left) / 2,
+                       content.top + (content.bottom - content.top) / 2};
     const HMONITOR target = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info{sizeof(info)};
     if (!target || !GetMonitorInfo(target, &info))
@@ -154,21 +161,67 @@ bool KeepRectOnVisibleScreens(RECT &rect, ScreenArea area, HMONITOR *monitor)
     }
 
     const RECT &bounds = ScreenAreaRect(info, area);
-    const int width = rect.right - rect.left;
-    const int height = rect.bottom - rect.top;
+    const int width = content.right - content.left;
+    const int height = content.bottom - content.top;
     const int maxX = (std::max)(static_cast<int>(bounds.left), static_cast<int>(bounds.right) - width);
     const int maxY = (std::max)(static_cast<int>(bounds.top), static_cast<int>(bounds.bottom) - height);
-    const int x = (std::max)(static_cast<int>(bounds.left), (std::min)(static_cast<int>(rect.left), maxX));
-    const int y = (std::max)(static_cast<int>(bounds.top), (std::min)(static_cast<int>(rect.top), maxY));
-    if (x == rect.left && y == rect.top)
+    const int x = (std::max)(static_cast<int>(bounds.left), (std::min)(static_cast<int>(content.left), maxX));
+    const int y = (std::max)(static_cast<int>(bounds.top), (std::min)(static_cast<int>(content.top), maxY));
+    if (x == content.left && y == content.top)
     {
         return false;
     }
-    rect.left = x;
-    rect.top = y;
-    rect.right = x + width;
-    rect.bottom = y + height;
+    OffsetRect(&rect, x - content.left, y - content.top);
     return true;
+}
+
+void ClipWindowToVisibleScreens(HWND hwnd, ScreenArea area)
+{
+    RECT rect{};
+    if (!hwnd || !GetWindowRect(hwnd, &rect))
+    {
+        return;
+    }
+    HRGN visible = CreateRectRgn(0, 0, 0, 0);
+    HRGN clipped = CreateRectRgnIndirect(&rect);
+    HRGN whole = CreateRectRgnIndirect(&rect);
+    HRGN current = CreateRectRgn(0, 0, 0, 0);
+    if (visible && clipped && whole && current)
+    {
+        VisibleRegionBuilder builder{visible, area};
+        EnumDisplayMonitors(nullptr, nullptr, AddMonitorAreaToRegion, reinterpret_cast<LPARAM>(&builder));
+        const int kind = CombineRgn(clipped, clipped, visible, RGN_AND);
+        const bool hasRegion = GetWindowRgn(hwnd, current) != ERROR;
+        // Nothing visible means the host is mid-drag between screens; the
+        // clamp at the end of the drag brings it back, so leave it alone.
+        if (kind == NULLREGION || kind == ERROR || EqualRgn(clipped, whole))
+        {
+            if (hasRegion && kind != NULLREGION)
+            {
+                SetWindowRgn(hwnd, nullptr, TRUE);
+            }
+        }
+        else
+        {
+            OffsetRgn(clipped, -rect.left, -rect.top);
+            // SetWindowRgn repaints, and it runs on every move during a drag.
+            if (!hasRegion || !EqualRgn(current, clipped))
+            {
+                // The system owns the region once it is set.
+                if (SetWindowRgn(hwnd, clipped, TRUE))
+                {
+                    clipped = nullptr;
+                }
+            }
+        }
+    }
+    for (HRGN region : {visible, clipped, whole, current})
+    {
+        if (region)
+        {
+            DeleteObject(region);
+        }
+    }
 }
 
 bool IsWindowInMoveSizeLoop(HWND hwnd)
@@ -182,7 +235,8 @@ bool IsWindowInMoveSizeLoop(HWND hwnd)
            info.hwndMoveSize == hwnd;
 }
 
-POINT PlaceResizedHost(HWND hwnd, int width, int height, const RECT *suggestedRect)
+POINT PlaceResizedHost(HWND hwnd, int width, int height, const RECT *suggestedRect, const RECT &offscreenInsets,
+                       const RECT *previousInsets)
 {
     RECT target{};
     if (suggestedRect)
@@ -193,6 +247,14 @@ POINT PlaceResizedHost(HWND hwnd, int width, int height, const RECT *suggestedRe
     {
         GetWindowRect(hwnd, &target);
     }
+    // Keep the visible part still when the margin around it changes size;
+    // anchoring the host's own top-left would shift it by the difference.
+    const bool insetsChanged = previousInsets && !suggestedRect && !EqualRect(previousInsets, &offscreenInsets);
+    if (insetsChanged)
+    {
+        target.left += previousInsets->left - offscreenInsets.left;
+        target.top += previousInsets->top - offscreenInsets.top;
+    }
     target.right = target.left + width;
     target.bottom = target.top + height;
     // A caption drag owns the position until it ends (WM_EXITSIZEMOVE clamps
@@ -200,7 +262,10 @@ POINT PlaceResizedHost(HWND hwnd, int width, int height, const RECT *suggestedRe
     // the screen it came from.
     if (!IsWindowInMoveSizeLoop(hwnd))
     {
-        KeepRectOnVisibleScreens(target, ScreenArea::Monitor);
+        // A changed margin re-checks the visible part against the work area,
+        // as the end of a drag does, so rounding cannot tuck it under the taskbar.
+        KeepRectOnVisibleScreens(target, insetsChanged ? ScreenArea::WorkArea : ScreenArea::Monitor, nullptr,
+                                 offscreenInsets);
     }
     return {target.left, target.top};
 }

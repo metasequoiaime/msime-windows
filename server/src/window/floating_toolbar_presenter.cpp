@@ -365,6 +365,8 @@ struct FloatingToolbarPresenter::Impl
     float radius = 8.0f;
     float iconRadius = 6.0f;
     bool light = false;
+    bool shadow = false;
+    float cardHeightDip = 0.0f;
     int cnEn = 1;
     int doubleSingleByte = 0;
     int punctuation = 1;
@@ -550,8 +552,10 @@ void FloatingToolbarPresenter::RebuildScene()
     brush.radiusY = radius;
     impl_->card = std::make_shared<msimeui::Card>(brush, 0.0f);
     // 与候选窗同一对柔和阴影（candidate_presenter.cpp）：light α .18/.10，dark α .34/.22。
-    // 关掉阴影时透明边距只留描边外沿，工具栏本体才能贴住屏幕边缘。
+    // 阴影边距可以伸出屏幕（ShadowInsetsPx），开着阴影工具栏本体也能贴住屏幕边缘；
+    // 关掉阴影时透明边距只留描边外沿。
     const bool shadow = GetConfiguredFloatingToolbarShadow();
+    impl_->shadow = shadow;
     impl_->card->SetShadowEnabled(shadow);
     if (shadow)
     {
@@ -631,6 +635,7 @@ void FloatingToolbarPresenter::RelayoutHost(FLOAT scaleOverride, const RECT *sug
     ::FTB_CONTENT_HEIGHT_DIP = measured.height;
     ::FTB_WND_WIDTH = static_cast<int>(std::ceil(measured.width));
     ::FTB_WND_HEIGHT = static_cast<int>(std::ceil(measured.height));
+    impl_->cardHeightDip = impl_->card ? impl_->card->GetBounds().height : 0.0f;
 
     FLOAT scale = scaleOverride > 0.0f ? scaleOverride : GetWindowScale(hwnd_);
     if (scale <= 0.0f)
@@ -654,8 +659,13 @@ void FloatingToolbarPresenter::RelayoutHost(FLOAT scaleOverride, const RECT *sug
         static_cast<float>(ClampHeightDipToHalfScreen(static_cast<double>(measured.height), limits));
     const int widthPx = (std::max)(1, static_cast<int>(std::ceil(widthDip * scale)));
     const int heightPx = (std::max)(1, static_cast<int>(std::ceil(heightDip * scale)));
-    const POINT pos = PlaceResizedHost(hwnd_, widthPx, heightPx, suggestedRect);
+    const RECT insets = ShadowInsetsPx(widthPx, heightPx, scale);
+    const POINT pos = PlaceResizedHost(hwnd_, widthPx, heightPx, suggestedRect, insets,
+                                       ::FTB_HOST_INSETS_VALID ? &::FTB_HOST_INSETS_PX : nullptr);
     SetWindowPos(hwnd_, nullptr, pos.x, pos.y, widthPx, heightPx, SWP_NOZORDER | SWP_NOACTIVATE);
+    ::FTB_HOST_INSETS_PX = insets;
+    ::FTB_HOST_INSETS_VALID = true;
+    ClipWindowToVisibleScreens(hwnd_, ScreenArea::WorkArea);
     impl_->resources.EnsureForComposition(hwnd_);
     if (impl_->card && impl_->dragLimit)
     {
@@ -675,6 +685,34 @@ bool FloatingToolbarPresenter::HitCaptionDrag(POINT clientPoint) const
     const PointF dip = impl_->window->ClientPixelsToDips(clientPoint);
     return dip.x >= impl_->captionRect.x && dip.x < impl_->captionRect.x + impl_->captionRect.width &&
            dip.y >= impl_->captionRect.y && dip.y < impl_->captionRect.y + impl_->captionRect.height;
+}
+
+RECT FloatingToolbarPresenter::ShadowInsetsPx(int hostWidthPx, int hostHeightPx, FLOAT scale) const
+{
+    if (!impl_ || scale <= 0.0f)
+    {
+        return {};
+    }
+    // Where the border's outer edge lands in the host, as Present lays it out:
+    // the frame stretches the card to the host width, while the root stack keeps
+    // the measured height, so the rounded-up host height is spare room below.
+    // Fixed pads alone left that rounding (1-3 px) between the bar and the edge.
+    // Without the shadow this trims the kNoShadowPad slack the same way.
+    const float padLeft = impl_->shadow ? kShadowPadLeft : kNoShadowPad;
+    const float padTop = impl_->shadow ? kShadowPadTop : kNoShadowPad;
+    const float padRight = impl_->shadow ? kShadowPadRight : kNoShadowPad;
+    const float s = static_cast<float>(scale);
+    const float half = kToolbarStrokeWidth * 0.5f;
+    const float hostWidthDip = static_cast<float>(hostWidthPx) / s;
+    const float left = padLeft - half;
+    const float top = padTop - half;
+    const float right = hostWidthDip - padRight + half;
+    const float bottom = padTop + impl_->cardHeightDip + half;
+    // Floor / ceil keep the antialiased edge pixel of the border on screen.
+    const auto clamp = [](float px) { return (std::max)(0L, static_cast<LONG>(px)); };
+    return {clamp(std::floor(left * s)), clamp(std::floor(top * s)),
+            clamp(static_cast<float>(hostWidthPx) - std::ceil(right * s)),
+            clamp(static_cast<float>(hostHeightPx) - std::ceil(bottom * s))};
 }
 
 void FloatingToolbarPresenter::SyncUi(int cnEn, int doubleSingleByte, int punctuation, int englishInputMode,

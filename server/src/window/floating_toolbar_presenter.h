@@ -18,6 +18,11 @@ class FloatingToolbarPresenter
     void SyncUi(int cnEn, int doubleSingleByte, int punctuation, int englishInputMode, int capsLock,
                 int japaneseInputMode);
     bool HitCaptionDrag(POINT clientPoint) const;
+    // Physical px per side of transparent margin (shadow, or the stroke slack
+    // when the shadow is off) that may hang off a
+    // screen edge (KeepRectOnVisibleScreens' offscreenInsets), for a host of
+    // the given physical size. Everything inside it is the bar and its border.
+    RECT ShadowInsetsPx(int hostWidthPx, int hostHeightPx, FLOAT scale) const;
     bool HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 
   private:
