@@ -9,7 +9,7 @@ namespace ime_config_detail
 // Encrypts on write, decrypts on read. Uses Windows DPAPI with current-user scope.
 class CredentialEncryption
 {
-public:
+  public:
     // Encrypt plaintext using DPAPI. Returns base64-encoded ciphertext prefixed with "DPAPI:".
     // Returns empty string on failure.
     static std::string Encrypt(const std::string &plaintext);
@@ -21,7 +21,7 @@ public:
     // Check if a value is encrypted (has "DPAPI:" prefix).
     static bool IsEncrypted(const std::string &value);
 
-private:
+  private:
     static constexpr const char *kEncryptionPrefix = "DPAPI:";
 };
 

@@ -80,7 +80,8 @@ void DownloadThread()
     // 从 https://github.com/metasequoiaime/chinese-ime-lm/releases/download/model-v1/
     // 下载效果优先模型（24.9M）
     const wchar_t *host = L"github.com";
-    const wchar_t *path = L"/metasequoiaime/chinese-ime-lm/releases/download/model-v1/sentence-model-desktop.safetensors";
+    const wchar_t *path =
+        L"/metasequoiaime/chinese-ime-lm/releases/download/model-v1/sentence-model-desktop.safetensors";
 
     HINTERNET session = NetworkProxy::OpenWinHttpSession(L"MetasequoiaImeServer/1.0");
     if (session == nullptr)
@@ -172,8 +173,7 @@ void DownloadThread()
 
     if (!ok)
     {
-        SetState(DownloadState::Error, 0,
-                 status != 0 && status != HTTP_STATUS_OK ? "下载响应异常" : "下载中断");
+        SetState(DownloadState::Error, 0, status != 0 && status != HTTP_STATUS_OK ? "下载响应异常" : "下载中断");
         std::error_code cleanup;
         std::filesystem::remove(PartFile(), cleanup);
         return;

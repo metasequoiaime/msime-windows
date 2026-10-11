@@ -18,9 +18,7 @@ namespace ime_config_detail
 bool IsCredentialField(const std::string &section, const std::string &key)
 {
     static const std::set<std::string> credential_keys = {
-        "token",        "api_key",     "apikey",    "secret_id", "secret_key",
-        "app_id",       "asr_app_key", "asr_token", "polish_token"
-    };
+        "token", "api_key", "apikey", "secret_id", "secret_key", "app_id", "asr_app_key", "asr_token", "polish_token"};
 
     if (credential_keys.count(key) != 0)
     {

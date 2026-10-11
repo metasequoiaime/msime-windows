@@ -828,8 +828,8 @@ bool LoadImeConfig()
         for (const auto provider : AiAssistantProviders())
         {
             const std::string id(provider);
-            g_ai_assistant.tokens[id] = VoiceInput::UsableToken(
-                CredentialEncryption::Decrypt(tbl["ai_assistant"][AiAssistantTokenSlotKey(id)].value_or(std::string())));
+            g_ai_assistant.tokens[id] = VoiceInput::UsableToken(CredentialEncryption::Decrypt(
+                tbl["ai_assistant"][AiAssistantTokenSlotKey(id)].value_or(std::string())));
         }
         {
             std::string &stored = g_ai_assistant.tokens[g_ai_assistant.provider];

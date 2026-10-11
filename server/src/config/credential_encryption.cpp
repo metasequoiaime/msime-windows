@@ -13,8 +13,7 @@ namespace ime_config_detail
 namespace
 {
 // Base64 encoding alphabet.
-constexpr const char kBase64Alphabet[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+constexpr const char kBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 // Encode binary data to base64 string.
 std::string Base64Encode(const uint8_t *data, size_t size)
@@ -134,15 +133,14 @@ std::string CredentialEncryption::Encrypt(const std::string &plaintext)
     DATA_BLOB output_blob = {};
 
     // Encrypt with DPAPI (DPAPI_PROTECT_DATA_NO_UI ensures no UI prompts).
-    if (!CryptProtectData(&input_blob, L"MetasequoiaIME Credential", nullptr,
-                          nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output_blob))
+    if (!CryptProtectData(&input_blob, L"MetasequoiaIME Credential", nullptr, nullptr, nullptr,
+                          CRYPTPROTECT_UI_FORBIDDEN, &output_blob))
     {
         return "";
     }
 
     // Encode to base64 and prepend prefix.
-    std::string base64 =
-        Base64Encode(output_blob.pbData, output_blob.cbData);
+    std::string base64 = Base64Encode(output_blob.pbData, output_blob.cbData);
     LocalFree(output_blob.pbData);
 
     return std::string(kEncryptionPrefix) + base64;
@@ -178,8 +176,7 @@ std::string CredentialEncryption::Decrypt(const std::string &ciphertext)
     DATA_BLOB output_blob = {};
 
     // Decrypt with DPAPI.
-    if (!CryptUnprotectData(&input_blob, nullptr, nullptr, nullptr, nullptr,
-                            CRYPTPROTECT_UI_FORBIDDEN, &output_blob))
+    if (!CryptUnprotectData(&input_blob, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output_blob))
     {
         return "";
     }
