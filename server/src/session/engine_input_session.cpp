@@ -74,7 +74,8 @@ void EngineInputSession::ApplyConfiguration()
     SentenceAssociationOptions association;
     association.word_lattice = GetConfiguredAssocSentenceWordLattice();
     association.google = GetConfiguredAssocSentenceGoogle();
-    association.neural_desktop = GetConfiguredAssocSentenceNeuralDesktop();
+    association.neural_desktop =
+        GetConfiguredAssocSentenceNeuralDesktopEnabled() && !GetConfiguredAssocSentenceNeuralDesktopModel().empty();
     association.neural_keyboard = GetConfiguredAssocSentenceNeuralKeyboard();
     association.show_next_on_duplicate = GetConfiguredAssocSentenceShowNextOnDuplicate();
     // octagram 语法模型总开关：开关关时连模型路径都不解析。引擎侧的加成分由 collocation_model
