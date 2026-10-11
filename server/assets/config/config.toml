@@ -103,7 +103,7 @@ sentence_collocation_rerank_weight = 0.05
 # 腾讯云机器翻译（候选项本地词库未命中时的补全）
 #
 [tencent_tmt]
-enabled = true
+enabled = false
 secret_id = ""
 secret_key = ""
 region = "ap-guangzhou"
@@ -124,7 +124,7 @@ api_key = ""
 # enabled = true 时优先于腾讯云与自定义 DeepLX。
 #
 [niutrans]
-enabled = false
+enabled = true
 app_id = ""
 apikey = ""
 
