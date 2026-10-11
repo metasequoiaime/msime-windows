@@ -155,6 +155,9 @@ jobs:
       # before configuring. Defaults to the x64 host/target, matching the build below.
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Verify direct MSVC fallback
+        shell: pwsh
+        run: ./scripts/ci/test-sccache-fallback.ps1
       - name: Set up sccache
         id: sccache
         continue-on-error: true
@@ -182,11 +185,7 @@ jobs:
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
             '-DVCPKG_TARGET_TRIPLET=x64-windows'
           )
-          if ('${{ steps.sccache.outcome }}' -eq 'success' -and (Get-Command sccache -ErrorAction SilentlyContinue)) {
-            $cmakeArgs += '-DCMAKE_C_COMPILER_LAUNCHER=sccache', '-DCMAKE_CXX_COMPILER_LAUNCHER=sccache'
-          } else {
-            Write-Warning 'sccache is unavailable. Build with MSVC directly.'
-          }
+          $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
           cmake @cmakeArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Save dependency binaries before compiling
@@ -254,11 +253,7 @@ jobs:
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
             '-DVCPKG_TARGET_TRIPLET=x64-windows', '-DBUILD_TESTING=ON'
           )
-          if ('${{ steps.sccache.outcome }}' -eq 'success' -and (Get-Command sccache -ErrorAction SilentlyContinue)) {
-            $cmakeArgs += '-DCMAKE_C_COMPILER_LAUNCHER=sccache', '-DCMAKE_CXX_COMPILER_LAUNCHER=sccache'
-          } else {
-            Write-Warning 'sccache is unavailable. Build with MSVC directly.'
-          }
+          $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
           cmake @cmakeArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Save dependency binaries before compiling

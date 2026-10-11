@@ -376,11 +376,7 @@ jobs:
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
             '-DVCPKG_TARGET_TRIPLET=x64-windows'
           )
-          if ('${{ steps.sccache.outcome }}' -eq 'success' -and (Get-Command sccache -ErrorAction SilentlyContinue)) {
-            $cmakeArgs += '-DCMAKE_C_COMPILER_LAUNCHER=sccache', '-DCMAKE_CXX_COMPILER_LAUNCHER=sccache'
-          } else {
-            Write-Warning 'sccache is unavailable. Build with MSVC directly.'
-          }
+          $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
           cmake @cmakeArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
