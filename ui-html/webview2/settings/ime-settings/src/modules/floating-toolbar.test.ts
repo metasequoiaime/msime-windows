@@ -5,10 +5,11 @@ import { expect, it, vi } from 'vitest';
 import {
   applyCaretStateIndicatorPosition,
   applyFloatingToolbarAutoHideConfig,
+  applyFloatingToolbarShadowConfig,
   clampAutoHideDelay,
   setupFloatingToolbar
 } from './floating-toolbar';
-import { setupDropdownMenu, applyDropdownValue, setupToggleButton } from './shared';
+import { setupDropdownMenu, applyDropdownValue, applyToggleState, setupToggleButton } from './shared';
 import { updateConfig } from './config-sync';
 import partial from '../partials/floating-toolbar.html?raw';
 
@@ -206,6 +207,36 @@ it('persists the auto-hide switch and steps the delay within range', () => {
     expect(updateConfig).not.toHaveBeenCalled();
     listeners.get('ftbAutoHideDelayIncBtn')!();
     expect(updateConfig).toHaveBeenLastCalledWith('general.floating_toolbar_auto_hide_delay', 2);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it('persists the shadow switch and mirrors it on the preview', () => {
+  const toolbarCard = partial.match(/<div class="section floating-toolbar-card">([\s\S]*?)<div class="section caret-state-indicator-card">/)?.[1] ?? '';
+  expect(toolbarCard).toContain('class="ftb-toggle-btn active" id="ftbShadowToggleBtn" role="switch" aria-label="工具栏阴影" aria-checked="true"');
+  expect(styles).toMatch(/\.ftb-preview-host\.no-shadow \.status-bar\s*\{\s*box-shadow:\s*none !important;/);
+
+  const toggle = { setAttribute: vi.fn() };
+  const preview = { classList: { toggle: vi.fn() } };
+  // Withheld during setup so mounting the preview (DOMParser) is skipped.
+  let previewMounted = false;
+  vi.stubGlobal('document', {
+    getElementById: (id: string) => id === 'ftbShadowToggleBtn' ? toggle
+      : id === 'ftbPreviewHost' && previewMounted ? preview : null,
+    querySelectorAll: () => []
+  });
+  try {
+    setupFloatingToolbar();
+    previewMounted = true;
+    const onToggle = vi.mocked(setupToggleButton).mock.calls.find(([id]) => id === 'ftbShadowToggleBtn')?.[1];
+    onToggle!(false);
+    expect(updateConfig).toHaveBeenLastCalledWith('general.floating_toolbar_shadow', false);
+    expect(preview.classList.toggle).toHaveBeenLastCalledWith('no-shadow', true);
+
+    applyFloatingToolbarShadowConfig(true);
+    expect(applyToggleState).toHaveBeenLastCalledWith('ftbShadowToggleBtn', true);
+    expect(preview.classList.toggle).toHaveBeenLastCalledWith('no-shadow', false);
   } finally {
     vi.unstubAllGlobals();
   }

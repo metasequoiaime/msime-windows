@@ -509,6 +509,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const int previous_floating_toolbar_font_size = GetConfiguredFloatingToolbarFontSize();
             const bool previous_floating_toolbar_auto_hide = GetConfiguredFloatingToolbarAutoHide();
             const int previous_floating_toolbar_auto_hide_delay = GetConfiguredFloatingToolbarAutoHideDelay();
+            const bool previous_floating_toolbar_shadow = GetConfiguredFloatingToolbarShadow();
             const bool previous_cloud_candidates = GetConfiguredCloudCandidatesEnabled();
             const bool previous_comma_period = GetConfiguredPagingCommaPeriodEnabled();
             const bool previous_smart_punctuation = GetConfiguredSmartPunctuationEnabled();
@@ -611,7 +612,8 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
                     ApplyConfiguredFloatingToolbarItems();
                 }
                 else if (std::fabs(previous_floating_toolbar_scale - GetConfiguredFloatingToolbarScale()) > 0.001 ||
-                         previous_floating_toolbar_font_size != GetConfiguredFloatingToolbarFontSize())
+                         previous_floating_toolbar_font_size != GetConfiguredFloatingToolbarFontSize() ||
+                         previous_floating_toolbar_shadow != GetConfiguredFloatingToolbarShadow())
                 {
                     ApplyConfiguredFloatingToolbarSize();
                 }

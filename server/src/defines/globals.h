@@ -64,6 +64,10 @@ inline int FTB_WND_SHADOW_WIDTH = 8;
 // Last measured .status-bar size in CSS DIPs (0 until first successful measure).
 inline double FTB_CONTENT_WIDTH_DIP = 0.0;
 inline double FTB_CONTENT_HEIGHT_DIP = 0.0;
+// Off-screen margin (physical px) the host was last placed with, so a resize
+// that changes it (shadow toggled) can keep the visible bar where it was.
+inline RECT FTB_HOST_INSETS_PX = {};
+inline bool FTB_HOST_INSETS_VALID = false;
 
 inline HWND global_hwnd_ftb = NULL;
 inline bool is_global_wnd_ftb_shown = false;

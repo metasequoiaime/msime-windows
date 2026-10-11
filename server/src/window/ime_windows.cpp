@@ -424,8 +424,9 @@ int CreateCandidateWindow(HINSTANCE hInstance)
                 WS_EX_NOACTIVATE;  //
                                    // WS_EX_TOPMOST;                               //
     MonitorCoordinates ftbMonitor = GetMainMonitorCoordinates();
-    const int ftbWidth = static_cast<int>((::FTB_WND_WIDTH + ::FTB_WND_SHADOW_WIDTH) * scale);
-    const int ftbHeight = static_cast<int>((::FTB_WND_HEIGHT + ::FTB_WND_SHADOW_WIDTH) * scale);
+    const int ftbShadowWidth = GetConfiguredFloatingToolbarShadow() ? ::FTB_WND_SHADOW_WIDTH : 0;
+    const int ftbWidth = static_cast<int>((::FTB_WND_WIDTH + ftbShadowWidth) * scale);
+    const int ftbHeight = static_cast<int>((::FTB_WND_HEIGHT + ftbShadowWidth) * scale);
     const int ftbTaskbarHeight = GetTaskbarHeight();
     const int ftbCornerInset = static_cast<int>(std::lround(10.0 * static_cast<double>(scale > 0 ? scale : 1.0f)));
     const int ftbX = ftbMonitor.right - ftbWidth - ftbCornerInset;

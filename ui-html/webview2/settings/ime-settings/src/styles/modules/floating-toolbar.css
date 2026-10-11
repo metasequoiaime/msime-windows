@@ -12,7 +12,7 @@
 .floating-toolbar-setting-row { padding: 20px 24px; }
 /* Auto-hide rows sit under the main switch; the delay is a child of the auto-hide
    switch, indented and greyed out while that switch is off. */
-.ftb-auto-hide-row, .ftb-auto-hide-delay-row { border-top: 1px solid var(--divider-color); }
+.ftb-auto-hide-row, .ftb-auto-hide-delay-row, .ftb-shadow-row { border-top: 1px solid var(--divider-color); }
 .ftb-auto-hide-delay-row { padding-left: 48px; }
 .ftb-auto-hide-delay-row.is-disabled { opacity: 0.45; }
 .ftb-auto-hide-delay-row.is-disabled .number-stepper { pointer-events: none; }
@@ -49,7 +49,7 @@
 .floating-toolbar-required-option input:disabled { opacity: 0.72; }
 .floating-toolbar-required-label { margin-left: auto; color: var(--text-muted) !important; font-size: 12px !important; }
 .ftb-preview-host { display: flex; justify-content: center; padding: 14px 0 22px; pointer-events: none; --ftb-scale: 1; --ftb-bar-height: 35px; --ftb-icon-size: 24px; --ftb-gap: 6px; --ftb-pad-left: 8px; --ftb-pad-right: 4px; --ftb-radius: 8px; --ftb-handle-width: 2.5px; --ftb-handle-height: 14px; }
-.ftb-preview-host .status-bar { position: relative; display: flex; align-items: center; height: calc(var(--ftb-bar-height) * var(--ftb-scale)); padding: 0 calc(var(--ftb-pad-right) * var(--ftb-scale)) 0 calc(var(--ftb-pad-left) * var(--ftb-scale)); gap: calc(var(--ftb-gap) * var(--ftb-scale)); background-color: #1a1a1a; border: 1.4px solid rgba(255, 255, 255, 0.15); border-radius: calc(var(--ftb-radius) * var(--ftb-scale)); box-shadow: 4px 4px 4px rgba(0, 0, 0, 0.4); backdrop-filter: blur(8px); }
+.ftb-preview-host .status-bar { position: relative; display: flex; align-items: center; height: calc(var(--ftb-bar-height) * var(--ftb-scale)); padding: 0 calc(var(--ftb-pad-right) * var(--ftb-scale)) 0 calc(var(--ftb-pad-left) * var(--ftb-scale)); gap: calc(var(--ftb-gap) * var(--ftb-scale)); background-color: #1a1a1a; border: 1.4px solid rgba(255, 255, 255, 0.15); border-radius: calc(var(--ftb-radius) * var(--ftb-scale)); box-shadow: 8px 10px 24px rgba(0, 0, 0, 0.34), 2px 3px 8px rgba(0, 0, 0, 0.22); backdrop-filter: blur(8px); }
 .ftb-preview-host .drag-handle { position: relative; width: calc(var(--ftb-handle-width) * var(--ftb-scale)); height: calc(var(--ftb-handle-height) * var(--ftb-scale)); margin-right: 0; border-radius: calc(2px * var(--ftb-scale)); background: #8e8cd8; }
 .ftb-preview-host .divider { align-self: stretch; width: calc(1.2px * var(--ftb-scale)); height: auto; margin: 0 0 0 calc(4px * var(--ftb-scale)); background-color: rgba(255, 255, 255, 0.15); }
 .ftb-preview-host .icon { display: flex; align-items: center; justify-content: center; width: calc(var(--ftb-icon-size) * var(--ftb-scale)); height: calc(var(--ftb-icon-size) * var(--ftb-scale)); color: #fff; border-radius: calc(6px * var(--ftb-scale)); font-family: "Segoe UI Symbol", "Microsoft YaHei", sans-serif; font-size: calc(var(--ftb-icon-size) * 0.833 * var(--ftb-scale)); }
@@ -63,8 +63,11 @@
 .ftb-preview-host.theme-light .status-bar {
   background-color: #ffffff;
   border: 1.4px solid rgba(0, 0, 0, 0.12);
-  box-shadow: 4px 4px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: 8px 10px 24px rgba(0, 0, 0, 0.18), 2px 3px 8px rgba(0, 0, 0, 0.10);
 }
+
+/* 跟随「工具栏阴影」开关；放在皮肤规则之后也要压过它们。 */
+.ftb-preview-host.no-shadow .status-bar { box-shadow: none !important; }
 
 .ftb-preview-host.theme-light .divider {
   background-color: rgba(0, 0, 0, 0.12);

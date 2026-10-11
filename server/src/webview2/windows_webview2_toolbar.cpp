@@ -475,7 +475,9 @@ HRESULT OnControllerCreatedFtbWnd(      //
                     else if (type == "contentTruncated")
                     {
                         if (HandleContentTruncatedMessage(hwnd, webviewFtbWnd.Get(), webviewControllerFtbWnd.Get(), val,
-                                                          g_last_content_truncation_ftb_ms, ::FTB_WND_SHADOW_WIDTH))
+                                                          g_last_content_truncation_ftb_ms,
+                                                          GetConfiguredFloatingToolbarShadow() ? ::FTB_WND_SHADOW_WIDTH
+                                                                                               : 0))
                         {
                             const double widthDip = JsonNumberAsDouble(val.at("data").at("width"));
                             const double heightDip = JsonNumberAsDouble(val.at("data").at("height"));

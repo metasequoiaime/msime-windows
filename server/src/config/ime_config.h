@@ -401,6 +401,10 @@ bool GetConfiguredFloatingToolbarAutoHide();
 bool SetConfiguredFloatingToolbarAutoHide(bool enabled);
 int GetConfiguredFloatingToolbarAutoHideDelay();
 bool SetConfiguredFloatingToolbarAutoHideDelay(int seconds);
+// Draw the toolbar's drop shadow (default on). Either way the bar itself can
+// sit flush with a screen edge; the shadow margin may hang off the screen.
+bool GetConfiguredFloatingToolbarShadow();
+bool SetConfiguredFloatingToolbarShadow(bool enabled);
 bool GetConfiguredEnglishCandidatesEnabled();
 bool SetConfiguredEnglishCandidatesEnabled(bool enabled);
 bool GetConfiguredCandidateTranslationsEnabled();

@@ -37,6 +37,8 @@ floating_toolbar_font_size = 24
 floating_toolbar_auto_hide = false
 # 自动隐藏延时（秒），可选：1–60
 floating_toolbar_auto_hide_delay = 5
+# 悬浮工具栏阴影（与候选窗一致的柔和阴影）
+floating_toolbar_shadow = true
 # Emoji
 enable_emoji = true
 # 翻页方式

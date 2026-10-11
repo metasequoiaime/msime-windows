@@ -804,13 +804,17 @@ bool ApplyConfiguredFloatingToolbarAppearance(std::function<void()> onComplete)
     }
 
     nlohmann::json cfg = {{"scale", GetConfiguredFloatingToolbarScale()},
-                          {"font_size", GetConfiguredFloatingToolbarFontSize()}};
+                          {"font_size", GetConfiguredFloatingToolbarFontSize()},
+                          {"shadow", GetConfiguredFloatingToolbarShadow()}};
+    // An inline box-shadow beats both the page's own and the injected skin rules.
     const std::wstring script = L"(function(c){"
                                 L"const root=document.documentElement;"
                                 L"const scale=(typeof c.scale==='number'&&c.scale>0)?c.scale:1;"
                                 L"const icon=(typeof c.font_size==='number'&&c.font_size>0)?c.font_size:24;"
                                 L"root.style.setProperty('--ftb-scale', String(scale));"
                                 L"root.style.setProperty('--ftb-icon-size', String(icon)+'px');"
+                                L"const bar=document.querySelector('.status-bar');"
+                                L"if(bar)bar.style.boxShadow=c.shadow===false?'none':'';"
                                 L"return true;"
                                 L"})(" +
                                 string_to_wstring(cfg.dump()) + L");";
