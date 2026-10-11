@@ -120,13 +120,13 @@ endpoint = ""
 api_key = ""
 
 #
-# 小牛翻译（NiuTrans）机器翻译。app_id 与 apikey 在“控制台->API应用”中查看。
+# 小牛翻译（NiuTrans）机器翻译。app_id 与 apikey 在”控制台->API应用”中查看。
 # enabled = true 时优先于腾讯云与自定义 DeepLX。
 #
 [niutrans]
-enabled = false
-app_id = ""
-apikey = ""
+enabled = true
+app_id = “”
+apikey = “”
 
 #
 # 网络代理：云输入、模型下载、AI 联想、翻译、语音识别等需要联网的功能共用。
