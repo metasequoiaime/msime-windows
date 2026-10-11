@@ -426,10 +426,13 @@ bool GetConfiguredAssocSentenceWordLattice();
 bool SetConfiguredAssocSentenceWordLattice(bool enabled);
 bool GetConfiguredAssocSentenceGoogle();
 bool SetConfiguredAssocSentenceGoogle(bool enabled);
-bool GetConfiguredAssocSentenceNeuralDesktop();
-bool SetConfiguredAssocSentenceNeuralDesktop(bool enabled);
 bool GetConfiguredAssocSentenceNeuralKeyboard();
 bool SetConfiguredAssocSentenceNeuralKeyboard(bool enabled);
+// 神经网络模型整句（效果优先 / desktop）：需先下载模型
+std::string GetConfiguredAssocSentenceNeuralDesktopModel();
+bool SetConfiguredAssocSentenceNeuralDesktopModel(const std::string &model_id);
+bool GetConfiguredAssocSentenceNeuralDesktopEnabled();
+bool SetConfiguredAssocSentenceNeuralDesktopEnabled(bool enabled);
 bool GetConfiguredAssocSentenceShowNextOnDuplicate();
 bool SetConfiguredAssocSentenceShowNextOnDuplicate(bool enabled);
 bool GetConfiguredAssocSentenceSourceBadge();

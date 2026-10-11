@@ -1,8 +1,10 @@
 // 把设置写回 config.toml（批量、保留格式、先校验再原子替换），并通知 Server 重新加载配置或切换输入方案。
 #include "config/ime_config_internal.h"
+#include "config/credential_encryption.h"
 #include <Windows.h>
 #include <cwchar>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -13,6 +15,20 @@ using namespace ime_config_detail;
 
 namespace ime_config_detail
 {
+bool IsCredentialField(const std::string &section, const std::string &key)
+{
+    static const std::set<std::string> credential_keys = {
+        "token",        "api_key",     "apikey",    "secret_id", "secret_key",
+        "app_id",       "asr_app_key", "asr_token", "polish_token"
+    };
+
+    if (credential_keys.count(key) != 0)
+    {
+        return true;
+    }
+    return key.rfind("token_", 0) == 0 || key.rfind("asr_token_", 0) == 0 || key.rfind("polish_token_", 0) == 0;
+}
+
 bool WriteConfiguredValues(const std::vector<ConfigValueUpdate> &updates)
 {
     ConfigFileLock lock;
@@ -38,8 +54,18 @@ bool WriteConfiguredValues(const std::vector<ConfigValueUpdate> &updates)
 
     for (const auto &update : updates)
     {
-        if (!ReplaceTomlValuePreservingFormatting(text, update.section, update.key, update.value) &&
-            !InsertTomlValuePreservingFormatting(text, update.section, update.key, update.value))
+        std::string value_to_write = update.value;
+        if (IsCredentialField(update.section, update.key) && !value_to_write.empty())
+        {
+            value_to_write = CredentialEncryption::Encrypt(value_to_write);
+            if (value_to_write.empty())
+            {
+                return false;
+            }
+        }
+
+        if (!ReplaceTomlValuePreservingFormatting(text, update.section, update.key, value_to_write) &&
+            !InsertTomlValuePreservingFormatting(text, update.section, update.key, value_to_write))
         {
             return false;
         }

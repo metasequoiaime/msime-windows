@@ -190,6 +190,8 @@ extern bool g_assoc_sentence_collocation_enabled;
 extern std::string g_assoc_sentence_collocation_model;
 extern double g_assoc_sentence_collocation_weight;
 extern double g_assoc_sentence_collocation_rerank_weight;
+extern std::string g_assoc_sentence_neural_desktop_model;
+extern bool g_assoc_sentence_neural_desktop_enabled;
 extern bool g_emoji_mixed_input_enabled;
 extern bool g_kaomoji_mixed_input_enabled;
 extern bool g_unicode_mode_enabled;
