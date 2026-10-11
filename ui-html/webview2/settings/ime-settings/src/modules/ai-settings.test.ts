@@ -16,6 +16,7 @@ import { updateConfig } from './config-sync';
 class StubElement {
   value = '';
   placeholder = '';
+  hidden = false;
   listeners = new Map<string, (event: unknown) => void>();
   addEventListener(type: string, listener: (event: unknown) => void): void {
     this.listeners.set(type, listener);
@@ -29,7 +30,7 @@ let elements: Map<string, StubElement>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  elements = new Map(['aiToken', 'aiEndpoint', 'aiModel', 'aiProviderMenu'].map(id => [id, new StubElement()]));
+  elements = new Map(['aiToken', 'aiEndpoint', 'aiModel', 'aiProviderMenu', 'aiThinkingField'].map(id => [id, new StubElement()]));
   vi.stubGlobal('document', { getElementById: (id: string) => elements.get(id) ?? null });
   setupAiSettings();
 });
@@ -99,6 +100,19 @@ it('reloads provider-specific values from a new config snapshot', () => {
   elements.get('aiProviderMenu')!.select('groq');
   expect(elements.get('aiEndpoint')!.value).toBe('https://groq.example.test/v1/chat/completions');
   expect(elements.get('aiModel')!.value).toBe('custom-groq');
+});
+
+it('shows the thinking level only for DeepSeek and keeps the saved level when hidden', () => {
+  const field = elements.get('aiThinkingField')!;
+  applyAiConfig({ provider: 'openai', thinking: 'high' });
+  expect(field.hidden).toBe(true);
+
+  elements.get('aiProviderMenu')!.select('deepseek');
+  expect(field.hidden).toBe(false);
+
+  elements.get('aiProviderMenu')!.select('groq');
+  expect(field.hidden).toBe(true);
+  expect(updateConfig).not.toHaveBeenCalledWith('ai_assistant.thinking', expect.anything());
 });
 
 it('keeps the Custom base url, api key and model independent from built-in providers', () => {

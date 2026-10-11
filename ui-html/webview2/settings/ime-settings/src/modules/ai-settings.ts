@@ -53,6 +53,12 @@ function applyProviderFields(provider: string): void {
   }
 }
 
+// 思考强度只有 DeepSeek 会发给服务商，其他服务商下隐藏，已保存的档位保留不动。
+function applyThinkingVisibility(provider: string): void {
+  const field = document.getElementById('aiThinkingField');
+  if (field) field.hidden = provider !== 'deepseek';
+}
+
 function readProviderMap(raw: unknown, provider: string, legacyValue: string): Record<string, string> {
   const result: Record<string, string> = {};
   if (raw && typeof raw === 'object') {
@@ -83,6 +89,7 @@ function switchProvider(provider: string): void {
   if (token) token.value = tokens[provider] ?? '';
   updateConfig('ai_assistant.provider', provider);
   applyProviderFields(provider);
+  applyThinkingVisibility(provider);
   clearModelMenu();
 }
 
@@ -125,6 +132,7 @@ export function setupAiSettings(): void {
   });
   setupDropdownMenu('aiProviderBtn', 'aiProviderMenu', 'changeAiProvider', true);
   setupDropdownMenu('aiModelBtn', 'aiModelMenu', '', true, 'ai_assistant.model');
+  setupModelArrowFetch();
   setupDropdownMenu('aiPromptSlotBtn', 'aiPromptSlotMenu', 'changeAiPromptSlot', true,
     'ai_assistant.prompt_id');
   setupDropdownMenu('aiThinkingBtn', 'aiThinkingMenu', 'changeAiThinking', true, 'ai_assistant.thinking');
@@ -166,6 +174,19 @@ export function setupAiSettings(): void {
   });
 }
 
+// 还没有模型列表时点下拉箭头，等同点「查询模型」，结果返回后列表自动展开。
+// 只挂在箭头上：点进输入框是要手动输入，不该发网络请求。
+function setupModelArrowFetch(): void {
+  const arrow = document.getElementById('aiModelBtn')?.querySelector<HTMLElement>('.arrow');
+  const menu = document.getElementById('aiModelMenu');
+  const fetchButton = document.getElementById('aiModelFetchButton') as HTMLButtonElement | null;
+  if (!arrow || !menu || !fetchButton) return;
+
+  arrow.addEventListener('click', () => {
+    if (!menu.querySelector('.dropdown-item')) fetchButton.click();
+  });
+}
+
 function setupTokenVisibilityToggle(): void {
   const token = document.getElementById('aiToken') as HTMLInputElement | null;
   const toggle = document.getElementById('aiTokenVisibility') as HTMLButtonElement | null;
@@ -203,6 +224,7 @@ export function applyAiConfig(config: Record<string, unknown>): void {
   const token = document.getElementById('aiToken') as HTMLInputElement | null;
   if (token) token.value = tokens[currentProvider] ?? '';
   applyDropdownValue('aiProviderBtn', 'aiProviderMenu', currentProvider);
+  applyThinkingVisibility(currentProvider);
   const defaults = PROVIDER_DEFAULTS[currentProvider];
   const model = document.getElementById('aiModel') as HTMLInputElement | null;
   if (model && defaults) model.placeholder = defaults.model;

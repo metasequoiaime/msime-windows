@@ -30,9 +30,12 @@
         <span>模型</span>
         <div class="ai-model-row">
           <div class="dropdown ai-model-dropdown">
-            <div id="aiModelBtn" class="ai-model-combobox">
+            <div id="aiModelBtn" class="dropdown-toggle font-combobox ai-model-combobox">
               <input id="aiModel" type="text" autocomplete="off" spellcheck="false"
                      aria-label="模型名称" aria-controls="aiModelMenu" aria-autocomplete="list">
+              <div class="arrow">
+                <img src="./assets/arrow.svg" alt="">
+              </div>
             </div>
             <div class="dropdown-menu font-dropdown-menu compact-scroll-menu" id="aiModelMenu"></div>
           </div>
@@ -62,7 +65,7 @@
         </span>
       </div>
       <label><span>候选数量</span><input id="aiCandidateLimit" type="number" min="1" max="10" autocomplete="off"></label>
-      <div class="ai-field">
+      <div class="ai-field" id="aiThinkingField">
         <span>思考强度</span>
         <div class="dropdown">
           <button class="dropdown-toggle" id="aiThinkingBtn" type="button">
@@ -76,7 +79,7 @@
             <div class="dropdown-item" data-value="max">最高</div>
           </div>
         </div>
-        <span class="ai-description">仅 DeepSeek 生效。开启后候选更准，但要多等几秒到几十秒。</span>
+        <span class="ai-description">开启后候选更准，但要多等几秒到几十秒。</span>
       </div>
       <label class="ai-wide"><span>接口地址</span><input id="aiEndpoint" type="url" autocomplete="off" spellcheck="false"></label>
     </div>

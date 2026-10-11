@@ -47,6 +47,11 @@
   font-weight: 500;
 }
 
+/* 上面的 display: flex 会盖过 hidden 属性，需显式恢复。 */
+.ai-grid .ai-field[hidden] {
+  display: none;
+}
+
 .ai-grid .dropdown,
 .ai-grid .dropdown-toggle {
   width: 100%;
@@ -159,7 +164,7 @@
   display: block;
 }
 
-/* 模型字段：普通输入框，查询到的模型列表从它下方弹出；右侧是「查询模型」按钮。 */
+/* 模型字段：外观同其他下拉框、但可直接输入的组合框，查询到的模型列表从它下方弹出；右侧是「查询模型」按钮。 */
 .ai-model-row {
   display: flex;
   align-items: stretch;
@@ -169,6 +174,24 @@
 .ai-model-row .ai-model-dropdown {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.ai-model-combobox:focus-within {
+  border-color: var(--accent-soft-border);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* 内嵌输入框去掉网格里普通输入框的边框和底色，由外层下拉框提供外观。 */
+.ai-grid .ai-model-combobox input,
+.ai-grid .ai-model-combobox input:focus {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* 菜单按单行高度算可见行数，长模型名截断，完整名称见悬停提示。 */
