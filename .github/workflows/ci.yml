@@ -140,6 +140,7 @@ jobs:
     # every step that shells out to the compiler (configure probes it too, not just build).
     env:
       SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -155,6 +156,8 @@ jobs:
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
       - name: Set up sccache
+        id: sccache
+        continue-on-error: true
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - name: Install Boost
         shell: pwsh
@@ -173,12 +176,19 @@ jobs:
       # (check-server-binaries.ps1, ctest -C Release) already depend on.
       - name: Configure
         shell: pwsh
-        run: >
-          cmake -S server -B server/build-release -G "Ninja Multi-Config"
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=x64-windows
-          -DCMAKE_C_COMPILER_LAUNCHER=sccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+        run: |
+          $cmakeArgs = @(
+            '-S', 'server', '-B', 'server/build-release', '-G', 'Ninja Multi-Config',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            '-DVCPKG_TARGET_TRIPLET=x64-windows'
+          )
+          if ('${{ steps.sccache.outcome }}' -eq 'success' -and (Get-Command sccache -ErrorAction SilentlyContinue)) {
+            $cmakeArgs += '-DCMAKE_C_COMPILER_LAUNCHER=sccache', '-DCMAKE_CXX_COMPILER_LAUNCHER=sccache'
+          } else {
+            Write-Warning 'sccache is unavailable. Build with MSVC directly.'
+          }
+          cmake @cmakeArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Save dependency binaries before compiling
         if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -189,7 +199,8 @@ jobs:
         shell: pwsh
         run: cmake --build server/build-release --config Release --parallel
       - name: Report sccache hit rate
-        if: always()
+        if: ${{ !cancelled() && steps.sccache.outcome == 'success' }}
+        continue-on-error: true
         shell: pwsh
         run: sccache --show-stats
       - name: Check the Release binaries and symbols
@@ -231,18 +242,25 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
       - name: Set up sccache
         id: sccache
+        continue-on-error: true
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       # Keep Ninja Multi-Config: CMake ignores CMAKE_<LANG>_COMPILER_LAUNCHER under the Visual
       # Studio generator, so switching back to -A x64 would silently disable sccache.
       - name: Configure
         shell: pwsh
-        run: >
-          cmake -S engine -B engine/build -G "Ninja Multi-Config"
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=x64-windows
-          -DCMAKE_C_COMPILER_LAUNCHER=sccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
-          -DBUILD_TESTING=ON
+        run: |
+          $cmakeArgs = @(
+            '-S', 'engine', '-B', 'engine/build', '-G', 'Ninja Multi-Config',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            '-DVCPKG_TARGET_TRIPLET=x64-windows', '-DBUILD_TESTING=ON'
+          )
+          if ('${{ steps.sccache.outcome }}' -eq 'success' -and (Get-Command sccache -ErrorAction SilentlyContinue)) {
+            $cmakeArgs += '-DCMAKE_C_COMPILER_LAUNCHER=sccache', '-DCMAKE_CXX_COMPILER_LAUNCHER=sccache'
+          } else {
+            Write-Warning 'sccache is unavailable. Build with MSVC directly.'
+          }
+          cmake @cmakeArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Save dependency binaries before compiling
         if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -254,6 +272,7 @@ jobs:
         run: cmake --build engine/build --config Release --parallel
       - name: Report sccache hit rate
         if: ${{ !cancelled() && steps.sccache.outcome == 'success' }}
+        continue-on-error: true
         shell: pwsh
         run: sccache --show-stats
       - name: Test with the product's exact data

@@ -284,6 +284,7 @@ jobs:
       VCPKG_INSTALLATION_ROOT: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'C:\vcpkg' || 'E:\\msime-runner\\vcpkg-3' }}
       # Only the GitHub-hosted path compiles through sccache (see Configure); the variable is inert where sccache is not the compiler launcher.
       SCCACHE_GHA_ENABLED: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'true' || '' }}
+      SCCACHE_IGNORE_SERVER_IO_ERROR: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && '1' || '' }}
     # A 4-core hosted runner is slower than the release machine; sccache hits from ci.yml's Server job on develop carry most of it.
     timeout-minutes: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 120 || 90 }}
     steps:
@@ -341,6 +342,8 @@ jobs:
 
       - name: Set up sccache
         if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        id: sccache
+        continue-on-error: true
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - name: Install Boost
@@ -364,15 +367,22 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-windows
 
       # Ninja Multi-Config because sccache plugs in through CMAKE_<LANG>_COMPILER_LAUNCHER, which the Visual Studio generator ignores; it keeps the --config Release / bin/Release layout the later steps read.
-      - name: Configure with sccache
+      - name: Configure hosted build
         if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
         shell: pwsh
-        run: >
-          cmake -S server -B server/build-release -G "Ninja Multi-Config"
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=x64-windows
-          -DCMAKE_C_COMPILER_LAUNCHER=sccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+        run: |
+          $cmakeArgs = @(
+            '-S', 'server', '-B', 'server/build-release', '-G', 'Ninja Multi-Config',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            '-DVCPKG_TARGET_TRIPLET=x64-windows'
+          )
+          if ('${{ steps.sccache.outcome }}' -eq 'success' -and (Get-Command sccache -ErrorAction SilentlyContinue)) {
+            $cmakeArgs += '-DCMAKE_C_COMPILER_LAUNCHER=sccache', '-DCMAKE_CXX_COMPILER_LAUNCHER=sccache'
+          } else {
+            Write-Warning 'sccache is unavailable. Build with MSVC directly.'
+          }
+          cmake @cmakeArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Save dependency binaries before compiling
         if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) }}
@@ -386,7 +396,8 @@ jobs:
         run: cmake --build server/build-release --config Release --parallel
 
       - name: Report sccache hit rate
-        if: ${{ always() && vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        if: ${{ !cancelled() && vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.sccache.outcome == 'success' }}
+        continue-on-error: true
         shell: pwsh
         run: sccache --show-stats
 
