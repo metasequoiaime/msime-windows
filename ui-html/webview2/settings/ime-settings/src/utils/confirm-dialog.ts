@@ -42,7 +42,7 @@ export function confirmDialog(message: string, options: ConfirmOptions = {}): Pr
       if (event.key !== 'Escape' && event.key !== 'Enter') return;
       event.preventDefault();
       event.stopPropagation();
-      close(event.key === 'Enter');
+      close(event.key === 'Enter' && document.activeElement !== cancel);
     }
     document.addEventListener('keydown', onKeydown, true);
     cancel.addEventListener('click', () => close(false));
