@@ -410,7 +410,7 @@ std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_inpu
     }
 
     pinyin_sequence_ = raw_input;
-    const auto segments = resolve_segments(raw_input, segmentation);
+    const auto segments = resolve_segments(raw_input, segmentation, autocorrect_types != 0);
 
     // Typing autocorrection: when the spelling is not a legal pinyin
     // combination (the correction cut already fell back to greedy), try to
@@ -1002,26 +1002,31 @@ std::vector<WordItem> QuanpinDictionary::query_prefix_path(const std::string &ra
     return result;
 }
 
-quanpin::Segments QuanpinDictionary::resolve_segments(const std::string &raw_input, const std::string &segmentation)
+quanpin::Segments QuanpinDictionary::resolve_segments(const std::string &raw_input, const std::string &segmentation,
+                                                      bool include_correction_aliases)
 {
     // 单一归一咽喉点：显式 segmentation 与自动切分两条路径都过这里，进入查询
     // 管线的 segments 由此保证已归一恰一次。查库、调频、造词各调用点因此
     // 不必各自处理别名。
-    quanpin::Segments segments =
-        segmentation.empty() ? get_or_compute_segments(raw_input) : quanpin::split_segments(segmentation);
+    quanpin::Segments segments = segmentation.empty() ? get_or_compute_segments(raw_input, include_correction_aliases)
+                                                      : quanpin::split_segments(segmentation);
     return normalize_umlaut_aliases(std::move(segments));
 }
 
-quanpin::Segments QuanpinDictionary::get_or_compute_segments(const std::string &raw_input)
+quanpin::Segments QuanpinDictionary::get_or_compute_segments(const std::string &raw_input,
+                                                             bool include_correction_aliases)
 {
-    if (const auto *cached = segmentation_cache_.find(raw_input))
+    // 两种掩码状态下同名输入的切分可能不同（手误别名层在 mask != 0 时才跑），缓存键
+    // 带上该标志，避免「开着纠错算出来的 shang」被关掉纠错的同名查询复用。
+    const std::string cache_key = (include_correction_aliases ? "1:" : "0:") + raw_input;
+    if (const auto *cached = segmentation_cache_.find(cache_key))
     {
         return *cached;
     }
 
-    const auto cuts = quanpin::cut_pinyin_by_mode(raw_input, "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(raw_input, "correction", include_correction_aliases);
     const auto segments = cuts.empty() ? quanpin::Segments{} : cuts.front();
-    segmentation_cache_.insert(raw_input, segments);
+    segmentation_cache_.insert(cache_key, segments);
     return segments;
 }
 
@@ -1744,7 +1749,7 @@ int QuanpinDictionary::insert_word_to_series_cache(const std::string &raw_input,
         return ERROR_CODE;
     }
 
-    const auto segments = resolve_segments(raw_input, segmentation);
+    const auto segments = resolve_segments(raw_input, segmentation, autocorrect_types != 0);
     const auto resolution = resolve_series_query(raw_input, segments, autocorrect_types);
     return insert_word_to_series_cache_key(resolution.cache_key, raw_input, word, source);
 }
@@ -2212,8 +2217,9 @@ std::vector<WordItem> QuanpinDictionary::query(const std::string &raw_input, con
     if (fuzzy.rules && !raw_input.empty())
     {
         // Keep ordinary cache slots free of preference-specific candidates.
-        const auto typed =
-            segmentation.empty() ? quanpin::join_segments(resolve_segments(raw_input, segmentation)) : segmentation;
+        const auto typed = segmentation.empty()
+                               ? quanpin::join_segments(resolve_segments(raw_input, segmentation, autocorrect != 0))
+                               : segmentation;
         // Specificity is how many typed letters a candidate accounts for, not the raw
         // length of its stored key: alternative cuts ("xi'e" for "xie", "you'di'an"
         // for "you'dian") and fuzzy variants carry apostrophes, so comparing pinyin

@@ -249,6 +249,21 @@ void run_umlaut_alias_session_tests(const std::filesystem::path &data_directory)
                 "The standard spelling 'lve' must stay unmarked.");
     }
 
+    // R2 例外：纠错全关时 ü 归一（非手误）仍然生效——nue -> nve、lve 直接命中。
+    // 只断言可达（nue 另有 nu'e 读法与它竞争，谁领衔由词频裁决，与开关无关）。
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "nue");
+        require(find_candidate_index(session, "虐") < session.candidates().size(),
+                "The ü alias rewrite must stay active for 'nue' with autocorrection off.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "lve");
+        require(find_candidate_index(session, "略") < session.candidates().size(),
+                "The standard 'lve' spelling must stay reachable with autocorrection off.");
+    }
+
     // AC3：jqxy 系既有归一从无标变带标（行为变更），标准拼法无标。
     {
         metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
@@ -2083,6 +2098,11 @@ int run_test()
                     "A v-form umlaut syllable did not query its canonical dictionary key.");
         }
 
+        // The alias layer that folds a dropped final g (zhonguo -> zhong'guo,
+        // dongua -> dong'gua) is part of autocorrection and now follows its
+        // switch, so these cases run with the switch explicitly on. The default
+        // session has it off -- the mask=0 block right below pins that.
+        const unsigned alias_mask = quanpin::kAutocorrectTransposition;
         const std::array<UmlautAliasCase, 6> missing_final_g_cases = {{{"zhonguo", "中国"},
                                                                        {"zhon'guo", "中国"},
                                                                        {"zhongguo", "中国"},
@@ -2091,12 +2111,36 @@ int run_test()
                                                                        {"dongan", "东安"}}};
         for (const auto &test_case : missing_final_g_cases)
         {
-            metasequoia::InputSession corrected;
+            metasequoia::InputSession corrected(SchemeType::Quanpin, alias_mask);
             type(corrected, test_case.pinyin);
             require(candidate_index(corrected, test_case.candidate) == 0,
                     "A missing final g did not resolve to the complete dictionary phrase.");
             require(corrected.select_candidate(0).commit == test_case.candidate && !corrected.has_composition(),
                     "Selecting a corrected phrase left an unconsumed input suffix.");
+        }
+
+        // R2: with both switches off the engine must not correct at all. These
+        // inputs used to be rewritten by the always-on alias layer (sahng ->
+        // shang, zhonguo -> zhong'guo, laing -> liang, ahng -> hang, mihng ->
+        // ming); now the alias layer and the correction BFS both follow the
+        // mask, so nothing may come back marked as corrected.
+        for (const char *typo : {"sahng", "zhonguo", "laing", "ahng", "mihng"})
+        {
+            metasequoia::InputSession off_session(SchemeType::Quanpin, 0u);
+            type(off_session, typo);
+            require(std::none_of(off_session.candidates().begin(), off_session.candidates().end(),
+                                 [](const WordItem &item) { return !item.corrected_from.empty(); }),
+                    "With autocorrection off no candidate may be marked as corrected.");
+        }
+
+        // R2 exception: the non-typo ü normalization must still work with the
+        // switches off. The run_test fixture carries ju/qu/xu/yu (nue/lve live in
+        // run_umlaut_alias_session_tests, which also pins the mask=0 path).
+        {
+            metasequoia::InputSession umlaut_session(SchemeType::Quanpin, 0u);
+            type(umlaut_session, "jv");
+            require(candidate_index(umlaut_session, "居") == 0,
+                    "The ü normalization (jv -> ju) must stay active with autocorrection off.");
         }
 
         // PRD R5 regression: a fully legal spelling whose alias reading won the
@@ -2120,17 +2164,22 @@ int run_test()
                     "A legal spelling with an alias reading must preedit the typed letters.");
         }
 
-        // Inputs the guard does not cover fall back to the input as typed when
-        // the alias layer rewrote the letters: no phantom letter, and a manual
-        // delimiter the user typed stays in place.
-        const std::array<PreeditCase, 4> typed_fallback_preedit_cases = {
-            {{"dongua", "dongua"}, {"zhonguo", "zhonguo"}, {"haoyonga'", "haoyonga'"}, {"hao'yonga", "hao'yonga"}}};
+        // Inputs the guard does not cover: with autocorrection off the alias
+        // layer no longer rewrites the letters, so these preedit their literal
+        // (greedy) cut -- the typed letters with a separator at the greedy cut
+        // position, and never a phantom letter. (With correction on the same
+        // inputs fall back to the typed spelling; that path is covered by the
+        // mask-enabled display cases in test_pinyin.cpp.)
+        const std::array<PreeditCase, 4> typed_fallback_preedit_cases = {{{"dongua", "don'gua"},
+                                                                          {"zhonguo", "zhon'guo"},
+                                                                          {"haoyonga'", "hao'yong'a'"},
+                                                                          {"hao'yonga", "hao'yong'a"}}};
         for (const auto &test_case : typed_fallback_preedit_cases)
         {
             metasequoia::InputSession session;
             type(session, test_case.pinyin);
             require(session.get_pinyin_segmentation_with_cases() == test_case.expected_preedit,
-                    "An alias-rewritten input must preedit exactly what was typed.");
+                    "An uncorrected input must preedit its literal cut.");
         }
 
         metasequoia::InputSession no_autocorrect_session(SchemeType::Quanpin, 0u);

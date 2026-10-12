@@ -1456,12 +1456,13 @@ TEST_CASE(SegmentBoundariesFollowTheDisplayedQuanpinSyllables)
     InputLetters(cased, "NiHaoMa");
     REQUIRE_EQ(cased.segment_raw_boundaries(), std::vector<std::size_t>({0, 2, 5, 7}));
 
-    // A correction display that rewrites letters stays one unit when the cut
-    // reports one syllable, and an incomplete tail is a unit of its own so only
-    // the tail is deleted.
+    // With autocorrection off (the default) the alias layer no longer rewrites
+    // the letters, so the display is the literal greedy cut ("sa'h'n'g") and
+    // every greedy unit is its own boundary. (The correction-on display that
+    // collapses to one unit is covered by the engine-level autocorrect tests.)
     EngineInputSession corrected(SchemeType::Quanpin);
     InputLetters(corrected, "sahng");
-    REQUIRE_EQ(corrected.segment_raw_boundaries(), std::vector<std::size_t>({0, 5}));
+    REQUIRE_EQ(corrected.segment_raw_boundaries(), std::vector<std::size_t>({0, 2, 3, 4, 5}));
 
     EngineInputSession partial(SchemeType::Quanpin);
     InputLetters(partial, "nih");

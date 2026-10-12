@@ -116,6 +116,9 @@ class ImeSession
     void bind_shuangpin_scheme();
     // 把会话的直接辅助码、大写触发设置下发给双拼方案（非双拼方案什么也不做）。
     void configure_shuangpin_scheme(IInputScheme *scheme) const;
+    // 把会话的纠错掩码下发给全拼方案（非全拼方案什么也不做）。要在 build_request 之前调，
+    // 掩码决定切分要不要跑手误别名层。
+    void configure_quanpin_scheme(IInputScheme *scheme) const;
     std::unique_ptr<IInputScheme> create_scheme(SchemeType scheme_type) const;
 
   private:

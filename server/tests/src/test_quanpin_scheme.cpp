@@ -1118,6 +1118,14 @@ TEST_CASE(QuanpinDictionaryAutocorrectInsertionTypo)
     const auto legacy = dictionary.query("sghang", "", legacy_bits);
     REQUIRE(std::none_of(legacy.begin(), legacy.end(),
                          [](const WordItem &item) { return item.corrected_from == "sghang"; }));
+
+    // mask=0 端到端：纠错全关时同一输入不得产出任何纠错标记（链路 B 的手误别名
+    // 也跟开关走，此前空切分入口会无条件改写）。
+    const auto off = dictionary.query("sghang", "", 0u);
+    REQUIRE(std::none_of(off.begin(), off.end(), [](const WordItem &item) { return !item.corrected_from.empty(); }));
+    const auto off_alias = dictionary.query("sahng", "", 0u);
+    REQUIRE(std::none_of(off_alias.begin(), off_alias.end(),
+                         [](const WordItem &item) { return !item.corrected_from.empty(); }));
 }
 
 TEST_CASE(QuanpinDictionaryAutocorrectAmbiguousDisambiguation)

@@ -346,9 +346,10 @@ std::string RebuildQuanpinDisplayFromLegalSpelling(const std::string &cased_inpu
 // BFS (shabg -> shang, which only re-separates). Both are rebuilt here from
 // the raw letters with separators at the actual cut positions; when the BFS
 // cannot explain a rewrite (length-changing aliases such as mihng -> ming) the
-// input is shown as typed, with no scheme separators. The rebuild is deliberately
-// switch-independent: the alias layer rewrites letters regardless of the
-// autocorrect switches, and AC1 only constrains the candidate list.
+// input is shown as typed, with no scheme separators. With the correction
+// switches off the scheme alias table no longer rewrites letters, so `base` is
+// already the literal cut and this rebuild is a no-op fast path; the rebuild
+// matters while correction is on, and AC1 only constrains the candidate list.
 std::string BuildQuanpinAutocorrectDisplay(const QueryRequest &request)
 {
     const std::string &cased = request.raw_input_with_cases.empty() ? request.raw_input : request.raw_input_with_cases;

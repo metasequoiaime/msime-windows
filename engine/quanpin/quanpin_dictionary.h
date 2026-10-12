@@ -126,8 +126,9 @@ class QuanpinDictionary
     // query_series 的非完整前缀：只取词库里真有的词，不解 query_single_path 那条注定被丢掉的 Google 兜底整句。
     std::vector<WordItem> query_prefix_path(const std::string &raw_input, const std::string &segmentation,
                                             const quanpin::Segments &segments);
-    quanpin::Segments resolve_segments(const std::string &raw_input, const std::string &segmentation);
-    quanpin::Segments get_or_compute_segments(const std::string &raw_input);
+    quanpin::Segments resolve_segments(const std::string &raw_input, const std::string &segmentation,
+                                       bool include_correction_aliases);
+    quanpin::Segments get_or_compute_segments(const std::string &raw_input, bool include_correction_aliases);
     std::vector<WordItem> query_database(const quanpin::Segments &segments, const std::string &segmentation);
     std::vector<WordItem> query_initial(const std::string &code, int limit);
     std::vector<WordItem> append_ime_fallback(const std::string &raw_input, const std::string &segmentation,

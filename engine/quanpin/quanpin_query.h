@@ -46,7 +46,12 @@ struct QueryResult
 };
 
 Segments cut_pinyin_greedy(const std::string &pinyin, bool intact_only = false);
-std::vector<Segments> cut_pinyin_by_mode(const std::string &pinyin, const std::string &mode = "greedy");
+// include_correction_aliases gates the hand-mistake alias layer (transposition
+// shapes, extra/missing letters) on the autocorrect switch; false keeps only the
+// ü normalization (jv -> ju). Defaults to true so non-query callers keep the
+// historical behaviour.
+std::vector<Segments> cut_pinyin_by_mode(const std::string &pinyin, const std::string &mode = "greedy",
+                                         bool include_correction_aliases = true);
 Segments split_segments(const std::string &segmentation);
 std::string join_segments(const Segments &segments, const std::string &delimiter = "'");
 std::string build_table_name(const Segments &segments);
