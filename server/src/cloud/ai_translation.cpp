@@ -152,6 +152,11 @@ std::vector<std::string> ParseTranslations(const std::string &content, size_t ex
 
 namespace AiTranslation
 {
+std::vector<std::string> ParseTranslations(const std::string &content, size_t expected)
+{
+    return ::ParseTranslations(content, expected);
+}
+
 bool IsUsableConfig(const Config &config)
 {
     return !config.endpoint.empty() && !config.token.empty() && !config.model.empty() &&
