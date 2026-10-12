@@ -293,6 +293,36 @@ bool SetConfiguredNiuTransString(const std::string &key, const std::string &valu
     return true;
 }
 
+const TranslationConfig &GetConfiguredTranslation()
+{
+    return g_translation;
+}
+
+bool SetConfiguredTranslationString(const std::string &key, const std::string &value)
+{
+    if (key != "provider")
+        return false;
+    if (value != "tencent" && value != "niutrans" && value != "custom" && value != "ai")
+        return false;
+    if (!WriteConfiguredValue("translation", key, EscapeTomlBasicString(value)))
+        return false;
+    g_translation.provider = value;
+    // 写回旧布尔，保证降级到旧版时选择不丢；旧版不认识 ai，会回落到腾讯云。
+    const bool niutrans = value == "niutrans";
+    const bool custom = value == "custom";
+    if (niutrans != g_niutrans.enabled)
+    {
+        WriteConfiguredValue("niutrans", "enabled", niutrans ? "true" : "false");
+        g_niutrans.enabled = niutrans;
+    }
+    if (custom != g_custom_translation.enabled)
+    {
+        WriteConfiguredValue("custom_translation", "enabled", custom ? "true" : "false");
+        g_custom_translation.enabled = custom;
+    }
+    return true;
+}
+
 std::string NormalizeNetworkProxyServer(const std::string &value)
 {
     const auto not_space = [](unsigned char ch) { return !std::isspace(ch); };

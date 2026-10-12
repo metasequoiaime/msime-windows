@@ -13,7 +13,6 @@
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/input_key_policy.h"
 #include "utils/common_utils.h"
-#include "fmt/xchar.h"
 #include <utf8.h>
 #include "global/globals.h"
 #include "engine/common/helpcode_utils.h"
@@ -380,8 +379,7 @@ void PrepareCandidateTranslationRequest()
         }
         return;
     }
-    const std::string scope = fmt::format("{}|{}|{}", GetConfiguredTencentTmt().enabled,
-                                          GetConfiguredCustomTranslation().enabled, GetConfiguredNiuTrans().enabled);
+    const std::string scope = CloudTranslation::ActiveProviderScope();
     if (scope != g_candidate_translation_scope)
     {
         g_candidate_translation_scope = scope;

@@ -423,6 +423,47 @@ TEST_CASE(ai_provider_retired_default_model_follows_new_default)
     fs::remove_all(unique_root, ec);
 }
 
+// [translation].provider 是候选词翻译的唯一来源；旧配置只有三个 enabled 布尔，升级时按
+// niutrans > custom > tencent 推导，并把布尔按 provider 归一，降级回旧版时选择不丢。
+TEST_CASE(translation_provider_migrates_from_legacy_enabled_flags)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"translation-provider";
+    const fs::path data_dir = unique_root / L"metasequoiaime";
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    SeedTemplate(data_dir);
+    // 旧版配置：没有 [translation]，只有 niutrans.enabled。
+    WriteText(data_dir / L"config.toml",
+              "[niutrans]\nenabled = true\napp_id = \"legacy-app\"\napikey = \"legacy-key\"\n");
+    {
+        ScopedConfigLocation location(unique_root);
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredTranslation().provider, std::string("niutrans"));
+        REQUIRE(GetConfiguredNiuTrans().enabled);
+        REQUIRE(!GetConfiguredCustomTranslation().enabled);
+
+        // 非法值被拒绝，保持原值。
+        REQUIRE(!SetConfiguredTranslationString("provider", "not-a-provider"));
+        REQUIRE_EQ(GetConfiguredTranslation().provider, std::string("niutrans"));
+
+        // 切到 AI 辅助：provider 落盘，旧布尔同步写回 false。
+        REQUIRE(SetConfiguredTranslationString("provider", "ai"));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredTranslation().provider, std::string("ai"));
+        REQUIRE(!GetConfiguredNiuTrans().enabled);
+        REQUIRE(!GetConfiguredCustomTranslation().enabled);
+
+        // 切到自定义 DeepLX：布尔随之更新。
+        REQUIRE(SetConfiguredTranslationString("provider", "custom"));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredTranslation().provider, std::string("custom"));
+        REQUIRE(GetConfiguredCustomTranslation().enabled);
+        REQUIRE(!GetConfiguredNiuTrans().enabled);
+    }
+    fs::remove_all(unique_root, ec);
+}
+
 TEST_CASE(config_recovers_unparseable_file_and_saves)
 {
     namespace fs = std::filesystem;

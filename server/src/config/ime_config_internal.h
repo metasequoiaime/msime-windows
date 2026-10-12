@@ -249,6 +249,7 @@ extern AiAssistantConfig g_ai_assistant;
 extern TencentTmtConfig g_tencent_tmt;
 extern CustomTranslationConfig g_custom_translation;
 extern NiuTransConfig g_niutrans;
+extern TranslationConfig g_translation;
 extern std::mutex g_network_proxy_mutex;
 extern NetworkProxyConfig g_network_proxy; // guarded by g_network_proxy_mutex
 extern FrequencyAdjustmentConfig g_frequency_adjustment;

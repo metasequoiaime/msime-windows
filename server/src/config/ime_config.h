@@ -141,6 +141,14 @@ struct NiuTransConfig
     std::string apikey;
 };
 
+// [translation] 段：候选词翻译当前生效的在线提供方。旧配置没有这个键时，由
+// [tencent_tmt]/[custom_translation]/[niutrans] 的 enabled 布尔在加载时推导。
+struct TranslationConfig
+{
+    // tencent | niutrans | custom | ai
+    std::string provider = "tencent";
+};
+
 // [network] 段：云输入、模型下载、AI、翻译、语音等所有出站请求共用的代理设置。
 struct NetworkProxyConfig
 {
@@ -593,6 +601,8 @@ bool SetConfiguredCustomTranslationString(const std::string &key, const std::str
 const NiuTransConfig &GetConfiguredNiuTrans();
 bool SetConfiguredNiuTransBool(const std::string &key, bool value);
 bool SetConfiguredNiuTransString(const std::string &key, const std::string &value);
+const TranslationConfig &GetConfiguredTranslation();
+bool SetConfiguredTranslationString(const std::string &key, const std::string &value);
 // Snapshot by value: download threads and the cloud worker read it while the settings host rewrites it.
 NetworkProxyConfig GetConfiguredNetworkProxy();
 bool SetConfiguredNetworkString(const std::string &key, const std::string &value);

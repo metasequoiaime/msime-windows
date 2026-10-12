@@ -1,9 +1,11 @@
 #include "api_credential_test.h"
 
+#include "cloud/ai_translation.h"
 #include "cloud/custom_translation.h"
 #include "cloud/niutrans_translation.h"
 #include "cloud/tencent_tmt.h"
 #include "cloud/translation_gloss.h"
+#include "config/ime_config.h"
 #include "voice-input/doubao_asr_client.h"
 
 #include "utils/network_proxy.h"
@@ -259,7 +261,18 @@ ApiCredentialTest::Result TestBatchAsr(const ApiCredentialTest::Request &request
 ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &request)
 {
     std::vector<std::string> translated;
-    if (request.service == "translation.tencent")
+    if (request.service == "translation.ai")
+    {
+        // 复用 AI 辅助当前服务商的配置，页面上没有独立的地址与密钥输入框。
+        const auto &configured = GetConfiguredAiAssistant();
+        const AiTranslation::Config config{configured.provider, CloudTranslation::TrimSecret(configured.endpoint),
+                                           CloudTranslation::TrimSecret(configured.token),
+                                           CloudTranslation::TrimSecret(configured.model)};
+        if (!AiTranslation::IsUsableConfig(config))
+            return {false, "请先在 AI 辅助页面填写有效的接口地址、Token 和模型。"};
+        translated = AiTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en");
+    }
+    else if (request.service == "translation.tencent")
     {
         const TencentTmt::Credentials credentials{Value(request, "secretId"), Value(request, "secretKey"),
                                                   "ap-guangzhou"};

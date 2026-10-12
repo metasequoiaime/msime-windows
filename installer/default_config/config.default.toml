@@ -100,6 +100,7 @@ sentence_collocation_rerank_weight = 0.05
 
 #
 # 腾讯云机器翻译（竖排候选项本地词库未命中时的补全）
+# enabled 布尔仅为旧版兼容保留，实际生效方由 [translation].provider 决定。
 #
 [tencent_tmt]
 enabled = false
@@ -121,12 +122,21 @@ api_key = ""
 
 #
 # 小牛翻译（NiuTrans）机器翻译。app_id 与 apikey 在“控制台->API应用”中查看。
-# enabled = true 时优先于腾讯云与自定义 DeepLX。
+# enabled 布尔仅为旧版兼容保留，实际生效方由 [translation].provider 决定。
 #
 [niutrans]
 enabled = true
 app_id = ""
 apikey = ""
+
+#
+# 候选词翻译当前生效的在线提供方：tencent | niutrans | custom | ai。
+# ai 表示复用 AI 辅助当前服务商的接口地址、Token 与模型。
+# 留空表示按 [tencent_tmt]/[custom_translation]/[niutrans] 的旧 enabled 布尔自动推导，
+# 在设置页选择过一次后会写入具体值。
+#
+[translation]
+provider = ""
 
 #
 # 网络代理：云输入、模型下载、AI 联想、翻译、语音识别等需要联网的功能共用。
