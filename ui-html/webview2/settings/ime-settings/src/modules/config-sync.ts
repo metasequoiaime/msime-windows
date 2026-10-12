@@ -1,4 +1,5 @@
 import { onHostMessage } from '../utils/host-messages';
+import { setAiAssistantState } from './ai-assistant-state';
 import { serializeHostMessage } from '../../../../shared/messages';
 import { applyCollocationModelStatus, applyNeuralModelStatus, applyCandidateArrange, applyDropdownValue as applyDropdown, applyToggleState as applyToggle, setFuzzyRuleOptionsDisabled, setMixedCandidateOptionsDisabled, setSmartPunctuationOptionsDisabled } from './shared';
 
@@ -402,6 +403,15 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
     if (typeof data.ai_assistant.enabled === 'boolean') {
       applyToggleState('aiEnabled', data.ai_assistant.enabled);
     }
+    if (!target) {
+      const text = (value: unknown) => (typeof value === 'string' ? value : '');
+      setAiAssistantState({
+        provider: text(data.ai_assistant.provider),
+        endpoint: text(data.ai_assistant.endpoint),
+        model: text(data.ai_assistant.model),
+        token: text(data.ai_assistant.token)
+      });
+    }
   }
 
   if (applies('input') || applies('helpcode') || applies('tools-settings')) {
@@ -430,7 +440,7 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
       module.applyTencentTmtConfig(data?.tencent_tmt);
       module.applyNiuTransConfig(data?.niutrans);
       module.applyCustomTranslationConfig(data?.custom_translation);
-      module.applyTranslationConfig(data?.translation, data?.ai_assistant);
+      module.applyTranslationConfig(data?.translation);
     });
   }
   if (applies('tools-settings')) {

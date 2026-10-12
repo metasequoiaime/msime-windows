@@ -3,6 +3,7 @@ import { applyDropdownValue, applyToggleState, setFuzzyRuleOptionsDisabled, setS
 import { updateConfig } from './config-sync';
 import { updateCandidatePreviewHelpcode } from './appearance';
 import { setupCredentialTest } from './credential-test';
+import { getAiAssistantState, isUsableAiAssistantState, onAiAssistantStateChange } from './ai-assistant-state';
 import { onHostMessage } from '../utils/host-messages';
 import { hoistOverlay } from '../utils/overlay-host';
 
@@ -13,7 +14,10 @@ type TranslationProvider = 'tencent' | 'niutrans' | 'custom' | 'ai';
 
 let applyingInputConfig = false;
 let translationProvider: TranslationProvider = 'tencent';
-let aiTranslationConfigured = false;
+
+function parseTranslationProvider(value: unknown): TranslationProvider {
+  return value === 'niutrans' || value === 'custom' || value === 'ai' ? value : 'tencent';
+}
 
 const SHUANGPIN_REFRESH_TIMEOUT_MS = 5000;
 let shuangpinToastTimer: number | null = null;
@@ -202,7 +206,7 @@ function syncCandidateTranslationWarning(): void {
   const provider = activeTranslationProvider();
   if (provider === 'ai') {
     warning.textContent = '请先在 AI 辅助页面填写接口地址、Token 和模型';
-    warning.classList.toggle('is-hidden', aiTranslationConfigured);
+    warning.classList.toggle('is-hidden', isUsableAiAssistantState(getAiAssistantState()));
     return;
   }
   if (provider === 'custom') {
@@ -234,7 +238,15 @@ function syncTranslationProviderView(provider: TranslationProvider): void {
   if (niutransFields) niutransFields.hidden = provider !== 'niutrans';
   if (customFields) customFields.hidden = provider !== 'custom';
   if (aiFields) aiFields.hidden = provider !== 'ai';
+  syncAiTranslationSummary();
   syncCandidateTranslationWarning();
+}
+
+function syncAiTranslationSummary(): void {
+  const summary = document.getElementById('aiTranslationSummary') as HTMLInputElement | null;
+  if (!summary) return;
+  const assistant = getAiAssistantState();
+  summary.value = isUsableAiAssistantState(assistant) ? `${assistant.provider} · ${assistant.model}` : '';
 }
 
 function refreshTranslationProvider(): void {
@@ -270,19 +282,8 @@ export function applyNiuTransConfig(config: Record<string, unknown> | undefined)
   if (apiKey && typeof config?.apikey === 'string') apiKey.value = config.apikey;
 }
 
-export function applyTranslationConfig(
-  config: Record<string, unknown> | undefined,
-  assistant: Record<string, unknown> | undefined
-): void {
-  const value = typeof config?.provider === 'string' ? config.provider : '';
-  translationProvider = value === 'niutrans' || value === 'custom' || value === 'ai' ? value : 'tencent';
-  const provider = typeof assistant?.provider === 'string' ? assistant.provider : '';
-  const endpoint = typeof assistant?.endpoint === 'string' ? assistant.endpoint : '';
-  const model = typeof assistant?.model === 'string' ? assistant.model : '';
-  const token = typeof assistant?.token === 'string' ? assistant.token : '';
-  aiTranslationConfigured = Boolean(endpoint && model && token);
-  const summary = document.getElementById('aiTranslationSummary') as HTMLInputElement | null;
-  if (summary) summary.value = aiTranslationConfigured ? `${provider} · ${model}` : '';
+export function applyTranslationConfig(config: Record<string, unknown> | undefined): void {
+  translationProvider = parseTranslationProvider(config?.provider);
   refreshTranslationProvider();
 }
 
@@ -421,12 +422,14 @@ export function setupInput(): void {
   document.getElementById('translationProviderMenu')?.addEventListener('click', (event: Event) => {
     const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('.dropdown-item');
     if (!item) return;
-    const value = item.dataset.value;
-    const provider: TranslationProvider =
-      value === 'niutrans' ? 'niutrans' : value === 'custom' ? 'custom' : value === 'ai' ? 'ai' : 'tencent';
+    const provider = parseTranslationProvider(item.dataset.value);
     translationProvider = provider;
     syncTranslationProviderView(provider);
     updateConfig('translation.provider', provider);
+  });
+  onAiAssistantStateChange(() => {
+    syncAiTranslationSummary();
+    syncCandidateTranslationWarning();
   });
   const translationFields: Record<string, string> = {
     tencentTmtSecretId: 'tencent_tmt.secret_id',

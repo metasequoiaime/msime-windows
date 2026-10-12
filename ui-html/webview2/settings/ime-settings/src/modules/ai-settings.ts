@@ -2,6 +2,7 @@ import { applyDropdownValue, applyToggleState, setupDropdownMenu, setupToggleBut
 import { updateConfig } from './config-sync';
 import { setupCredentialTest } from './credential-test';
 import { setupModelFetch } from './model-fetch';
+import { type AiAssistantState, setAiAssistantState } from './ai-assistant-state';
 
 type ProviderDefaults = { endpoint: string; model: string };
 
@@ -91,6 +92,7 @@ function switchProvider(provider: string): void {
   applyProviderFields(provider);
   applyThinkingVisibility(provider);
   clearModelMenu();
+  setAiAssistantState(currentAiConfig());
 }
 
 function switchPrompt(id: string): void {
@@ -104,7 +106,7 @@ function switchPrompt(id: string): void {
 }
 
 // 凭据测试和模型列表共用同一份请求配置，空值按服务商默认值补全。
-function currentAiConfig(): Record<string, string> {
+function currentAiConfig(): AiAssistantState {
   const defaults = PROVIDER_DEFAULTS[currentProvider];
   const value = (id: string) =>
     (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? '';
@@ -141,6 +143,10 @@ export function setupAiSettings(): void {
     const provider = item?.dataset.value;
     if (provider) switchProvider(provider);
   });
+  // 从下拉列表选模型由通用下拉逻辑写配置和输入框，这里等它写完再同步给候选词翻译。
+  document.getElementById('aiModelMenu')?.addEventListener('click', () => {
+    queueMicrotask(() => setAiAssistantState(currentAiConfig()));
+  });
   document.getElementById('aiPromptSlotMenu')?.addEventListener('click', (event) => {
     const item = (event.target as HTMLElement | null)?.closest('.dropdown-item') as HTMLElement | null;
     const id = item?.dataset.value;
@@ -152,13 +158,14 @@ export function setupAiSettings(): void {
       if (id === 'aiToken') {
         tokens[currentProvider] = element.value.trim();
         updateConfig(`ai_assistant.token_${currentProvider}`, tokens[currentProvider]);
-        return;
+      } else {
+        updateConfig(`ai_assistant.${key}`, element.value);
+        if (!element.value) {
+          const defaults = PROVIDER_DEFAULTS[currentProvider];
+          if (defaults) element.value = defaults[key as keyof ProviderDefaults];
+        }
       }
-      updateConfig(`ai_assistant.${key}`, element.value);
-      if (!element.value) {
-        const defaults = PROVIDER_DEFAULTS[currentProvider];
-        if (defaults) element.value = defaults[key as keyof ProviderDefaults];
-      }
+      setAiAssistantState(currentAiConfig());
     });
   });
   const limit = document.getElementById('aiCandidateLimit') as HTMLInputElement | null;
