@@ -20,12 +20,12 @@ let toastTimer: number | null = null;
 
 function post(action: DictionaryRequest['action'], data: Partial<Omit<DictionaryRequest, 'action' | 'requestId'>> = {}): void {
   const requestId = `dict-${++requestCounter}`;
-  const targetDictionary = dictionary;
+  const targetDictionary = data.dictionary ?? dictionary;
   pendingRequests.set(requestId, { action, dictionary: targetDictionary });
   if (action === 'query') { latestQueryId = requestId; pager?.loading(); }
   window.chrome?.webview?.postMessage(serializeHostMessage({
     type: 'dictionaryRequest',
-    data: { requestId, dictionary, action, ...data }
+    data: { requestId, action, ...data, dictionary: targetDictionary }
   }));
 }
 
@@ -186,10 +186,11 @@ export function setupDictionary(): void {
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
+    const targetDictionary = dictionary;
     try {
       const content = await readDictionaryFile(file);
       if (!content.trim()) { showToast('文件内容为空', false); return; }
-      post('import', { content });
+      post('import', { dictionary: targetDictionary, content });
     } catch {
       showToast('读取文件失败', false);
     }
@@ -202,10 +203,11 @@ export function setupDictionary(): void {
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
+    const targetDictionary = dictionary;
     try {
       const content = await readDictionaryFile(file);
       if (!content.trim()) { showToast('文件内容为空', false); return; }
-      post('importHans', { content });
+      post('importHans', { dictionary: targetDictionary, content });
     } catch {
       showToast('读取文件失败', false);
     }
