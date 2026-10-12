@@ -9,11 +9,11 @@ import { hoistOverlay } from '../utils/overlay-host';
 type InputScheme = 'quanpin' | 'shuangpin' | 'wubi';
 type InputMode = 'chinese' | 'japanese';
 
-type TranslationProvider = 'tencent' | 'niutrans' | 'custom';
+type TranslationProvider = 'tencent' | 'niutrans' | 'custom' | 'ai';
 
 let applyingInputConfig = false;
-let customTranslationEnabled = false;
-let niutransTranslationEnabled = false;
+let translationProvider: TranslationProvider = 'tencent';
+let aiTranslationConfigured = false;
 
 const SHUANGPIN_REFRESH_TIMEOUT_MS = 5000;
 let shuangpinToastTimer: number | null = null;
@@ -174,9 +174,7 @@ function syncCandidateTranslationOptions(enabled: boolean): void {
 }
 
 function activeTranslationProvider(): TranslationProvider {
-  if (niutransTranslationEnabled) return 'niutrans';
-  if (customTranslationEnabled) return 'custom';
-  return 'tencent';
+  return translationProvider;
 }
 
 function inputValue(id: string): string {
@@ -185,6 +183,10 @@ function inputValue(id: string): string {
 
 function translationTestConfig(): Record<string, string> {
   const provider = activeTranslationProvider();
+  if (provider === 'ai') {
+    // 服务端直接读取 AI 辅助当前服务商配置，页面无需传地址与密钥。
+    return {};
+  }
   if (provider === 'niutrans') {
     return { appId: inputValue('niutransAppId'), apiKey: inputValue('niutransApiKey') };
   }
@@ -198,6 +200,11 @@ function syncCandidateTranslationWarning(): void {
   const warning = document.getElementById('candidateTranslationApiWarning');
   if (!warning) return;
   const provider = activeTranslationProvider();
+  if (provider === 'ai') {
+    warning.textContent = '请先在 AI 辅助页面填写接口地址、Token 和模型';
+    warning.classList.toggle('is-hidden', aiTranslationConfigured);
+    return;
+  }
   if (provider === 'custom') {
     const endpoint = (document.getElementById('customTranslationEndpoint') as HTMLInputElement | null)?.value.trim();
     const valid = /^https?:\/\/\S+$/i.test(endpoint ?? '');
@@ -222,9 +229,11 @@ function syncTranslationProviderView(provider: TranslationProvider): void {
   const tencentFields = document.getElementById('tencentTranslationFields');
   const niutransFields = document.getElementById('niutransTranslationFields');
   const customFields = document.getElementById('customTranslationFields');
+  const aiFields = document.getElementById('aiTranslationFields');
   if (tencentFields) tencentFields.hidden = provider !== 'tencent';
   if (niutransFields) niutransFields.hidden = provider !== 'niutrans';
   if (customFields) customFields.hidden = provider !== 'custom';
+  if (aiFields) aiFields.hidden = provider !== 'ai';
   syncCandidateTranslationWarning();
 }
 
@@ -248,20 +257,32 @@ export function applyTencentTmtConfig(config: Record<string, unknown> | undefine
 }
 
 export function applyCustomTranslationConfig(config: Record<string, unknown> | undefined): void {
-  customTranslationEnabled = config?.enabled === true;
   const endpoint = document.getElementById('customTranslationEndpoint') as HTMLInputElement | null;
   const apiKey = document.getElementById('customTranslationApiKey') as HTMLInputElement | null;
   if (endpoint && typeof config?.endpoint === 'string') endpoint.value = config.endpoint;
   if (apiKey && typeof config?.api_key === 'string') apiKey.value = config.api_key;
-  refreshTranslationProvider();
 }
 
 export function applyNiuTransConfig(config: Record<string, unknown> | undefined): void {
-  niutransTranslationEnabled = config?.enabled === true;
   const appId = document.getElementById('niutransAppId') as HTMLInputElement | null;
   const apiKey = document.getElementById('niutransApiKey') as HTMLInputElement | null;
   if (appId && typeof config?.app_id === 'string') appId.value = config.app_id;
   if (apiKey && typeof config?.apikey === 'string') apiKey.value = config.apikey;
+}
+
+export function applyTranslationConfig(
+  config: Record<string, unknown> | undefined,
+  assistant: Record<string, unknown> | undefined
+): void {
+  const value = typeof config?.provider === 'string' ? config.provider : '';
+  translationProvider = value === 'niutrans' || value === 'custom' || value === 'ai' ? value : 'tencent';
+  const provider = typeof assistant?.provider === 'string' ? assistant.provider : '';
+  const endpoint = typeof assistant?.endpoint === 'string' ? assistant.endpoint : '';
+  const model = typeof assistant?.model === 'string' ? assistant.model : '';
+  const token = typeof assistant?.token === 'string' ? assistant.token : '';
+  aiTranslationConfigured = Boolean(endpoint && model && token);
+  const summary = document.getElementById('aiTranslationSummary') as HTMLInputElement | null;
+  if (summary) summary.value = aiTranslationConfigured ? `${provider} · ${model}` : '';
   refreshTranslationProvider();
 }
 
@@ -400,17 +421,12 @@ export function setupInput(): void {
   document.getElementById('translationProviderMenu')?.addEventListener('click', (event: Event) => {
     const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('.dropdown-item');
     if (!item) return;
-    const provider: TranslationProvider = item.dataset.value === 'niutrans'
-      ? 'niutrans'
-      : item.dataset.value === 'custom'
-        ? 'custom'
-        : 'tencent';
-    niutransTranslationEnabled = provider === 'niutrans';
-    customTranslationEnabled = provider === 'custom';
+    const value = item.dataset.value;
+    const provider: TranslationProvider =
+      value === 'niutrans' ? 'niutrans' : value === 'custom' ? 'custom' : value === 'ai' ? 'ai' : 'tencent';
+    translationProvider = provider;
     syncTranslationProviderView(provider);
-    // Only one provider is active; keep the mutually-exclusive flags in sync.
-    updateConfig('niutrans.enabled', niutransTranslationEnabled);
-    updateConfig('custom_translation.enabled', customTranslationEnabled);
+    updateConfig('translation.provider', provider);
   });
   const translationFields: Record<string, string> = {
     tencentTmtSecretId: 'tencent_tmt.secret_id',

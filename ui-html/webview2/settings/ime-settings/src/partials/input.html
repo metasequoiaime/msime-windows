@@ -284,7 +284,7 @@
       <div class="section-header translation-language-row">
         <div>
           <div class="section-title">在线翻译服务</div>
-          <div class="input-setting-description">可使用腾讯云、小牛翻译，或填写自己部署的 DeepLX 兼容接口</div>
+          <div class="input-setting-description">可使用腾讯云、小牛翻译、自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置</div>
         </div>
         <div class="dropdown">
           <button class="dropdown-toggle translation-language-toggle" id="translationProviderBtn">
@@ -294,6 +294,7 @@
             <div class="dropdown-item" data-value="tencent">腾讯云</div>
             <div class="dropdown-item" data-value="niutrans">小牛翻译</div>
             <div class="dropdown-item" data-value="custom">自定义 DeepLX</div>
+            <div class="dropdown-item" data-value="ai">AI 辅助</div>
           </div>
         </div>
       </div>
@@ -410,6 +411,18 @@
                 </svg>
               </button>
             </span>
+          </label>
+        </div>
+      </div>
+      <div id="aiTranslationFields" hidden>
+        <div class="translation-api-heading">
+          <div class="section-title">复用 AI 辅助配置</div>
+          <div class="input-setting-description">使用 AI 辅助页当前服务商的接口地址、Token 与模型，无需在此重复填写</div>
+        </div>
+        <div class="translation-api-grid">
+          <label class="translation-api-field translation-api-field-wide">
+            <span>当前服务商与模型</span>
+            <input id="aiTranslationSummary" type="text" readonly autocomplete="off" spellcheck="false" placeholder="未配置">
           </label>
         </div>
       </div>

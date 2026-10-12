@@ -430,6 +430,7 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
       module.applyTencentTmtConfig(data?.tencent_tmt);
       module.applyNiuTransConfig(data?.niutrans);
       module.applyCustomTranslationConfig(data?.custom_translation);
+      module.applyTranslationConfig(data?.translation, data?.ai_assistant);
     });
   }
   if (applies('tools-settings')) {

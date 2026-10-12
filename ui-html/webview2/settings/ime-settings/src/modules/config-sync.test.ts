@@ -24,6 +24,7 @@ vi.mock('./shared', () => ({
 vi.mock('./appearance', () => ({ applyAppearanceConfig: vi.fn(), updateCandidatePreviewHelpcode: vi.fn() }));
 vi.mock('./skin', () => ({ applyCandidateSkin: vi.fn(), applyCandidateSkinCatalog: vi.fn() }));
 vi.mock('./input', () => ({
+  applyTranslationConfig: vi.fn(),
   applyCustomShuangpinSchemas: vi.fn(),
   applyCustomTranslationConfig: vi.fn(),
   applyFrequencyConfig: vi.fn(),
