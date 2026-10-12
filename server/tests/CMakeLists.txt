@@ -29,6 +29,8 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/cloud/translation_gloss.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_custom_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/cloud/custom_translation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_translation.cpp"
+    "${CMAKE_SOURCE_DIR}/src/cloud/ai_translation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_niutrans_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/cloud/niutrans_translation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_active_client_state.cpp"
