@@ -394,6 +394,15 @@ QuanpinDictionary::~QuanpinDictionary()
     }
 }
 
+unsigned QuanpinDictionary::effective_autocorrect_types(const quanpin::Segments &segments, unsigned autocorrect_types)
+{
+    if (autocorrect_types == 0)
+    {
+        return 0;
+    }
+    return quanpin::has_pure_jianpin_reading(db_, statement_cache_, segments) ? 0u : autocorrect_types;
+}
+
 std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_input, const std::string &segmentation,
                                                      unsigned autocorrect_types)
 {
@@ -406,6 +415,14 @@ std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_inpu
     pinyin_sequence_ = raw_input;
     const auto segments = resolve_segments(raw_input, segmentation);
 
+    // 纯简拼形输入（每个字母都是一个声母）如果词库里真有它的简拼读法，就不能被纠错
+    // 改写劫持：nbn 是「能不能」/nqn 是「女青年」/bqng 是「并且能够」，纠错却把它们
+    // 改写成 难/帮 一类字母更近的错串候选，顶掉真实命中的简拼词。输入形状分不干净
+    // （sahng 全声母却必须保留纠错），唯一分得开的是词库 jp 列有没有这个读法，
+    // 所以判定放在唯一同时持有 DB 与纠错掩码的这里。命中即把本次有效掩码置 0，
+    // 让下面既有的 plain 分支按字面简拼读法出候选。
+    const unsigned effective = effective_autocorrect_types(segments, autocorrect_types);
+
     // Typing autocorrection: when the spelling is not a legal pinyin
     // combination (the correction cut already fell back to greedy), try to
     // rewrite the whole string into legal syllables. The corrected
@@ -415,7 +432,7 @@ std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_inpu
     // Memoize the k-best correction search: it is the expensive part of every
     // keystroke, yet a pure function of this input tuple, so a re-typed or
     // backspaced prefix should reuse it instead of re-running the k=9 beam.
-    const std::string resolution_key = std::to_string(autocorrect_types) + '\x1f' + raw_input + '\x1f' + segmentation;
+    const std::string resolution_key = std::to_string(effective) + '\x1f' + raw_input + '\x1f' + segmentation;
     SeriesQueryResolution resolution;
     if (const auto *cached_resolution = resolution_cache_.find(resolution_key))
     {
@@ -423,7 +440,7 @@ std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_inpu
     }
     else
     {
-        resolution = resolve_series_query(raw_input, segments, autocorrect_types);
+        resolution = resolve_series_query(raw_input, segments, effective);
         resolution_cache_.insert(resolution_key, resolution);
     }
     pinyin_segmentation_ = resolution.segmentation;
@@ -480,7 +497,7 @@ std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_inpu
     // unconditionally changed the default behaviour for every caller: a misspelled
     // input such as "sahng" started offering the corrected candidate even with
     // autocorrection explicitly turned off.
-    if (autocorrect_types != 0)
+    if (effective != 0)
     {
         // Correction alternatives first: they explain the letters the user
         // actually typed, so they outrank the phonetic-shape alias readings that
@@ -1743,7 +1760,8 @@ int QuanpinDictionary::insert_word_to_series_cache(const std::string &raw_input,
     }
 
     const auto segments = resolve_segments(raw_input, segmentation);
-    const auto resolution = resolve_series_query(raw_input, segments, autocorrect_types);
+    const auto resolution =
+        resolve_series_query(raw_input, segments, effective_autocorrect_types(segments, autocorrect_types));
     return insert_word_to_series_cache_key(resolution.cache_key, raw_input, word, source);
 }
 

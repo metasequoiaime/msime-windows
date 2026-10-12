@@ -1525,6 +1525,73 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
     }
 }
 
+// 纯简拼形输入（每个字母都是一个声母）如果词库里真有它的简拼读法，纠错不得接管：
+// nbn/nqn/bqng 分别命中词库 jp 列的 能不能/女青年/并且能够，纠错却把它们改写成
+// 字母更近的错串候选顶掉真实命中。判定在查询层按 jp 列做（形状分不干净，见任务
+// design.md）。shng 含双字母切分 sh，不是纯简拼，漏字纠错照旧。
+void run_autocorrect_pure_jianpin_guard_tests(const std::filesystem::path &data_directory)
+{
+    const std::filesystem::path directory = data_directory / "autocorrect-pure-jianpin";
+    std::filesystem::create_directories(directory);
+    {
+        Database database(directory / "msime.db");
+        database.execute("CREATE TABLE tbl_1_s(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_s VALUES('shang','s','上',900);"
+                         "CREATE TABLE tbl_1_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_n VALUES('nan','n','难',900);"
+                         "CREATE TABLE tbl_1_b(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_b VALUES('bang','b','帮',900);"
+                         "CREATE TABLE tbl_3_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_3_n VALUES('neng''bu''neng','nbn','能不能',5000);"
+                         "INSERT INTO tbl_3_n VALUES('nv''qing''nian','nqn','女青年',3000);"
+                         "CREATE TABLE tbl_4_b(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_4_b VALUES('bing''qie''neng''gou','bqng','并且能够',4000);");
+    }
+
+    metasequoia::RuntimePaths paths;
+    paths.resources = directory;
+    paths.user_data = directory;
+    paths.cache = directory;
+    paths.dictionaries = directory;
+    const unsigned all = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor |
+                         quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+
+    struct Case
+    {
+        const char *input;
+        const char *word;
+    };
+    for (const Case &test : {Case{"nbn", "能不能"}, Case{"nqn", "女青年"}, Case{"bqng", "并且能够"}})
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, all, true, true, true, paths);
+        type(session, test.input);
+        require(!session.candidates().empty() && session.candidates().front().word == test.word &&
+                    session.candidates().front().corrected_from.empty(),
+                "A pure-jianpin input with a dictionary reading must lead with that reading, uncorrected.");
+        require(std::none_of(session.candidates().begin(), session.candidates().end(),
+                             [&](const WordItem &item) { return item.corrected_from == test.input; }),
+                "A pure-jianpin input with a dictionary reading must not produce a corrected candidate.");
+    }
+
+    // 含双字母切分的输入不是纯简拼，漏字纠错照旧命中「上」并记下敲入的字母。
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, all, true, true, true, paths);
+        type(session, "shng");
+        const auto found = find_candidate_index(session, "上");
+        require(found < session.candidates().size() && session.candidates()[found].corrected_from == "shng",
+                "A non-pure-jianpin typo (shng) must still be corrected with the typed letters recorded.");
+    }
+
+    // 纠错关时逐位不变：纯简拼输入仍由字面简拼读法领衔，且无纠错标记。
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "bqng");
+        require(!session.candidates().empty() && session.candidates().front().word == "并且能够" &&
+                    session.candidates().front().corrected_from.empty(),
+                "With autocorrection off a pure-jianpin reading must still lead, uncorrected.");
+    }
+}
+
 void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
 {
     const std::filesystem::path directory = data_directory / "caret-prefix";
@@ -2521,6 +2588,7 @@ int run_test()
     run_autocorrect_costlier_context_tests(data_directory);
 
     run_autocorrect_generated_space_tests(data_directory);
+    run_autocorrect_pure_jianpin_guard_tests(data_directory);
 #endif
 
 #ifndef METASEQUOIA_SKIP_FREQUENCY_TESTS

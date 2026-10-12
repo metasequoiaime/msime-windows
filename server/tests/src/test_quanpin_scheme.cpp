@@ -978,16 +978,24 @@ std::filesystem::path CreateAutocorrectDatabase()
         throw std::runtime_error("Failed to create temporary autocorrect database.");
     }
     const char *sql = "CREATE TABLE tbl_1_s(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                      "CREATE TABLE tbl_1_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                      "CREATE TABLE tbl_1_b(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                       "CREATE TABLE tbl_2_s(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                       "CREATE TABLE tbl_2_g(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                       "CREATE TABLE tbl_2_j(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                       "CREATE TABLE tbl_2_q(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                      "CREATE TABLE tbl_3_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                       "CREATE TABLE tbl_4_s(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                      "CREATE TABLE tbl_4_b(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                       "INSERT INTO tbl_1_s VALUES('shang','s','上',100);"
+                      "INSERT INTO tbl_1_n VALUES('nan','n','难',100);"
+                      "INSERT INTO tbl_1_b VALUES('bang','b','帮',100);"
                       "INSERT INTO tbl_2_s VALUES('shang''zhi','sz','上至',100);"
                       "INSERT INTO tbl_2_g VALUES('guan''li','gl','管理',100);"
                       "INSERT INTO tbl_2_j VALUES('jian''du','jd','监督',100);"
                       "INSERT INTO tbl_2_q VALUES('quan''li','ql','权利',100);"
+                      "INSERT INTO tbl_3_n VALUES('neng''bu''neng','nbn','能不能',5000);"
+                      "INSERT INTO tbl_4_b VALUES('bing''qie''neng''gou','bqng','并且能够',4000);"
                       "INSERT INTO tbl_4_s VALUES('sa''huang''na''ge','shng','撒谎那个',1000);";
     const int result = sqlite3_exec(db, sql, nullptr, nullptr, nullptr);
     sqlite3_close(db);
@@ -1061,6 +1069,28 @@ TEST_CASE(QuanpinDictionaryAutocorrectDeletionTypo)
     const auto legacy = dictionary.query("shng", "sh'n'g", both);
     REQUIRE(
         std::none_of(legacy.begin(), legacy.end(), [](const WordItem &item) { return item.corrected_from == "shng"; }));
+}
+
+TEST_CASE(QuanpinDictionaryPureJianpinReadingBlocksAutocorrect)
+{
+    const auto db_path = CreateAutocorrectDatabase();
+    QuanpinDictionary dictionary(test::Utf8(db_path));
+    const unsigned all = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor |
+                         quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+
+    // S2 纯简拼读法否决权：纯简拼形输入（每个字母都是一个声母）且词库 jp 列有命中时，
+    // 纠错不得接管——字面简拼读法领衔且无 corrected_from。
+    const auto bqng = dictionary.query("bqng", "", all);
+    REQUIRE(!bqng.empty());
+    REQUIRE_EQ(bqng.front().word, std::string("并且能够"));
+    REQUIRE(bqng.front().corrected_from.empty());
+    REQUIRE(std::none_of(bqng.begin(), bqng.end(), [](const WordItem &item) { return item.corrected_from == "bqng"; }));
+
+    // 非纯简拼（shng = sh + n + g，含双字母切分）不受保护：漏字纠错照旧命中「上」。
+    const auto shng = dictionary.query("shng", "sh'n'g", all);
+    REQUIRE(!shng.empty());
+    REQUIRE_EQ(shng.front().word, std::string("上"));
+    REQUIRE_EQ(shng.front().corrected_from, std::string("shng"));
 }
 
 TEST_CASE(QuanpinDictionaryAutocorrectInsertionTypo)

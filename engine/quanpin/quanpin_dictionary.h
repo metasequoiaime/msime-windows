@@ -119,6 +119,10 @@ class QuanpinDictionary
   private:
     std::vector<WordItem> query_exact(const std::string &raw_input, const std::string &segmentation,
                                       unsigned autocorrect_types);
+    // 纯简拼形输入若词库 jp 列有该读法，纠错不得接管：本次有效掩码置 0（S2 简拼读法
+    // 否决权）。query_exact 与 insert_word_to_series_cache 共用同一判定，两边算出的
+    // series 缓存键才一致——否则纠错开时动态候选会被写进查询读不到的槽位。
+    unsigned effective_autocorrect_types(const quanpin::Segments &segments, unsigned autocorrect_types);
     std::vector<WordItem> query_series(const std::string &raw_input, const std::string &segmentation,
                                        const quanpin::Segments &segments);
     std::vector<WordItem> query_single_path(const std::string &raw_input, const std::string &segmentation,

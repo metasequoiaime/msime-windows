@@ -51,6 +51,13 @@ Segments split_segments(const std::string &segmentation);
 std::string join_segments(const Segments &segments, const std::string &delimiter = "'");
 std::string build_table_name(const Segments &segments);
 std::string segments_to_jianpin(const Segments &segments);
+// True when every segment is a single-letter initial (a pure jianpin shape) and the
+// dictionary has at least one row under that jianpin key. The autocorrection gate
+// uses this to let a genuine jianpin reading win over a rewrite: shape alone cannot
+// separate nbn (must not be corrected) from sahn (must be corrected); the jp column
+// can. Uses the same jp-key semantics as the query layer's pure-jianpin branch.
+bool has_pure_jianpin_reading(sqlite3 *db, std::unordered_map<std::string, sqlite3_stmt *> &statement_cache,
+                              const Segments &segments, int limit = 1);
 std::string get_default_db_path();
 // Busy timeout for every read connection to the pinyin dictionary. Writes hold
 // the lock only for a commit, so a short wait is enough; failing instead would
