@@ -43,6 +43,21 @@ std::string Trim(std::string value)
     return std::string(begin, end);
 }
 
+std::string StripMarkdownFences(std::string text)
+{
+    text = Trim(std::move(text));
+    if (text.rfind("```", 0) != 0)
+        return text;
+    const size_t newline = text.find('\n');
+    if (newline == std::string::npos)
+        return text;
+    text = text.substr(newline + 1);
+    const size_t closing = text.rfind("```");
+    if (closing != std::string::npos)
+        text = text.substr(0, closing);
+    return Trim(std::move(text));
+}
+
 std::string LanguageName(const std::string &code)
 {
     if (code == "zh")
@@ -97,7 +112,7 @@ std::vector<std::string> ParseTranslations(const std::string &content, size_t ex
 
     try
     {
-        const auto root = nlohmann::json::parse(content);
+        const auto root = nlohmann::json::parse(StripMarkdownFences(content));
         if (from_array(root))
             return results;
         if (root.is_object())
