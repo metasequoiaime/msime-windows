@@ -697,13 +697,16 @@ TEST_CASE(QuanpinAutocorrectCutTypeBitSwitchMatrix)
     REQUIRE_EQ(quanpin::join_segments(quanpin::autocorrect_cut("shabg", neighbor_only)), std::string("shang"));
     REQUIRE_EQ(quanpin::join_segments(quanpin::autocorrect_cut("shabg", both)), std::string("shang"));
 
-    // "sshang" (doubled s) is an insertion fix; only that bit may correct it.
-    REQUIRE(quanpin::autocorrect_cut("sshang", none).empty());
-    REQUIRE(quanpin::autocorrect_cut("sshang", transposition_only).empty());
-    REQUIRE(quanpin::autocorrect_cut("sshang", neighbor_only).empty());
-    REQUIRE(quanpin::autocorrect_cut("sshang", quanpin::kAutocorrectDeletion).empty());
-    REQUIRE_EQ(quanpin::join_segments(quanpin::autocorrect_cut("sshang", quanpin::kAutocorrectInsertion)),
+    // "sghang" (a QWERTY neighbor of h inserted between s and h) is an insertion
+    // fix; only that bit may correct it. A doubled key ("sshang") is no longer
+    // an insertion key (the rule was narrowed to QWERTY neighbors).
+    REQUIRE(quanpin::autocorrect_cut("sghang", none).empty());
+    REQUIRE(quanpin::autocorrect_cut("sghang", transposition_only).empty());
+    REQUIRE(quanpin::autocorrect_cut("sghang", neighbor_only).empty());
+    REQUIRE(quanpin::autocorrect_cut("sghang", quanpin::kAutocorrectDeletion).empty());
+    REQUIRE_EQ(quanpin::join_segments(quanpin::autocorrect_cut("sghang", quanpin::kAutocorrectInsertion)),
                std::string("shang"));
+    REQUIRE(quanpin::autocorrect_cut("sshang", quanpin::kAutocorrectInsertion).empty());
 }
 
 TEST_CASE(QuanpinJianpinShapeGuardBlocksCorrection)

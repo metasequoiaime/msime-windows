@@ -645,9 +645,9 @@ struct CorrectionTarget
     // pair. The tie-break weight is derived from the ENABLED subset at query
     // time (see min_enabled_correction_weight), never from a switched-off table.
     unsigned type_bit = 0;
-    // Out-of-table generated pair (non-neighbor substitution / arbitrary-letter
-    // insertion): flat expensive-tier weight (kAutocorrectGeneratedShapeWeight)
-    // instead of the per-bit derivation; switch gating still uses type_bit.
+    // Out-of-table generated pair (non-neighbor substitution): flat expensive-tier
+    // weight (kAutocorrectGeneratedShapeWeight) instead of the per-bit derivation;
+    // switch gating still uses type_bit.
     bool generated = false;
 };
 
@@ -741,8 +741,10 @@ struct GeneratedPair
 };
 
 // Enumerate the out-of-table shapes over every legal syllable: non-neighbor
-// substitutions and arbitrary-letter insertions. Transpositions and deletions
-// are exhaustive in the static tables -- nothing to add. Wrong forms must be
+// substitutions only. Transpositions, deletions and all insertions are
+// exhaustive in the static tables -- an inserted letter is always the QWERTY
+// neighbor of an adjacent key (see the generator's insertion rule), so there is
+// nothing left to add here. Wrong forms must be
 // non-legal, at least three letters (shorter strings belong to the jianpin
 // space) and at most six (the k-best piece scan never looks at longer pieces) --
 // the same window as the static tables and the evaluation filter.
@@ -772,29 +774,6 @@ std::vector<GeneratedPair> build_generated_pairs()
                     continue;
                 }
                 pairs.push_back({std::move(wrong), syllable, kAutocorrectNeighbor});
-            }
-        }
-        // 任意字母插入：插入字母不属于静态覆盖集（该位相邻字母及其邻键）。
-        for (size_t i = 0; i <= syllable.size(); ++i)
-        {
-            const char left = i > 0 ? syllable[i - 1] : '\0';
-            const char right = i < syllable.size() ? syllable[i] : '\0';
-            for (char key = 'a'; key <= 'z'; ++key)
-            {
-                const bool statically_covered = key == left || key == right ||
-                                                (left != '\0' && is_qwerty_neighbor(key, left)) ||
-                                                (right != '\0' && is_qwerty_neighbor(key, right));
-                if (statically_covered)
-                {
-                    continue;
-                }
-                std::string wrong = syllable;
-                wrong.insert(i, 1, key);
-                if (wrong.size() > 6 || legal.find(wrong) != legal.end())
-                {
-                    continue; // 7 letters sit outside the k-best piece scan window
-                }
-                pairs.push_back({std::move(wrong), syllable, kAutocorrectInsertion});
             }
         }
     }
@@ -867,14 +846,14 @@ const std::unordered_map<std::string_view, std::vector<CorrectionTarget>> &corre
 // input letters consumed: equal to syllable.size() for legal syllables and
 // same-length corrections (transposition / neighbor), one less for deletion
 // corrections ("zhng" -> zhang), one more for insertion corrections
-// ("shangg" -> shang).
+// ("sghang" -> shang).
 struct AutocorrectEdge
 {
     size_t raw_length = 0;
     std::string_view syllable;
     bool corrected = false;
-    // Out-of-table generated pair (non-neighbor substitution / arbitrary-letter
-    // insertion). Generated-containing hypotheses rank behind ALL static
+    // Out-of-table generated pair (non-neighbor substitution). Generated-
+    // containing hypotheses rank behind ALL static
     // hypotheses (see the finalize comparator) so in-table inputs keep their
     // baseline cut set.
     bool generated = false;
@@ -1178,8 +1157,8 @@ std::vector<AutocorrectCut> legal_input_correction_cuts(const std::string &pinyi
     // （zi'a、ji'o'a、ni'a），多打一个元音（jiu'zhe'e'yang），漏打声母（jiu'zhe'ang）。
     // 纠正的那段必须盖住这样一个音节：不然 k-best 会跨音节边界重切任何普通输入，
     // 道路 dao'lu 读成 da + olu->lou「大楼」、会的 hui'de 读成 hu + ide->die「蝴蝶」——
-    // 词库扫描里第 2 位的噪声几乎全是这种。生成式空间（静态表之外的远键替换、任意字母
-    // 插入）也不认：它是给切不成合法音节的输入兜底的，放到合法输入上只会拼出巧合。
+    // 词库扫描里第 2 位的噪声几乎全是这种。生成式空间（静态表之外的远键替换）
+    // 也不认：它是给切不成合法音节的输入兜底的，放到合法输入上只会拼出巧合。
     // 先多搜几条再过滤：长句里前几名常被别处更便宜、却不盖零声母音节的纠正占满
     // （jintianjiuzheeyangba 取 3 条时一条都留不下）。与查询层同一个 k。
     constexpr std::size_t kSearchKBest = 9;

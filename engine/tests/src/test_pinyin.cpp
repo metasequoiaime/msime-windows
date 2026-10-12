@@ -1038,24 +1038,28 @@ void test_quanpin_autocorrect_switches_and_guard()
     expect(quanpin::join_segments(quanpin::autocorrect_cut("shngzhk", both)) == "sang'zhi",
            "Without the deletion bit 'shngzhk' still cuts: generated sang + static zhk -> zhi.");
 
-    // Insertion bit (fourth type): "shangg" (doubled g) and "sjhang" (j is a
-    // QWERTY neighbor of h) are insertion fixes; only that bit may correct them.
+    // Insertion bit (fourth type): the inserted letter must be a QWERTY
+    // neighbor of an adjacent key. "sjhang" (j is a QWERTY neighbor of h) and
+    // "sghang" (g is a QWERTY neighbor of h) are insertion fixes; only that bit
+    // may correct them.
     const unsigned insertion_only = quanpin::kAutocorrectInsertion;
     const unsigned all_four = all | insertion_only;
-    expect(quanpin::join_segments(quanpin::autocorrect_cut("shangg", insertion_only)) == "shang",
-           "Insertion-only must correct 'shangg'.");
-    expect(quanpin::autocorrect_cut("shangg", transposition_only).empty(),
-           "Transposition-only must not correct the insertion case 'shangg'.");
-    expect(quanpin::autocorrect_cut("shangg", deletion_only).empty(),
-           "Deletion-only must not correct the insertion case 'shangg'.");
-    expect(quanpin::autocorrect_cut("shangg", neighbor_only).empty(),
-           "Neighbor-only must not correct the insertion case 'shangg'.");
     expect(quanpin::join_segments(quanpin::autocorrect_cut("sjhang", insertion_only)) == "shang",
            "Insertion-only must correct the neighbor-key insertion 'sjhang'.");
+    expect(quanpin::join_segments(quanpin::autocorrect_cut("sghang", insertion_only)) == "shang",
+           "Insertion-only must correct the neighbor-key insertion 'sghang'.");
     expect(quanpin::autocorrect_cut("sjhang", neighbor_only).empty(),
            "Neighbor-only must not correct the insertion case 'sjhang'.");
-    expect(quanpin::join_segments(quanpin::autocorrect_cut("shanggzhi", all_four)) == "shang'zhi",
-           "An insertion edge followed by a legal tail must cut 'shanggzhi'.");
+    expect(quanpin::join_segments(quanpin::autocorrect_cut("sghangzhi", all_four)) == "shang'zhi",
+           "An insertion edge followed by a legal tail must cut 'sghangzhi'.");
+    // The insertion rule was narrowed to QWERTY neighbors only: a doubled key
+    // ("shangg") and a far-key insertion ("schang"; c is not a neighbor of s or
+    // h, and not a far substitution of any legal syllable either) are no longer
+    // insert keys.
+    expect(quanpin::autocorrect_cut("shangg", all_four).empty(),
+           "A doubled key must no longer be an insertion correction.");
+    expect(quanpin::autocorrect_cut("schang", all_four).empty(),
+           "A far-key insertion must no longer be an insertion correction.");
 
     // Jianpin guard shapes sit INSIDE the insertion table (zher = zhe + r, and
     // r is a QWERTY neighbor of e): the BFS cut exists by design, the shape
@@ -1114,7 +1118,7 @@ void test_quanpin_autocorrect_switches_and_guard()
     const std::pair<const char *, unsigned> projection_inputs[] = {
         {"sahng", both},      {"shabg", both}, {"sahnguai", both},
         {"ahan", both},       {"zheg", both},  {"keneng", both},
-        {"shng", all},        {"zhngu", all},  {"shangg", insertion_only},
+        {"shng", all},        {"zhngu", all},  {"sghang", insertion_only},
         {"sjhang", all_four},
     };
     for (const auto &[input, types] : projection_inputs)
@@ -1393,34 +1397,34 @@ void test_quanpin_autocorrect_display()
                zhngu_cut.segments[1].start == 3 && !zhngu_cut.segments[1].corrected,
            "'zhngu' must split 3+2 with the legal tail starting at raw offset 3.");
 
-    // 插入（第四类）：raw 比音节长 1（"shangg" -> shang）；位置推进同样跟随
-    // raw_length 而非音节长度。
+    // 插入（第四类）：raw 比音节长 1（"sghang" -> shang，g 是 h 的邻键）；位置推进
+    // 同样跟随 raw_length 而非音节长度。
     const unsigned all_four = all | quanpin::kAutocorrectInsertion;
-    const auto shangg_cut = quanpin::autocorrect_cut_detail("shangg", all_four);
-    expect(shangg_cut.segments.size() == 1, "'shangg' must cut into a single corrected segment.");
-    expect(shangg_cut.segments[0].syllable == "shang" && shangg_cut.segments[0].raw_text == "shangg" &&
-               shangg_cut.segments[0].start == 0 && shangg_cut.segments[0].corrected,
+    const auto sghang_cut = quanpin::autocorrect_cut_detail("sghang", all_four);
+    expect(sghang_cut.segments.size() == 1, "'sghang' must cut into a single corrected segment.");
+    expect(sghang_cut.segments[0].syllable == "shang" && sghang_cut.segments[0].raw_text == "sghang" &&
+               sghang_cut.segments[0].start == 0 && sghang_cut.segments[0].corrected,
            "The insertion segment must map 6 raw letters onto the 5-letter syllable.");
     const auto shangghao_cut = quanpin::autocorrect_cut_detail("shangghao", all_four);
     expect(shangghao_cut.segments.size() == 2, "'shangghao' must cut into two segments.");
-    // 同为 1 条纠错边时权重定序：漏字解释（shang + ghao->gao，11）胜过插入
-    // 解释（shangg->shang + hao，12），插入不劫持更便宜的解释。
+    // 读法是 shang + ghao->gao（ghao 的 h 是 g 的邻键，一条插入边）；首段是合法
+    // 音节不动，插入落在第二段。
     expect(shangghao_cut.segments[0].syllable == "shang" && shangghao_cut.segments[0].raw_text == "shang" &&
                shangghao_cut.segments[0].start == 0 && !shangghao_cut.segments[0].corrected,
-           "The cheaper deletion reading (weight 11) must win over the insertion reading (12).");
+           "The leading legal syllable must stay uncorrected.");
     expect(shangghao_cut.segments[1].syllable == "gao" && shangghao_cut.segments[1].raw_text == "ghao" &&
                shangghao_cut.segments[1].start == 5 && shangghao_cut.segments[1].corrected,
-           "The 'ghao' tail must be corrected through the deletion key.");
+           "The 'ghao' tail must be corrected through the insertion key.");
     // 纯插入解释的 raw 区间：无更便宜的捷径时插入边胜出，第二段起点跟随
     // raw_length（6 而非 5）。
-    const auto shanggni_cut = quanpin::autocorrect_cut_detail("shanggni", all_four);
-    expect(shanggni_cut.segments.size() == 2, "'shanggni' must cut into two segments via an insertion edge.");
-    expect(shanggni_cut.segments[0].syllable == "shang" && shanggni_cut.segments[0].raw_text == "shangg" &&
-               shanggni_cut.segments[0].start == 0 && shanggni_cut.segments[0].corrected,
+    const auto sghangni_cut = quanpin::autocorrect_cut_detail("sghangni", all_four);
+    expect(sghangni_cut.segments.size() == 2, "'sghangni' must cut into two segments via an insertion edge.");
+    expect(sghangni_cut.segments[0].syllable == "shang" && sghangni_cut.segments[0].raw_text == "sghang" &&
+               sghangni_cut.segments[0].start == 0 && sghangni_cut.segments[0].corrected,
            "The insertion segment must keep the raw letters of the corrected part.");
-    expect(shanggni_cut.segments[1].syllable == "ni" && shanggni_cut.segments[1].raw_text == "ni" &&
-               shanggni_cut.segments[1].start == 6 && !shanggni_cut.segments[1].corrected,
-           "The legal tail of 'shanggni' must start at the raw offset the insertion edge left.");
+    expect(sghangni_cut.segments[1].syllable == "ni" && sghangni_cut.segments[1].raw_text == "ni" &&
+               sghangni_cut.segments[1].start == 6 && !sghangni_cut.segments[1].corrected,
+           "The legal tail of 'sghangni' must start at the raw offset the insertion edge left.");
 
     // 字典级标记：候选字母 == 主切分字母 且 主切分字母 != 原始字母 才标记。
     const auto db_path = create_autocorrect_display_probe_database();
@@ -1481,10 +1485,10 @@ void test_quanpin_autocorrect_display()
         const auto deletion_off = dictionary.query("shng", "sh'n'g", both);
         expect(count_marked(deletion_off) == 0, "Without the deletion bit 'shng' must stay uncorrected and unmarked.");
 
-        // 插入（阶段 4）：insertion 位开时 "sghang"（中间误插 g）经纠错键命中目标词
-        // 并带 corrected_from（AC5）；关闭 insertion 位则无纠错标记。注：结尾单
-        // 插入（如 shangg = shang + g）属简拼尾形状，被词典门按设计拦截，
-        // 与 zher 同理 —— insertion 的可达面在中间插入与多音节输入
+        // 插入（阶段 4）：insertion 位开时 "sghang"（中间误插 g，g 是 h 的邻键）
+        // 经纠错键命中目标词并带 corrected_from（AC5）；关闭 insertion 位则无纠错
+        // 标记。可达面在中间插入与多音节输入；尾位插入（shangv 类）属简拼尾形状，
+        // 被词典门按设计拦截，与 zher 同理。
         const auto insertion = dictionary.query("sghang", "", all_four);
         expect(!insertion.empty() && insertion.front().word == "上" && insertion.front().corrected_from == "sghang",
                "An insertion typo must resolve through the corrected key and carry corrected_from.");
