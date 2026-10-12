@@ -107,7 +107,7 @@ bool NormalizeFullPinyin(const std::string &input, quanpin::Segments &segments, 
     }
     else
     {
-        const auto cuts = quanpin::cut_pinyin_by_mode(source, "correction");
+        const auto cuts = quanpin::cut_pinyin_by_mode(source, "correction", true);
         if (cuts.empty())
             return false;
         segments = cuts.front();

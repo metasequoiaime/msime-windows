@@ -800,7 +800,7 @@ int ShuangpinDictionary::update_weight_by_word(string word)
 
 int ShuangpinDictionary::update_weight_by_pinyin_and_word(string pinyin, string word)
 {
-    const auto direct_cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction");
+    const auto direct_cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction", true);
     // 只有“完整合法拼读”的直切才可信：correction 模式的 greedy 后备允许单声母
     // 等不完整段，会把双拼原始串（如 qbtmuo → q'b't'mu'o）切成恰好能拼回原串
     // 的碎片，导致归一化被跳过、置顶更新落在错误 key 上静默失败（0 行更新
@@ -810,7 +810,7 @@ int ShuangpinDictionary::update_weight_by_pinyin_and_word(string pinyin, string 
     {
         pinyin = normalize_shuangpin_to_quanpin_input(pinyin);
     }
-    const auto cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction", true);
     if (cuts.empty())
         return ERROR_CODE;
     auto segments = cuts.front();
@@ -830,9 +830,9 @@ int ShuangpinDictionary::update_weight_by_pinyin_and_word(string pinyin, string 
 
 int ShuangpinDictionary::delete_by_pinyin_and_word(string pinyin, string word)
 {
-    const auto direct_cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction");
+    const auto direct_cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction", true);
     const auto normalized_shuangpin = normalize_shuangpin_to_quanpin_input(pinyin);
-    const auto shuangpin_cuts = quanpin::cut_pinyin_by_mode(normalized_shuangpin, "correction");
+    const auto shuangpin_cuts = quanpin::cut_pinyin_by_mode(normalized_shuangpin, "correction", true);
     const size_t han_count = HelpcodeUtils::count_han_chars(word);
     const bool direct_key_matches_word = !direct_cuts.empty() && direct_cuts.front().size() == han_count;
     const bool shuangpin_key_matches_word = !shuangpin_cuts.empty() && shuangpin_cuts.front().size() == han_count;
@@ -842,7 +842,7 @@ int ShuangpinDictionary::delete_by_pinyin_and_word(string pinyin, string word)
     {
         pinyin = normalized_shuangpin;
     }
-    const auto cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction", true);
     if (cuts.empty())
         return ERROR_CODE;
     const std::string normalized = quanpin::join_segments(cuts.front());
@@ -1026,7 +1026,7 @@ std::string ShuangpinDictionary::normalize_shuangpin_to_quanpin_input(const std:
 std::string ShuangpinDictionary::build_quanpin_sql_for_creating_word(const std::string &pinyin) const
 {
     const std::string normalized = normalize_shuangpin_to_quanpin_input(pinyin);
-    const auto cuts = quanpin::cut_pinyin_by_mode(normalized, "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(normalized, "correction", true);
     if (cuts.empty())
     {
         return "";
@@ -1048,7 +1048,7 @@ std::string ShuangpinDictionary::build_quanpin_sql_for_creating_word(const std::
 std::string ShuangpinDictionary::build_quanpin_sql_for_checking_word(const std::string &key,
                                                                      const std::string &value) const
 {
-    const auto cuts = quanpin::cut_pinyin_by_mode(key, "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(key, "correction", true);
     if (cuts.empty())
     {
         return "";
@@ -1061,7 +1061,7 @@ std::string ShuangpinDictionary::build_quanpin_sql_for_checking_word(const std::
 std::string ShuangpinDictionary::build_quanpin_sql_for_inserting_word(const std::string &key, const std::string &jp,
                                                                       const std::string &value) const
 {
-    const auto cuts = quanpin::cut_pinyin_by_mode(key, "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(key, "correction", true);
     if (cuts.empty())
     {
         return "";
@@ -1082,7 +1082,7 @@ std::string ShuangpinDictionary::build_quanpin_sql_for_updating_word(std::string
     // 是全拼）。这里不能再过 normalize_shuangpin_to_quanpin_input：双拼 profile
     // 会把它当作双拼码重切，qin'tian'shuo 被搧成 qi'n'ti'an'sang'shuo，UPDATE
     // 永远落在错误 key 上静默失败（0 行更新仍返回 OK）。
-    const auto cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(remove_delimiters(pinyin), "correction", true);
     if (cuts.empty())
     {
         return "";
@@ -1111,7 +1111,7 @@ std::string ShuangpinDictionary::build_quanpin_sql_for_updating_word(std::string
 std::string ShuangpinDictionary::build_quanpin_sql_for_deleting_canonical_word(const std::string &canonical_pinyin,
                                                                                const std::string &word) const
 {
-    const auto cuts = quanpin::cut_pinyin_by_mode(canonical_pinyin, "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(canonical_pinyin, "correction", true);
     if (cuts.empty())
     {
         return "";
@@ -1142,7 +1142,7 @@ bool ShuangpinDictionary::do_validate(string key, string jp, string value) const
         return false;
     }
 
-    const auto cuts = quanpin::cut_pinyin_by_mode(pure_key, "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(pure_key, "correction", true);
     if (!cuts.empty())
     {
         return cuts.front().size() == han_count;

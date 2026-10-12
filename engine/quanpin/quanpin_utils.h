@@ -63,6 +63,15 @@ inline constexpr unsigned kAutocorrectDeletion = 1u << 2;
 // insertion task); the bit stays independent for a future config key.
 inline constexpr unsigned kAutocorrectInsertion = 1u << 3;
 
+// 掩码下手误别名层（cut_pinyin_by_mode 的 include_correction_aliases）是否生效。
+// 用户可见的开关只有换位与邻键两位，删除 / 插入位只随它们联动（见 engine.cpp 的
+// autocorrect_types_from_request），所以只带后两位的掩码按「关」处理。方案、词典、
+// 辅助码与排序上下文 key 都按这一条判断，避免各层对同一个掩码给出不同的切分。
+inline constexpr bool correction_aliases_enabled(unsigned autocorrect_types)
+{
+    return (autocorrect_types & (kAutocorrectTransposition | kAutocorrectNeighbor)) != 0;
+}
+
 /**
  * Integer correction-edge weights (patent CN 101133411 B, [0052]).
  *

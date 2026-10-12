@@ -6,6 +6,7 @@
 #include "../../contracts/dictionary/format.h"
 #include "../../quanpin/quanpin_query.h"
 #include "../../quanpin/quanpin_utils.h"
+#include "../../schemes/quanpin_scheme.h"
 #include "../../shuangpin/shuangpin_profile.h"
 
 #include <sqlite3.h>
@@ -1254,6 +1255,87 @@ void run_autocorrect_costlier_context_tests(const std::filesystem::path &data_di
         type(session, "sahngna");
         require(!session.candidates().empty() && session.candidates().front().word == "桑拿",
                 "The context rerank must run whenever any sentence source is on, not only the Trigram row.");
+    }
+
+    std::filesystem::remove_all(directory);
+}
+
+// 纠错开关关掉后，查询之外的几条路径也必须按字面切分，否则它们和查询落在不同的键上：
+// - 写回：选中后调频要把字面键 hao'yong'a 的行改掉，而不是别名重切出的 hao'yong'ga；
+// - 辅助码：带辅助码的输入自己切底串，不能让 haoyonga 经别名层变成 hao'yong'ga（辅助码只在底串是完整拼音时生效）；
+// - 固定位置：laing 的上下文 key 不能被切成 liang，和真正输入 liang 的那组混到一起。
+void run_autocorrect_off_consistency_tests(const std::filesystem::path &data_directory)
+{
+    const std::filesystem::path directory = data_directory / "autocorrect-off-consistency";
+    std::filesystem::create_directories(directory);
+    write_file(directory / "helpcodes" / "helpcode.txt", "好=ef\n用=gh\n啊=ij\n阿=kl\n");
+    {
+        Database database(directory / "msime.db");
+        database.execute("CREATE TABLE tbl_3_h(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_3_h VALUES('hao''yong''a', 'hya', '好用啊', 100);"
+                         "INSERT INTO tbl_3_h VALUES('hao''yong''a', 'hya', '好用阿', 200);"
+                         "INSERT INTO tbl_3_h VALUES('hao''yong''ga', 'hyg', '好用嘎', 300);");
+
+        database.execute("CREATE TABLE tbl_1_l(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_l VALUES('lai', 'l', '来', 200);"
+                         "INSERT INTO tbl_1_l VALUES('liang', 'l', '两', 200);");
+    }
+
+    metasequoia::RuntimePaths paths;
+    paths.resources = directory;
+    paths.user_data = directory;
+    paths.cache = directory;
+    paths.dictionaries = directory;
+
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "haoyonga");
+        require(session.select_candidate(candidate_index(session, "好用啊")).commit == "好用啊",
+                "The literal reading of haoyonga must be selectable with autocorrection off.");
+        Database database(directory / "msime.db");
+        require(database.query_integer("SELECT weight FROM tbl_3_h WHERE value='好用啊'") > 100,
+                "Learning a pick with autocorrection off must update the literal key it was queried under.");
+    }
+
+    {
+        metasequoia::InputSession helpcode(SchemeType::Quanpin, 0u, true, true, true, paths);
+        helpcode.set_quanpin_helpcode_enabled(true);
+        require(helpcode.set_helpcode_schema("lantian"), "The helpcode fixture was not selected.");
+        type(helpcode, "haoyongaK");
+        require(find_candidate_index(helpcode, "好用啊") < helpcode.candidates().size(),
+                "With autocorrection off a helpcode must still offer the literal reading hao'yong'a.");
+        require(find_candidate_index(helpcode, "好用嘎") == helpcode.candidates().size(),
+                "With autocorrection off a helpcode must not query the alias re-cut hao'yong'ga.");
+    }
+
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        session.enable_fixed_positions();
+        type(session, "laing");
+        const auto index = candidate_index(session, "来");
+        const auto selected = session.candidates()[index];
+        require(session.set_candidate_position(index, 2).handled, "Pinning a literal candidate must succeed.");
+        const auto key = selected.canonical_pinyin.empty() ? selected.pinyin : selected.canonical_pinyin;
+        const auto journal = metasequoia::path_to_utf8(paths.user(metasequoia::assets::user_journal));
+        require(!user_dictionary::is_fixed(journal, "liang", key, selected.word),
+                "With autocorrection off, laing must not pin into the liang context.");
+        const auto literal = quanpin::cut_pinyin_by_mode("laing", "correction", false);
+        require(!literal.empty() &&
+                    user_dictionary::is_fixed(journal, quanpin::join_segments(literal.front()), key, selected.word),
+                "With autocorrection off, laing must pin under its literal context.");
+    }
+
+    // 方案与词典按同一条规则读掩码：只带删除 / 插入位的掩码在词典侧按「关」处理，方案也不能
+    // 跑别名层，否则预编辑显示纠正、候选却按未纠正查。
+    {
+        QuanpinScheme scheme;
+        scheme.set_raw_input("sahng", "sahng");
+        scheme.set_autocorrect_types(quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion);
+        require(scheme.build_request().segmentation != "shang",
+                "A mask without the user-facing bits must not run the alias layer in the scheme.");
+        scheme.set_autocorrect_types(quanpin::kAutocorrectTransposition);
+        require(scheme.build_request().segmentation == "shang",
+                "The transposition switch must run the alias layer in the scheme.");
     }
 
     std::filesystem::remove_all(directory);
@@ -2655,6 +2737,7 @@ int run_test()
     run_autocorrect_selection_consumption_tests(data_directory);
     run_literal_segmentation_arbitration_tests(data_directory);
     run_autocorrect_costlier_context_tests(data_directory);
+    run_autocorrect_off_consistency_tests(data_directory);
 
     run_autocorrect_generated_space_tests(data_directory);
     run_autocorrect_pure_jianpin_guard_tests(data_directory);

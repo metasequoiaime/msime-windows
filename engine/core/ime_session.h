@@ -119,6 +119,8 @@ class ImeSession
     // 把会话的纠错掩码下发给全拼方案（非全拼方案什么也不做）。要在 build_request 之前调，
     // 掩码决定切分要不要跑手误别名层。
     void configure_quanpin_scheme(IInputScheme *scheme) const;
+    // 换方案或改纠错开关时把掩码绑到当前方案上，和 bind_shuangpin_scheme 同一模式。
+    void bind_quanpin_scheme();
     std::unique_ptr<IInputScheme> create_scheme(SchemeType scheme_type) const;
 
   private:

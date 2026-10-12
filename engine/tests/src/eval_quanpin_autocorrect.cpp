@@ -649,7 +649,7 @@ DictionaryGate classify_dictionary_gate(const std::string &typo)
     }
     // get_or_compute_segments takes the front correction-mode cut as the base
     // segmentation; the completeness check runs on exactly that value.
-    const auto cuts = quanpin::cut_pinyin_by_mode(typo, "correction");
+    const auto cuts = quanpin::cut_pinyin_by_mode(typo, "correction", true);
     if (!cuts.empty() && quanpin::has_only_complete_pinyin_segments(cuts.front()))
     {
         return DictionaryGate::CompleteLegalPinyin;

@@ -39,7 +39,11 @@ std::string InputSession::position_context(bool english, bool wubi) const
         return context;
     auto plain = context;
     plain.erase(std::remove(plain.begin(), plain.end(), '\''), plain.end());
-    const auto cuts = quanpin::cut_pinyin_by_mode(plain, "correction");
+    // 全拼的上下文 key 跟查询走同一个纠错开关：关掉纠错时 laing 的候选按字面 lai'ng 出，
+    // key 若仍被别名层切成 liang，两组固定位置会互相串。双拼词典不受全拼开关管，保持原样。
+    const bool correction_aliases =
+        scheme() == SchemeType::Shuangpin || quanpin::correction_aliases_enabled(quanpin_autocorrect_types_);
+    const auto cuts = quanpin::cut_pinyin_by_mode(plain, "correction", correction_aliases);
     return cuts.empty() ? context : quanpin::join_segments(cuts.front());
 }
 

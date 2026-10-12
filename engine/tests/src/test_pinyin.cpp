@@ -883,21 +883,21 @@ void test_quanpin_order_corrections()
 
     for (const auto &[typed, expected] : cases)
     {
-        const auto cuts = quanpin::cut_pinyin_by_mode(typed, "correction");
+        const auto cuts = quanpin::cut_pinyin_by_mode(typed, "correction", true);
         expect(!cuts.empty(), fmt::format("Expected '{}' to produce a corrected path.", typed));
         expect(quanpin::join_segments(cuts.front()) == expected,
                fmt::format("Expected '{}' to normalize to '{}', got '{}'.", typed, expected,
                            quanpin::join_segments(cuts.front())));
     }
 
-    const auto ambiguous = quanpin::cut_pinyin_by_mode("cehng", "correction");
+    const auto ambiguous = quanpin::cut_pinyin_by_mode("cehng", "correction", true);
     expect(ambiguous.size() >= 2, "Expected cehng to retain both valid interpretations.");
     expect(quanpin::join_segments(ambiguous.front()) == "cheng", "Expected cheng to be the primary interpretation.");
     expect(std::any_of(ambiguous.begin(), ambiguous.end(),
                        [](const quanpin::Segments &segments) { return quanpin::join_segments(segments) == "ceng"; }),
            "Expected ceng to remain available as an alternative interpretation.");
 
-    const auto ambiguous_ahng = quanpin::cut_pinyin_by_mode("ahng", "correction");
+    const auto ambiguous_ahng = quanpin::cut_pinyin_by_mode("ahng", "correction", true);
     expect(ambiguous_ahng.size() >= 2, "Expected ahng to retain both valid interpretations.");
     expect(quanpin::join_segments(ambiguous_ahng.front()) == "hang", "Expected hang to be the primary interpretation.");
     expect(std::any_of(ambiguous_ahng.begin(), ambiguous_ahng.end(),

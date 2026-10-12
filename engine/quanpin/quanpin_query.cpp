@@ -54,8 +54,8 @@ const CorrectionAliases &pinyin_normalization_aliases()
     return kAliases;
 }
 
-// 手误别名：换位形状（aing/uang/ian/uan/iao/agn/egn/on）、多一个 h、漏一个 g。
-// 属纠错，按掩码门控（mask == 0 时不参与切分）。
+// 手误别名：换位形状（aing/uang/ian/uan/iao/agn/egn/on）、多一个 h、漏一个 g，外加
+// 上面那条 ü 归一。属纠错，按掩码门控（开关关掉时不参与切分）。
 const CorrectionAliases &pinyin_correction_aliases()
 {
     static const CorrectionAliases kAliases = [] {
@@ -92,6 +92,8 @@ const CorrectionAliases &pinyin_correction_aliases()
         add_suffix_aliases("ang", "agn");
         add_suffix_aliases("eng", "egn");
         add_alias("egn", "eng");
+        // ü 归一也留在这张表里，纠错开着时一张表就够；关掉时只查 pinyin_normalization_aliases。
+        add_alias("jv", "ju");
         // Missing final g before the next syllable: zhonguo -> zhong guo.
         add_suffix_aliases("ong", "on");
 
@@ -109,28 +111,6 @@ const CorrectionAliases &pinyin_correction_aliases()
     return kAliases;
 }
 
-// include=true 时用的合并表：手误别名 + ü 归一。两表的键不相交（ü 归一只有 jv），
-// 合并结果与拆分前的单表逐项相同，所以纠错开着的路径行为不变。
-const CorrectionAliases &pinyin_aliases_with_corrections()
-{
-    static const CorrectionAliases kAliases = [] {
-        CorrectionAliases aliases = pinyin_correction_aliases();
-        for (const auto &[typed, canonicals] : pinyin_normalization_aliases())
-        {
-            auto &target = aliases[typed];
-            for (const auto &canonical : canonicals)
-            {
-                if (std::find(target.begin(), target.end(), canonical) == target.end())
-                {
-                    target.push_back(canonical);
-                }
-            }
-        }
-        return aliases;
-    }();
-    return kAliases;
-}
-
 std::vector<Segments> cut_one_piece_with_corrections(const std::string &pinyin, bool include_correction_aliases)
 {
     struct RankedPath
@@ -143,8 +123,7 @@ std::vector<Segments> cut_one_piece_with_corrections(const std::string &pinyin, 
     const auto &valid_pinyin = intact_pinyin_set();
     // include=false keeps only the ü normalization (jv -> ju); the hand-mistake
     // aliases are part of autocorrection and follow its switch.
-    const auto &aliases =
-        include_correction_aliases ? pinyin_aliases_with_corrections() : pinyin_normalization_aliases();
+    const auto &aliases = include_correction_aliases ? pinyin_correction_aliases() : pinyin_normalization_aliases();
     std::unordered_map<size_t, std::vector<RankedPath>> memo;
 
     const auto solve = [&](auto &&self, size_t index) -> std::vector<RankedPath> {
@@ -1103,7 +1082,8 @@ std::vector<KeyedQueryItem> query_initial(sqlite3 *db, const std::string &prefix
 
 QueryResult query_words(const std::string &pinyin, const std::string &db_path, const std::string &mode, int limit)
 {
-    const auto cuts = cut_pinyin_by_mode(pinyin, mode);
+    // 离线查询工具，不挂在任何会话的纠错开关上。
+    const auto cuts = cut_pinyin_by_mode(pinyin, mode, true);
     QueryResult result{pinyin, mode, {}};
     if (cuts.empty())
     {

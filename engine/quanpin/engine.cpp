@@ -47,12 +47,15 @@ std::vector<WordItem> QuanpinEngine::query(const QueryRequest &request)
         request.enable_quanpin_helpcode
             ? quanpin::detect_active_helpcode_length(request.raw_input, request.raw_input_with_cases)
             : 0;
+    // 辅助码路径自己切出底串的显式切分交给词典，词典不会再按掩码重切，所以这里要和方案的
+    // build_request 走同一个开关，否则关掉纠错后带辅助码的输入仍被别名层改写。
+    const bool correction_aliases = quanpin::correction_aliases_enabled(autocorrect_types_from_request(request));
 
     if (helpcode_length == 2)
     {
         const std::string base_raw_input =
             quanpin::strip_active_helpcodes(request.raw_input, request.raw_input_with_cases);
-        const auto cuts = quanpin::cut_pinyin_by_mode(base_raw_input, "correction");
+        const auto cuts = quanpin::cut_pinyin_by_mode(base_raw_input, "correction", correction_aliases);
         const std::string base_segmentation = quanpin::join_segments(cuts.front());
         const std::string help_codes = request.raw_input.substr(request.raw_input.size() - 2, 2);
         const auto base_candidates = dictionary_.query(base_raw_input, base_segmentation,
@@ -64,7 +67,7 @@ std::vector<WordItem> QuanpinEngine::query(const QueryRequest &request)
     {
         const std::string base_raw_input =
             quanpin::strip_active_helpcodes(request.raw_input, request.raw_input_with_cases);
-        const auto cuts = quanpin::cut_pinyin_by_mode(base_raw_input, "correction");
+        const auto cuts = quanpin::cut_pinyin_by_mode(base_raw_input, "correction", correction_aliases);
         const std::string base_segmentation = quanpin::join_segments(cuts.front());
         const std::string help_code = request.raw_input.substr(request.raw_input.size() - 1, 1);
         const auto base_candidates = dictionary_.query(base_raw_input, base_segmentation,

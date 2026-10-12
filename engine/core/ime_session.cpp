@@ -45,6 +45,7 @@ ImeSession::ImeSession(SchemeType scheme_type, const ShuangpinProfile &shuangpin
 {
     bind_wubi_scheme();
     bind_shuangpin_scheme();
+    bind_quanpin_scheme();
 }
 
 void ImeSession::configure_shuangpin_scheme(IInputScheme *scheme) const
@@ -58,8 +59,8 @@ void ImeSession::configure_shuangpin_scheme(IInputScheme *scheme) const
 
 void ImeSession::configure_quanpin_scheme(IInputScheme *scheme) const
 {
-    // build_request 在 apply_request_options 之前跑，纠错掩码必须在这里先落到方案上，
-    // 否则切分会用方案自己的默认值（0 = 关）而不是会话的开关状态。
+    // build_request 在 apply_request_options 之前跑，纠错掩码必须先落到方案上，
+    // 否则切分会用方案自己的默认值（关）而不是会话的开关状态。
     if (auto *quanpin_scheme = dynamic_cast<QuanpinScheme *>(scheme))
     {
         quanpin_scheme->set_autocorrect_types(quanpin_autocorrect_types_);
@@ -69,6 +70,11 @@ void ImeSession::configure_quanpin_scheme(IInputScheme *scheme) const
 void ImeSession::bind_shuangpin_scheme()
 {
     configure_shuangpin_scheme(scheme_.get());
+}
+
+void ImeSession::bind_quanpin_scheme()
+{
+    configure_quanpin_scheme(scheme_.get());
 }
 
 void ImeSession::set_direct_helpcode_enabled(bool enabled)
@@ -135,6 +141,7 @@ void ImeSession::switch_scheme(SchemeType scheme_type)
     scheme_ = create_scheme(scheme_type);
     bind_wubi_scheme();
     bind_shuangpin_scheme();
+    bind_quanpin_scheme();
     state_ = CompositionState{};
 }
 
@@ -151,6 +158,7 @@ void ImeSession::set_quanpin_helpcode_enabled(bool enabled)
 void ImeSession::set_quanpin_autocorrect_types(unsigned autocorrect_types)
 {
     quanpin_autocorrect_types_ = autocorrect_types;
+    bind_quanpin_scheme();
 }
 
 void ImeSession::replace_shuangpin_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases)
@@ -385,7 +393,6 @@ void ImeSession::apply_request_options(QueryRequest &request) const
 void ImeSession::refresh_candidates()
 {
     state_.preedit = scheme_->get_preedit();
-    configure_quanpin_scheme(scheme_.get());
     state_.request = scheme_->build_request();
     apply_request_options(state_.request);
     ApplyShuangpinHelpcodeSegmentation(state_.request, shuangpin_profile_);

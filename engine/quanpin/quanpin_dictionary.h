@@ -178,6 +178,10 @@ class QuanpinDictionary
     std::string build_sql_for_updating_word(std::string pinyin, const std::string &word);
     std::string build_sql_for_deleting_word(std::string pinyin, const std::string &word);
     bool do_validate(const std::string &key, const std::string &jp, const std::string &value);
+    // 写回路径（调频、造词、删词、写整句缓存、建 SQL、校验）去掉分隔符后的重切。按最近一次
+    // query 的纠错状态切，写回才会落在查询出的同一个键上：开关关掉时查询按字面切
+    // hao'yong'a，这里若仍跑别名层会切成 hao'yong'ga，UPDATE 匹配不到任何行。
+    std::vector<quanpin::Segments> cut_for_write(const std::string &pinyin) const;
     void reset_cache_if_database_changed();
     int insert_word_to_series_cache_key(const std::string &cache_key, const std::string &pinyin,
                                         const std::string &word, CandidateSource source);
@@ -220,6 +224,9 @@ class QuanpinDictionary
     SentenceAssociationOptions sentence_association_;
     // 词格跨度查询带的模糊音规则，由 query 随请求更新，变化时清缓存（整句与裁决都按它算）。
     metasequoia::FuzzyPinyinOptions fuzzy_pinyin_;
+    // 手误别名层是否参与切分，由 query 按请求的纠错掩码更新，写回路径据此重切（见 cut_for_write）。
+    // 还没查询过时保持历史行为（开）。
+    bool correction_aliases_enabled_ = true;
     // 神经重排的上下文（光标前已上屏的文本）。宿主没给就是空串。
     std::string rescoring_context_;
     std::unordered_map<std::string, sqlite3_stmt *> statement_cache_;

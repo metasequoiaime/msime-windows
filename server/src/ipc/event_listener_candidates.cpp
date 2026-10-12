@@ -472,7 +472,12 @@ std::string CurrentRankingContextKey()
         return converted;
     std::string plain = converted;
     plain.erase(std::remove(plain.begin(), plain.end(), '\''), plain.end());
-    const auto cuts = quanpin::cut_pinyin_by_mode(plain, "correction");
+    // 与引擎侧 InputSession::position_context 同一规则（quanpin::correction_aliases_enabled 只看
+    // 换位、邻键两个开关）：全拼跟纠错开关走，双拼保持原样。
+    const bool correction_aliases = g_inputSession->current_scheme_type() == SchemeType::Shuangpin ||
+                                    GetConfiguredQuanpinAutocorrectTransposition() ||
+                                    GetConfiguredQuanpinAutocorrectNeighbor();
+    const auto cuts = quanpin::cut_pinyin_by_mode(plain, "correction", correction_aliases);
     return cuts.empty() ? converted : quanpin::join_segments(cuts.front());
 }
 

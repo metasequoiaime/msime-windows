@@ -410,7 +410,8 @@ std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_inpu
     }
 
     pinyin_sequence_ = raw_input;
-    const auto segments = resolve_segments(raw_input, segmentation, autocorrect_types != 0);
+    const auto segments =
+        resolve_segments(raw_input, segmentation, quanpin::correction_aliases_enabled(autocorrect_types));
 
     // Typing autocorrection: when the spelling is not a legal pinyin
     // combination (the correction cut already fell back to greedy), try to
@@ -495,7 +496,8 @@ std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_inpu
         {
             append_alternative(candidate);
         }
-        const auto correction_paths = quanpin::cut_pinyin_by_mode(raw_input, "correction");
+        const auto correction_paths = quanpin::cut_pinyin_by_mode(
+            raw_input, "correction", quanpin::correction_aliases_enabled(autocorrect_types));
         for (const auto &candidate : correction_paths)
         {
             append_alternative(candidate);
@@ -1028,6 +1030,11 @@ quanpin::Segments QuanpinDictionary::get_or_compute_segments(const std::string &
     const auto segments = cuts.empty() ? quanpin::Segments{} : cuts.front();
     segmentation_cache_.insert(cache_key, segments);
     return segments;
+}
+
+std::vector<quanpin::Segments> QuanpinDictionary::cut_for_write(const std::string &pinyin) const
+{
+    return quanpin::cut_pinyin_by_mode(pinyin, "correction", correction_aliases_enabled_);
 }
 
 int QuanpinDictionary::handleVkCode(ImeKeyCode vk, ImeModifierMask modifiers_down, ImeCharacter wch)
@@ -1622,7 +1629,7 @@ void QuanpinDictionary::mark_autocorrect_candidates(std::vector<WordItem> &candi
 int QuanpinDictionary::create_word(std::string pinyin, std::string word)
 {
     pinyin = remove_delimiters(pinyin);
-    const auto cuts = quanpin::cut_pinyin_by_mode(pinyin, "correction");
+    const auto cuts = cut_for_write(pinyin);
     if (cuts.empty())
     {
         return ERROR_CODE;
@@ -1690,7 +1697,7 @@ int QuanpinDictionary::update_weight_by_word(std::string word)
 int QuanpinDictionary::update_weight_by_pinyin_and_word(std::string pinyin, std::string word)
 {
     pinyin = remove_delimiters(pinyin);
-    const auto cuts = quanpin::cut_pinyin_by_mode(pinyin, "correction");
+    const auto cuts = cut_for_write(pinyin);
     if (cuts.empty())
         return ERROR_CODE;
     auto segments = cuts.front();
@@ -1714,7 +1721,7 @@ int QuanpinDictionary::update_weight_by_pinyin_and_word(std::string pinyin, std:
 int QuanpinDictionary::delete_by_pinyin_and_word(std::string pinyin, std::string word)
 {
     pinyin = remove_delimiters(pinyin);
-    const auto cuts = quanpin::cut_pinyin_by_mode(pinyin, "correction");
+    const auto cuts = cut_for_write(pinyin);
     if (cuts.empty())
         return ERROR_CODE;
     const std::string normalized = quanpin::join_segments(cuts.front());
@@ -1734,7 +1741,7 @@ int QuanpinDictionary::insert_word_to_series_cache(const std::string &pinyin, co
         return ERROR_CODE;
     }
 
-    const auto cuts = quanpin::cut_pinyin_by_mode(pinyin, "correction");
+    const auto cuts = cut_for_write(pinyin);
     const std::string segmentation = cuts.empty() ? pinyin : quanpin::join_segments(cuts.front());
     const std::string cache_key = series_cache_key(pinyin, segmentation);
     return insert_word_to_series_cache_key(cache_key, pinyin, word, source);
@@ -1749,7 +1756,8 @@ int QuanpinDictionary::insert_word_to_series_cache(const std::string &raw_input,
         return ERROR_CODE;
     }
 
-    const auto segments = resolve_segments(raw_input, segmentation, autocorrect_types != 0);
+    const auto segments =
+        resolve_segments(raw_input, segmentation, quanpin::correction_aliases_enabled(autocorrect_types));
     const auto resolution = resolve_series_query(raw_input, segments, autocorrect_types);
     return insert_word_to_series_cache_key(resolution.cache_key, raw_input, word, source);
 }
@@ -2056,7 +2064,7 @@ int QuanpinDictionary::delete_data(const std::string &sql_str)
 
 std::string QuanpinDictionary::build_sql_for_creating_word(const std::string &pinyin)
 {
-    const auto cuts = quanpin::cut_pinyin_by_mode(pinyin, "correction");
+    const auto cuts = cut_for_write(pinyin);
     if (cuts.empty())
     {
         return "";
@@ -2077,7 +2085,7 @@ std::string QuanpinDictionary::build_sql_for_creating_word(const std::string &pi
 
 std::string QuanpinDictionary::build_sql_for_checking_word(const std::string &key, const std::string &value)
 {
-    const auto cuts = quanpin::cut_pinyin_by_mode(key, "correction");
+    const auto cuts = cut_for_write(key);
     if (cuts.empty())
     {
         return "";
@@ -2090,7 +2098,7 @@ std::string QuanpinDictionary::build_sql_for_checking_word(const std::string &ke
 std::string QuanpinDictionary::build_sql_for_inserting_word(const std::string &key, const std::string &jp,
                                                             const std::string &value)
 {
-    const auto cuts = quanpin::cut_pinyin_by_mode(key, "correction");
+    const auto cuts = cut_for_write(key);
     if (cuts.empty())
     {
         return "";
@@ -2108,7 +2116,7 @@ std::string QuanpinDictionary::build_sql_for_updating_word(const std::string &wo
 std::string QuanpinDictionary::build_sql_for_updating_word(std::string pinyin, const std::string &word)
 {
     pinyin = remove_delimiters(pinyin);
-    const auto cuts = quanpin::cut_pinyin_by_mode(pinyin, "correction");
+    const auto cuts = cut_for_write(pinyin);
     if (cuts.empty())
     {
         return "";
@@ -2137,7 +2145,7 @@ std::string QuanpinDictionary::build_sql_for_updating_word(std::string pinyin, c
 std::string QuanpinDictionary::build_sql_for_deleting_word(std::string pinyin, const std::string &word)
 {
     pinyin = remove_delimiters(pinyin);
-    const auto cuts = quanpin::cut_pinyin_by_mode(pinyin, "correction");
+    const auto cuts = cut_for_write(pinyin);
     if (cuts.empty())
     {
         return "";
@@ -2168,7 +2176,7 @@ bool QuanpinDictionary::do_validate(const std::string &key, const std::string &j
         return false;
     }
 
-    const auto cuts = quanpin::cut_pinyin_by_mode(pure_key, "correction");
+    const auto cuts = cut_for_write(pure_key);
     if (cuts.empty())
     {
         return false;
@@ -2213,13 +2221,16 @@ std::vector<WordItem> QuanpinDictionary::query(const std::string &raw_input, con
 {
     // 词格要按同一套规则收模糊读音，先于 query_exact 下发。
     set_fuzzy_pinyin(fuzzy);
+    // 写回路径随后按这次查询的切分重切（cut_for_write），状态要和查询一致。
+    correction_aliases_enabled_ = quanpin::correction_aliases_enabled(autocorrect);
     auto result = query_exact(raw_input, segmentation, autocorrect);
     if (fuzzy.rules && !raw_input.empty())
     {
         // Keep ordinary cache slots free of preference-specific candidates.
-        const auto typed = segmentation.empty()
-                               ? quanpin::join_segments(resolve_segments(raw_input, segmentation, autocorrect != 0))
-                               : segmentation;
+        const auto typed =
+            segmentation.empty()
+                ? quanpin::join_segments(resolve_segments(raw_input, segmentation, correction_aliases_enabled_))
+                : segmentation;
         // Specificity is how many typed letters a candidate accounts for, not the raw
         // length of its stored key: alternative cuts ("xi'e" for "xie", "you'di'an"
         // for "you'dian") and fuzzy variants carry apostrophes, so comparing pinyin
