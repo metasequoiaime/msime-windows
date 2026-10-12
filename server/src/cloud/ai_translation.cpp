@@ -1,7 +1,7 @@
 #include "ai_translation.h"
 
-#include "utils/network_proxy.h"
-#include <curl/curl.h>
+#include "ai/chat_completions.h"
+#include "translation_gloss.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
@@ -10,29 +10,6 @@
 
 namespace
 {
-constexpr long kConnectTimeoutMs = 2500;
-constexpr long kTimeoutMs = 5000;
-constexpr size_t kMaxResponseBytes = 1024 * 1024;
-
-struct ResponseBuffer
-{
-    std::string text;
-    bool overflow = false;
-};
-
-size_t WriteResponse(char *data, size_t size, size_t count, void *user)
-{
-    const size_t bytes = size * count;
-    auto *buffer = static_cast<ResponseBuffer *>(user);
-    if (bytes > kMaxResponseBytes - (std::min)(buffer->text.size(), kMaxResponseBytes))
-    {
-        buffer->overflow = true;
-        return 0;
-    }
-    buffer->text.append(data, bytes);
-    return bytes;
-}
-
 std::string Trim(std::string value)
 {
     const auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
@@ -94,15 +71,20 @@ std::string BuildSystemPrompt(const std::string &source, const std::string &targ
            "数组长度和顺序必须与输入完全一致，无法翻译的位置返回空字符串。译文要简短，适合放在输入法候选窗里。";
 }
 
-// Picks the translated strings out of a Chat Completions content string.
+// Picks the translated strings out of a Chat Completions content string. A reply that is
+// valid JSON but has none of the expected shapes, or an array whose length differs from the
+// request, yields nothing: guessing would show the raw reply in the candidate window and
+// persist it into the user's gloss store.
 std::vector<std::string> ParseTranslations(const std::string &content, size_t expected)
 {
     std::vector<std::string> results(expected);
+    if (expected == 0)
+        return results;
 
     const auto from_array = [&](const nlohmann::json &array) {
-        if (!array.is_array())
+        if (!array.is_array() || array.size() != expected)
             return false;
-        for (size_t i = 0; i < expected && i < array.size(); ++i)
+        for (size_t i = 0; i < expected; ++i)
         {
             if (array[i].is_string())
                 results[i] = Trim(array[i].get<std::string>());
@@ -110,57 +92,62 @@ std::vector<std::string> ParseTranslations(const std::string &content, size_t ex
         return true;
     };
 
-    try
+    const std::string text = StripMarkdownFences(content);
+    if (text.empty())
+        return results;
+    if (nlohmann::json::accept(text))
     {
-        const auto root = nlohmann::json::parse(StripMarkdownFences(content));
-        if (from_array(root))
-            return results;
-        if (root.is_object())
+        try
         {
-            for (const char *key : {"translations", "translation", "results", "data"})
+            const auto root = nlohmann::json::parse(text);
+            if (from_array(root))
+                return results;
+            if (root.is_object())
             {
-                const auto found = root.find(key);
-                if (found != root.end() && from_array(*found))
-                    return results;
-            }
-            for (const char *key : {"translation", "text", "result"})
-            {
-                const auto found = root.find(key);
-                if (found != root.end() && found->is_string() && expected > 0)
+                for (const char *key : {"translations", "translation", "results", "data"})
                 {
-                    results[0] = Trim(found->get<std::string>());
-                    return results;
+                    const auto found = root.find(key);
+                    if (found != root.end() && from_array(*found))
+                        return results;
+                }
+                for (const char *key : {"translation", "text", "result"})
+                {
+                    const auto found = root.find(key);
+                    if (found != root.end() && found->is_string() && expected == 1)
+                    {
+                        results[0] = Trim(found->get<std::string>());
+                        return results;
+                    }
                 }
             }
         }
-    }
-    catch (const std::exception &)
-    {
+        catch (const std::exception &)
+        {
+        }
+        return std::vector<std::string>(expected);
     }
 
-    // Some providers ignore response_format and answer with one line per entry.
-    if (expected > 0)
+    // Some providers ignore response_format and answer with one line per entry. Text that
+    // looks like broken JSON is not a list of translations.
+    if (text.front() == '{' || text.front() == '[')
+        return results;
+    std::vector<std::string> lines;
+    std::string current;
+    for (const char ch : text)
     {
-        std::vector<std::string> lines;
-        std::string current;
-        for (const char ch : content)
+        if (ch == '\n')
         {
-            if (ch == '\n')
-            {
-                lines.push_back(Trim(current));
-                current.clear();
-            }
-            else
-            {
-                current.push_back(ch);
-            }
+            lines.push_back(Trim(current));
+            current.clear();
         }
-        lines.push_back(Trim(current));
-        if (lines.size() == expected)
-            return lines;
-        if (expected == 1)
-            results[0] = Trim(content);
+        else
+        {
+            current.push_back(ch);
+        }
     }
+    lines.push_back(Trim(current));
+    if (lines.size() == expected)
+        return lines;
     return results;
 }
 } // namespace
@@ -172,9 +159,15 @@ std::vector<std::string> ParseTranslations(const std::string &content, size_t ex
     return ::ParseTranslations(content, expected);
 }
 
+Config FromConfiguredTranslation(const TranslationConfig &config)
+{
+    return {config.ai.provider, CloudTranslation::TrimSecret(config.ai.endpoint),
+            CloudTranslation::TrimSecret(config.ai.token), CloudTranslation::TrimSecret(config.ai.model)};
+}
+
 bool IsUsableConfig(const Config &config)
 {
-    return !config.endpoint.empty() && !config.token.empty() && !config.model.empty() &&
+    return CloudTranslation::IsUsableSecret(config.token) && !config.model.empty() &&
            (config.endpoint.rfind("https://", 0) == 0 || config.endpoint.rfind("http://", 0) == 0);
 }
 
@@ -197,46 +190,8 @@ std::vector<std::string> TextTranslateBatch(const Config &config, const std::vec
         // 与 AI 辅助保持一致，避免推理模型的思考内容拖慢候选翻译。
         body["thinking"] = {{"type", "disabled"}};
     }
-    const std::string payload = body.dump();
-
-    CURL *curl = curl_easy_init();
-    if (!curl)
-        return results;
-
-    ResponseBuffer response;
-    const std::string authorization = "Authorization: Bearer " + config.token;
-    curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json; charset=utf-8");
-    headers = curl_slist_append(headers, authorization.c_str());
-
-    curl_easy_setopt(curl, CURLOPT_URL, config.endpoint.c_str());
-    NetworkProxy::ApplyToCurl(curl);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMs);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, kTimeoutMs);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-
-    const CURLcode performed = curl_easy_perform(curl);
-    long status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    if (performed != CURLE_OK || response.overflow || status < 200 || status >= 300)
-        return results;
-
-    try
-    {
-        const auto outer = nlohmann::json::parse(response.text);
-        const std::string content = outer.at("choices").at(0).at("message").at("content").get<std::string>();
-        return ParseTranslations(content, texts.size());
-    }
-    catch (const std::exception &)
-    {
-        return results;
-    }
+    const auto content =
+        ChatCompletions::FetchContent(config.endpoint, config.token, body.dump(), ChatCompletions::kDefaultTimeoutMs);
+    return content ? ParseTranslations(*content, texts.size()) : results;
 }
 } // namespace AiTranslation

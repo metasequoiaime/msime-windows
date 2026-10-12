@@ -2,8 +2,8 @@
 #include "ai_assistant_cache.h"
 #include "ai_assistant_cache_key.h"
 #include "ai_assistant_request.h"
+#include "chat_completions.h"
 
-#include "utils/network_proxy.h"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <Windows.h>
@@ -27,12 +27,6 @@ std::chrono::steady_clock::time_point g_last_input;
 AiAssistant::ApplyCallback g_callback;
 AiAssistant::detail::SuggestionCache g_candidate_cache;
 
-size_t WriteResponse(char *data, size_t size, size_t count, void *user)
-{
-    static_cast<std::string *>(user)->append(data, size * count);
-    return size * count;
-}
-
 std::string Fetch(const AiAssistant::Request &request, uint64_t generation)
 {
     const auto &config = request.config;
@@ -44,51 +38,14 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation)
     }
 
     const nlohmann::json body = AiAssistant::detail::BuildRequestBody(request);
-
-    // Deliberately exclude API token and system prompt from logs.
-    (void)0;
-
-    CURL *curl = curl_easy_init();
-    if (!curl)
+    const auto content = ChatCompletions::FetchContent(config.endpoint, config.token, body.dump(),
+                                                       AiAssistant::detail::RequestTimeoutMs(config));
+    if (!content || g_generation.load() != generation)
         return {};
-    std::string response;
-    const std::string authorization = "Authorization: Bearer " + config.token;
-    curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, authorization.c_str());
-    const std::string payload = body.dump();
-    curl_easy_setopt(curl, CURLOPT_URL, config.endpoint.c_str());
-    NetworkProxy::ApplyToCurl(curl);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 2500L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, AiAssistant::detail::RequestTimeoutMs(config));
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    const CURLcode result = curl_easy_perform(curl);
-    long status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    (void)0;
-    if (result != CURLE_OK || status < 200 || status >= 300)
-    {
-        (void)0;
-        return {};
-    }
-    if (g_generation.load() != generation)
-    {
-        (void)0;
-        return {};
-    }
 
     try
     {
-        const auto outer = nlohmann::json::parse(response);
-        const std::string content = outer.at("choices").at(0).at("message").at("content").get<std::string>();
-        const auto result_json = nlohmann::json::parse(content);
+        const auto result_json = nlohmann::json::parse(*content);
         const auto &candidates = result_json.at("candidates");
         if (!candidates.is_array() || candidates.empty())
         {

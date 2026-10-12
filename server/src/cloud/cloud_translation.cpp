@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 
@@ -37,9 +38,9 @@ CloudTranslation::ApplyCallback g_callback;
 std::unordered_map<std::string, std::string> g_cache;
 std::unordered_map<std::string, std::chrono::steady_clock::time_point> g_negative;
 
-std::string TargetLanguage()
+std::string TargetLanguage(const TranslationConfig &config)
 {
-    const auto &language = GetConfiguredTencentTmt().target_language;
+    const auto &language = config.tencent.target_language;
     return language.empty() ? "en" : language;
 }
 
@@ -52,16 +53,31 @@ enum class Provider
 };
 
 // 当前生效的提供方由 [translation].provider 单一决定，服务端与页面不再各写一份优先级。
-Provider ActiveProvider()
+Provider ActiveProvider(const TranslationConfig &config)
 {
-    const std::string &provider = GetConfiguredTranslation().provider;
-    if (provider == "ai")
+    if (config.provider == "ai")
         return Provider::Ai;
-    if (provider == "niutrans")
+    if (config.provider == "niutrans")
         return Provider::NiuTrans;
-    if (provider == "custom")
+    if (config.provider == "custom")
         return Provider::Custom;
     return Provider::Tencent;
+}
+
+std::string ProviderScope(const TranslationConfig &config)
+{
+    switch (ActiveProvider(config))
+    {
+    case Provider::Ai:
+        return "ai:" + config.ai.provider + ":" + config.ai.endpoint + ":" + config.ai.model;
+    case Provider::NiuTrans:
+        return "niutrans:" + config.niutrans.app_id;
+    case Provider::Custom:
+        return "custom:" + config.custom.endpoint;
+    case Provider::Tencent:
+    default:
+        return "tencent";
+    }
 }
 
 std::string Identity(const EnglishIme::TranslationQuery &query, const std::string &target_language,
@@ -106,11 +122,13 @@ void RememberNegative(const std::string &identity)
     g_negative[identity] = std::chrono::steady_clock::now() + kNegativeTtl;
 }
 
-TencentTmt::Credentials ResolveCredentials()
+TencentTmt::Credentials ResolveCredentials(const TencentTmtConfig &config)
 {
     TencentTmt::Credentials credentials;
-    const auto &config = GetConfiguredTencentTmt();
-    // 提供方已由 [translation].provider 决定，tencent_tmt.enabled 仅旧版兼容保留，不再作为门禁。
+    // provider 由设置页明确选成腾讯云时，加载配置会把 enabled 置为 true；只是从旧布尔推导出
+    // 腾讯云的配置仍要求 enabled，和旧版一样，不会因为升级就开始向腾讯云发送候选词。
+    if (!config.enabled)
+        return credentials;
     credentials.region = config.region.empty() ? "ap-guangzhou" : config.region;
     credentials.secret_id = CloudTranslation::TrimSecret(config.secret_id);
     credentials.secret_key = CloudTranslation::TrimSecret(config.secret_key);
@@ -120,29 +138,49 @@ TencentTmt::Credentials ResolveCredentials()
     return credentials;
 }
 
-CustomTranslation::Config ResolveCustomConfig()
+// 一个任务只需要当前生效提供方的配置，其余提供方保持空。
+struct ResolvedProvider
 {
-    const auto &configured = GetConfiguredCustomTranslation();
-    if (!configured.enabled)
-        return {};
-    return {CloudTranslation::TrimSecret(configured.endpoint), CloudTranslation::TrimSecret(configured.api_key)};
-}
+    Provider provider = Provider::Tencent;
+    TencentTmt::Credentials tencent;
+    CustomTranslation::Config custom;
+    NiuTransTranslation::Config niutrans;
+    AiTranslation::Config ai;
+};
 
-NiuTransTranslation::Config ResolveNiuTransConfig()
+std::optional<ResolvedProvider> ResolveActiveProvider(const TranslationConfig &config)
 {
-    const auto &configured = GetConfiguredNiuTrans();
-    if (!configured.enabled)
-        return {};
-    return {CloudTranslation::TrimSecret(configured.app_id), CloudTranslation::TrimSecret(configured.apikey)};
-}
-
-// AI 翻译复用 AI 辅助当前服务商的接口地址、Token 与模型，与 ai_assistant.enabled 解耦：
-// 用户可能只想用翻译、不开 AI 联想。
-AiTranslation::Config ResolveAiConfig()
-{
-    const auto &configured = GetConfiguredAiAssistant();
-    return {configured.provider, CloudTranslation::TrimSecret(configured.endpoint),
-            CloudTranslation::TrimSecret(configured.token), CloudTranslation::TrimSecret(configured.model)};
+    ResolvedProvider resolved;
+    resolved.provider = ActiveProvider(config);
+    switch (resolved.provider)
+    {
+    case Provider::Ai:
+        // 复用 AI 辅助当前服务商的接口地址、Token 与模型，与 ai_assistant.enabled 解耦：
+        // 用户可能只想用翻译、不开 AI 联想。
+        resolved.ai = AiTranslation::FromConfiguredTranslation(config);
+        if (!AiTranslation::IsUsableConfig(resolved.ai))
+            return std::nullopt;
+        break;
+    case Provider::NiuTrans:
+        resolved.niutrans = {CloudTranslation::TrimSecret(config.niutrans.app_id),
+                             CloudTranslation::TrimSecret(config.niutrans.apikey)};
+        if (!NiuTransTranslation::IsUsableConfig(resolved.niutrans))
+            return std::nullopt;
+        break;
+    case Provider::Custom:
+        resolved.custom = {CloudTranslation::TrimSecret(config.custom.endpoint),
+                           CloudTranslation::TrimSecret(config.custom.api_key)};
+        if (!CustomTranslation::IsSupportedEndpoint(resolved.custom.endpoint))
+            return std::nullopt;
+        break;
+    case Provider::Tencent:
+    default:
+        resolved.tencent = ResolveCredentials(config.tencent);
+        if (!CloudTranslation::IsUsableSecret(resolved.tencent.secret_id))
+            return std::nullopt;
+        break;
+    }
+    return resolved;
 }
 
 void PersistGloss(const EnglishIme::TranslationQuery &query, const std::string &gloss,
@@ -176,29 +214,24 @@ void ApplyTranslatedGroup(const std::vector<EnglishIme::TranslationQuery> &group
     }
 }
 
-std::vector<std::string> TranslateWithProvider(Provider provider, const TencentTmt::Credentials &credentials,
-                                               const CustomTranslation::Config &custom,
-                                               const NiuTransTranslation::Config &niutrans,
-                                               const AiTranslation::Config &ai, const std::vector<std::string> &texts,
+std::vector<std::string> TranslateWithProvider(const ResolvedProvider &resolved, const std::vector<std::string> &texts,
                                                const std::string &source, const std::string &target)
 {
-    switch (provider)
+    switch (resolved.provider)
     {
     case Provider::Ai:
-        return AiTranslation::TextTranslateBatch(ai, texts, source, target);
+        return AiTranslation::TextTranslateBatch(resolved.ai, texts, source, target);
     case Provider::NiuTrans:
-        return NiuTransTranslation::TextTranslateBatch(niutrans, texts, source, target);
+        return NiuTransTranslation::TextTranslateBatch(resolved.niutrans, texts, source, target);
     case Provider::Custom:
-        return CustomTranslation::TextTranslateBatch(custom, texts, source, target);
+        return CustomTranslation::TextTranslateBatch(resolved.custom, texts, source, target);
     case Provider::Tencent:
     default:
-        return TencentTmt::TextTranslateBatch(credentials, texts, source, target);
+        return TencentTmt::TextTranslateBatch(resolved.tencent, texts, source, target);
     }
 }
 
-void TranslateGroup(Provider provider, const TencentTmt::Credentials &credentials,
-                    const CustomTranslation::Config &custom, const NiuTransTranslation::Config &niutrans,
-                    const AiTranslation::Config &ai, const std::vector<EnglishIme::TranslationQuery> &group,
+void TranslateGroup(const ResolvedProvider &resolved, const std::vector<EnglishIme::TranslationQuery> &group,
                     const std::string &source, const std::string &target, const std::string &target_language,
                     const std::string &provider_scope, std::vector<EnglishIme::TranslationResult> &out)
 {
@@ -206,7 +239,7 @@ void TranslateGroup(Provider provider, const TencentTmt::Credentials &credential
     texts.reserve(group.size());
     for (const auto &query : group)
         texts.push_back(query.key);
-    const auto translated = TranslateWithProvider(provider, credentials, custom, niutrans, ai, texts, source, target);
+    const auto translated = TranslateWithProvider(resolved, texts, source, target);
     ApplyTranslatedGroup(group, translated, target_language, provider_scope, out);
 }
 
@@ -241,19 +274,13 @@ void WorkerLoop()
         if (!g_running || queries.empty() || !EnglishIme::IsTranslationCurrent(generation))
             continue;
 
-        const Provider provider = ActiveProvider();
-        const auto custom = ResolveCustomConfig();
-        const auto niutrans = ResolveNiuTransConfig();
-        const auto ai = ResolveAiConfig();
-        const auto credentials = provider == Provider::Tencent ? ResolveCredentials() : TencentTmt::Credentials{};
-        if ((provider == Provider::Ai && !AiTranslation::IsUsableConfig(ai)) ||
-            (provider == Provider::Custom && !CustomTranslation::IsSupportedEndpoint(custom.endpoint)) ||
-            (provider == Provider::NiuTrans && !NiuTransTranslation::IsUsableConfig(niutrans)) ||
-            (provider == Provider::Tencent && !CloudTranslation::IsUsableSecret(credentials.secret_id)))
+        const auto config = GetConfiguredTranslation();
+        const auto resolved = ResolveActiveProvider(*config);
+        if (!resolved)
             continue;
 
-        const std::string target_language = TargetLanguage();
-        const std::string provider_scope = CloudTranslation::ActiveProviderScope();
+        const std::string target_language = TargetLanguage(*config);
+        const std::string provider_scope = ProviderScope(*config);
         std::vector<EnglishIme::TranslationQuery> en_zh;
         std::vector<EnglishIme::TranslationQuery> zh_target;
         std::vector<EnglishIme::TranslationResult> results;
@@ -286,11 +313,9 @@ void WorkerLoop()
         }
 
         if (!en_zh.empty())
-            TranslateGroup(provider, credentials, custom, niutrans, ai, en_zh, "en", "zh", target_language,
-                           provider_scope, results);
+            TranslateGroup(*resolved, en_zh, "en", "zh", target_language, provider_scope, results);
         if (!zh_target.empty())
-            TranslateGroup(provider, credentials, custom, niutrans, ai, zh_target, "zh", target_language,
-                           target_language, provider_scope, results);
+            TranslateGroup(*resolved, zh_target, "zh", target_language, target_language, provider_scope, results);
         if (results.empty() || !g_running || g_job.load() != observed_job ||
             !EnglishIme::IsTranslationCurrent(generation) || !g_callback)
             continue;
@@ -342,26 +367,15 @@ void Clear()
 
 std::string ActiveProviderScope()
 {
-    switch (ActiveProvider())
-    {
-    case Provider::Ai: {
-        const auto &ai = GetConfiguredAiAssistant();
-        return "ai:" + ai.provider + ":" + ai.endpoint + ":" + ai.model;
-    }
-    case Provider::NiuTrans:
-        return "niutrans:" + GetConfiguredNiuTrans().app_id;
-    case Provider::Custom:
-        return "custom:" + GetConfiguredCustomTranslation().endpoint;
-    case Provider::Tencent:
-    default:
-        return "tencent";
-    }
+    return ProviderScope(*GetConfiguredTranslation());
 }
 
 std::string LookupCache(const std::string &key, EnglishIme::TranslationDirection direction)
 {
+    const auto config = GetConfiguredTranslation();
+    const std::string identity = Identity({key, direction}, TargetLanguage(*config), ProviderScope(*config));
     std::lock_guard lock(g_mutex);
-    const auto found = g_cache.find(Identity({key, direction}, TargetLanguage(), ActiveProviderScope()));
+    const auto found = g_cache.find(identity);
     return found == g_cache.end() ? std::string{} : found->second;
 }
 } // namespace CloudTranslation

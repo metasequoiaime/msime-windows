@@ -439,27 +439,70 @@ TEST_CASE(translation_provider_migrates_from_legacy_enabled_flags)
     {
         ScopedConfigLocation location(unique_root);
         InitImeConfig();
-        REQUIRE_EQ(GetConfiguredTranslation().provider, std::string("niutrans"));
+        REQUIRE_EQ(GetConfiguredTranslation()->provider, std::string("niutrans"));
         REQUIRE(GetConfiguredNiuTrans().enabled);
         REQUIRE(!GetConfiguredCustomTranslation().enabled);
+        REQUIRE_EQ(GetConfiguredTranslation()->niutrans.app_id, std::string("legacy-app"));
 
         // 非法值被拒绝，保持原值。
         REQUIRE(!SetConfiguredTranslationString("provider", "not-a-provider"));
-        REQUIRE_EQ(GetConfiguredTranslation().provider, std::string("niutrans"));
+        REQUIRE_EQ(GetConfiguredTranslation()->provider, std::string("niutrans"));
 
         // 切到 AI 辅助：provider 落盘，旧布尔同步写回 false。
         REQUIRE(SetConfiguredTranslationString("provider", "ai"));
         InitImeConfig();
-        REQUIRE_EQ(GetConfiguredTranslation().provider, std::string("ai"));
+        REQUIRE_EQ(GetConfiguredTranslation()->provider, std::string("ai"));
         REQUIRE(!GetConfiguredNiuTrans().enabled);
         REQUIRE(!GetConfiguredCustomTranslation().enabled);
+        REQUIRE(!GetConfiguredTencentTmt().enabled);
+
+        // AI 辅助页改模型后，翻译快照立刻跟着变，不用等重载。
+        REQUIRE(SetConfiguredAiAssistantString("model", "translation-model"));
+        REQUIRE_EQ(GetConfiguredTranslation()->ai.model, std::string("translation-model"));
 
         // 切到自定义 DeepLX：布尔随之更新。
         REQUIRE(SetConfiguredTranslationString("provider", "custom"));
         InitImeConfig();
-        REQUIRE_EQ(GetConfiguredTranslation().provider, std::string("custom"));
+        REQUIRE_EQ(GetConfiguredTranslation()->provider, std::string("custom"));
         REQUIRE(GetConfiguredCustomTranslation().enabled);
         REQUIRE(!GetConfiguredNiuTrans().enabled);
+
+        // 旧的 enabled 开关改为切换 provider；关掉当前服务回落到腾讯云，并显式打开腾讯云门禁。
+        REQUIRE(SetConfiguredNiuTransBool("enabled", true));
+        REQUIRE_EQ(GetConfiguredTranslation()->provider, std::string("niutrans"));
+        REQUIRE(SetConfiguredCustomTranslationBool("enabled", false));
+        REQUIRE_EQ(GetConfiguredTranslation()->provider, std::string("niutrans"));
+        REQUIRE(SetConfiguredNiuTransBool("enabled", false));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredTranslation()->provider, std::string("tencent"));
+        REQUIRE(GetConfiguredTencentTmt().enabled);
+    }
+    fs::remove_all(unique_root, ec);
+}
+
+// 旧版只有 tencent_tmt.enabled = true 时才向腾讯云发请求。三个布尔都关的旧配置升级后推导为
+// 腾讯云，但门禁保持关闭，不能因为升级就把候选词发出去。
+TEST_CASE(translation_provider_migration_keeps_tencent_gate)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"translation-tencent-gate";
+    const fs::path data_dir = unique_root / L"metasequoiaime";
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    SeedTemplate(data_dir);
+    WriteText(data_dir / L"config.toml", "[tencent_tmt]\nenabled = false\nsecret_id = \"AKIDreal\"\n"
+                                         "secret_key = \"real-key\"\n[niutrans]\nenabled = false\n"
+                                         "[custom_translation]\nenabled = false\n");
+    {
+        ScopedConfigLocation location(unique_root);
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredTranslation()->provider, std::string("tencent"));
+        REQUIRE(!GetConfiguredTranslation()->tencent.enabled);
+
+        // 用户在设置页明确选择腾讯云后才打开。
+        REQUIRE(SetConfiguredTranslationString("provider", "tencent"));
+        InitImeConfig();
+        REQUIRE(GetConfiguredTranslation()->tencent.enabled);
     }
     fs::remove_all(unique_root, ec);
 }

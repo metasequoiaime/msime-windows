@@ -404,7 +404,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
     const TencentTmtConfig &tencent_tmt = GetConfiguredTencentTmt();
     const CustomTranslationConfig &custom_translation = GetConfiguredCustomTranslation();
     const NiuTransConfig &niutrans = GetConfiguredNiuTrans();
-    const TranslationConfig &translation = GetConfiguredTranslation();
+    const auto translation = GetConfiguredTranslation();
     const NetworkProxyConfig network_proxy = GetConfiguredNetworkProxy();
     const FrequencyAdjustmentConfig &frequency = GetConfiguredFrequencyAdjustment();
     const FloatingToolbarItemsConfig &toolbar = GetConfiguredFloatingToolbarItems();
@@ -712,7 +712,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"endpoint", custom_translation.endpoint},
             {"api_key", custom_translation.api_key}}},
           {"niutrans", {{"enabled", niutrans.enabled}, {"app_id", niutrans.app_id}, {"apikey", niutrans.apikey}}},
-          {"translation", {{"provider", translation.provider}}},
+          {"translation", {{"provider", translation->provider}}},
           {"network", {{"proxy_mode", network_proxy.mode}, {"proxy_server", network_proxy.server}}},
           {"helpcode",
            {{"shuangpin_helpcode", GetConfiguredShuangpinHelpcodeEnabled()},
@@ -1095,7 +1095,10 @@ bool ApplyConfigUpdate(const json::object &data)
                                                                 json::value_to<std::string>(value));
     }
     if (path == "translation.provider")
-        return SetConfiguredTranslationString("provider", json::value_to<std::string>(data.at("value")));
+    {
+        const json::value &value = data.at("value");
+        return value.is_string() && SetConfiguredTranslationString("provider", json::value_to<std::string>(value));
+    }
     if (path.rfind("network.", 0) == 0)
     {
         const json::value &value = data.at("value");

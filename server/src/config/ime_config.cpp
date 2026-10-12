@@ -218,7 +218,7 @@ AiAssistantConfig g_ai_assistant;
 TencentTmtConfig g_tencent_tmt;
 CustomTranslationConfig g_custom_translation;
 NiuTransConfig g_niutrans;
-TranslationConfig g_translation;
+std::string g_translation_provider = "tencent";
 std::mutex g_network_proxy_mutex;
 NetworkProxyConfig g_network_proxy;
 FrequencyAdjustmentConfig g_frequency_adjustment;
@@ -300,11 +300,6 @@ const std::vector<std::string_view> &AiAssistantProviders()
 bool IsRetiredAiAssistantDefaultModel(std::string_view provider, std::string_view model)
 {
     return provider == "groq" && model == "llama-3.3-70b-versatile";
-}
-
-bool IsValidTranslationProvider(const std::string &provider)
-{
-    return provider == "tencent" || provider == "niutrans" || provider == "custom" || provider == "ai";
 }
 } // namespace
 
@@ -901,18 +896,26 @@ bool LoadImeConfig()
         g_niutrans.apikey = tbl["niutrans"]["apikey"].value_or(std::string());
         // [translation].provider 是唯一来源；旧配置缺这个键时从三个 enabled 布尔推导，
         // 再把布尔按 provider 归一，保证旧版读回时选择不丢。
-        g_translation.provider = tbl["translation"]["provider"].value_or(std::string());
-        if (!IsValidTranslationProvider(g_translation.provider))
+        g_translation_provider = tbl["translation"]["provider"].value_or(std::string());
+        if (IsValidTranslationProvider(g_translation_provider))
         {
-            if (g_niutrans.enabled)
-                g_translation.provider = "niutrans";
-            else if (g_custom_translation.enabled)
-                g_translation.provider = "custom";
-            else
-                g_translation.provider = "tencent";
+            // 用户在设置页明确选过，腾讯云的旧门禁跟着选择走。
+            g_tencent_tmt.enabled = g_translation_provider == "tencent";
         }
-        g_niutrans.enabled = g_translation.provider == "niutrans";
-        g_custom_translation.enabled = g_translation.provider == "custom";
+        else
+        {
+            // 推导出腾讯云时保留 tencent_tmt.enabled 原值：旧版要它为 true 才会发请求，
+            // 升级不能替用户把候选词发给腾讯云。
+            if (g_niutrans.enabled)
+                g_translation_provider = "niutrans";
+            else if (g_custom_translation.enabled)
+                g_translation_provider = "custom";
+            else
+                g_translation_provider = "tencent";
+        }
+        g_niutrans.enabled = g_translation_provider == "niutrans";
+        g_custom_translation.enabled = g_translation_provider == "custom";
+        PublishTranslationConfig();
         {
             NetworkProxyConfig proxy;
             proxy.mode = tbl["network"]["proxy_mode"].value_or(std::string("system"));

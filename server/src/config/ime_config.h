@@ -6,6 +6,7 @@
 #include <toml++/toml.h>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -141,12 +142,24 @@ struct NiuTransConfig
     std::string apikey;
 };
 
-// [translation] 段：候选词翻译当前生效的在线提供方。旧配置没有这个键时，由
-// [tencent_tmt]/[custom_translation]/[niutrans] 的 enabled 布尔在加载时推导。
+// 候选词翻译读取的整份配置快照。provider 来自 [translation].provider，旧配置没有这个键时由
+// [tencent_tmt]/[custom_translation]/[niutrans] 的 enabled 布尔在加载时推导；其余字段是各提供方
+// 配置的副本，ai 复用 AI 辅助当前服务商。配置加载和相关设置写入后整份替换，翻译 worker 与
+// 候选线程只读快照，不直接读会被重载改写的各段全局字符串。
 struct TranslationConfig
 {
     // tencent | niutrans | custom | ai
     std::string provider = "tencent";
+    TencentTmtConfig tencent;
+    CustomTranslationConfig custom;
+    NiuTransConfig niutrans;
+    struct Ai
+    {
+        std::string provider;
+        std::string endpoint;
+        std::string token;
+        std::string model;
+    } ai;
 };
 
 // [network] 段：云输入、模型下载、AI、翻译、语音等所有出站请求共用的代理设置。
@@ -601,7 +614,8 @@ bool SetConfiguredCustomTranslationString(const std::string &key, const std::str
 const NiuTransConfig &GetConfiguredNiuTrans();
 bool SetConfiguredNiuTransBool(const std::string &key, bool value);
 bool SetConfiguredNiuTransString(const std::string &key, const std::string &value);
-const TranslationConfig &GetConfiguredTranslation();
+bool IsValidTranslationProvider(const std::string &provider);
+std::shared_ptr<const TranslationConfig> GetConfiguredTranslation();
 bool SetConfiguredTranslationString(const std::string &key, const std::string &value);
 // Snapshot by value: download threads and the cloud worker read it while the settings host rewrites it.
 NetworkProxyConfig GetConfiguredNetworkProxy();

@@ -249,7 +249,7 @@ extern AiAssistantConfig g_ai_assistant;
 extern TencentTmtConfig g_tencent_tmt;
 extern CustomTranslationConfig g_custom_translation;
 extern NiuTransConfig g_niutrans;
-extern TranslationConfig g_translation;
+extern std::string g_translation_provider;
 extern std::mutex g_network_proxy_mutex;
 extern NetworkProxyConfig g_network_proxy; // guarded by g_network_proxy_mutex
 extern FrequencyAdjustmentConfig g_frequency_adjustment;
@@ -269,6 +269,9 @@ bool IsValidCandidateFixedBadgeStyle(const std::string &style);
 bool IsValidSettingsWindowLinger(const std::string &linger);
 bool IsValidTranslationTargetLanguage(const std::string &language);
 std::string AiAssistantTokenSlotKey(std::string_view provider);
+// ime_config_services.cpp：按当前各段全局配置重建候选词翻译快照。改动 provider、腾讯云、
+// 自定义翻译、小牛翻译或 AI 辅助服务商配置的地方，改完都要调一次。
+void PublishTranslationConfig();
 void RememberConfigWriteTime();
 
 // ime_config_toml.cpp

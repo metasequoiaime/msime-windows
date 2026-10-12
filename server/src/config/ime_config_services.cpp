@@ -238,6 +238,7 @@ bool SetConfiguredTencentTmtString(const std::string &key, const std::string &va
     if (!target || !WriteConfiguredValue("tencent_tmt", key, EscapeTomlBasicString(value)))
         return false;
     *target = value;
+    PublishTranslationConfig();
     return true;
 }
 
@@ -246,12 +247,20 @@ const CustomTranslationConfig &GetConfiguredCustomTranslation()
     return g_custom_translation;
 }
 
+// 旧的 enabled 开关不再单独落盘，改成切换 [translation].provider：打开即选中该服务，关掉当前
+// 生效的服务回落到腾讯云，和旧版两个布尔都为 false 时的效果一致。
+static bool SetTranslationProviderFromLegacyBool(const std::string &provider, bool enabled)
+{
+    if (enabled)
+        return SetConfiguredTranslationString("provider", provider);
+    if (g_translation_provider != provider)
+        return true;
+    return SetConfiguredTranslationString("provider", "tencent");
+}
+
 bool SetConfiguredCustomTranslationBool(const std::string &key, bool value)
 {
-    if (key != "enabled" || !WriteConfiguredValue("custom_translation", key, value ? "true" : "false"))
-        return false;
-    g_custom_translation.enabled = value;
-    return true;
+    return key == "enabled" && SetTranslationProviderFromLegacyBool("custom", value);
 }
 
 bool SetConfiguredCustomTranslationString(const std::string &key, const std::string &value)
@@ -264,6 +273,7 @@ bool SetConfiguredCustomTranslationString(const std::string &key, const std::str
     if (!target || !WriteConfiguredValue("custom_translation", key, EscapeTomlBasicString(value)))
         return false;
     *target = value;
+    PublishTranslationConfig();
     return true;
 }
 
@@ -274,10 +284,7 @@ const NiuTransConfig &GetConfiguredNiuTrans()
 
 bool SetConfiguredNiuTransBool(const std::string &key, bool value)
 {
-    if (key != "enabled" || !WriteConfiguredValue("niutrans", key, value ? "true" : "false"))
-        return false;
-    g_niutrans.enabled = value;
-    return true;
+    return key == "enabled" && SetTranslationProviderFromLegacyBool("niutrans", value);
 }
 
 bool SetConfiguredNiuTransString(const std::string &key, const std::string &value)
@@ -290,36 +297,58 @@ bool SetConfiguredNiuTransString(const std::string &key, const std::string &valu
     if (!target || !WriteConfiguredValue("niutrans", key, EscapeTomlBasicString(value)))
         return false;
     *target = value;
+    PublishTranslationConfig();
     return true;
 }
 
-const TranslationConfig &GetConfiguredTranslation()
+bool IsValidTranslationProvider(const std::string &provider)
 {
-    return g_translation;
+    return provider == "tencent" || provider == "niutrans" || provider == "custom" || provider == "ai";
+}
+
+namespace
+{
+std::mutex g_translation_snapshot_mutex;
+std::shared_ptr<const TranslationConfig> g_translation_snapshot = std::make_shared<TranslationConfig>();
+} // namespace
+
+void ime_config_detail::PublishTranslationConfig()
+{
+    auto snapshot = std::make_shared<TranslationConfig>();
+    snapshot->provider = g_translation_provider;
+    snapshot->tencent = g_tencent_tmt;
+    snapshot->custom = g_custom_translation;
+    snapshot->niutrans = g_niutrans;
+    snapshot->ai = {g_ai_assistant.provider, g_ai_assistant.endpoint, g_ai_assistant.token, g_ai_assistant.model};
+    std::lock_guard<std::mutex> lock(g_translation_snapshot_mutex);
+    g_translation_snapshot = std::move(snapshot);
+}
+
+std::shared_ptr<const TranslationConfig> GetConfiguredTranslation()
+{
+    std::lock_guard<std::mutex> lock(g_translation_snapshot_mutex);
+    return g_translation_snapshot;
 }
 
 bool SetConfiguredTranslationString(const std::string &key, const std::string &value)
 {
-    if (key != "provider")
+    if (key != "provider" || !IsValidTranslationProvider(value))
         return false;
-    if (value != "tencent" && value != "niutrans" && value != "custom" && value != "ai")
-        return false;
-    if (!WriteConfiguredValue("translation", key, EscapeTomlBasicString(value)))
-        return false;
-    g_translation.provider = value;
-    // 写回旧布尔，保证降级到旧版时选择不丢；旧版不认识 ai，会回落到腾讯云。
+    // 旧布尔与 provider 一次写入，保证降级到旧版时选择不丢；旧版不认识 ai，三个布尔都关，
+    // 不会把候选词发给用户没选的服务。
+    const bool tencent = value == "tencent";
     const bool niutrans = value == "niutrans";
     const bool custom = value == "custom";
-    if (niutrans != g_niutrans.enabled)
-    {
-        WriteConfiguredValue("niutrans", "enabled", niutrans ? "true" : "false");
-        g_niutrans.enabled = niutrans;
-    }
-    if (custom != g_custom_translation.enabled)
-    {
-        WriteConfiguredValue("custom_translation", "enabled", custom ? "true" : "false");
-        g_custom_translation.enabled = custom;
-    }
+    if (!WriteConfiguredValues({{"translation", key, EscapeTomlBasicString(value)},
+                                {"tencent_tmt", "enabled", tencent ? "true" : "false"},
+                                {"niutrans", "enabled", niutrans ? "true" : "false"},
+                                {"custom_translation", "enabled", custom ? "true" : "false"}}))
+        return false;
+    g_translation_provider = value;
+    g_tencent_tmt.enabled = tencent;
+    g_niutrans.enabled = niutrans;
+    g_custom_translation.enabled = custom;
+    PublishTranslationConfig();
     return true;
 }
 
@@ -416,7 +445,7 @@ static std::string AiAssistantEffectiveValue(const std::string &key, const std::
     return value.empty() ? AiAssistantDefaultValue(key, provider) : value;
 }
 
-bool SetConfiguredAiAssistantString(const std::string &key, const std::string &value)
+static bool ApplyAiAssistantString(const std::string &key, const std::string &value)
 {
     if (key == "prompt_id" && value != "custom_1" && value != "custom_2" && value != "custom_3")
         return false;
@@ -517,6 +546,15 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
         g_ai_assistant.tokens[g_ai_assistant.provider] = value;
         WriteConfiguredValue("ai_assistant", slot, EscapeTomlBasicString(value));
     }
+    return true;
+}
+
+bool SetConfiguredAiAssistantString(const std::string &key, const std::string &value)
+{
+    if (!ApplyAiAssistantString(key, value))
+        return false;
+    // 候选词翻译选了 AI 辅助时复用这里的服务商、地址、Token 与模型。
+    PublishTranslationConfig();
     return true;
 }
 

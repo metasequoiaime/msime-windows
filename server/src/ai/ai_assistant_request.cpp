@@ -1,4 +1,5 @@
 #include "ai_assistant_request.h"
+#include "chat_completions.h"
 
 #include "voice-input/voice_providers.h"
 
@@ -36,6 +37,7 @@ nlohmann::json BuildRequestBody(const Request &request)
 
 long RequestTimeoutMs(const AiAssistantConfig &config)
 {
-    return VoiceInput::UsesDeepSeekThinking(config.provider, config.thinking) ? 30000L : 8000L;
+    return VoiceInput::UsesDeepSeekThinking(config.provider, config.thinking) ? 30000L
+                                                                              : ChatCompletions::kDefaultTimeoutMs;
 }
 } // namespace AiAssistant::detail
