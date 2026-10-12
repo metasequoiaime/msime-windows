@@ -1132,18 +1132,17 @@ void test_quanpin_autocorrect_switches_and_guard()
     {
         QuanpinDictionary dictionary(db_path.string());
 
-        // S2 纯简拼读法否决权：纯简拼形输入（每个字母都是一个声母）且词库 jp 列有命中时，
-        // 纠错不得接管——字面简拼读法领衔且无 corrected_from。形状分不干净（sahng 全声母
-        // 却必须保留纠错），唯一分得开的是 jp 列有没有这个读法。
+        // 纯简拼字面整词领衔：纯简拼形输入（每个字母都是一个声母）且词库里有这个简拼整词时，
+        // 它排在纠错读法前面且无 corrected_from；纠错读法仍留在后面、带纠错标记。
         // 放在既有断言之前：本函数后段有一条与本任务无关的既有失败会抛出，其后的断言不再执行。
         const unsigned all_four =
             transposition_only | neighbor_only | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
         const auto pure_nbn = dictionary.query("nbn", "", all_four);
         expect(!pure_nbn.empty() && pure_nbn.front().word == "能不能" && pure_nbn.front().corrected_from.empty(),
                "A pure-jianpin input with a dictionary reading must lead uncorrected (nbn -> 能不能).");
-        expect(std::none_of(pure_nbn.begin(), pure_nbn.end(),
-                            [](const WordItem &item) { return item.corrected_from == "nbn"; }),
-               "A pure-jianpin input with a dictionary reading must not produce a corrected candidate.");
+        expect(std::any_of(pure_nbn.begin(), pure_nbn.end(),
+                           [](const WordItem &item) { return item.word == "难" && item.corrected_from == "nbn"; }),
+               "The corrected reading must stay behind the jianpin word (nbn -> 难).");
         const auto pure_bqng = dictionary.query("bqng", "", all_four);
         expect(!pure_bqng.empty() && pure_bqng.front().word == "并且能够" && pure_bqng.front().corrected_from.empty(),
                "A pure-jianpin input with a dictionary reading must lead uncorrected (bqng -> 并且能够).");

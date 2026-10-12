@@ -1008,50 +1008,6 @@ std::string segments_to_jianpin(const Segments &segments)
     return segments_to_jianpin_impl(segments);
 }
 
-bool has_pure_jianpin_reading(sqlite3 *db, std::unordered_map<std::string, sqlite3_stmt *> &statement_cache,
-                              const Segments &segments, int limit)
-{
-    // An empty cut has no reading; a segment of two or more letters is a full
-    // syllable (sh, n) rather than an initial, so the input is not pure jianpin.
-    // Reuse the query layer's own predicate so the two judgements cannot drift.
-    if (db == nullptr || limit <= 0 || segments.empty() || !is_pure_jianpin(segments))
-    {
-        return false;
-    }
-
-    const auto table = build_table_name_impl(segments);
-    if (table.empty())
-    {
-        return false;
-    }
-    const auto jp = segments_to_jianpin_impl(segments);
-    const std::string sql = "SELECT 1 FROM \"" + table + "\" WHERE \"jp\" = ? LIMIT ?";
-
-    sqlite3_stmt *stmt = nullptr;
-    const auto found = statement_cache.find(sql);
-    if (found != statement_cache.end())
-    {
-        stmt = found->second;
-        sqlite3_reset(stmt);
-        sqlite3_clear_bindings(stmt);
-    }
-    else
-    {
-        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
-        {
-            return false;
-        }
-        statement_cache.emplace(sql, stmt);
-    }
-
-    sqlite3_bind_text(stmt, 1, jp.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 2, limit);
-    const bool has_row = sqlite3_step(stmt) == SQLITE_ROW;
-    sqlite3_reset(stmt);
-    sqlite3_clear_bindings(stmt);
-    return has_row;
-}
-
 std::string get_default_db_path()
 {
     return metasequoia::path_to_utf8(shuangpin::get_data_file_path(metasequoia::assets::main_dictionary));

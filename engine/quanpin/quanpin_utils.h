@@ -29,6 +29,9 @@ bool has_only_complete_pinyin_segments(const Segments &segments);
 // 0: no literal mixed match; 1: whole input; 2: one unfinished 1-2-letter syllable remains.
 // Both full syllables and single-letter initials must match the candidate's canonical key.
 unsigned literal_mixed_pinyin_match(const std::string &raw, const std::string &code, const std::string &canonical);
+// 纯简拼字面整词：两个及以上单字母声母（a/e/o 是完整音节，不算）盖住整串输入，且逐个是
+// 候选正读音节的首字母（nbn = n'b'n -> neng'bu'neng）。前缀单字和带完整音节的混合简拼不算。
+bool literal_jianpin_pinyin_match(const std::string &raw, const std::string &code, const std::string &canonical);
 SyllableGraph build_syllable_graph(const std::string &pinyin);
 std::vector<Segments> enumerate_complete_segmentations(const SyllableGraph &graph, size_t path_limit = 32);
 std::vector<std::string> cut_one_piece_greedy(const std::string &pinyin, bool intact_only);

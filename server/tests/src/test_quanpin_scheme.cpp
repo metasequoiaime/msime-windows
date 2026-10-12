@@ -1071,20 +1071,21 @@ TEST_CASE(QuanpinDictionaryAutocorrectDeletionTypo)
         std::none_of(legacy.begin(), legacy.end(), [](const WordItem &item) { return item.corrected_from == "shng"; }));
 }
 
-TEST_CASE(QuanpinDictionaryPureJianpinReadingBlocksAutocorrect)
+TEST_CASE(QuanpinDictionaryPureJianpinWordLeadsAutocorrect)
 {
     const auto db_path = CreateAutocorrectDatabase();
     QuanpinDictionary dictionary(test::Utf8(db_path));
     const unsigned all = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor |
                          quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
 
-    // S2 纯简拼读法否决权：纯简拼形输入（每个字母都是一个声母）且词库 jp 列有命中时，
-    // 纠错不得接管——字面简拼读法领衔且无 corrected_from。
+    // 纯简拼字面整词领衔：纯简拼形输入（每个字母都是一个声母）且词库里有这个简拼整词时，
+    // 它排在纠错读法前面且无 corrected_from；纠错读法仍留在后面、带纠错标记。
     const auto bqng = dictionary.query("bqng", "", all);
     REQUIRE(!bqng.empty());
     REQUIRE_EQ(bqng.front().word, std::string("并且能够"));
     REQUIRE(bqng.front().corrected_from.empty());
-    REQUIRE(std::none_of(bqng.begin(), bqng.end(), [](const WordItem &item) { return item.corrected_from == "bqng"; }));
+    REQUIRE(std::any_of(bqng.begin(), bqng.end(),
+                        [](const WordItem &item) { return item.word == "帮" && item.corrected_from == "bqng"; }));
 
     // 非纯简拼（shng = sh + n + g，含双字母切分）不受保护：漏字纠错照旧命中「上」。
     const auto shng = dictionary.query("shng", "sh'n'g", all);

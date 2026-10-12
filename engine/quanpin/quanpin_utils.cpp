@@ -50,6 +50,25 @@ unsigned literal_mixed_pinyin_match(const std::string &raw, const std::string &c
     return full && initial ? (tail.empty() ? 1u : 2u) : 0u;
 }
 
+bool literal_jianpin_pinyin_match(const std::string &raw, const std::string &code, const std::string &canonical)
+{
+    if (raw.find('\'') != std::string::npos || canonical.empty())
+        return false;
+    const auto typed = split_segments(code);
+    const auto reading = split_segments(canonical);
+    if (typed.size() < 2 || typed.size() != reading.size())
+        return false;
+    std::string letters;
+    for (size_t i = 0; i < typed.size(); ++i)
+    {
+        if (typed[i].size() != 1 || !prefix_pinyin_set().count(typed[i]) || intact_pinyin_set().count(typed[i]) ||
+            !intact_pinyin_set().count(reading[i]) || reading[i][0] != typed[i][0])
+            return false;
+        letters += typed[i];
+    }
+    return letters == raw;
+}
+
 namespace
 {
 struct SparsePinyinFallbackEntry
@@ -214,8 +233,10 @@ bool looks_like_jianpin_spelling(const std::string &pinyin)
     // trailing letter ("zheg" = zhe + g) to count as jianpin intent. The cut
     // backtracks like the query-side segmentation ("zaijinut" = zai'ji'nu + t).
     // All-consonant strings match zero syllables and return false on purpose:
-    // the engine has no multi-letter jianpin, so correction is the only useful
-    // reading of e.g. "bqng" -> bang.
+    // shape alone cannot tell a pure jianpin ("nbn" = 能不能) from a dropped
+    // vowel ("bng" -> bang), so both still enter correction. The dictionary
+    // layer then puts a literal pure-jianpin whole word ahead of the corrected
+    // readings (literal_jianpin_pinyin_match), keeping the correction behind it.
     if (is_complete_pinyin_input(pinyin))
     {
         // Fully reduced to legal syllables: a legitimate spelling, not a typo.
