@@ -10,7 +10,8 @@ param(
     [Parameter(Mandatory)][ValidateSet('Payload', 'Installer')][string]$Set,
     [Parameter(Mandatory)][string]$Directory,
     [string]$Version,
-    [string]$ExpectedSignerThumbprint
+    [string]$ExpectedSignerThumbprint,
+    [switch]$AllowUntrustedSigner
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,8 +61,11 @@ else {
         $signed = Join-Path $Directory $file
         if (-not (Test-Path -LiteralPath $signed)) { throw "SignPath returned no $file" }
         $signature = Get-AuthenticodeSignature -LiteralPath $signed
-        if ($signature.Status -ne 'Valid') {
+        if ($signature.Status -ne 'Valid' -and -not $AllowUntrustedSigner) {
             throw "SignPath returned $file with signature status $($signature.Status)"
+        }
+        if (-not $signature.SignerCertificate) {
+            throw "SignPath returned $file without a signer certificate"
         }
         if ($ExpectedSignerThumbprint -and $signature.SignerCertificate.Thumbprint -ne $ExpectedSignerThumbprint) {
             throw "SignPath returned $file signed by unexpected certificate $($signature.SignerCertificate.Thumbprint)"
