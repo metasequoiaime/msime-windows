@@ -1,0 +1,51 @@
+schema_version = 1
+id = "shoudao-blue"
+name = "首道-蓝"
+version = "1.0.0"
+description = "首道-蓝：蓝白配色，简约护眼"
+base = "willow_green"
+
+[supports]
+layouts = ["horizontal", "vertical"]
+themes = ["dark", "light"]
+
+[candidate_window]
+min_width_dip = 360
+
+[candidate.light]
+surface = "#F4F3F1"
+border = "#E7E6E1"
+accent = "#1B3B5C"
+selected = "#1B3B5C"
+hover = "#7D9BB940"
+text = "#050505"
+number = "#9370DB"
+translation = "#232424A6"
+show_selected_bar = false
+
+[candidate.dark]
+surface = "#1E2A3E"
+border = "#8FA6C240"
+accent = "#7FA8D0"
+selected = "#34597F"
+hover = "#6987A440"
+text = "#EDF2F7"
+number = "#EDF2F7A6"
+translation = "#9FB6CC"
+show_selected_bar = false
+
+[toolbar.light]
+background = "#C3D2C7"
+border = "#828ACA39"
+handle = "#BACCDE"
+divider = "#828ACA39"
+icon = "#526A82"
+hover = "#0000000D"
+
+[toolbar.dark]
+background = "#1E2A3E"
+border = "#8FA6C240"
+handle = "#7FA8D0"
+divider = "#8FA6C240"
+icon = "#B9C9DB"
+hover = "#FFFFFF14"
