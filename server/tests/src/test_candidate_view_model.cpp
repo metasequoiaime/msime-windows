@@ -36,6 +36,30 @@ TEST_CASE(candidate_view_wraps_part_of_speech_and_separators_in_translation)
                                                     "<span class=\"cand-pos\">n.</span> laugh</span>"));
 }
 
+TEST_CASE(candidate_view_pos_toggle_updates_display_and_refresh_signature)
+{
+    const std::string raw = "adj. <spreading>; n. laugh";
+    CandidateViewItem item;
+    item.text = "笑";
+    item.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw, true);
+    const auto shown_html = CandidateViewHtml(item);
+    const auto shown_signature = CandidatePageSignature({item});
+    const CandidateFramePageState page{2, 1, true, true};
+    const auto shown_frame = CandidateFrameSignature(L"xiao", {item}, 10, 20, page);
+
+    item.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw, false);
+    REQUIRE_EQ(item.translation, std::string("<spreading>; laugh"));
+    REQUIRE_EQ(CandidateViewHtml(item), std::string("笑<span class=\"cand-translation\">&lt;spreading&gt;"
+                                                    "<span class=\"cand-sep\">;</span> laugh</span>"));
+    REQUIRE(shown_signature != CandidatePageSignature({item}));
+    REQUIRE(shown_frame != CandidateFrameSignature(L"xiao", {item}, 10, 20, page));
+
+    item.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw, true);
+    REQUIRE_EQ(CandidateViewHtml(item), shown_html);
+    REQUIRE_EQ(CandidatePageSignature({item}), shown_signature);
+    REQUIRE_EQ(CandidateFrameSignature(L"xiao", {item}, 10, 20, page), shown_frame);
+}
+
 TEST_CASE(candidate_page_signature_distinguishes_comma_split_between_items)
 {
     CandidateViewItem ab, c, a, bc;

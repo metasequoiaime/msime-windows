@@ -1,5 +1,5 @@
 import { serializeHostMessage } from '../../../../shared/messages';
-import { applyDropdownValue, applyToggleState, setFuzzyRuleOptionsDisabled, setSmartPunctuationOptionsDisabled, setupDropdownMenu, setupNeuralModelControls, setupToggleButton } from './shared';
+import { applyDropdownValue, applyToggleState, setCandidateTranslationOptionsDisabled, setFuzzyRuleOptionsDisabled, setSmartPunctuationOptionsDisabled, setupDropdownMenu, setupNeuralModelControls, setupToggleButton } from './shared';
 import { updateConfig } from './config-sync';
 import { updateCandidatePreviewHelpcode } from './appearance';
 import { setupCredentialTest } from './credential-test';
@@ -171,10 +171,6 @@ export function applyFrequencyConfig(config: any): void {
   applyDropdownValue('frequencyModeBtn', 'frequencyModeMenu', config?.mode);
   applyDropdownValue('frequencyTriggerCountBtn', 'frequencyTriggerCountMenu', String(config?.trigger_count ?? 1));
   applyDropdownValue('frequencyLinearStepBtn', 'frequencyLinearStepMenu', String(config?.linear_step ?? 1));
-}
-
-function syncCandidateTranslationOptions(enabled: boolean): void {
-  document.getElementById('candidateTranslationApiOptions')?.classList.toggle('is-disabled', !enabled);
 }
 
 function activeTranslationProvider(): TranslationProvider {
@@ -413,8 +409,11 @@ export function setupInput(): void {
     updateConfig('input.enter_learns_english_word', active);
   });
   setupToggleButton('candidateTranslationsToggleBtn', (active) => {
-    syncCandidateTranslationOptions(active);
+    setCandidateTranslationOptionsDisabled(!active);
     updateConfig('general.candidate_translations', active);
+  });
+  setupToggleButton('candidateTranslationShowPosToggleBtn', (active) => {
+    updateConfig('general.candidate_translation_show_pos', active);
   });
   setupDropdownMenu(
     'translationTargetLanguageBtn',

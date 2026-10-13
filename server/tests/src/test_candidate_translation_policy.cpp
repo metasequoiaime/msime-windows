@@ -113,3 +113,46 @@ TEST_CASE(translation_gloss_keeps_a_single_sense_whole)
     REQUIRE_EQ(ragged[0], std::string("apple"));
     REQUIRE_EQ(ragged[1], std::string("pear"));
 }
+
+TEST_CASE(translation_display_hides_every_recognized_part_of_speech_label)
+{
+    using FanyImeIpc::FormatTranslationGlossForDisplay;
+    for (const std::string label : {"proper n.", "interj.", "idiom.", "pron.", "prep.", "conj.", "adj.", "adv.", "num.",
+                                    "det.", "aux.", "n.", "v."})
+    {
+        const std::string raw = label + " \t\r\nmeaning";
+        REQUIRE_EQ(FormatTranslationGlossForDisplay(raw, true), raw);
+        REQUIRE_EQ(FormatTranslationGlossForDisplay(raw, false), std::string("meaning"));
+    }
+}
+
+TEST_CASE(translation_display_preserves_separators_whitespace_and_unlabelled_text)
+{
+    using FanyImeIpc::FormatTranslationGlossForDisplay;
+    const std::string raw = " adj. spreading; n. sound of laughter；proper n. Wanshan District；；v. giggle; ";
+    REQUIRE_EQ(FormatTranslationGlossForDisplay(raw, true), raw);
+    REQUIRE_EQ(FormatTranslationGlossForDisplay(raw, false),
+               std::string(" spreading; sound of laughter；Wanshan District；；giggle; "));
+    for (const std::string text : {"", " \t\r\n", "n.", "n. ", "very peculiar", "unknown. meaning", "苹果；家伙",
+                                   "今天天气不错，我们出去走走", "；；;"})
+    {
+        REQUIRE_EQ(FormatTranslationGlossForDisplay(text, true), text);
+        REQUIRE_EQ(FormatTranslationGlossForDisplay(text, false), text);
+    }
+}
+
+TEST_CASE(translation_display_toggle_preserves_raw_gloss_and_commit_senses)
+{
+    using FanyImeIpc::FormatTranslationGlossForDisplay;
+    using FanyImeIpc::SplitTranslationGloss;
+    std::string raw = "adj. spreading; n. sound of laughter；v. giggle";
+    const std::string original = raw;
+    const std::vector<std::string> expected{"spreading", "sound of laughter", "giggle"};
+    for (const bool show_pos : {true, false, true})
+    {
+        const auto display = FormatTranslationGlossForDisplay(raw, show_pos);
+        REQUIRE_EQ(raw, original);
+        REQUIRE(SplitTranslationGloss(raw) == expected);
+        REQUIRE(SplitTranslationGloss(display) == expected);
+    }
+}

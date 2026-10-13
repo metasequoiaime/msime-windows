@@ -179,6 +179,7 @@ extern int g_floating_toolbar_auto_hide_delay;
 extern bool g_floating_toolbar_shadow;
 extern bool g_english_candidates_enabled;
 extern bool g_candidate_translations_enabled;
+extern std::atomic_bool g_candidate_translation_show_pos;
 extern int g_english_mixed_input_min_chars;
 extern bool g_cloud_candidates_enabled;
 extern bool g_assoc_sentence_wordlattice;

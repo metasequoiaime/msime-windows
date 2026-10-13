@@ -102,6 +102,31 @@ inline std::vector<TranslationSegment> SegmentTranslationGloss(std::string_view 
     return segments;
 }
 
+// Display-only formatting. Keep the original gloss for caching and Ctrl+Enter;
+// unlike splitting commit candidates, hiding labels preserves every separator.
+inline std::string FormatTranslationGlossForDisplay(std::string_view gloss, bool show_pos)
+{
+    if (show_pos)
+        return std::string(gloss);
+
+    std::string displayed;
+    bool after_label = false;
+    for (const auto &segment : SegmentTranslationGloss(gloss))
+    {
+        if (segment.kind == TranslationSegmentKind::PartOfSpeech)
+        {
+            after_label = true;
+            continue;
+        }
+        std::string_view text = segment.text;
+        if (after_label && segment.kind == TranslationSegmentKind::Text)
+            text.remove_prefix((std::min)(text.find_first_not_of(" \t\r\n"), text.size()));
+        displayed += text;
+        after_label = false;
+    }
+    return displayed;
+}
+
 // english.db stores one gloss string per entry with the senses already joined:
 // en->zh uses the fullwidth '；' ("苹果；家伙"), zh->en the ASCII "; " ("string; trail").
 // Every sense is returned, with its part-of-speech label removed.

@@ -615,6 +615,13 @@ export function applyToggleState(btnId: string, active: boolean): void {
   toggle?.setAttribute('aria-checked', String(active));
 }
 
+export function setCandidateTranslationOptionsDisabled(disabled: boolean): void {
+  document.getElementById('candidateTranslationApiOptions')?.classList.toggle('is-disabled', disabled);
+  const toggle = document.getElementById('candidateTranslationShowPosToggleBtn');
+  toggle?.setAttribute('aria-disabled', String(disabled));
+  if (toggle) toggle.tabIndex = disabled ? -1 : 0;
+}
+
 // 模糊音规则复选随总开关联动：禁用 + 置灰 + 提示。input.ts（点击总开关）与
 // config-sync.ts（快照回填）共用这一份 DOM 名单，不要在两侧各写一遍。
 export function setFuzzyRuleOptionsDisabled(disabled: boolean): void {

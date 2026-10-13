@@ -85,6 +85,36 @@ TEST_CASE(shipped_caret_indicator_defaults_and_upgrade_behavior)
     REQUIRE(opted_in["general"]["caret_state_indicator"].value_or(false));
 }
 
+TEST_CASE(shipped_translation_pos_defaults_and_upgrade_preserve_user_choice)
+{
+    std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string installed((std::istreambuf_iterator<char>(input)), {});
+    const auto working_path =
+        std::filesystem::path(MSIME_DEFAULT_CONFIG_PATH).parent_path().parent_path().parent_path() /
+        "server/assets/config/config.toml";
+    std::ifstream development(working_path, std::ios::binary);
+    REQUIRE(static_cast<bool>(development));
+    const std::string working((std::istreambuf_iterator<char>(development)), {});
+    REQUIRE(toml::parse(installed)["general"]["candidate_translation_show_pos"].value_or(false));
+    REQUIRE(toml::parse(working)["general"]["candidate_translation_show_pos"].value_or(false));
+
+    const std::string old_template = "[general]\ncandidate_translations = false\n";
+    const auto upgraded = toml::parse(MergeConfigIntoTemplate(installed, old_template, old_template));
+    REQUIRE(upgraded["general"]["candidate_translation_show_pos"].value_or(false));
+    for (const bool show : {false, true})
+    {
+        const std::string configured =
+            old_template + "candidate_translation_show_pos = " + (show ? "true\n" : "false\n");
+        for (const auto &baseline : {std::string(), old_template, installed})
+        {
+            const auto preserved = toml::parse(MergeConfigIntoTemplate(installed, configured, baseline));
+            REQUIRE_EQ(preserved["general"]["candidate_translation_show_pos"].value_or(!show), show);
+            REQUIRE(!preserved["general"]["candidate_translations"].value_or(true));
+        }
+    }
+}
+
 TEST_CASE(shipped_tsf_diagnostic_log_survives_template_upgrade)
 {
     std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);

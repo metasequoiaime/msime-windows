@@ -1,7 +1,7 @@
 import { onHostMessage } from '../utils/host-messages';
 import { setAiAssistantState } from './ai-assistant-state';
 import { serializeHostMessage } from '../../../../shared/messages';
-import { applyCollocationModelStatus, applyNeuralModelStatus, applyCandidateArrange, applyDropdownValue as applyDropdown, applyToggleState as applyToggle, setFuzzyRuleOptionsDisabled, setMixedCandidateOptionsDisabled, setSmartPunctuationOptionsDisabled } from './shared';
+import { applyCollocationModelStatus, applyNeuralModelStatus, applyCandidateArrange, applyDropdownValue as applyDropdown, applyToggleState as applyToggle, setCandidateTranslationOptionsDisabled, setFuzzyRuleOptionsDisabled, setMixedCandidateOptionsDisabled, setSmartPunctuationOptionsDisabled } from './shared';
 
 let lastSnapshot: Record<string, any> | null = null;
 const readyModules = new Set<string>();
@@ -190,10 +190,12 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
   }
   if (typeof data?.general?.candidate_translations === 'boolean') {
     applyToggleState('candidateTranslationsToggleBtn', data.general.candidate_translations);
-    findElement('candidateTranslationApiOptions')?.classList.toggle(
-      'is-disabled',
-      !data.general.candidate_translations
-    );
+    if (findElement('candidateTranslationApiOptions')) {
+      setCandidateTranslationOptionsDisabled(!data.general.candidate_translations);
+    }
+  }
+  if (typeof data?.general?.candidate_translation_show_pos === 'boolean') {
+    applyToggleState('candidateTranslationShowPosToggleBtn', data.general.candidate_translation_show_pos);
   }
   if (typeof data?.general?.emoji_mixed_input === 'boolean') {
     applyToggleState('emojiMixedInputToggleBtn', data.general.emoji_mixed_input);

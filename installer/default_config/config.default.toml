@@ -56,6 +56,8 @@ cn_en_mixed_input = true
 cn_en_mixed_input_min_chars = 5
 # 在竖排候选窗口中显示中英文互译（每项最多两个简短释义）
 candidate_translations = false
+# 在候选译文中显示 n.、v. 等词性标记，关闭后仅显示释义
+candidate_translation_show_pos = true
 # 中文输入状态下显示 emoji 前缀候选（排在候选项列表最后）
 emoji_mixed_input = false
 # 中文输入状态下显示颜文字前缀候选（排在 emoji 之后）

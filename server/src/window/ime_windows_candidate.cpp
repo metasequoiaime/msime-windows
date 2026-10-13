@@ -500,6 +500,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const bool previous_trilingual_cycle = GetConfiguredTrilingualCycleEnabled();
             const std::string previous_shuangpin_schema = GetConfiguredShuangpinSchema();
             const std::string previous_character_set = GetConfiguredCharacterSet();
+            const bool previous_translation_show_pos = GetConfiguredCandidateTranslationShowPos();
             const std::string previous_layout = GetConfiguredCandidateWindowLayout();
             const std::string previous_candidate_skin = GetConfiguredCandidateSkin();
             const bool previous_fit_content = GetConfiguredCandidateWindowFitContent();
@@ -556,6 +557,10 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
                 if (previous_character_set != GetConfiguredCharacterSet())
                 {
                     UpdateFtbCharacterSetState(::webviewFtbWnd);
+                }
+                if (previous_character_set != GetConfiguredCharacterSet() ||
+                    previous_translation_show_pos != GetConfiguredCandidateTranslationShowPos())
+                {
                     FanyNamedPipe::EnqueueRefreshCandidatePageTask();
                 }
                 // 收紧宽度写在候选页的 <html> 属性上，开关变了与换排列方式一样重建候选页；D2D 由皮肤指纹重新套用。
