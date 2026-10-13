@@ -11,7 +11,7 @@ param(
     [Parameter(Mandatory)][string]$Directory,
     [string]$Version,
     [string]$ExpectedSignerThumbprint,
-    [switch]$AllowUntrustedSigner
+    [string]$AllowUntrustedSigner
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,7 +61,7 @@ else {
         $signed = Join-Path $Directory $file
         if (-not (Test-Path -LiteralPath $signed)) { throw "SignPath returned no $file" }
         $signature = Get-AuthenticodeSignature -LiteralPath $signed
-        if ($signature.Status -ne 'Valid' -and -not $AllowUntrustedSigner) {
+        if ($signature.Status -ne 'Valid' -and $AllowUntrustedSigner -ne 'true') {
             throw "SignPath returned $file with signature status $($signature.Status)"
         }
         if (-not $signature.SignerCertificate) {
