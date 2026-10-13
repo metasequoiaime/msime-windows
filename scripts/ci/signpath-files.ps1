@@ -9,7 +9,8 @@ param(
     [Parameter(Mandatory)][ValidateSet('Stage', 'Restore')][string]$Mode,
     [Parameter(Mandatory)][ValidateSet('Payload', 'Installer')][string]$Set,
     [Parameter(Mandatory)][string]$Directory,
-    [string]$Version
+    [string]$Version,
+    [string]$ExpectedSignerThumbprint
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +62,9 @@ else {
         $signature = Get-AuthenticodeSignature -LiteralPath $signed
         if ($signature.Status -ne 'Valid') {
             throw "SignPath returned $file with signature status $($signature.Status)"
+        }
+        if ($ExpectedSignerThumbprint -and $signature.SignerCertificate.Thumbprint -ne $ExpectedSignerThumbprint) {
+            throw "SignPath returned $file signed by unexpected certificate $($signature.SignerCertificate.Thumbprint)"
         }
         Copy-Item -LiteralPath $signed -Destination $file -Force
         Write-Host "$file signed by $($signature.SignerCertificate.Subject)"
