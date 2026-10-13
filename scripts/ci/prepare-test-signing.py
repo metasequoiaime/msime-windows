@@ -8,8 +8,9 @@ project = os.environ["SIGNPATH_PROJECT_SLUG"]
 token = os.environ["SIGNPATH_TOKEN"]
 headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
-def get(path):
-    req = urllib.request.Request(base + org + path, headers=headers)
+def get(path, accept="application/json"):
+    request_headers = {**headers, "Accept": accept}
+    req = urllib.request.Request(base + org + path, headers=request_headers)
     with urllib.request.urlopen(req) as response:
         return response.read()
 
@@ -18,7 +19,7 @@ if policy.get("status") != "Valid":
     raise SystemExit(f"test-signing policy status is {policy.get('status')!r}, expected 'Valid'")
 if policy.get("purpose") != "TestSigning":
     raise SystemExit(f"test-signing policy purpose is {policy.get('purpose')!r}, expected 'TestSigning'")
-cert = get(f"/Projects/{project}/SigningPolicies/test-signing/Certificate/X509Certificate")
+cert = get(f"/Projects/{project}/SigningPolicies/test-signing/Certificate/X509Certificate", "application/pkix-cert")
 out = pathlib.Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "signpath-test.cer"
 out.write_bytes(cert)
 sha = hashlib.sha256(cert).hexdigest()
