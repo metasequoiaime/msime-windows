@@ -84,12 +84,10 @@ constexpr bool ShouldResetCompositionForImeMode(bool chinese_mode)
 // engine's own report that the code is complete, table-answered and unique is the only other gate.
 // A word being created keeps the composition open: the raw belongs to the prefix the user is still
 // assembling, and committing it would end that word early.
-// A special mode owns the raw for its own shape rules (T mode's keyword letters normalize to four
-// wubi letters -- Tdate -> tdat). Committing there would end the mode on its fourth letter.
-constexpr bool ShouldAutoCommitCompleteWubiCode(bool auto_commit_enabled, bool special_mode_active,
-                                                bool unique_four_code, bool creating_word_active)
+constexpr bool ShouldAutoCommitCompleteWubiCode(bool auto_commit_enabled, bool unique_four_code,
+                                                bool creating_word_active)
 {
-    return auto_commit_enabled && !special_mode_active && unique_four_code && !creating_word_active;
+    return auto_commit_enabled && unique_four_code && !creating_word_active;
 }
 
 // The user is typing past a complete four-letter wubi code (a letter key with the caret at the end
@@ -101,14 +99,12 @@ constexpr bool ShouldAutoCommitCompleteWubiCode(bool auto_commit_enabled, bool s
 // spelling. With mixed input off the engine clips the code back to four letters, which drops the
 // key on the Server while a raw-preedit client already shows it, so the switch yields to the top
 // commit there: an extra key never loses input, whatever the setting says.
-// The special-mode guard above applies here for the same reason: those four letters are a mode's
-// input, not a code to commit and type past.
-constexpr bool ShouldCommitCompleteWubiCodeOnNextKey(bool top_commit_enabled, bool special_mode_active,
-                                                     bool mixed_pinyin_enabled, bool four_code_is_complete,
-                                                     bool key_is_letter, bool caret_at_end, bool creating_word_active)
+constexpr bool ShouldCommitCompleteWubiCodeOnNextKey(bool top_commit_enabled, bool mixed_pinyin_enabled,
+                                                     bool four_code_is_complete, bool key_is_letter, bool caret_at_end,
+                                                     bool creating_word_active)
 {
-    return (top_commit_enabled || !mixed_pinyin_enabled) && !special_mode_active && four_code_is_complete &&
-           key_is_letter && caret_at_end && !creating_word_active;
+    return (top_commit_enabled || !mixed_pinyin_enabled) && four_code_is_complete && key_is_letter && caret_at_end &&
+           !creating_word_active;
 }
 
 // Enter commits the raw composition instead of choosing a special-mode

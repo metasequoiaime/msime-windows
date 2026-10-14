@@ -310,6 +310,13 @@ bool IsSpecialModeCompositionActive(const std::string &raw)
            IsEmojiCompositionActive(raw) || IsKaomojiCompositionActive(raw) || IsJianpinCompositionActive(raw) ||
            IsYModeCompositionActive(raw) || IsVModeCompositionActive(raw);
 }
+
+bool IsWubiLiteralComposition(const std::string &raw)
+{
+    // T 模式按触发标记认，不按 IsDateTimeCompositionActive 的形状认：模式里敲了主体不收的键
+    // （TdatE），组合只是不再出日期，里面的字母仍然不是要上屏的五笔码（tdat）。
+    return (g_date_time_mode_triggered && !raw.empty() && raw.front() == 'T') || IsVModeCompositionActive(raw);
+}
 } // namespace event_listener_detail
 
 namespace

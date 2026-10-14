@@ -59,7 +59,9 @@ class ImeSession
     }
     void replace_shuangpin_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases);
     void replace_quanpin_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases);
-    void replace_wubi_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases);
+    // literal_input: see WubiScheme::set_literal_input.
+    void replace_wubi_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases,
+                                bool literal_input = false);
     void replace_japanese_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases);
     // Writes back to whichever scheme is composing. Committing a pinyin answer out of a longer
     // mixed composition has to shorten the live composition, and the pinyin-shaped caller would

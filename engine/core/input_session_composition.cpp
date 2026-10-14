@@ -807,6 +807,11 @@ void InputSession::set_pinyin_sequence_with_cases(const std::string &pinyin_sequ
     has_pending_pinyin_sequence_with_cases_ = true;
 }
 
+void InputSession::set_wubi_literal_input(bool literal)
+{
+    pending_wubi_literal_input_ = literal;
+}
+
 int InputSession::store_user_phrase(std::string pinyin, std::string word)
 {
     return engine_.create_word(std::move(pinyin), std::move(word));
@@ -1166,6 +1171,7 @@ void InputSession::clear_pending_sequence()
     pending_pinyin_sequence_with_cases_.clear();
     has_pending_pinyin_sequence_ = false;
     has_pending_pinyin_sequence_with_cases_ = false;
+    pending_wubi_literal_input_ = false;
 }
 
 void InputSession::apply_pending_sequence()
@@ -1184,7 +1190,7 @@ void InputSession::apply_pending_sequence()
         engine_.replace_quanpin_raw_input(raw_input, raw_input_with_cases);
         break;
     case SchemeType::Wubi:
-        engine_.replace_wubi_raw_input(raw_input, raw_input_with_cases);
+        engine_.replace_wubi_raw_input(raw_input, raw_input_with_cases, pending_wubi_literal_input_);
         break;
     case SchemeType::JapaneseRomaji:
         engine_.replace_japanese_raw_input(raw_input, raw_input_with_cases);

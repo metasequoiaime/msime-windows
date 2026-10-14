@@ -86,6 +86,8 @@ FanyImeVModeInput::Trigger CurrentVModeTrigger();
 bool IsVModeCompositionActive(const std::string &raw);
 void ClearSpecialModeTriggers();
 bool IsSpecialModeCompositionActive(const std::string &raw);
+// 五笔会话里属于 T/V 模式的串：交给引擎时标成字面输入，原样保留、不查码表、不算完整四码。
+bool IsWubiLiteralComposition(const std::string &raw);
 
 void PublishCandidateUiOwner(uint64_t client_id, uint64_t activation_epoch);
 FanyImeIpc::CandidateUiOwner SnapshotCandidateUiOwner();

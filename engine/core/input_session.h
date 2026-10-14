@@ -237,6 +237,11 @@ class InputSession
 
     void set_pinyin_sequence(const std::string &pinyin_sequence);
     void set_pinyin_sequence_with_cases(const std::string &pinyin_sequence);
+    // Marks the pending sequence as a special mode's literal input on a wubi session (T mode's
+    // Tdate, V mode's V1+2): kept as typed, never queried, never a complete code. Applies to the
+    // sequence set alongside it and is dropped with it, so a host that does not call it gets an
+    // ordinary code. Other schemes keep every typed character anyway and ignore it.
+    void set_wubi_literal_input(bool literal);
 
     int store_user_phrase(std::string pinyin, std::string word);
     int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word);
@@ -347,6 +352,7 @@ class InputSession
     std::string pending_pinyin_sequence_with_cases_;
     bool has_pending_pinyin_sequence_ = false;
     bool has_pending_pinyin_sequence_with_cases_ = false;
+    bool pending_wubi_literal_input_ = false;
 
     RuntimePaths paths_;
     CandidateQueries candidate_queries_;

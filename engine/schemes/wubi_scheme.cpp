@@ -12,53 +12,33 @@ bool is_wubi_letter(char lower, bool mixed_pinyin_allowed, bool z_wildcard)
     return (lower >= 'a' && lower <= 'y') || (lower == 'z' && (mixed_pinyin_allowed || z_wildcard));
 }
 
-bool is_wubi_vk(ImeKeyCode vk, bool mixed_pinyin_allowed, bool z_wildcard)
+// The code letters of input with their case kept, clipped to max_length: anything that is not a
+// code letter (a z with mixed input and wildcard off, a digit, an operator) is dropped.
+std::string wubi_code_letters(const std::string &input, size_t max_length, bool mixed_pinyin_allowed, bool z_wildcard)
 {
-    return vk >= 'A' && vk <= 'Z' &&
-           is_wubi_letter(static_cast<char>(vk + ('a' - 'A')), mixed_pinyin_allowed, z_wildcard);
-}
-
-// The raw string with cases is what a host reads back to recognise T mode (an uppercase T prefix)
-// and V mode (an uppercase V followed by digits) from its shape. It keeps the case and the
-// non-letter keys those modes type (digits, operators, ':' and '/'), but drops letters outside the
-// code domain exactly as normalize_wubi_code does: with mixed input and z wildcard off, a typed z
-// is not a code position, and keeping it would make the raw string longer than the code. The Server
-// counts the raw string to decide when a four-letter code is complete, so a dropped letter must not
-// count as one.
-std::string normalize_wubi_with_cases(const std::string &input, bool mixed_pinyin_allowed, bool z_wildcard)
-{
-    std::string filtered;
-    filtered.reserve(input.size());
+    std::string letters;
+    letters.reserve((std::min)(input.size(), max_length));
     for (const unsigned char ch : input)
     {
-        const bool ascii_letter = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
-        if (ascii_letter && !is_wubi_letter(static_cast<char>(std::tolower(ch)), mixed_pinyin_allowed, z_wildcard))
-        {
-            continue;
-        }
-        filtered.push_back(static_cast<char>(ch));
-    }
-    return filtered;
-}
-
-std::string normalize_wubi_code(const std::string &input, size_t max_length, bool mixed_pinyin_allowed, bool z_wildcard)
-{
-    std::string normalized;
-    normalized.reserve((std::min)(input.size(), max_length));
-    for (const unsigned char ch : input)
-    {
-        const char lower = static_cast<char>(std::tolower(ch));
-        if (!is_wubi_letter(lower, mixed_pinyin_allowed, z_wildcard))
-        {
-            continue;
-        }
-        normalized.push_back(lower);
-        if (normalized.size() == max_length)
+        if (letters.size() == max_length)
         {
             break;
         }
+        if (std::isalpha(ch) && is_wubi_letter(static_cast<char>(std::tolower(ch)), mixed_pinyin_allowed, z_wildcard))
+        {
+            letters.push_back(static_cast<char>(ch));
+        }
     }
-    return normalized;
+    return letters;
+}
+
+std::string to_lower_ascii(std::string text)
+{
+    for (char &ch : text)
+    {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return text;
 }
 } // namespace
 
@@ -68,6 +48,7 @@ void WubiScheme::reset()
     raw_input_.clear();
     key_strokes_.clear();
     extended_length_allowed_ = false;
+    literal_input_ = false;
 }
 
 void WubiScheme::handle_key(ImeKeyCode vk, ImeModifierMask modifiers_down, ImeCharacter wch)
@@ -78,10 +59,10 @@ void WubiScheme::handle_key(ImeKeyCode vk, ImeModifierMask modifiers_down, ImeCh
         {
             raw_input_with_cases_.pop_back();
         }
-        if (!raw_input_.empty())
-        {
-            raw_input_.pop_back();
-        }
+        // Rederived rather than popped: in literal input the last character may be a digit or an
+        // operator that was never a code letter, and popping the code too would drift the two apart.
+        raw_input_ = to_lower_ascii(
+            wubi_code_letters(raw_input_with_cases_, max_code_length(), mixed_pinyin_allowed_, z_wildcard_));
         if (!key_strokes_.empty())
         {
             key_strokes_.pop_back();
@@ -95,35 +76,39 @@ void WubiScheme::handle_key(ImeKeyCode vk, ImeModifierMask modifiers_down, ImeCh
         return;
     }
 
-    if (!is_wubi_vk(vk, mixed_pinyin_allowed_, z_wildcard_) || raw_input_.size() >= max_code_length())
+    if (vk < 'A' || vk > 'Z')
+    {
+        return;
+    }
+    // Same rule as the Server's raw editing: the letter the key produced when it produced one,
+    // otherwise the key's own letter. Both views take the same letter, so they cannot disagree on
+    // a layout where the key and the character differ.
+    const bool wch_is_letter = (wch >= 'A' && wch <= 'Z') || (wch >= 'a' && wch <= 'z');
+    const char typed = wch_is_letter ? static_cast<char>(wch) : static_cast<char>(vk + ('a' - 'A'));
+    const char code_letter = static_cast<char>(std::tolower(static_cast<unsigned char>(typed)));
+    if (!is_wubi_letter(code_letter, mixed_pinyin_allowed_, z_wildcard_) || raw_input_.size() >= max_code_length())
     {
         return;
     }
 
     key_strokes_.push_back(KeyStroke{vk, modifiers_down, wch});
-    raw_input_.push_back(static_cast<char>(vk + ('a' - 'A')));
-    // Same case rule as quanpin: the character the key produced when there is one, otherwise the
-    // key's own letter. Both fields stay in step, so the raw string is always the code as typed.
-    if (wch >= L'A' && wch <= L'Z')
-    {
-        raw_input_with_cases_.push_back(static_cast<char>(wch));
-    }
-    else if (wch >= L'a' && wch <= L'z')
-    {
-        raw_input_with_cases_.push_back(static_cast<char>(wch));
-    }
-    else
-    {
-        raw_input_with_cases_.push_back(static_cast<char>(vk + ('a' - 'A')));
-    }
+    raw_input_.push_back(code_letter);
+    raw_input_with_cases_.push_back(typed);
 }
 
 void WubiScheme::set_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases)
 {
-    raw_input_with_cases_ = normalize_wubi_with_cases(raw_input_with_cases.empty() ? raw_input : raw_input_with_cases,
-                                                      mixed_pinyin_allowed_, z_wildcard_);
-    raw_input_ = normalize_wubi_code(raw_input_with_cases_, max_code_length(), mixed_pinyin_allowed_, z_wildcard_);
+    const std::string &typed = raw_input_with_cases.empty() ? raw_input : raw_input_with_cases;
+    raw_input_with_cases_ =
+        literal_input_ ? typed : wubi_code_letters(typed, max_code_length(), mixed_pinyin_allowed_, z_wildcard_);
+    raw_input_ =
+        to_lower_ascii(wubi_code_letters(raw_input_with_cases_, max_code_length(), mixed_pinyin_allowed_, z_wildcard_));
     key_strokes_.clear();
+}
+
+void WubiScheme::set_literal_input(bool literal)
+{
+    literal_input_ = literal;
 }
 
 void WubiScheme::set_extended_length_allowed(bool allowed)

@@ -3118,8 +3118,8 @@ int run_test()
             "Shift+T was swallowed outside a pinyin scheme.");
 
     // 五笔保留原样串：Server 端的 T/V 形状判定（大写 T 前缀、V＋数字）读的是宿主回读的原样串，
-    // 而五笔码表查询和自动上屏用的是归一后的码。两者必须是同一份输入的两个视图——原样串留全
-    // 用户敲的字符，查询码只留 a–y（混输/通配时含 z）并截断。
+    // 而五笔码表查询和自动上屏用的是归一后的码。宿主把 T/V 模式的串标成字面输入，原样串才
+    // 留全用户敲的字符；普通码的原样串就是带大小写的码，与查询码逐位对应、一起截断。
     const std::filesystem::path wubi_raw_directory = data_directory / "wubi-raw";
     std::filesystem::create_directories(wubi_raw_directory);
     {
@@ -3136,14 +3136,25 @@ int run_test()
         v_mode_wubi.set_wubi_input_options(wubi_options);
         v_mode_wubi.set_pinyin_sequence("V1+2");
         v_mode_wubi.set_pinyin_sequence_with_cases("V1+2");
+        v_mode_wubi.set_wubi_literal_input(true);
         v_mode_wubi.recompute_candidates();
         require(v_mode_wubi.get_pinyin_sequence_with_cases() == "V1+2" && v_mode_wubi.get_pinyin_sequence() == "v",
                 "Wubi did not keep the raw-case V-mode prefix apart from the query code.");
+
+        // 不标字面输入时同一串就是普通码：数字不是码字，回读里也不能有。
+        metasequoia::InputSession v_code_wubi(SchemeType::Wubi);
+        v_code_wubi.set_wubi_input_options(wubi_options);
+        v_code_wubi.set_pinyin_sequence("V1+2");
+        v_code_wubi.set_pinyin_sequence_with_cases("V1+2");
+        v_code_wubi.recompute_candidates();
+        require(v_code_wubi.get_pinyin_sequence_with_cases() == "V" && v_code_wubi.get_pinyin_sequence() == "v",
+                "A wubi code kept characters that are not code letters in its raw-case string.");
 
         metasequoia::InputSession t_mode_wubi(SchemeType::Wubi);
         t_mode_wubi.set_wubi_input_options(wubi_options);
         t_mode_wubi.set_pinyin_sequence("T2024/12/25");
         t_mode_wubi.set_pinyin_sequence_with_cases("T2024/12/25");
+        t_mode_wubi.set_wubi_literal_input(true);
         t_mode_wubi.recompute_candidates();
         require(t_mode_wubi.get_pinyin_sequence_with_cases() == "T2024/12/25" &&
                     t_mode_wubi.get_pinyin_sequence() == "t" && t_mode_wubi.preedit() == "t",
