@@ -515,10 +515,14 @@ void CandidatePresenter::ApplySkin()
         tokens.menuHover = ColorFromRgb(0xECECEC);
     }
     const std::wstring skinsRoot = AssetRoot() + L"\\skins";
+    // 外部皮肤用声明支持当前布局与主题的那一份；不支持就回退 base，和 WebView2 端同一条规则。
+    const std::string candidateLayout = GetConfiguredCandidateWindowLayout();
+    const std::string candidateTheme = candLight ? "light" : "dark";
     std::optional<CandidateSkinCatalog::Package> package;
     if (!CandidateSkinCatalog::IsBuiltIn(skinId))
     {
-        package = CandidateSkinCatalog::Load(std::filesystem::path(skinsRoot), skinId);
+        package = CandidateSkinCatalog::LoadSupported(std::filesystem::path(skinsRoot), skinId, candidateLayout,
+                                                      candidateTheme);
     }
     // 自定义包的几何取自它的 base 皮肤，与 WebView2 端注入 base 皮肤 CSS 一致；颜色随后由包覆盖。
     const std::string baseSkin = package ? package->base : skinId;

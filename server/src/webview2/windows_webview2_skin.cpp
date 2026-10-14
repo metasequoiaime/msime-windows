@@ -706,10 +706,9 @@ int PrepareHtmlForWnds()
     if (!CandidateSkinCatalog::IsBuiltIn(candidateSkin))
     {
         const std::wstring skinsRoot = assetPath + L"\\skins";
-        activeExternalCandidateSkin = CandidateSkinCatalog::Load(skinsRoot, candidateSkin);
-        if (activeExternalCandidateSkin &&
-            !CandidateSkinCatalog::Supports(*activeExternalCandidateSkin, candidateLayout, candidateTheme))
-            activeExternalCandidateSkin.reset();
+        // LoadSupported 只在皮肤声明支持当前布局与主题时才返回，两个后端走同一条规则。
+        activeExternalCandidateSkin =
+            CandidateSkinCatalog::LoadSupported(skinsRoot, candidateSkin, candidateLayout, candidateTheme);
         baseCandidateSkin = activeExternalCandidateSkin ? activeExternalCandidateSkin->base : "fluent";
     }
     std::wstring htmlCandWnd;

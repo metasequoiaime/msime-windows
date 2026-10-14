@@ -586,15 +586,18 @@ void FloatingToolbarPresenter::ApplyTheme()
     }
     const bool light = ResolveConfiguredTheme(GetConfiguredThemeFtb()) == "light";
     // 与 WebView2 端选工具栏页面的规则一致：跟随候选窗皮肤，外部皮肤用其 base，再叠上 [toolbar] 的覆盖。
-    std::string skinId = GetConfiguredCandidateSkin();
+    // 皮肤在当前候选布局/主题下不生效时整份不套用，与两个候选窗后端同一条判定。
+    const std::string skinId = GetConfiguredCandidateSkin();
     std::optional<CandidateSkinCatalog::Package> package;
+    std::string baseSkinId = skinId;
     if (!CandidateSkinCatalog::IsBuiltIn(skinId))
     {
-        package =
-            CandidateSkinCatalog::Load(std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"skins", skinId);
-        skinId = package ? package->base : "fluent";
+        package = CandidateSkinCatalog::LoadSupported(
+            std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"skins", skinId,
+            GetConfiguredCandidateWindowLayout(), ResolveConfiguredTheme(GetConfiguredThemeCand()));
+        baseSkinId = package ? package->base : "fluent";
     }
-    FloatingToolbarSkin skin = ResolveFloatingToolbarSkin(skinId, light);
+    FloatingToolbarSkin skin = ResolveFloatingToolbarSkin(baseSkinId, light);
     if (package)
     {
         ApplyFloatingToolbarSkinOverrides(skin, *package, light);

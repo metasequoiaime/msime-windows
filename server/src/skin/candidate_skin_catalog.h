@@ -184,6 +184,10 @@ bool IsBackupFolder(const std::string &folder);
 bool Supports(const Package &package, const std::string &layout, const std::string &theme);
 std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::string &id,
                             std::string *error = nullptr);
+// 读取外部皮肤，但只在它声明支持该布局与主题时才返回；不支持时返回空，调用方回退 base 皮肤。
+// 两个渲染后端与辅助浮层共用这一条判定，避免某个使用方只 Load 不校验。
+std::optional<Package> LoadSupported(const std::filesystem::path &skinsRoot, const std::string &id,
+                                     const std::string &layout, const std::string &theme);
 ScanResult Scan(const std::filesystem::path &skinsRoot);
 std::optional<DefaultSkin> LoadDefault(const std::filesystem::path &skinsRoot, const std::string &id,
                                        std::string *error = nullptr);
