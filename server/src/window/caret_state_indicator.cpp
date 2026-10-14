@@ -52,7 +52,7 @@ void RefreshPalette()
     if (!CandidateSkinCatalog::IsBuiltIn(skinId))
         package =
             CandidateSkinCatalog::LoadSupported(std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"skins",
-                                                skinId, layout, ResolveConfiguredTheme(GetConfiguredThemeCand()));
+                                                skinId, layout, light ? "light" : "dark");
     const CandidateSkinCatalog::CandidateColors *packageColors =
         package ? &(light ? package->light : package->dark) : nullptr;
     const std::string baseSkinId = package ? package->base : std::string{};

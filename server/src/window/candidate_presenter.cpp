@@ -515,7 +515,7 @@ void CandidatePresenter::ApplySkin()
         tokens.menuHover = ColorFromRgb(0xECECEC);
     }
     const std::wstring skinsRoot = AssetRoot() + L"\\skins";
-    // 外部皮肤用声明支持当前布局与主题的那一份；不支持就回退 base，和 WebView2 端同一条规则。
+    // 外部皮肤用声明支持当前布局与主题的那一份；不支持或读不出来就回退 fluent，和 WebView2 端同一条规则。
     const std::string candidateLayout = GetConfiguredCandidateWindowLayout();
     const std::string candidateTheme = candLight ? "light" : "dark";
     std::optional<CandidateSkinCatalog::Package> package;
@@ -525,12 +525,13 @@ void CandidatePresenter::ApplySkin()
                                                       candidateTheme);
     }
     // 自定义包的几何取自它的 base 皮肤，与 WebView2 端注入 base 皮肤 CSS 一致；颜色随后由包覆盖。
-    const std::string baseSkin = package ? package->base : skinId;
+    const std::string baseSkin =
+        package ? package->base : (CandidateSkinCatalog::IsBuiltIn(skinId) ? skinId : std::string("fluent"));
     // Built-in skin palettes mirror ui-html/webview2/candwnd/skins/<skin>/;
     // the WebView2 CSS is the reference for both the light and dark values.
     // 横排时高亮内缩于外框，首项、尾项落在卡片四角上的那几个角与卡片同 R，其余角保持
     // itemRadius，对应 CSS 横排的 .pinyin + .row-wrapper / .last-visible 规则。
-    const bool horizontalLayout = GetConfiguredCandidateWindowLayout() == "horizontal";
+    const bool horizontalLayout = candidateLayout == "horizontal";
     // 翻页箭头改变的是场景结构（竖排多一行、横排多一列），开关或排列方式变了就整棵重建，
     // 再往下套用配色与尺寸。重建会清掉指纹，这里补回去。
     const bool pageArrows = CandidateSkinCatalog::ResolvePageArrows(std::filesystem::path(skinsRoot), skinId,
@@ -791,8 +792,8 @@ void CandidatePresenter::ApplySkin()
     }
     const CandidateSkinCatalog::CandidateColors *packageColors =
         package ? &(candLight ? package->light : package->dark) : nullptr;
-    const CandidateSkinPalette palette = ResolveCandidateSkinPalette(
-        skinId, candLight, GetConfiguredCandidateTextColor(), packageColors, package ? package->base : std::string{});
+    const CandidateSkinPalette palette =
+        ResolveCandidateSkinPalette(baseSkin, candLight, GetConfiguredCandidateTextColor(), packageColors);
     tokens.surface = palette.surface;
     tokens.border = palette.border;
     tokens.text = palette.text;
@@ -803,7 +804,7 @@ void CandidatePresenter::ApplySkin()
     if (impl_->card)
     {
         const std::string shadow = package ? package->shadow : std::string{};
-        if ((CandidateSkinCatalog::IsBuiltIn(skinId) || package) && shadow != "none")
+        if (shadow != "none")
         {
             // 外部皮肤的 shadow = soft / strong 按同一系数缩放两层不透明度，与 WebView2 端一致。
             const float scale = ShadowAlphaScale(shadow);

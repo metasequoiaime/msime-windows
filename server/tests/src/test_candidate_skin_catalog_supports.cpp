@@ -47,14 +47,15 @@ void WriteSkin(const fs::path &root, const std::string &id, const std::string &s
                                                         supportsBody + "\n[candidate_window]\n");
 }
 
+// root 是 <temp>/msime-skin-support-<pid>/<leaf>/skins，连同按进程号建的那层一起删掉。
 void Cleanup(const fs::path &root)
 {
     std::error_code ec;
-    fs::remove_all(root.parent_path(), ec);
+    fs::remove_all(root.parent_path().parent_path(), ec);
 }
 } // namespace
 
-// 声明只支持横排的皮肤：横排拿得到，竖排拿不到、退回 base。
+// 声明只支持横排的皮肤：横排拿得到，竖排拿不到、回退 fluent。
 TEST_CASE(candidate_skin_load_supported_rejects_unsupported_layout)
 {
     const auto root = MakeSkinsRoot(L"layout");
@@ -97,12 +98,14 @@ TEST_CASE(candidate_skin_load_supported_accepts_every_declared_combination)
     Cleanup(root);
 }
 
-// 读不出来的皮肤（缺 manifest、ID 非法）同样返回空，调用方回退 base。
+// 读不出来的皮肤（缺 manifest、ID 非法）同样返回空，调用方回退 fluent。
 TEST_CASE(candidate_skin_load_supported_returns_nothing_when_manifest_is_unusable)
 {
     const auto root = MakeSkinsRoot(L"unusable");
     WriteSkin(root, "ok", "layouts = [\"horizontal\"]\nthemes = [\"dark\"]\n");
 
+    // 同一目录下的正常皮肤读得到，下面几条的拒绝来自 ID 本身，而不是目录没建好。
+    REQUIRE(CandidateSkinCatalog::LoadSupported(root, "ok", "horizontal", "dark").has_value());
     REQUIRE(!CandidateSkinCatalog::LoadSupported(root, "missing", "horizontal", "dark").has_value());
     REQUIRE(!CandidateSkinCatalog::LoadSupported(root, "../escape", "horizontal", "dark").has_value());
     REQUIRE(!CandidateSkinCatalog::LoadSupported(root, "", "horizontal", "dark").has_value());
