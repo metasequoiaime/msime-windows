@@ -1788,6 +1788,17 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
                     "The floored prefix must decode exactly like the typed prefix spelling");
         }
 
+        // 首单元内侧不是串首：向上取整到首单元末尾，与 caret 落在 ni 边界上解码相同。
+        for (const std::size_t caret : {std::size_t(1), std::size_t(2)})
+        {
+            session.set_caret(caret);
+            session.recompute_candidates();
+            require(session.prefix_end() == 3 && session.pending_suffix() == "hao'shi'jie",
+                    "A caret inside the first unit must round up to the end of that unit");
+            require(same_word_list(session, quanpin_words("ni")),
+                    "The rounded-up first unit must decode exactly like the typed spelling");
+        }
+
         session.set_caret(7);
         session.recompute_candidates();
         require(session.prefix_end() == 7 && session.pending_suffix() == "shi'jie",
@@ -1829,7 +1840,7 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
         require(same_word_list(session, full_words), "Unsetting the caret must restore the full-string decode");
     }
 
-    // 首单元内侧（多字母首音节）：floor 到 0 但 caret > 0，按整串解码而非空前缀，
+    // 只有一个单元时首单元内侧向上取整就是整串：按整串解码而非空前缀，
     // 候选窗不被 IsCaretPrefixEmpty 收起。
     {
         metasequoia::InputSession session(SchemeType::Quanpin, 0, true, true, false, paths);
@@ -1880,7 +1891,7 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
     }
 
     // 双拼贪心配对（engine spec #187）：nihkb; → {0,2,4,6}、nihcb; → {0,2,3,5,6}，
-    // caret 落在段中间时同样 floor 到完整段边界；首单元内侧 floor 到 0 时退回整串解码。
+    // caret 落在段中间时同样 floor 到完整段边界；首单元内侧向上取整到首单元末尾。
     const auto shuangpin_words = [&](const std::string &typed) {
         metasequoia::InputSession other(SchemeType::Shuangpin, GetMicrosoftShuangpinProfile(), paths);
         type(other, typed);
@@ -1896,9 +1907,9 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
 
         session.set_caret(1);
         session.recompute_candidates();
-        require(session.prefix_end() == 6 && session.pending_suffix().empty() &&
-                    same_word_list(session, shuangpin_words("nihkb;")),
-                "A caret inside the first shuangpin unit must fall back to the full-string decode");
+        require(session.prefix_end() == 2 && session.pending_suffix() == "hkb;" &&
+                    same_word_list(session, shuangpin_words("ni")),
+                "A caret inside the first shuangpin unit must round up to the end of that unit");
 
         session.set_caret(3);
         session.recompute_candidates();

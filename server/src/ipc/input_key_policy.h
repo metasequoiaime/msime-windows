@@ -249,7 +249,8 @@ constexpr bool ShouldResegmentCompositionByCaret(bool client_supports_restore, b
     return client_supports_restore && !ui_less && !english_input_mode && !special_mode_composition_active;
 }
 
-// R4：光标量化后的前缀为空（raw 非空而前缀终点为 0）。此时候选必须为空、候选窗隐藏，
+// R4：光标量化后的前缀为空（raw 非空而前缀终点为 0）。引擎只在 caret == 0 时给出 0：
+// 光标落在首单元内部会向上取整到首单元末尾，不算空前缀。此时候选必须为空、候选窗隐藏，
 // 不得回退成「整串 raw 假候选」。caret 未设置（整串解码）时 prefix_end == raw_length，
 // 恒为 false；raw 为空的组合同样恒为 false。
 constexpr bool IsCaretPrefixEmpty(std::size_t prefix_end, std::size_t raw_length) noexcept
@@ -273,7 +274,7 @@ inline std::string NormalizeCandidatePagePrefix(const std::string &raw_input_wit
 // 光标箭头键之后的候选发布决策（2026-09 真机回归修复）：光标移回串尾时引擎已按整串重算，
 // 但 candidate_ui.items 仍是上一次前缀重解发布的页面。「只刷新页面」会继续用这批旧前缀
 // 候选重建页面并参与空格/数字结算（ni'hao'ya 从 ni'hao 右移回串尾后只上屏「你好」+「ya」）。
-// 门控启用时前缀中间与串尾一律从引擎重读重建页面；前缀为空仍收起候选窗（R4）；未启用
+// 门控启用时前缀中间与串尾一律从引擎重读重建页面；前缀为空（caret 在串首）仍收起候选窗（R4）；未启用
 // （未协商/UILess/特殊模式）或 raw 为空维持只刷新页面的现状（R7/AC8 零差异）。
 enum class CaretArrowCandidatePublish
 {

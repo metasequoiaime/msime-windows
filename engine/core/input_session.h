@@ -171,11 +171,10 @@ class InputSession
     // recompute_candidates() or key handling.
     void set_caret(std::optional<std::size_t> caret);
     // Raw length consumed by the current decode: the caret moved onto the last complete
-    // syllable-unit boundary at or before it (floor). Three cases decode the whole string and
-    // report the raw length: the caret is unset, the scheme has no unit model
-    // (segment_raw_boundaries() empty), or the caret sits inside the first unit (floored to 0
-    // while the caret is past the string head). The last case keeps an intra-first-unit caret
-    // from looking like the empty prefix at the true head: prefix_end() == 0 means caret == 0.
+    // syllable-unit boundary at or before it (floor). A caret inside the first unit rounds up to
+    // the end of that unit instead, so prefix_end() == 0 means caret == 0. The caret being
+    // unset, or a scheme without the unit model (segment_raw_boundaries() empty), decodes the
+    // whole string and this equals the raw length.
     std::size_t prefix_end() const;
     // raw[prefix_end, size) with its original casing: the pending input this decode did not
     // consume. Empty unless the caret prefix is strictly shorter than the raw string.
@@ -306,8 +305,8 @@ class InputSession
     KeyResult replace_editing_text(std::string text, std::size_t caret);
     std::optional<std::size_t> caret_;
     // Last complete unit boundary at or before the caret; only consumes segment_raw_boundaries()
-    // (segmentation contract #187). Caret unset, no unit model, or a caret inside the first unit
-    // (floor 0 with caret > 0) yields the full raw length -- only caret == 0 keeps the 0.
+    // (segmentation contract #187). A caret inside the first unit rounds up to that unit's end,
+    // so only caret == 0 yields 0. Caret unset or no unit model yields the full raw length.
     std::size_t quantized_prefix_end() const;
     // Decodes the quantized caret prefix into prefix_candidates_ when it is strictly shorter
     // than the raw string, caching by prefix so unchanged keystrokes skip the extra query.
