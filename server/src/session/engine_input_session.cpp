@@ -1,8 +1,10 @@
 #include "engine_input_session.h"
 #include "config/ime_config.h"
 #include "engine/common/helpcode_utils.h"
+#include "engine/contracts/assets/assets.h"
 #include "engine/core/data_path.h"
 #include "engine/core/sentence_association_options.h"
+#include "engine/local_modes/radical_query.h"
 #include "engine/quanpin/quanpin_utils.h"
 #include "settings/neural_model.h"
 
@@ -344,6 +346,11 @@ IInputSession::CreatingWordProgress EngineInputSession::update_creating_word_pro
     const SelectionTransition &selection_transition) const
 {
     return session_.update_creating_word_progress(current_pinyin, current_word, selected_word, selection_transition);
+}
+
+std::vector<IInputSession::WordItem> EngineInputSession::query_radical(const std::string &code) const
+{
+    return metasequoia::local_modes::query_radical(paths_.resource(metasequoia::assets::radical_decomposition), code);
 }
 
 std::string EngineInputSession::get_helpcode_annotation(const std::string &word, bool uppercase_all) const

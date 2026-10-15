@@ -19,6 +19,20 @@ TEST_CASE(font_fallback_upgrade_preserves_legacy_fonts_and_order)
             std::string::npos);
 }
 
+TEST_CASE(radical_mode_upgrade_inherits_renamed_unicode_mode_switch)
+{
+    const std::string next = "[utility]\nradical_mode = true\n";
+    const std::string old_template = "[utility]\nunicode_mode = true\n";
+    // 关掉过旧开关的用户，升级后新开关也是关的；改名不能把 Shift+U 悄悄重新打开。
+    REQUIRE(
+        MergeConfigIntoTemplate(next, "[utility]\nunicode_mode = false\n", old_template).find("radical_mode = false") !=
+        std::string::npos);
+    REQUIRE(MergeConfigIntoTemplate(next, old_template, old_template).find("radical_mode = true") != std::string::npos);
+    // 已经有新键时以新键为准，残留的旧键不再起作用。
+    REQUIRE(MergeConfigIntoTemplate(next, "[utility]\nunicode_mode = false\nradical_mode = true\n", next)
+                .find("radical_mode = true") != std::string::npos);
+}
+
 TEST_CASE(shortcut_config_upgrade_preserves_word_selection_and_adds_defaults)
 {
     const std::string old_config =

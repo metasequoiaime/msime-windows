@@ -217,8 +217,6 @@ KeyResult InputSession::insert_at_caret(char character)
         switch (local_input_mode_)
         {
         case LocalInputMode::Radical:
-            accepted = lower;
-            break;
         case LocalInputMode::QuickPhrase:
             accepted = lower;
             break;

@@ -514,6 +514,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/clipboard/clipboard_history.h"
     "./src/utils/common_utils.cpp"
     "./src/utils/common_utils.h"
+    "./src/utils/hanzi_pinyin.cpp"
+    "./src/utils/hanzi_pinyin.h"
     "./src/utils/ime_paths.cpp"
     "./src/utils/network_proxy.cpp"
     "./src/utils/network_proxy.h"

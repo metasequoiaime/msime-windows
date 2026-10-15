@@ -602,7 +602,8 @@ bool LoadImeConfig()
         g_assoc_sentence_source_badge = tbl["association"]["sentence_source_badge"].value_or(false);
         g_emoji_mixed_input_enabled = tbl["general"]["emoji_mixed_input"].value_or(false);
         g_kaomoji_mixed_input_enabled = tbl["general"]["kaomoji_mixed_input"].value_or(false);
-        g_radical_mode_enabled = tbl["utility"]["radical_mode"].value_or(true);
+        // 改名前的 unicode_mode 作迁移兜底；升级合并已把它搬到新键，新写入只用新键。
+        g_radical_mode_enabled = tbl["utility"]["radical_mode"].value_or(tbl["utility"]["unicode_mode"].value_or(true));
         g_quick_phrase_enabled = tbl["utility"]["quick_phrase"].value_or(true);
         g_quick_phrase_candidates_enabled = tbl["utility"]["quick_phrase_candidates"].value_or(false);
         g_quick_phrase_frequency_enabled = tbl["utility"]["quick_phrase_frequency"].value_or(true);

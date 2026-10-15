@@ -428,6 +428,13 @@ int run_test()
                   "ririri\t晶\t106\r\n"
                   "ririri\t晿\t1\r\n"
                   "riririri\t𣊭\t1\r\n"
+                  "koukoukou\t品\t500\r\n"
+                  "koukou\t吅\t300\r\n"
+                  "ma\t马\t50\r\n"
+                  "kou\t口\t10\r\n"
+                  "majiong\t駉\t5\r\n"
+                  "majiongkou\t駉\t5\r\n"
+                  "matongkou\t駉\t4\r\n"
                   "# 末尾注释\r\n"
                   "heng\t少一列\r\n"
                   "heng\t字频非整数\txx\r\n";
@@ -447,6 +454,18 @@ int run_test()
     const auto radical_file_order = metasequoia::local_modes::query_radical(decomposition, "a", 50);
     require(radical_file_order.size() == 2 && radical_file_order[0].word == "乙" && radical_file_order[1].word == "甲",
             "Radical lookup ranked by spelling instead of the table's frequency order.");
+    // 打全了某个字的拆法，它排在更高频的长码前面，limit 再小也挤不掉。
+    const auto radical_exact_first = metasequoia::local_modes::query_radical(decomposition, "kou", 50);
+    require(radical_exact_first.size() == 3 && radical_exact_first[0].word == "口" &&
+                radical_exact_first[1].word == "品" && radical_exact_first[2].word == "吅" &&
+                metasequoia::local_modes::query_radical(decomposition, "kou", 1).front().word == "口",
+            "Radical lookup ranked a complete decomposition below longer, more frequent prefix matches.");
+    // 一个字的几种拆法共享前缀时只出一次。
+    const auto radical_deduplicated = metasequoia::local_modes::query_radical(decomposition, "ma", 50);
+    require(radical_deduplicated.size() == 2 && radical_deduplicated[0].word == "马" &&
+                radical_deduplicated[1].word == "駉" &&
+                metasequoia::local_modes::query_radical(decomposition, "majiong", 50).size() == 1,
+            "Radical lookup listed one character once per decomposition sharing the typed prefix.");
     require(
         metasequoia::local_modes::query_radical(decomposition, "", 50).empty() &&
             metasequoia::local_modes::query_radical(decomposition, "Ri", 50).empty() &&

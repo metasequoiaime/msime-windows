@@ -18,7 +18,11 @@
 #include "english/english_ime.h"
 #include "mixed/mixed_candidates.h"
 #include "engine/neural/rescore_worker.h"
+#include "engine/contracts/assets/assets.h"
+#include "engine/core/runtime_paths.h"
+#include "engine/local_modes/radical_query.h"
 #include "utils/common_utils.h"
+#include "utils/hanzi_pinyin.h"
 #include "utils/single_instance.h"
 #include "session/session_factory.h"
 #include "statistics/stats_pipe.h"
@@ -197,8 +201,21 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
                            [](MixedCandidates::Result result, const std::string &input, uint64_t generation) {
                                FanyNamedPipe::EnqueueMixedCandidates(std::move(result), input, generation);
                            });
+    // U 模式第一次查询要解析十几万行的拆字表、加载 cpp-pinyin 词典，放在按键回复里会卡住 Shift+U
+    // 之后的第一个字母。没开这个模式的用户不多读这两份数据。
+    std::thread radical_warmup;
+    if (GetConfiguredRadicalModeEnabled())
+    {
+        radical_warmup = std::thread([] {
+            metasequoia::local_modes::preload_radical_table(
+                metasequoia::RuntimePaths::legacy().resource(metasequoia::assets::radical_decomposition));
+            (void)HanziPinyin::Engine();
+        });
+    }
 
     int ret = CreateCandidateWindow(hInstance);
+    if (radical_warmup.joinable())
+        radical_warmup.join();
 
     FanyNamedPipe::RegisterStatusSnapshotWindow(nullptr);
     ShutdownWebviews();

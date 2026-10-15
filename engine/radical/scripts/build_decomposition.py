@@ -21,6 +21,22 @@ import sys
 from pathlib import Path
 
 
+def is_han_character(char: str) -> bool:
+    """CJK 统一汉字（基本区、扩展 A 及第二、三平面的扩展区）、兼容汉字和〇。
+
+    上游表在 `abc` 码下收了一批数字、拉丁/希腊字母和数学符号，它们没有部件可拆，不该出现在
+    拆字候选里。第二、三平面整体按汉字放行，新的扩展区不用逐个登记。
+    """
+    code = ord(char)
+    return (
+        code == 0x3007
+        or 0x3400 <= code <= 0x4DBF
+        or 0x4E00 <= code <= 0x9FFF
+        or 0xF900 <= code <= 0xFAFF
+        or 0x20000 <= code <= 0x3FFFF
+    )
+
+
 def parse_source(path: Path) -> tuple[str, list[tuple[str, str, int]]]:
     """Return (upstream version, entries). Entries are (char, code_without_apostrophe, weight)."""
     version = ""
@@ -43,7 +59,7 @@ def parse_source(path: Path) -> tuple[str, list[tuple[str, str, int]]]:
         if len(parts) < 3:
             continue
         char, code, weight = parts[0], parts[1], parts[2]
-        if len(char) != 1:
+        if len(char) != 1 or not is_han_character(char):
             continue
         try:
             rank = int(weight)

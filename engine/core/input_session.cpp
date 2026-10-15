@@ -912,7 +912,8 @@ KeyResult InputSession::handle_local_character(char character)
         local_preedit_.push_back(character);
         return {true, std::nullopt, update_local_candidates()};
     }
-    if (local_input_mode_ == LocalInputMode::QuickPhrase)
+    // 快捷短语码与 U 模式的部件拼音连写都只收小写 a-z：其它键吞掉、预编辑不变。
+    if (local_input_mode_ == LocalInputMode::QuickPhrase || local_input_mode_ == LocalInputMode::Radical)
     {
         if (character < 'a' || character > 'z')
         {
@@ -936,17 +937,6 @@ KeyResult InputSession::handle_local_character(char character)
         local_preedit_.push_back(character);
         return {true, std::nullopt, update_local_candidates()};
     }
-    if (local_input_mode_ == LocalInputMode::Radical)
-    {
-        // U 模式只收小写 a-z（部件拼音连写，撇号已被去段规则挡在外面）：其它键吞掉、预编辑不变。
-        if (character < 'a' || character > 'z')
-        {
-            return {true, std::nullopt, std::nullopt};
-        }
-        local_preedit_.push_back(character);
-        return {true, std::nullopt, update_local_candidates()};
-    }
-
     return {};
 }
 

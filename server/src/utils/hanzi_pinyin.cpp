@@ -20,12 +20,13 @@ std::filesystem::path ExecutableDirectory()
         return {};
     return std::filesystem::path(path).parent_path();
 }
+} // namespace
 
 // cpp-pinyin 的词典由 CMake 的 POST_BUILD 拷到可执行文件旁的 dict\。Server 与设置进程各自
 // 初始化一次：设置页的导入注音也用它，两边共用同一份词典拷贝，只是进程内各持一个实例。
 // 词典缺失或损坏时 cpp-pinyin 会抛出，这里吞掉并留空实例——候选组装在按键路径上，绝不能
 // 让第三方初始化失败把输入法打崩。
-Pinyin::Pinyin *Annotator()
+Pinyin::Pinyin *Engine()
 {
     static std::once_flag once;
     static std::unique_ptr<Pinyin::Pinyin> engine;
@@ -42,7 +43,6 @@ Pinyin::Pinyin *Annotator()
     });
     return engine.get();
 }
-} // namespace
 
 std::string Annotate(const std::string &hanzi)
 {
@@ -50,7 +50,7 @@ std::string Annotate(const std::string &hanzi)
     {
         return {};
     }
-    Pinyin::Pinyin *annotator = Annotator();
+    Pinyin::Pinyin *annotator = Engine();
     if (annotator == nullptr)
     {
         return {};

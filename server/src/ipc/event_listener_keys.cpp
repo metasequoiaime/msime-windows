@@ -464,16 +464,9 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         {
             return false;
         }
-        // U 模式的收键集合就是「小写 a-z」一条：引号、分号、斜杠、长音符、大写字母（部件拼音
-        // 连写只可能是小写）这些在别的模式下是编码键的字符，进了 U 模式一律吞掉、预编辑不变——
-        // 否则串里多出一个非 a-z 字符会让 IsRadicalCompositionActive 判否，候选整段掉回普通
-        // 拼音路径，而引擎的 handle_local_character 是直接吞的，两侧就不一致了。
-        // 判据落在 input（由 wch 推出）而不是 keycode：VK 码恒为大写字母，按 keycode 判会把小写
-        // 部件字母（r/i/…）一并吞掉，U 模式就再也进不了码。
-        if (IsRadicalCompositionActive(raw) && (input < 'a' || input > 'z'))
-        {
-            return true;
-        }
+        // U 模式里引号、分号、斜杠、大写字母这些键不能在这里吞掉：TSF 已经把它们当输入键记进了
+        // 自己的按键缓冲，吞掉又不发 CompositionRestored 重同步，两侧的串和光标就会错位，之后的
+        // 退格删的也不是同一个字符。照常插入，拆字查询对含非 a-z 的码返回空候选即可。
         if (input == '\'' && ((composition.caret_position > 0 && raw[composition.caret_position - 1] == '\'') ||
                               (composition.caret_position < raw.size() && raw[composition.caret_position] == '\'')))
         {

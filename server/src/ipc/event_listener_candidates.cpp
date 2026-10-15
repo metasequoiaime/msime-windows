@@ -24,7 +24,6 @@
 #include "config/ime_config.h"
 #include "settings/collocation_model.h"
 #include "engine/local_modes/quick_phrase_query.h"
-#include "engine/local_modes/radical_query.h"
 #include "engine/local_modes/date_time_query.h"
 #include "engine/local_modes/emoji_query.h"
 #include "engine/local_modes/kaomoji_query.h"
@@ -674,7 +673,8 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     }
     else if (IsRadicalInput(current_input))
     {
-        items = metasequoia::local_modes::query_radical(current_input.substr(1));
+        // 串里混进了 a-z 以外的字符（撇号、大写字母等）时查不到任何字，候选为空。
+        items = g_inputSession->query_radical(current_input.substr(1));
     }
     else if (IsQuickPhraseInput(current_input))
     {

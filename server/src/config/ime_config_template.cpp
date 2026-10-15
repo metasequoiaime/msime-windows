@@ -98,6 +98,15 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
                                    (default_font == user_values.end() ? "\"Microsoft YaHei\"" : default_font->second) +
                                    "]";
     }
+    // Shift+U 由 Unicode 码位输入改成了部件拆字反查，开关从 utility.unicode_mode 改名为
+    // utility.radical_mode。旧键已不在模板里、会被丢弃：关掉过它的用户（Shift+U 直接打大写 U）
+    // 升级后不能被悄悄重新打开。
+    const auto radical_mode_id = MakeTomlAssignmentId("utility", "radical_mode");
+    const auto unicode_mode = user_values.find(MakeTomlAssignmentId("utility", "unicode_mode"));
+    if (unicode_mode != user_values.end() && user_values.find(radical_mode_id) == user_values.end())
+    {
+        user_values[radical_mode_id] = unicode_mode->second;
+    }
     struct ValuePatch
     {
         size_t begin;

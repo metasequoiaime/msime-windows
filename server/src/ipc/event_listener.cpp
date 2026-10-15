@@ -215,12 +215,12 @@ bool IsQuickPhraseCompositionActive(const std::string &raw)
     return g_quick_phrase_triggered && !raw.empty() && raw.front() == 'K';
 }
 
-// U 模式：首字符 U，其余是小写 a-z 的部件拼音连写（裸 U、U+ 这些中间态也算激活，避免被当普通拼音）。
+// U 模式：Shift+U 唤醒后整段组合都归它，和 K 模式一样只看唤醒标记与首字符。串里混进的撇号、
+// 大写字母等照常进 raw（TSF 的按键缓冲同样收下它们，两侧才不会错位），只是查不出候选；
+// 判据若要求其余全是 a-z，这种串就会掉回普通拼音路径。
 bool IsRadicalCompositionActive(const std::string &raw)
 {
-    if (!g_radical_mode_triggered || raw.empty() || raw.front() != 'U')
-        return false;
-    return std::all_of(raw.begin() + 1, raw.end(), [](unsigned char ch) { return ch >= 'a' && ch <= 'z'; });
+    return g_radical_mode_triggered && !raw.empty() && raw.front() == 'U';
 }
 
 // T 后面是小写唤醒词，或者以数字开头的指定日期时间（形状见 engine/contracts/date_time_input.h）。后者

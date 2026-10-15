@@ -1,6 +1,5 @@
 #include "radical_query.h"
 
-#include "../contracts/assets/assets.h"
 #include "../core/data_path.h"
 
 #include <algorithm>
@@ -8,7 +7,9 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace metasequoia::local_modes
@@ -126,11 +127,6 @@ std::shared_ptr<const Table> cached_table(const std::filesystem::path &path)
 }
 } // namespace
 
-std::vector<WordItem> query_radical(const std::string &code, int limit)
-{
-    return query_radical(data_file_path(metasequoia::assets::radical_decomposition), code, limit);
-}
-
 std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code, int limit)
 {
     if (limit <= 0 || code.empty() || !is_lower_ascii_code(code))
@@ -147,7 +143,10 @@ std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_p
         table->by_code.begin(), table->by_code.end(), code,
         [&](std::size_t index, const std::string &value) { return table->entries[index].code < value; });
 
-    std::vector<std::size_t> matches;
+    // 全码命中在前、仅前缀命中在后，各自按字频：打全了某个生僻字的拆法，它不能被一串更高频的
+    // 长码挤出 limit。
+    std::vector<std::size_t> exact_matches;
+    std::vector<std::size_t> prefix_matches;
     for (auto it = lower; it != table->by_code.end(); ++it)
     {
         const std::string &entry_code = table->entries[*it].code;
@@ -156,20 +155,39 @@ std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_p
             // 同一前缀的行在排序视图里连续，越过前缀范围即可停。
             break;
         }
-        matches.push_back(*it);
+        (entry_code.size() == code.size() ? exact_matches : prefix_matches).push_back(*it);
     }
-    // 下标就是文件顺序（字频降序），排序后取前 limit 条即高频优先。
-    std::sort(matches.begin(), matches.end());
+    // 下标就是文件顺序（字频降序），排序后即高频优先。
+    std::sort(exact_matches.begin(), exact_matches.end());
+    std::sort(prefix_matches.begin(), prefix_matches.end());
 
-    const std::size_t count = (std::min)(static_cast<std::size_t>(limit), matches.size());
+    const auto count = static_cast<std::size_t>(limit);
     std::vector<WordItem> result;
-    result.reserve(count);
-    for (std::size_t index = 0; index < count; ++index)
+    // 一个字常有几种拆法（駉 = majiong / majiongkou / matongkou），共享同一前缀时只出一次，
+    // 位置取它排得最前的那条。
+    std::unordered_set<std::string_view> seen;
+    for (const auto *matches : {&exact_matches, &prefix_matches})
     {
-        const Entry &entry = table->entries[matches[index]];
-        // 注音不在这里填：引擎没有汉字→拼音能力，由 Server 组装候选时补。
-        result.emplace_back(std::string{}, entry.word, entry.weight, CandidateSource::Generated);
+        for (const std::size_t index : *matches)
+        {
+            if (result.size() >= count)
+            {
+                return result;
+            }
+            const Entry &entry = table->entries[index];
+            if (!seen.insert(entry.word).second)
+            {
+                continue;
+            }
+            // 注音不在这里填：引擎没有汉字→拼音能力，由 Server 组装候选时补。
+            result.emplace_back(std::string{}, entry.word, entry.weight, CandidateSource::Generated);
+        }
     }
     return result;
+}
+
+void preload_radical_table(const std::filesystem::path &decomposition_path)
+{
+    cached_table(decomposition_path);
 }
 } // namespace metasequoia::local_modes

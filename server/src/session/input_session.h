@@ -36,6 +36,12 @@ class IInputSession
     {
         return std::nullopt;
     }
+    // U 模式拆字反查：code 是唤醒键 U 之后的部件拼音连写，拆字表按本会话捕获的资源布局
+    // 解析，语义见 engine local_modes::query_radical。默认没有候选。
+    virtual std::vector<WordItem> query_radical(const std::string &) const
+    {
+        return {};
+    }
 
     virtual const std::string &get_pinyin_sequence() const = 0;
     virtual const std::string &get_pinyin_sequence_with_cases() const = 0;

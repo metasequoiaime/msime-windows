@@ -6,6 +6,7 @@
 #include "defines/defines.h"
 #include "settings/dictionary_validation.h"
 #include "utils/common_utils.h"
+#include "utils/hanzi_pinyin.h"
 #include "engine/common/helpcode_utils.h"
 #include "engine/quanpin/quanpin_query.h"
 #include "engine/quanpin/quanpin_utils.h"
@@ -61,27 +62,6 @@ void NotifyImeServerClearDictCache()
         PostMessageW(hwnd, WM_CLS_DICT_CACHE, 0, 0);
     else if (const HWND anyClassHwnd = FindWindowW(L"metasequoiaime_windows", nullptr))
         PostMessageW(anyClassHwnd, WM_CLS_DICT_CACHE, 0, 0);
-}
-
-std::filesystem::path SettingsExecutableDirectory()
-{
-    wchar_t path[MAX_PATH] = {};
-    const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH)
-        return {};
-    return std::filesystem::path(path).parent_path();
-}
-
-Pinyin::Pinyin &PinyinAnnotator()
-{
-    static std::once_flag once;
-    static std::unique_ptr<Pinyin::Pinyin> engine;
-    std::call_once(once, [] {
-        const auto dict_path = SettingsExecutableDirectory() / "dict";
-        Pinyin::setDictionaryPath(dict_path);
-        engine = std::make_unique<Pinyin::Pinyin>();
-    });
-    return *engine;
 }
 
 std::string NormalizeAnnotatedSyllable(std::string syllable)
@@ -151,8 +131,14 @@ bool AnnotateHansToPinyin(const std::string &word, std::string &code, std::strin
         return false;
     }
 
-    const auto results = PinyinAnnotator().hanziToPinyin(word, Pinyin::ManTone::Style::NORMAL, Pinyin::Error::Default,
-                                                         false, false, false);
+    Pinyin::Pinyin *annotator = HanziPinyin::Engine();
+    if (annotator == nullptr)
+    {
+        message = "拼音注音引擎初始化失败";
+        return false;
+    }
+    const auto results =
+        annotator->hanziToPinyin(word, Pinyin::ManTone::Style::NORMAL, Pinyin::Error::Default, false, false, false);
     if (results.empty())
     {
         message = "注音失败";
@@ -648,15 +634,10 @@ json::object ImportHans(const json::object &request)
     if (content.find_first_not_of(" \t\r\n") == std::string::npos)
         return Result(false, "文件内容为空");
 
-    try
-    {
-        (void)PinyinAnnotator();
-    }
-    catch (...)
-    {
+    Pinyin::Pinyin *annotator = HanziPinyin::Engine();
+    if (annotator == nullptr)
         return Result(false, "拼音注音引擎初始化失败");
-    }
-    if (!PinyinAnnotator().initialized())
+    if (!annotator->initialized())
         return Result(false, "拼音词典未就绪，请确认 dict 目录与设置程序同级");
 
     std::string error;
