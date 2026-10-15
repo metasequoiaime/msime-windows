@@ -54,6 +54,7 @@ try {
             if (-not ([IO.File]::ReadAllText($installLog).Contains('目标数据目录已有 config.toml'))) {
                 throw 'migration-conflict: log has no conflict message'
             }
+            $global:LASTEXITCODE = 0
             continue
         }
         if ($LASTEXITCODE -ne 0) { throw "$($case.Name): setup failed ($LASTEXITCODE)" }
