@@ -58,8 +58,8 @@ std::string Annotate(const std::string &hanzi)
     try
     {
         // 带调号（jīng）比不带调（jing）更能说清生僻字怎么读；多音字取 cpp-pinyin 的默认读音。
-        const auto results = annotator->hanziToPinyin(hanzi, Pinyin::ManTone::Style::TONE, Pinyin::Error::Default,
-                                                      false, false, false);
+        const auto results =
+            annotator->hanziToPinyin(hanzi, Pinyin::ManTone::Style::TONE, Pinyin::Error::Default, false, false, false);
         if (results.empty())
         {
             return {};

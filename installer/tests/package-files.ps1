@@ -31,6 +31,7 @@ try {
         'server/src/resource/MetasequoiaIME.ico',
         'windows/image/msime.ico',
         'engine/helpcode/helpcodes/helpcode.txt',
+        'engine/radical/decomposition.txt',
         'engine/googlepinyinime-rev/data/dict_pinyin.dat',
         'MetasequoiaImeDict/out/msime.db',
         'MetasequoiaImeDict/out/others.db',
