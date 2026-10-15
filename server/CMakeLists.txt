@@ -155,6 +155,7 @@ set(SRC_FILES
     "./src/ai/ai_assistant_request.h"
     "./src/ai/chat_completions.cpp"
     "./src/ai/chat_completions.h"
+    "./src/ai/chat_request_params.h"
     "./src/clipboard/clipboard_history.cpp"
     "./src/clipboard/clipboard_history.h"
     "./src/cloud/ai_translation.cpp"
@@ -224,6 +225,7 @@ set(SRC_FILES
     "./src/settings/settings_launcher.h"
     "./src/settings/api_credential_test.cpp"
     "./src/settings/api_credential_test.h"
+    "./src/settings/api_credential_test_request.h"
     "./src/settings/collocation_model.cpp"
     "./src/settings/collocation_model.h"
     "./src/skin/candidate_skin_catalog.cpp"
@@ -448,8 +450,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 set(SETTINGS_EXECUTABLE_NAME "MetasequoiaImeSettings")
 add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/settings_app.cpp"
+    "./src/ai/chat_request_params.h"
     "./src/settings/api_credential_test.cpp"
     "./src/settings/api_credential_test.h"
+    "./src/settings/api_credential_test_request.h"
     "./src/settings/collocation_model.cpp"
     "./src/settings/collocation_model.h"
     "./src/settings/neural_model.cpp"

@@ -1,4 +1,5 @@
 #include "ai/ai_assistant_request.h"
+#include "settings/api_credential_test_request.h"
 #include "tests/includes/test_framework.h"
 
 namespace
@@ -94,4 +95,39 @@ TEST_CASE(ai_request_keeps_custom_provider_request_shape)
     REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
     REQUIRE(!body.contains("reasoning_effort"));
     REQUIRE(!body.contains("thinking"));
+}
+
+TEST_CASE(credential_test_uses_openai_completion_limit)
+{
+    for (const char *model : {"gpt-4o-mini", "gpt-5.6-luna", "o3-mini"})
+    {
+        const auto body = ApiCredentialTest::detail::BuildChatRequestBody("OpenAI", model);
+        REQUIRE_EQ(body["model"].get<std::string>(), std::string(model));
+        REQUIRE_EQ(body["max_completion_tokens"].get<int>(), 1);
+        REQUIRE(!body.contains("max_tokens"));
+        REQUIRE(!body.contains("reasoning_effort"));
+        REQUIRE(!body.contains("thinking"));
+        REQUIRE(!body.contains("temperature"));
+        REQUIRE_EQ(body["messages"][0]["content"].get<std::string>(), "Reply OK");
+    }
+}
+
+TEST_CASE(credential_test_keeps_other_provider_request_shape)
+{
+    const auto deepseek = ApiCredentialTest::detail::BuildChatRequestBody("deepseek", "deepseek-chat");
+    REQUIRE_EQ(deepseek["max_tokens"].get<int>(), 1);
+    REQUIRE(!deepseek.contains("max_completion_tokens"));
+    REQUIRE_EQ(deepseek["thinking"]["type"].get<std::string>(), "disabled");
+    REQUIRE(!deepseek.contains("enable_thinking"));
+
+    const auto siliconflow = ApiCredentialTest::detail::BuildChatRequestBody("siliconflow", "Qwen/Qwen3-8B");
+    REQUIRE_EQ(siliconflow["max_tokens"].get<int>(), 1);
+    REQUIRE_EQ(siliconflow["enable_thinking"].get<bool>(), false);
+    REQUIRE(!siliconflow.contains("max_completion_tokens"));
+
+    const auto custom = ApiCredentialTest::detail::BuildChatRequestBody("custom", "gpt-5.6-luna");
+    REQUIRE_EQ(custom["max_tokens"].get<int>(), 1);
+    REQUIRE(!custom.contains("max_completion_tokens"));
+    REQUIRE(!custom.contains("thinking"));
+    REQUIRE(!custom.contains("enable_thinking"));
 }

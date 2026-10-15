@@ -1,4 +1,5 @@
 #include "api_credential_test.h"
+#include "api_credential_test_request.h"
 
 #include "cloud/ai_translation.h"
 #include "cloud/custom_translation.h"
@@ -157,16 +158,8 @@ ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
         return {false, "请先填写有效的 API Key。"};
     if (!IsHttpEndpoint(endpoint) || model.empty())
         return {false, "请填写有效的 HTTPS 接口地址和模型名。"};
-    nlohmann::json body = {{"model", model},
-                           {"stream", false},
-                           {"max_tokens", 1},
-                           {"messages", {{{"role", "user"}, {"content", "Reply OK"}}}}};
     const std::string provider = Value(request, "provider");
-    if (provider == "deepseek")
-        body["thinking"] = {{"type", "disabled"}};
-    else if (provider == "siliconflow")
-        body["enable_thinking"] = false;
-    const std::string payload = body.dump();
+    const std::string payload = ApiCredentialTest::detail::BuildChatRequestBody(provider, model).dump();
     const HttpResponse response = PerformJsonRequest(endpoint, token, &payload);
     if (response.code == CURLE_OK && response.status >= 200 && response.status < 300)
         return {true, "连接成功，API Key 和模型配置有效。"};
