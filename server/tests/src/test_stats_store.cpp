@@ -1,6 +1,7 @@
 #include "tests/includes/test_framework.h"
 #include "tests/includes/test_utf8_path.h"
 
+#include "statistics/stats_candidate_capture.h"
 #include "statistics/stats_overview.h"
 #include "statistics/stats_store.h"
 
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -84,6 +86,11 @@ bool HasHour(const std::vector<HourlyRow> &rows, int day_key, int hour)
 {
     return std::any_of(rows.begin(), rows.end(),
                        [day_key, hour](const HourlyRow &row) { return row.day_key == day_key && row.hour == hour; });
+}
+
+bool NearlyEqual(double left, double right)
+{
+    return std::abs(left - right) <= 0.001;
 }
 
 class RawDb
@@ -366,8 +373,9 @@ TEST_CASE(stats_store_schema_has_no_text_columns)
                                "SELECT name FROM pragma_table_info('stats_daily') "
                                "UNION ALL SELECT name FROM pragma_table_info('stats_hourly')",
                                -1, &statement, nullptr) == SQLITE_OK);
-    const std::vector<std::string> allowed = {"day_key", "hour",  "cjk",   "latin",    "digit",
-                                              "punct",   "other", "chars", "active_ms"};
+    const std::vector<std::string> allowed = {"day_key",         "hour",  "cjk",   "latin",     "digit",
+                                              "punct",           "other", "chars", "active_ms", "first_word_hits",
+                                              "first_word_total"};
     int step = SQLITE_OK;
     while ((step = sqlite3_step(statement)) == SQLITE_ROW)
     {
@@ -725,4 +733,214 @@ TEST_CASE(stats_store_retention_malformed_marker_self_repairs)
     REQUIRE(store->DailyRows(rows, error));
     REQUIRE(!HasDay(rows, MsimeStats::AddDays(today, -100)));
     REQUIRE(HasDay(rows, today));
+}
+
+// A v1 database (the shipped schema up to now) must open, keep its rows, gain
+// the two first-word columns filled with 0 (the migration must not invent any
+// measurement for days that had none) and be stamped with the new version.
+TEST_CASE(stats_store_migrates_v1_database_with_version_key)
+{
+    ScopedTempDir temp;
+    const fs::path db_path = temp.Root() / L"stats.db";
+    {
+        RawDb raw(db_path);
+        REQUIRE(sqlite3_exec(raw.get(),
+                             "CREATE TABLE stats_daily(day_key INTEGER PRIMARY KEY, cjk INTEGER NOT NULL DEFAULT 0, "
+                             "latin INTEGER NOT NULL DEFAULT 0, digit INTEGER NOT NULL DEFAULT 0, "
+                             "punct INTEGER NOT NULL DEFAULT 0, other INTEGER NOT NULL DEFAULT 0, "
+                             "active_ms INTEGER NOT NULL DEFAULT 0);"
+                             "CREATE TABLE stats_hourly(day_key INTEGER NOT NULL, hour INTEGER NOT NULL, "
+                             "chars INTEGER NOT NULL DEFAULT 0, active_ms INTEGER NOT NULL DEFAULT 0, "
+                             "PRIMARY KEY(day_key, hour));"
+                             "CREATE TABLE stats_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                             "INSERT INTO stats_meta(key, value) VALUES('schema_version', '1');"
+                             "INSERT INTO stats_daily(day_key, cjk, active_ms) VALUES(20260919, 42, 1000);",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+    }
+
+    std::string error;
+    std::unique_ptr<Store> store = Store::Open(db_path, error);
+    REQUIRE(store != nullptr);
+
+    std::vector<DailyRow> rows;
+    REQUIRE(store->DailyRows(rows, error));
+    REQUIRE_EQ(rows.size(), 1u);
+    REQUIRE_EQ(rows[0].cjk, 42);
+    REQUIRE_EQ(rows[0].active_ms, 1000);
+    // 历史日线补 0：迁移不给没有测量的日子编造命中率。
+    REQUIRE_EQ(rows[0].first_word_hits, 0);
+    REQUIRE_EQ(rows[0].first_word_total, 0);
+
+    std::string value;
+    bool present = false;
+    REQUIRE(store->Meta(MsimeStats::kStoreMetaSchemaVersion, value, present, error));
+    REQUIRE(present);
+    REQUIRE_EQ(value, std::string(MsimeStats::kStoreSchemaVersion));
+}
+
+// A database whose tables exist but were never stamped (a v1 file from before
+// the meta key had that meaning, or a partially created one) migrates too:
+// deciding from the metadata alone would strand it with a missing key.
+TEST_CASE(stats_store_migrates_v1_database_without_version_key)
+{
+    ScopedTempDir temp;
+    const fs::path db_path = temp.Root() / L"stats.db";
+    {
+        RawDb raw(db_path);
+        REQUIRE(sqlite3_exec(raw.get(),
+                             "CREATE TABLE stats_daily(day_key INTEGER PRIMARY KEY, cjk INTEGER NOT NULL DEFAULT 0, "
+                             "latin INTEGER NOT NULL DEFAULT 0, digit INTEGER NOT NULL DEFAULT 0, "
+                             "punct INTEGER NOT NULL DEFAULT 0, other INTEGER NOT NULL DEFAULT 0, "
+                             "active_ms INTEGER NOT NULL DEFAULT 0);"
+                             "INSERT INTO stats_daily(day_key, cjk) VALUES(20260920, 7);",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+    }
+
+    std::string error;
+    std::unique_ptr<Store> store = Store::Open(db_path, error);
+    REQUIRE(store != nullptr);
+
+    std::vector<DailyRow> rows;
+    REQUIRE(store->DailyRows(rows, error));
+    REQUIRE_EQ(rows.size(), 1u);
+    REQUIRE_EQ(rows[0].cjk, 7);
+    std::string value;
+    bool present = false;
+    REQUIRE(store->Meta(MsimeStats::kStoreMetaSchemaVersion, value, present, error));
+    REQUIRE_EQ(value, std::string(MsimeStats::kStoreSchemaVersion));
+}
+
+// A brand-new database must be created at the current version directly.
+TEST_CASE(stats_store_fresh_database_is_created_at_current_version)
+{
+    ScopedTempDir temp;
+    fs::path db_path;
+    std::unique_ptr<Store> store = OpenStore(temp, db_path);
+
+    std::string value;
+    bool present = false;
+    std::string error;
+    REQUIRE(store->Meta(MsimeStats::kStoreMetaSchemaVersion, value, present, error));
+    REQUIRE(present);
+    REQUIRE_EQ(value, std::string(MsimeStats::kStoreSchemaVersion));
+
+    std::vector<DailyRow> rows;
+    REQUIRE(store->DailyRows(rows, error));
+    REQUIRE(rows.empty());
+}
+
+// The capture path writes one commit at a time; the counters must accumulate
+// across calls, feed the user-character counters nothing, and drive
+// FirstWordRatio (nullopt without selections, a real ratio with them).
+TEST_CASE(stats_store_upsert_first_word_selection_increments_independently)
+{
+    ScopedTempDir temp;
+    fs::path db_path;
+    std::unique_ptr<Store> store = OpenStore(temp, db_path);
+
+    const int today = DayKey(2026, 9, 20);
+    std::string error;
+    REQUIRE(store->UpsertFirstWordSelection(today, true, error));  // 首选
+    REQUIRE(store->UpsertFirstWordSelection(today, false, error)); // 次选
+    REQUIRE(store->UpsertFirstWordSelection(today, true, error));
+    REQUIRE(store->UpsertFirstWordSelection(DayKey(2026, 9, 19), false, error));
+
+    std::vector<DailyRow> rows;
+    REQUIRE(store->DailyRows(rows, error));
+    REQUIRE_EQ(rows.size(), 2u);
+    REQUIRE_EQ(rows[1].day_key, today);
+    REQUIRE_EQ(rows[1].first_word_hits, 2);
+    REQUIRE_EQ(rows[1].first_word_total, 3);
+    // 字符计数完全不被这条路径触碰：分母不是输入字数。
+    REQUIRE_EQ(rows[1].cjk, 0);
+    REQUIRE_EQ(rows[1].active_ms, 0);
+
+    const MsimeStats::Overview overview = MsimeStats::ComputeOverview(rows, {}, today);
+    REQUIRE(overview.today_first_word_ratio.has_value());
+    REQUIRE(NearlyEqual(*overview.today_first_word_ratio, 2.0 / 3.0));
+    REQUIRE_EQ(overview.today_first_word_total, 3);
+    // 没有选词的日子：nullopt，不是 0%。
+    REQUIRE(!rows[0].FirstWordRatio().has_value());
+    REQUIRE(rows[1].FirstWordRatio().has_value());
+    REQUIRE(NearlyEqual(*rows[1].FirstWordRatio(), 2.0 / 3.0));
+
+    // 管道侧的批量 upsert 与本计数互不覆盖：再写一批字符计数后两列仍在。
+    Batch batch;
+    batch.days.push_back(DayDelta{today, 5, 0, 0, 0, 0, 0});
+    REQUIRE(store->Upsert(batch, error));
+    rows.clear();
+    REQUIRE(store->DailyRows(rows, error));
+    REQUIRE_EQ(rows[1].cjk, 5);
+    REQUIRE_EQ(rows[1].first_word_hits, 2);
+    REQUIRE_EQ(rows[1].first_word_total, 3);
+}
+
+// The Chinese-candidate gate (the policy half of the capture): engine-ranked
+// Chinese output counts; mixed-in English, emoji-style synthetic lists, date
+// formats, translation glosses and the raw-fallback placeholder do not.
+// Japanese candidates are excluded by scheme at the call site.
+TEST_CASE(stats_capture_policy_counts_toward_first_word_selection)
+{
+    using MsimeStats::CountsTowardFirstWordSelection;
+    WordItem item;
+    item.source = CandidateSource::Database;
+    item.sentence_association = false;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::UserDatabase;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::CloudSuggestion;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::AiSuggestion;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::QuickPhrase;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::Generated;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::NeuralDesktop;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::NeuralKeyboard;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::Collocation;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+
+    // 整句联想是引擎输出，计入；同名 Fallback 的合成项（.raw 占位、译文页）不计。
+    item.source = CandidateSource::Fallback;
+    item.sentence_association = true;
+    REQUIRE(CountsTowardFirstWordSelection(item));
+    item.sentence_association = false;
+    REQUIRE(!CountsTowardFirstWordSelection(item));
+
+    item.sentence_association = false;
+    item.source = CandidateSource::EnglishDictionary;
+    REQUIRE(!CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::Emoji;
+    REQUIRE(!CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::Kaomoji;
+    REQUIRE(!CountsTowardFirstWordSelection(item));
+    item.source = CandidateSource::DateTime;
+    REQUIRE(!CountsTowardFirstWordSelection(item));
+}
+
+// 跨线程一致性由 Store 自身的 mutex 保证（管道线程与选词路径共用句柄）；
+// 这里冒烟验证共享句柄下的连续 upsert 与首日/版本元数据的读取走的是同一份 schema。
+TEST_CASE(stats_store_shared_store_reference_is_usable_from_capture_path)
+{
+    ScopedTempDir temp;
+    fs::path db_path;
+    std::unique_ptr<Store> store = OpenStore(temp, db_path);
+
+    std::string error;
+    const int today = DayKey(2026, 9, 20);
+    REQUIRE(store->UpsertFirstWordSelection(today, true, error));
+    REQUIRE(store->UpsertFirstWordSelection(today, true, error));
+
+    int first = 0;
+    bool present = false;
+    REQUIRE(store->FirstDay(first, present, error));
+    REQUIRE(present);
+    REQUIRE_EQ(first, today);
+    std::string value;
+    REQUIRE(store->Meta(MsimeStats::kStoreMetaSchemaVersion, value, present, error));
+    REQUIRE(present);
+    REQUIRE_EQ(value, std::string(MsimeStats::kStoreSchemaVersion));
 }

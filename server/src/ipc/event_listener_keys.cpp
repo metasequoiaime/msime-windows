@@ -24,6 +24,7 @@
 #include "session/session_factory.h"
 #include "mixed/date_time_candidates.h"
 #include "log/candidate_diag_log.h"
+#include "statistics/stats_candidate_capture.h"
 
 using namespace event_listener_detail;
 
@@ -1176,22 +1177,36 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
 
             WordItem highlighted_item;
             const bool highlighted_resolved = ResolveCandidateItem(ui.selected_index_in_page + 1, highlighted_item);
+            // 首词命中率：标点收尾带上屏候选时也是一次中文候选提交（用户决策 1：只有
+            // 「纯标点收尾不带候选」才排除）。真正上屏的那条候选要么是高亮项，要么（高亮
+            // 停在「📅日期」入口上时）是本页第一条；is_first 按实际提交的那条算。
+            int committed_index_in_page = -2;
             if (highlighted_resolved && metasequoia::local_modes::is_date_time_menu_item(highlighted_item))
             {
                 // 「📅日期」入口不是要上屏的字：高亮停在它上面时，标点带出本页首个候选。
                 ui.selected_text = FanyImeIpc::HighlightedCandidateText(ui.page_words, 0);
+                committed_index_in_page = 0;
             }
-            else if (word_character_direction != 0 && highlighted_resolved)
+            else if (highlighted_resolved)
             {
-                const auto edge = word_character_direction < 0 ? FanyImeIpc::HanCharacterEdge::First
-                                                               : FanyImeIpc::HanCharacterEdge::Last;
-                const auto character =
-                    FanyImeIpc::ExtractHanCharacter(CandidateTextForOutput(highlighted_item.word), edge);
-                if (character)
+                committed_index_in_page = ui.selected_index_in_page;
+                if (word_character_direction != 0)
                 {
-                    Global::MsgTypeToTsf = Global::DataFromServerMsgType::CommitExactText;
-                    ui.selected_text = string_to_wstring(*character);
+                    const auto edge = word_character_direction < 0 ? FanyImeIpc::HanCharacterEdge::First
+                                                                   : FanyImeIpc::HanCharacterEdge::Last;
+                    const auto character =
+                        FanyImeIpc::ExtractHanCharacter(CandidateTextForOutput(highlighted_item.word), edge);
+                    if (character)
+                    {
+                        Global::MsgTypeToTsf = Global::DataFromServerMsgType::CommitExactText;
+                        ui.selected_text = string_to_wstring(*character);
+                    }
                 }
+            }
+            if (committed_index_in_page >= 0 && !g_english_input_mode &&
+                MsimeStats::CountsTowardFirstWordSelection(highlighted_item))
+            {
+                MsimeStats::RecordCandidateSelection(ui.page_index == 0 && committed_index_in_page == 0);
             }
             SendCurrentDataToClient(client_id, activation_epoch, request_id);
         }

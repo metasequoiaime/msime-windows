@@ -30,7 +30,14 @@ namespace MsimeStats
 // on open; kStoreSchemaVersion is the value. They must stay distinct: a future
 // migration reads the key back and compares it against the current version.
 inline constexpr const char *kStoreMetaSchemaVersion = "schema_version";
-inline constexpr const char *kStoreSchemaVersion = "1";
+inline constexpr const char *kStoreSchemaVersion = "2";
+
+// First-word hit-rate columns of stats_daily (introduced by schema v2).
+// first_word_counts commits made from the candidate list; first_word_hits
+// counts those that selected the first candidate of the first page. Only
+// counts, never text: the privacy contract is unchanged.
+inline constexpr const char *kStoreColumnFirstWordHits = "first_word_hits";
+inline constexpr const char *kStoreColumnFirstWordTotal = "first_word_total";
 
 // MetaFirstDay holds the smallest day_key currently stored; it doubles as the
 // empty-state predicate (the key is deleted when no data remains) and is
@@ -84,6 +91,13 @@ class Store
     // first_day. An empty batch is a no-op.
     bool Upsert(const Batch &batch, std::string &error);
 
+    // UpsertFirstWordSelection credits one Chinese candidate commit on
+    // day_key without touching the character counters: +1 to first_word_total
+    // and, when is_first, +1 to first_word_hits. The incremental two-column
+    // update matches the design for the first-word hit rate; total == 0 days
+    // carry no ratio (see DailyRow::FirstWordRatio).
+    bool UpsertFirstWordSelection(int day_key, bool is_first, std::string &error);
+
     // DailyRows returns every recorded day, ascending.
     bool DailyRows(std::vector<DailyRow> &rows, std::string &error) const;
 
@@ -116,6 +130,12 @@ class Store
     Store(sqlite3 *db, std::filesystem::path path);
 
     bool Initialize(std::string &error);
+    // Lifts a v1 database (or one stamped with a superseded version) to
+    // kStoreSchemaVersion. Fresh databases already build with the v2 shape, so
+    // this becomes a no-op there. Returns false on failure; statistics are
+    // non-critical so callers only log.
+    bool ApplySchemaMigration(std::string &error);
+    bool TableHasColumn(const char *table, const char *column) const;
     bool Exec(const char *sql, std::string &error) const;
     bool BeginTransaction(std::string &error);
     void Rollback();

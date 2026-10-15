@@ -93,7 +93,8 @@
 
 .stats-cards {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* 5 cards: input volume ×3 + streak + first-word hit rate. */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }

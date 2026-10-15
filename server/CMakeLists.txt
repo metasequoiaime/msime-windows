@@ -235,6 +235,8 @@ set(SRC_FILES
     "./src/session/session_factory.h"
     "./src/statistics/stats_aggregate.cpp"
     "./src/statistics/stats_aggregate.h"
+    "./src/statistics/stats_candidate_capture.cpp"
+    "./src/statistics/stats_candidate_capture.h"
     "./src/statistics/stats_frames.cpp"
     "./src/statistics/stats_frames.h"
     "./src/statistics/stats_pipe.cpp"

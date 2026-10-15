@@ -289,3 +289,54 @@ TEST_CASE(stats_overview_history_ends_before_today)
     REQUIRE_EQ(overview.current_streak, 0);
     REQUIRE_EQ(overview.longest_streak, 2);
 }
+
+// 首词命中率只在服务端算（stats_types.h:272 的「前端只做格式化」契约）：
+// total==0 的日子（或整个历史）没有测量，必须以 nullopt（JSON null）呈现，
+// 由页面渲染「–」，绝不能让它读成 0%。
+TEST_CASE(stats_overview_first_word_ratio_empty_state_is_null)
+{
+    const Overview overview = MsimeStats::ComputeOverview({}, {}, kToday);
+    REQUIRE(!overview.has_data);
+    REQUIRE(!overview.today_first_word_ratio.has_value());
+    REQUIRE(!overview.total_first_word_ratio.has_value());
+    REQUIRE_EQ(overview.today_first_word_total, 0);
+
+    // 历史只有未产生候选上屏的日子同样是无测量。
+    const std::vector<DailyRow> rows = {Row(20260901, 10)};
+    const Overview no_selections = MsimeStats::ComputeOverview(rows, {}, kToday);
+    REQUIRE(no_selections.has_data);
+    REQUIRE(!no_selections.today_first_word_ratio.has_value());
+    REQUIRE(!no_selections.total_first_word_ratio.has_value());
+}
+
+TEST_CASE(stats_overview_first_word_ratio_today_and_total)
+{
+    DailyRow yesterday = Row(20260919, 100);
+    yesterday.first_word_hits = 4;
+    yesterday.first_word_total = 10; // 40%
+    DailyRow today = Row(kToday, 50);
+    today.first_word_hits = 7;
+    today.first_word_total = 10; // 70%
+    const Overview overview = MsimeStats::ComputeOverview({yesterday, today}, {}, kToday);
+
+    REQUIRE(overview.today_first_word_ratio.has_value());
+    REQUIRE(NearlyEqual(*overview.today_first_word_ratio, 0.7));
+    REQUIRE_EQ(overview.today_first_word_total, 10);
+    REQUIRE(overview.total_first_word_ratio.has_value());
+    REQUIRE(NearlyEqual(*overview.total_first_word_ratio, 0.55)); // 共 11/20
+}
+
+// 昨天有选词、今天没有：今日比率无测量，但累计比率仍然可算——
+// 「已产生过选词的历史」不能因为今天还没打字就整页变成无数据。
+TEST_CASE(stats_overview_first_word_ratio_today_without_selections)
+{
+    DailyRow yesterday = Row(20260919, 100);
+    yesterday.first_word_hits = 9;
+    yesterday.first_word_total = 12;
+    const Overview overview = MsimeStats::ComputeOverview({yesterday}, {}, kToday);
+
+    REQUIRE(!overview.today_first_word_ratio.has_value());
+    REQUIRE_EQ(overview.today_first_word_total, 0);
+    REQUIRE(overview.total_first_word_ratio.has_value());
+    REQUIRE(NearlyEqual(*overview.total_first_word_ratio, 0.75));
+}

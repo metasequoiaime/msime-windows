@@ -15,6 +15,7 @@
 #include "engine/local_modes/date_time_query.h"
 #include "engine/local_modes/quick_phrase_query.h"
 #include "log/candidate_diag_log.h"
+#include "statistics/stats_candidate_capture.h"
 
 using namespace event_listener_detail;
 
@@ -261,6 +262,13 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         // 升级回放时日文词就成了中文候选（#869）。日文候选一律不往拼音词库写。
         const bool japanese_candidate = curWordItem.scheme == SchemeType::JapaneseRomaji;
         isNeedUpdateWeight = !japanese_candidate && (mid_sentence_ranking || !is_first_page_first);
+        // 首词命中率（任务 10-14-stats-first-word-hit-rate）：所有真正上屏的中文候选提交在这里
+        // 计一次分母，首选（第 1 页第 1 位，即 is_first_page_first）同时 +1 分子。英文模式、
+        // 临时日语与合成候选（表情/颜文字/日期格式/U 模式/译文页）按 CountsTowardFirstWordSelection
+        // 的 source 门排除；普通路径的「造词中间段」这次键不上屏，在下面 isNeedCreateWord 判定后
+        // 才记账，避免多算未上屏的段。
+        const bool counts_toward_first_word =
+            !g_english_input_mode && !japanese_candidate && MsimeStats::CountsTowardFirstWordSelection(curWordItem);
         const size_t absolute_index =
             static_cast<size_t>(Global::candidate_ui.page_index) * static_cast<size_t>(Global::candidate_ui.page_size) +
             static_cast<size_t>(index);
@@ -321,6 +329,10 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             }
             GlobalIme::composition.clear();
             ClearSpecialModeTriggers();
+            if (counts_toward_first_word)
+            {
+                MsimeStats::RecordCandidateSelection(is_first_page_first);
+            }
             return;
         }
         std::string cloudCommittedPinyin;
@@ -508,6 +520,12 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             // next one where they could restore an unrelated spelling.
             GlobalIme::composition.selection_history.clear();
             ClearSpecialModeTriggers();
+            // 这次键的结算真正上屏（普通段、造词完成段、四码自动上屏与顶字的推送提交都汇到这里），
+            // 按用户决策记首词命中的分子/分母；造词中间段走 else 分支，不计。
+            if (counts_toward_first_word)
+            {
+                MsimeStats::RecordCandidateSelection(is_first_page_first);
+            }
         }
         else
         {

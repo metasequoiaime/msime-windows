@@ -83,17 +83,38 @@ Overview ComputeOverview(const std::vector<DailyRow> &rows, const std::vector<Ho
     overview.days = static_cast<int>(sorted.size());
     int64_t total_speed_chars = 0;
     int64_t today_speed_chars = 0;
+    int64_t total_first_word_hits = 0;
+    int64_t total_first_word_total = 0;
+    int64_t today_first_word_hits = 0;
     for (const DailyRow &row : sorted)
     {
         overview.total_chars += row.Total();
         overview.total_active_ms += row.active_ms;
         total_speed_chars += row.SpeedChars();
+        total_first_word_hits += row.first_word_hits;
+        total_first_word_total += row.first_word_total;
         if (row.day_key == today_day_key)
         {
             overview.today_chars = row.Total();
             overview.today_active_ms = row.active_ms;
             today_speed_chars = row.SpeedChars();
+            today_first_word_hits = row.first_word_hits;
+            overview.today_first_word_total = row.first_word_total;
         }
+    }
+    // Ratios are computed on the server (the frontend formats only, per the
+    // contract in stats_types.h). Zero selections mean "no measurement",
+    // surfaced as nullopt so the page can show the no-data marker instead of
+    // reading like a 0% hit rate.
+    if (total_first_word_total > 0)
+    {
+        overview.total_first_word_ratio =
+            static_cast<double>(total_first_word_hits) / static_cast<double>(total_first_word_total);
+    }
+    if (overview.today_first_word_total > 0)
+    {
+        overview.today_first_word_ratio =
+            static_cast<double>(today_first_word_hits) / static_cast<double>(overview.today_first_word_total);
     }
     for (const HourlyRow &bucket : today_hourly)
     {

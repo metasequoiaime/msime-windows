@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace MsimeStats
@@ -180,6 +181,12 @@ struct DailyRow
     int64_t punct = 0;
     int64_t other = 0;
     int64_t active_ms = 0;
+    // First-candidate hit-rate counters (schema v2): the numerator counts
+    // commits that selected the first candidate of the first page, the
+    // denominator counts commits made from the candidate list at all. Only
+    // counts, never text: the privacy contract is unchanged.
+    int64_t first_word_hits = 0;
+    int64_t first_word_total = 0;
 
     // Total returns the day's character count across all categories. This is
     // the production metric used by the cards, best day, calendar and detail
@@ -187,6 +194,19 @@ struct DailyRow
     int64_t Total() const
     {
         return cjk + latin + digit + punct + other;
+    }
+
+    // FirstWordRatio returns the first-candidate hit rate of the day. A day
+    // with no candidate-list commits (total == 0) has no measurement: the
+    // frontend must show "no data" for it, never 0%, so it is surfaced as
+    // nullopt rather than a number.
+    std::optional<double> FirstWordRatio() const
+    {
+        if (first_word_total <= 0)
+        {
+            return std::nullopt;
+        }
+        return static_cast<double>(first_word_hits) / static_cast<double>(first_word_total);
     }
 
     // SpeedChars returns the characters that count toward the speed metric.
@@ -299,6 +319,15 @@ struct Overview
     double average_speed = 0.0;
     double fastest_speed = 0.0;
     int fastest_day_key = 0;
+
+    // First-candidate hit rates. Both are optional: a day (or the whole
+    // history) with no candidate-list commit has no measurement and serialises
+    // to JSON null, which the settings page renders as "no data". The counts
+    // themselves are in DailyRow::first_word_*; today_first_word_total lets
+    // the page show "today n/m" so the optional ratio is credible.
+    std::optional<double> today_first_word_ratio;
+    std::optional<double> total_first_word_ratio;
+    int64_t today_first_word_total = 0;
 
     CategoryCounts categories;
     // TodayHourly is the 24-bucket character distribution of today.

@@ -1256,6 +1256,8 @@ json::object OverviewToJson(const MsimeStats::Overview &overview)
         entry["punct"] = row.punct;
         entry["other"] = row.other;
         entry["activeMs"] = row.active_ms;
+        entry["firstWordHits"] = row.first_word_hits;
+        entry["firstWordTotal"] = row.first_word_total;
         daily.push_back(std::move(entry));
     }
 
@@ -1278,6 +1280,25 @@ json::object OverviewToJson(const MsimeStats::Overview &overview)
     result["averageSpeed"] = overview.average_speed;
     result["fastestSpeed"] = overview.fastest_speed;
     result["fastestDayKey"] = overview.fastest_day_key;
+    // optional 留空时写 JSON null：设置页按「无测量」渲染，绝不读成 0%。boost::json
+    // 不认识 std::optional，须显式落成数值或 null。
+    if (overview.today_first_word_ratio)
+    {
+        result["todayFirstWordRatio"] = *overview.today_first_word_ratio;
+    }
+    else
+    {
+        result["todayFirstWordRatio"] = json::value(nullptr);
+    }
+    if (overview.total_first_word_ratio)
+    {
+        result["totalFirstWordRatio"] = *overview.total_first_word_ratio;
+    }
+    else
+    {
+        result["totalFirstWordRatio"] = json::value(nullptr);
+    }
+    result["todayFirstWordTotal"] = overview.today_first_word_total;
     result["categories"] = std::move(categories);
     result["todayHourly"] = std::move(hourly);
     result["daily"] = std::move(daily);

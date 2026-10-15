@@ -9,8 +9,10 @@ import {
   dateToDayKey,
   dayKeyToDate,
   detailRows,
+  firstWordRatioOf,
   formatDayKey,
   formatDuration,
+  formatFirstWordRatio,
   formatNumber,
   formatSpeed,
   pad2,
@@ -23,7 +25,7 @@ import {
 import type { StatsDailyRow } from './stats';
 
 function row(dayKey: number, cjk: number, activeMs = 0): StatsDailyRow {
-  return { dayKey, cjk, latin: 0, digit: 0, punct: 0, other: 0, activeMs };
+  return { dayKey, cjk, latin: 0, digit: 0, punct: 0, other: 0, activeMs, firstWordHits: 0, firstWordTotal: 0 };
 }
 
 describe('日期与格式化', () => {
@@ -51,19 +53,49 @@ describe('日期与格式化', () => {
   });
 
   it('totalOf 汇总五类字符', () => {
-    const full: StatsDailyRow = { dayKey: 20250101, cjk: 1, latin: 2, digit: 3, punct: 4, other: 5, activeMs: 0 };
+    const full: StatsDailyRow = {
+      dayKey: 20250101,
+      cjk: 1,
+      latin: 2,
+      digit: 3,
+      punct: 4,
+      other: 5,
+      activeMs: 0,
+      firstWordHits: 0,
+      firstWordTotal: 0
+    };
     expect(totalOf(full)).toBe(15);
     expect(totalOf(row(20250101, 7))).toBe(7);
   });
 
   it('readableOf 只数中文与英文', () => {
-    const full: StatsDailyRow = { dayKey: 20250101, cjk: 1, latin: 2, digit: 3, punct: 4, other: 5, activeMs: 0 };
+    const full: StatsDailyRow = {
+      dayKey: 20250101,
+      cjk: 1,
+      latin: 2,
+      digit: 3,
+      punct: 4,
+      other: 5,
+      activeMs: 0,
+      firstWordHits: 0,
+      firstWordTotal: 0
+    };
     expect(readableOf(full)).toBe(3);
     expect(readableOf(row(20250101, 7))).toBe(7);
   });
 
   it('speedOf 只按中文+英文计算，标点/数字不影响速度', () => {
-    const quiet: StatsDailyRow = { dayKey: 20250101, cjk: 30, latin: 30, digit: 0, punct: 0, other: 0, activeMs: 60_000 };
+    const quiet: StatsDailyRow = {
+      dayKey: 20250101,
+      cjk: 30,
+      latin: 30,
+      digit: 0,
+      punct: 0,
+      other: 0,
+      activeMs: 60_000,
+      firstWordHits: 0,
+      firstWordTotal: 0
+    };
     const noisy: StatsDailyRow = {
       dayKey: 20250101,
       cjk: 30,
@@ -71,7 +103,9 @@ describe('日期与格式化', () => {
       digit: 500,
       punct: 500,
       other: 500,
-      activeMs: 60_000
+      activeMs: 60_000,
+      firstWordHits: 0,
+      firstWordTotal: 0
     };
     expect(speedOf(quiet)).toBe(60);
     expect(speedOf(noisy)).toBe(60);
@@ -81,15 +115,21 @@ describe('日期与格式化', () => {
 
   // 分母下限：不足一分钟按一分钟算，与 server 的 kMinSpeedActiveMs 同口径。
   it('speedOf 活跃时间不足一分钟时按一分钟算', () => {
+    const sparse = (cjk: number, latin: number, digit: number, activeMs: number): StatsDailyRow => ({
+      ...row(20250101, cjk),
+      latin,
+      digit,
+      activeMs
+    });
     // 真实记录：81 个可读字符 / 1.9 秒活跃，按真实时间外推是 2503 字/分。
-    expect(speedOf({ dayKey: 20250101, cjk: 19, latin: 62, digit: 10, punct: 0, other: 0, activeMs: 1942 })).toBe(81);
-    expect(speedOf({ dayKey: 20250101, cjk: 50, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 30_000 })).toBe(50);
-    expect(speedOf({ dayKey: 20250101, cjk: 50, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 1 })).toBe(50);
+    expect(speedOf(sparse(19, 62, 10, 1942))).toBe(81);
+    expect(speedOf(sparse(50, 0, 0, 30_000))).toBe(50);
+    expect(speedOf(sparse(50, 0, 0, 1))).toBe(50);
     // 超过下限后回到真实速率。
-    expect(speedOf({ dayKey: 20250101, cjk: 120, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 120_000 })).toBe(60);
+    expect(speedOf(sparse(120, 0, 0, 120_000))).toBe(60);
     // 完全没有活跃时间是缺样本，不是样本少，仍为 0。
-    expect(speedOf({ dayKey: 20250101, cjk: 50, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 0 })).toBe(0);
-    expect(speedOf({ dayKey: 20250101, cjk: 0, latin: 0, digit: 0, punct: 0, other: 0, activeMs: 1942 })).toBe(0);
+    expect(speedOf(sparse(50, 0, 0, 0))).toBe(0);
+    expect(speedOf(sparse(0, 0, 0, 1942))).toBe(0);
   });
 
   it('formatNumber 千分位', () => {
@@ -109,6 +149,22 @@ describe('日期与格式化', () => {
   it('formatSpeed 取整并带单位', () => {
     expect(formatSpeed(0)).toBe('0 字/分');
     expect(formatSpeed(61.6)).toBe('62 字/分');
+  });
+
+  // 与 server/src/statistics/stats_types.h 的 DailyRow::FirstWordRatio 同口径：
+  // 没有候选上屏（total==0）是没有测量，返回 null 显示「–」，绝不能读成 0%。
+  it('firstWordRatioOf 首选次数除以选词总数，total 为 0 时无测量', () => {
+    expect(firstWordRatioOf({ ...row(20250101, 10), firstWordHits: 7, firstWordTotal: 10 })).toBeCloseTo(0.7);
+    expect(firstWordRatioOf({ ...row(20250101, 10), firstWordHits: 7, firstWordTotal: 7 })).toBe(1);
+    expect(firstWordRatioOf({ ...row(20250101, 10), firstWordHits: 0, firstWordTotal: 5 })).toBe(0);
+    expect(firstWordRatioOf(row(20250101, 10))).toBeNull();
+  });
+
+  it('formatFirstWordRatio 有测量按百分比取整，无测量显示 –', () => {
+    expect(formatFirstWordRatio(0.755)).toBe('76%');
+    expect(formatFirstWordRatio(0)).toBe('0%');
+    expect(formatFirstWordRatio(1)).toBe('100%');
+    expect(formatFirstWordRatio(null)).toBe('–');
   });
 });
 

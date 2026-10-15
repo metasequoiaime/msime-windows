@@ -119,6 +119,23 @@ export function formatNumber(value: number): string {
   return Math.round(value).toLocaleString('zh-CN');
 }
 
+/**
+ * 按日首词命中率（明细列）：首选上屏次数 ÷ 候选上屏次数，与 server/src/statistics/
+ * stats_types.h 的 DailyRow::FirstWordRatio 同口径。没有候选上屏的日子返回 null——
+ * 那是没有测量，不是 0%，明细列显示「–」。
+ */
+export function firstWordRatioOf(row: StatsDailyRow): number | null {
+  if (row.firstWordTotal <= 0) {
+    return null;
+  }
+  return row.firstWordHits / row.firstWordTotal;
+}
+
+/** 首词命中率显示值：有测量时按百分比四舍五入，无测量时「–」。 */
+export function formatFirstWordRatio(ratio: number | null): string {
+  return ratio === null ? '–' : `${Math.round(ratio * 100)}%`;
+}
+
 export function formatDuration(ms: number): string {
   if (!ms || ms <= 0) {
     return '0 分钟';
@@ -310,11 +327,20 @@ function renderCards(overview: StatsOverview): void {
   if (!container) {
     return;
   }
+  // 首词命中率：数值/比率都由 Server 算好（statsResponse 契约），这里只做格式化。
+  // 无候选上屏的日子（ratio 为 null）显示「–」，绝不能读成 0%。
+  const ratio = overview.todayFirstWordRatio ?? null;
+  const ratioValue = ratio === null ? '–' : `${Math.round(ratio * 100)}%`;
+  const ratioNote =
+    overview.todayFirstWordTotal > 0
+      ? `今日 ${formatNumber(overview.todayFirstWordTotal)} 次选词`
+      : '今日无候选上屏';
   container.replaceChildren(
     statCard('今日输入', formatNumber(overview.todayChars), '字', `活跃 ${formatDuration(overview.todayActiveMs)}`),
     statCard('累计输入', formatNumber(overview.totalChars), '字', `共记录 ${overview.days} 天`),
     statCard('日均输入', formatNumber(overview.averagePerDay), '字', `自 ${formatDayKey(overview.firstDayKey)}`),
-    statCard('连续输入', formatNumber(overview.currentStreak), '天', `历史最长 ${overview.longestStreak} 天`)
+    statCard('连续输入', formatNumber(overview.currentStreak), '天', `历史最长 ${overview.longestStreak} 天`),
+    statCard('首词命中率', ratioValue, '', ratioNote)
   );
 }
 
@@ -454,7 +480,7 @@ function renderDetails(overview: StatsOverview): void {
   const table = el('table', 'stats-detail-table');
   const head = el('thead');
   const headRow = el('tr');
-  for (const title of ['日期', '字数', '中文', '英文', '数字', '标点', '其他', '活跃', '速度']) {
+  for (const title of ['日期', '字数', '中文', '英文', '数字', '标点', '其他', '活跃', '速度', '首词']) {
     headRow.append(el('th', undefined, title));
   }
   head.append(headRow);
@@ -469,6 +495,7 @@ function renderDetails(overview: StatsOverview): void {
     }
     tr.append(el('td', undefined, formatDuration(row.activeMs)));
     tr.append(el('td', undefined, formatSpeed(speedOf(row))));
+    tr.append(el('td', undefined, formatFirstWordRatio(firstWordRatioOf(row))));
     body.append(tr);
   }
   table.append(head, body);

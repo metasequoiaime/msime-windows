@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS stats_daily(
   digit INTEGER NOT NULL DEFAULT 0,
   punct INTEGER NOT NULL DEFAULT 0,
   other INTEGER NOT NULL DEFAULT 0,
-  active_ms INTEGER NOT NULL DEFAULT 0);
+  active_ms INTEGER NOT NULL DEFAULT 0,
+  first_word_hits INTEGER NOT NULL DEFAULT 0,
+  first_word_total INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS stats_hourly(
   day_key INTEGER NOT NULL,
   hour INTEGER NOT NULL,
@@ -37,6 +39,16 @@ const char *kUpsertDailySql =
     "cjk = cjk + excluded.cjk, latin = latin + excluded.latin, digit = digit + excluded.digit, "
     "punct = punct + excluded.punct, other = other + excluded.other, "
     "active_ms = active_ms + excluded.active_ms";
+
+// Incremental first-word counters only: the character counters must not be
+// touched (they are driven by the stats pipe, this one by the selection path).
+// Inserting zeros seeds a fresh row; the conflict branch adds the deltas.
+const char *kUpsertFirstWordSql =
+    "INSERT INTO stats_daily(day_key, cjk, latin, digit, punct, other, active_ms, first_word_hits, first_word_total) "
+    "VALUES(?, 0, 0, 0, 0, 0, 0, ?, ?) "
+    "ON CONFLICT(day_key) DO UPDATE SET "
+    "first_word_hits = first_word_hits + excluded.first_word_hits, "
+    "first_word_total = first_word_total + excluded.first_word_total";
 
 const char *kUpsertHourlySql = "INSERT INTO stats_hourly(day_key, hour, chars, active_ms) "
                                "VALUES(?, ?, ?, ?) "
@@ -146,7 +158,48 @@ bool Store::Initialize(std::string &error)
     {
         return false;
     }
+    // Schema v2 added the first-word hit-rate columns. kSchema lifts fresh
+    // databases straight to v2; a v1 database (the shipped schema up to now,
+    // with or without the stored version key, which v1 always wrote) needs its
+    // stats_daily extended in place and the version stamp advanced.
+    if (!ApplySchemaMigration(error))
+    {
+        return false;
+    }
     return SetMeta(kStoreMetaSchemaVersion, kStoreSchemaVersion, error);
+}
+
+bool Store::ApplySchemaMigration(std::string &error)
+{
+    std::string stored_version;
+    bool present = false;
+    if (!Meta(kStoreMetaSchemaVersion, stored_version, present, error) ||
+        (present && stored_version == kStoreSchemaVersion))
+    {
+        // Meta() can read freely before the version stamp exists; an absent key
+        // plus the fresh-table shape means nothing to migrate.
+        return true;
+    }
+
+    // Explicit column checks, not a try-ALTER: a v1 database might already have
+    // been extended by another process (Settings vs Server race) and ALTER
+    // TABLE ADD COLUMN has no IF NOT EXISTS form. Ever-darkening cores are not
+    // the case here; the two versions differ exactly in these two columns.
+    if (!TableHasColumn("stats_daily", kStoreColumnFirstWordHits) ||
+        !TableHasColumn("stats_daily", kStoreColumnFirstWordTotal))
+    {
+        std::string sql = std::string("ALTER TABLE stats_daily ADD COLUMN ") + kStoreColumnFirstWordHits +
+                          " INTEGER NOT NULL DEFAULT 0;"
+                          "ALTER TABLE stats_daily ADD COLUMN " +
+                          kStoreColumnFirstWordTotal + " INTEGER NOT NULL DEFAULT 0;";
+        if (!Exec(sql.c_str(), error))
+        {
+            // Statistics are not critical-path: a failed migration must not
+            // block input; Open reports failure upward where it is logged.
+            return false;
+        }
+    }
+    return true;
 }
 
 bool Store::Exec(const char *sql, std::string &error) const
@@ -343,13 +396,67 @@ bool Store::Upsert(const Batch &batch, std::string &error)
     return Commit(error);
 }
 
+bool Store::TableHasColumn(const char *table, const char *column) const
+{
+    sqlite3_stmt *statement = nullptr;
+    std::string sql = std::string("SELECT 1 FROM pragma_table_info('") + table + "') WHERE name = ?";
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+    sqlite3_bind_text(statement, 1, column, -1, SQLITE_TRANSIENT);
+    const int step = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    return step == SQLITE_ROW;
+}
+
+bool Store::UpsertFirstWordSelection(int day_key, bool is_first, std::string &error)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!BeginTransaction(error))
+    {
+        return false;
+    }
+    sqlite3_stmt *statement = nullptr;
+    bool ok = sqlite3_prepare_v2(db_, kUpsertFirstWordSql, -1, &statement, nullptr) == SQLITE_OK;
+    if (!ok)
+    {
+        error = Describe("prepare first-word upsert", db_);
+    }
+    else
+    {
+        sqlite3_bind_int64(statement, 1, day_key);
+        sqlite3_bind_int64(statement, 2, is_first ? 1 : 0);
+        sqlite3_bind_int64(statement, 3, 1);
+        ok = sqlite3_step(statement) == SQLITE_DONE;
+        if (!ok)
+        {
+            error = Describe("write first-word", db_);
+        }
+        sqlite3_finalize(statement);
+    }
+    if (ok)
+    {
+        // A brand-new day must refresh first_day in the same transaction so the
+        // overview sees the day at all.
+        ok = RefreshFirstDay(error);
+    }
+    if (!ok)
+    {
+        Rollback();
+        return false;
+    }
+    return Commit(error);
+}
+
 bool Store::DailyRows(std::vector<DailyRow> &rows, std::string &error) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     rows.clear();
     sqlite3_stmt *statement = nullptr;
     if (sqlite3_prepare_v2(db_,
-                           "SELECT day_key, cjk, latin, digit, punct, other, active_ms FROM stats_daily "
+                           "SELECT day_key, cjk, latin, digit, punct, other, active_ms, first_word_hits, "
+                           "first_word_total FROM stats_daily "
                            "ORDER BY day_key",
                            -1, &statement, nullptr) != SQLITE_OK)
     {
@@ -368,6 +475,8 @@ bool Store::DailyRows(std::vector<DailyRow> &rows, std::string &error) const
         row.punct = sqlite3_column_int64(statement, 4);
         row.other = sqlite3_column_int64(statement, 5);
         row.active_ms = sqlite3_column_int64(statement, 6);
+        row.first_word_hits = sqlite3_column_int64(statement, 7);
+        row.first_word_total = sqlite3_column_int64(statement, 8);
         rows.push_back(row);
     }
     const bool ok = step == SQLITE_DONE;

@@ -6,6 +6,7 @@
 #include "ipc/ipc.h"
 #include "log/candidate_diag_log.h"
 #include "statistics/stats_aggregate.h"
+#include "statistics/stats_candidate_capture.h"
 #include "statistics/stats_frames.h"
 #include "statistics/stats_store.h"
 #include "utils/common_utils.h"
@@ -25,11 +26,11 @@ namespace
 // seconds is generous; the TSF diagnostic listener uses the same bound.
 constexpr auto kStatsPipeReadTimeout = std::chrono::seconds(2);
 
-// Opened lazily on the first valid frame received while recording is enabled.
-// With the switch off no database file is ever created, which is the
-// observable half of the privacy contract.
-std::unique_ptr<Store> g_stats_store;
-
+// Opened lazily via EnsureStatsStoreOpen (stats_candidate_capture.cpp) on the
+// first valid frame received while recording is enabled. With the switch off
+// no database file is ever created, which is the observable half of the
+// privacy contract. The candidate capture path on the selection thread shares
+// the same handle.
 // The stream is global across host processes: typing continuously in two
 // applications counts as continuous activity, matching the standalone tool.
 Accumulator g_stats_accumulator;
@@ -38,28 +39,6 @@ bool WaitForStatsPipeClient(HANDLE pipe)
 {
     const BOOL connected = ConnectNamedPipe(pipe, nullptr);
     return connected || GetLastError() == ERROR_PIPE_CONNECTED;
-}
-
-Store *EnsureStatsStoreOpen()
-{
-    if (g_stats_store)
-    {
-        return g_stats_store.get();
-    }
-    const std::filesystem::path path = std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"stats.db";
-    std::string error;
-    g_stats_store = Store::Open(path, error);
-    if (!g_stats_store)
-    {
-        // Deliberately no retry throttle: frames arrive at typing speed and a
-        // transient failure (profile locked during an upgrade, missing parent
-        // directory) should recover on the next frame.
-        // DiagnosticLog is the only channel that reaches disk in production:
-        // InitializeSpdLog() is a no-op here, and the diag switch gates both
-        // the formatting and the write.
-        DIAG_LOGF(L"stats: unable to open stats.db: {}", string_to_wstring(error));
-    }
-    return g_stats_store.get();
 }
 
 // The config reader already falls back to forever for a missing or invalid
@@ -224,6 +203,6 @@ void StatsPipeEventListenerLoopThread()
 
 void ShutdownStatsPipe()
 {
-    g_stats_store.reset();
+    CloseSharedStatsStore();
 }
 } // namespace MsimeStats
