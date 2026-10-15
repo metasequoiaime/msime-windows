@@ -23,6 +23,7 @@ class CloudChoiceTests(unittest.TestCase):
         skip = body("function ShouldSkipPage")
         prepare = body("function PrepareToInstall")
         existing = body("function UserConfigExistsBeforeInstall", CHOICE)
+        conflict = body("function ConfigMigrationProblem", CHOICE)
 
         self.assertNotIn("UserConfigExistedBeforeInstall :=", wizard)
         self.assertIn('#include "cloud_choice.iss"', SCRIPT)
@@ -37,6 +38,12 @@ class CloudChoiceTests(unittest.TestCase):
         )
         self.assertIn("FileExists(UserConfigPath)", existing)
         self.assertIn("FileExists(AddBackslash(ResolvePreviousDataDir) + 'config.toml')", existing)
+        self.assertIn("FileExists(AddBackslash(OldDir) + 'config.toml')", conflict)
+        self.assertIn("FileExists(AddBackslash(NewDir) + 'config.toml')", conflict)
+        self.assertLess(
+            prepare.index("ConfigMigrationProblem(ResolvePreviousDataDir, GetDataDir(''))"),
+            prepare.index("StopImeProcesses"),
+        )
 
     def test_new_config_uses_utf8_and_existing_config_is_not_replaced(self):
         apply_choice = body("procedure ApplyNetworkChoiceToUserConfig", CHOICE)
@@ -50,7 +57,7 @@ class CloudChoiceTests(unittest.TestCase):
             SCRIPT,
             r'DestName: "config\.toml";\s*\\\s*Flags: onlyifdoesntexist',
         )
-        self.assertLess(migrate.index("目标数据目录已有 config.toml"), migrate.index("Log('Migrating user data"))
+        self.assertLess(migrate.index("ConfigMigrationProblem"), migrate.index("Log('Migrating user data"))
 
 
 if __name__ == "__main__":

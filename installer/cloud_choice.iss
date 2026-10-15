@@ -7,6 +7,18 @@ begin
     Result := FileExists(AddBackslash(ResolvePreviousDataDir) + 'config.toml');
 end;
 
+{ 迁移前先检查冲突。迁移时再次检查，防止目录内容在停机期间改变。}
+function ConfigMigrationProblem(const OldDir, NewDir: String): String;
+begin
+  Result := '';
+  if (OldDir = '') or (CompareText(OldDir, NewDir) = 0) or
+     (not DirExists(OldDir)) then
+    Exit;
+  if FileExists(AddBackslash(OldDir) + 'config.toml') and
+     FileExists(AddBackslash(NewDir) + 'config.toml') then
+    Result := '目标数据目录已有 config.toml，不能覆盖原有配置。请选择其他数据目录。';
+end;
+
 { 只改本次安装新生成的 config.toml。用户取消云候选时，写入失败必须报错。}
 procedure ApplyNetworkChoiceToUserConfig;
 var

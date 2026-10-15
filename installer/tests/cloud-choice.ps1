@@ -17,7 +17,8 @@ try {
         @{ Name = 'fresh-moved'; Previous = ''; Target = ''; Choice = '0'; Expected = 'false' },
         @{ Name = 'target-existing'; Previous = ''; Target = 'true'; Choice = '0'; Expected = 'true' },
         @{ Name = 'upgrade-moved'; Previous = 'true'; Target = ''; Choice = '0'; Expected = 'true' },
-        @{ Name = 'upgrade-in-place'; Previous = 'false'; Target = 'false'; Choice = '1'; Expected = 'false' }
+        @{ Name = 'upgrade-in-place'; Previous = 'false'; Target = 'false'; Choice = '1'; Expected = 'false' },
+        @{ Name = 'migration-conflict'; Previous = 'false'; Target = 'true'; Choice = '0'; Expected = 'true' }
     )
 
     foreach ($case in $cases) {
@@ -32,7 +33,29 @@ try {
             [IO.File]::WriteAllText((Join-Path $target 'config.toml'), "[general]`ncloud_candidates = $($case.Target)`n")
         }
         $app = Join-Path $caseRoot 'app'
-        & $binary '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' "/DIR=$app" "/TARGET=$target" "/PREVIOUS=$previous" "/CLOUD=$($case.Choice)" | Out-Null
+        $stopMarker = Join-Path $caseRoot 'processes-stopped'
+        $installLog = Join-Path $caseRoot 'install.log'
+        $oldConfig = Join-Path $previous 'config.toml'
+        $targetConfig = Join-Path $target 'config.toml'
+        if ($case.Name -eq 'migration-conflict') {
+            $oldBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($oldConfig))
+            $targetBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($targetConfig))
+        }
+        & $binary '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' "/DIR=$app" "/TARGET=$target" "/PREVIOUS=$previous" "/CLOUD=$($case.Choice)" "/STOPMARKER=$stopMarker" "/LOG=$installLog" | Out-Null
+        if ($case.Name -eq 'migration-conflict') {
+            if ($LASTEXITCODE -eq 0) { throw 'migration-conflict: setup accepted both configs' }
+            if (Test-Path -LiteralPath $stopMarker) { throw 'migration-conflict: processes stopped before rejection' }
+            if ($oldBefore -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($oldConfig))) {
+                throw 'migration-conflict: previous config changed'
+            }
+            if ($targetBefore -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($targetConfig))) {
+                throw 'migration-conflict: target config changed'
+            }
+            if (-not ([IO.File]::ReadAllText($installLog).Contains('目标数据目录已有 config.toml'))) {
+                throw 'migration-conflict: log has no conflict message'
+            }
+            continue
+        }
         if ($LASTEXITCODE -ne 0) { throw "$($case.Name): setup failed ($LASTEXITCODE)" }
         $config = [IO.File]::ReadAllText((Join-Path $target 'config.toml'))
         if ($config -notmatch "(?m)^cloud_candidates = $($case.Expected)\r?$") {
@@ -43,7 +66,7 @@ try {
             throw 'Fresh config lost UTF-8 text'
         }
     }
-    Write-Host 'Cloud choice probe passed five install scenarios'
+    Write-Host 'Cloud choice probe passed six install scenarios'
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

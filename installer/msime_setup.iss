@@ -1399,12 +1399,9 @@ begin
   if (OldDir = '') or (CompareText(OldDir, NewDir) = 0) or (not DirExists(OldDir)) then
     exit;
 
-  if FileExists(AddBackslash(OldDir) + 'config.toml') and
-     FileExists(AddBackslash(NewDir) + 'config.toml') then
-  begin
-    Result := '目标数据目录已有 config.toml，不能覆盖原有配置。请选择其他数据目录。';
+  Result := ConfigMigrationProblem(OldDir, NewDir);
+  if Result <> '' then
     exit;
-  end;
 
   Log('Migrating user data from ' + OldDir + ' to ' + NewDir);
   ForceDirectories(NewDir);
@@ -1624,6 +1621,13 @@ begin
   { 迁移会往目录里搬文件，所以要在那之前记下它是不是空着被接手的。}
   DataDirAdoptedEmpty :=
     OwnsDataDirExclusively(GetDataDir('')) or DirectoryIsEmpty(GetDataDir(''));
+
+  DataDirProblem := ConfigMigrationProblem(ResolvePreviousDataDir, GetDataDir(''));
+  if DataDirProblem <> '' then
+  begin
+    Result := DataDirProblem;
+    exit;
+  end;
 
   { 先锁定本次目录名，再清理能够释放的旧版本 DLL。}
   VersionDirName := GetVersionDir('');

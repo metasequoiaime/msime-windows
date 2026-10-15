@@ -47,7 +47,14 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   OldConfig: String;
 begin
-  Result := '';
+  Result := ConfigMigrationProblem(ResolvePreviousDataDir, GetDataDir(''));
+  if Result <> '' then
+    Exit;
+  if not SaveStringToFile(ExpandConstant('{param:STOPMARKER|}'), 'stopped', False) then
+  begin
+    Result := 'Cannot write stop marker';
+    Exit;
+  end;
   UserConfigExistedBeforeInstall := UserConfigExistsBeforeInstall;
   OldConfig := AddBackslash(ResolvePreviousDataDir) + 'config.toml';
   if FileExists(OldConfig) and (not FileExists(UserConfigPath)) then
