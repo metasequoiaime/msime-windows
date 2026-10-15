@@ -6,6 +6,7 @@
 #include "KeyHandlerEditSession.h"
 #include "KeyFocusRecovery.h"
 #include "KeyRepeatGuard.h"
+#include "CapsLockInputPolicy.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -524,16 +525,13 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
         const bool isComposing = freshCompositionState ? false : _IsComposing() != FALSE;
         const CANDIDATE_MODE candidateMode = freshCompositionState ? CANDIDATE_NONE : _candidateMode;
         const bool isCapsLockOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
-        const bool isUppercaseAlphabet = (wch >= L'A' && wch <= L'Z') && (*pCodeOut >= L'A' && *pCodeOut <= L'Z');
         const bool isInputInProgress =
             !freshCompositionState &&
             (isComposing || (candidateMode != CANDIDATE_NONE) ||
              (pCompositionProcessorEngine && pCompositionProcessorEngine->GetVirtualKeyLength() > 0));
 
-        // CapsLock ON + uppercase(没有按 Shift) alphabet:
-        // - start of input: don't eat
-        // - middle of input: eat
-        if (isCapsLockOn && isUppercaseAlphabet && !isInputInProgress)
+        // CapsLock alphabet keys belong to the application unless input is already in progress
+        if (ShouldPassCapsLockAlphabet(isCapsLockOn, isInputInProgress, *pCodeOut, wch))
         {
             return isTouchKeyboardSpecialKeys;
         }

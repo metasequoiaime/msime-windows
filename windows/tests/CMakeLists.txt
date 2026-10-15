@@ -30,6 +30,11 @@ target_include_directories(test_caps_lock_punctuation_policy PRIVATE ../src)
 target_compile_features(test_caps_lock_punctuation_policy PRIVATE cxx_std_17)
 add_test(NAME caps_lock_punctuation_policy COMMAND test_caps_lock_punctuation_policy)
 
+add_executable(test_caps_lock_input_policy caps_lock_input_policy.cpp)
+target_include_directories(test_caps_lock_input_policy PRIVATE ../src)
+target_compile_features(test_caps_lock_input_policy PRIVATE cxx_std_17)
+add_test(NAME caps_lock_input_policy COMMAND test_caps_lock_input_policy)
+
 add_executable(test_commit_candidate_and_continue_payload commit_candidate_and_continue_payload.cpp)
 target_include_directories(test_commit_candidate_and_continue_payload PRIVATE ../src)
 target_compile_features(test_commit_candidate_and_continue_payload PRIVATE cxx_std_17)

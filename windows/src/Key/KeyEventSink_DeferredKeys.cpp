@@ -9,6 +9,7 @@
 #include "KeyHandlerEditSession.h"
 #include "KeyFocusRecovery.h"
 #include "KeyRepeatGuard.h"
+#include "CapsLockInputPolicy.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -594,11 +595,10 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
             isInputKey = CCompositionProcessorEngine::IsVModeInputKey(*classifiedWch, shadow.rawInput.data(),
                                                                       shadow.rawInput.size(), shadow.caret);
         }
-        if (shadow.inputLength == 0 && (GetKeyState(VK_CAPITAL) & 0x0001) != 0 && *classifiedWch >= L'A' &&
-            *classifiedWch <= L'Z' && *classifiedCode >= L'A' && *classifiedCode <= L'Z')
+        if (ShouldPassCapsLockAlphabet((GetKeyState(VK_CAPITAL) & 0x0001) != 0, shadow.inputLength != 0,
+                                       *classifiedCode, *classifiedWch))
         {
-            // Match the normal fresh-composition path: CapsLock uppercase at
-            // the beginning belongs to the application.
+            // Match the normal fresh-composition path for CapsLock with or without Shift
             isInputKey = false;
         }
     }
