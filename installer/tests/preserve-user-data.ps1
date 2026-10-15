@@ -92,9 +92,10 @@ foreach ($name in $migrated) {
 }
 
 # Server 侧库名是这份清单的源头。改了 stats.db 之类的名字而不同步安装器，升级又会清零一次。
-$statsSource = Join-Path $PSScriptRoot '../../server/src/statistics/stats_pipe.cpp'
+# 库名在 EnsureStatsStoreOpen 里，随首词命中率改动从 stats_pipe.cpp 挪到了 stats_candidate_capture.cpp。
+$statsSource = Join-Path $PSScriptRoot '../../server/src/statistics/stats_candidate_capture.cpp'
 $storeName = [regex]::Match([IO.File]::ReadAllText($statsSource), 'L"([\w.-]+\.db)"').Groups[1].Value
-if (-not $storeName) { throw "stats_pipe.cpp no longer names a database file; update this test and the installer" }
+if (-not $storeName) { throw "stats_candidate_capture.cpp no longer names a database file; update this test and the installer" }
 if (-not $preserved.Contains($storeName)) { throw "统计库 $storeName 不在 IsPreservedAppDataItem 名单里，覆盖安装会清空统计数据" }
 if (-not $migrated.Contains($storeName)) { throw "统计库 $storeName 不在 MigrateUserDataDir 的 robocopy 清单里，换数据目录会丢统计数据" }
 

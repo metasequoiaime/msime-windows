@@ -98,7 +98,10 @@ class RawDb
   public:
     explicit RawDb(const fs::path &path)
     {
-        if (sqlite3_open_v2(test::Utf8(path).c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
+        // CREATE 让测试能从零构造一个库（迁移用例在打开前并不存在文件）；
+        // 对已有的库无副作用，先 OpenStore 再检查的用例行为不变。
+        if (sqlite3_open_v2(test::Utf8(path).c_str(), &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) !=
+            SQLITE_OK)
         {
             if (db_ != nullptr)
             {
@@ -770,6 +773,8 @@ TEST_CASE(stats_store_migrates_v1_database_with_version_key)
     // 历史日线补 0：迁移不给没有测量的日子编造命中率。
     REQUIRE_EQ(rows[0].first_word_hits, 0);
     REQUIRE_EQ(rows[0].first_word_total, 0);
+    // 迁移不给没有测量的日子编造比率：total == 0 时 FirstWordRatio 是 nullopt，不是 0%。
+    REQUIRE(!rows[0].FirstWordRatio().has_value());
 
     std::string value;
     bool present = false;
@@ -859,8 +864,10 @@ TEST_CASE(stats_store_upsert_first_word_selection_increments_independently)
     REQUIRE(overview.today_first_word_ratio.has_value());
     REQUIRE(NearlyEqual(*overview.today_first_word_ratio, 2.0 / 3.0));
     REQUIRE_EQ(overview.today_first_word_total, 3);
-    // 没有选词的日子：nullopt，不是 0%。
-    REQUIRE(!rows[0].FirstWordRatio().has_value());
+    // 09-19 只有一次次选、零首选：这是一次真实测量（0%），不是 nullopt——
+    // nullopt 只留给完全没有候选上屏的日子（first_word_total == 0，见 stats_types.h）。
+    REQUIRE(rows[0].FirstWordRatio().has_value());
+    REQUIRE(NearlyEqual(*rows[0].FirstWordRatio(), 0.0));
     REQUIRE(rows[1].FirstWordRatio().has_value());
     REQUIRE(NearlyEqual(*rows[1].FirstWordRatio(), 2.0 / 3.0));
 
