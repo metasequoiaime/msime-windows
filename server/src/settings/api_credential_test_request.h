@@ -11,7 +11,10 @@ inline nlohmann::json BuildChatRequestBody(const std::string &provider, const st
 {
     nlohmann::json body = {
         {"model", model}, {"stream", false}, {"messages", {{{"role", "user"}, {"content", "Reply OK"}}}}};
-    ChatCompletions::SetTokenLimit(body, provider, 1);
+    // A one-token probe can reject reasoning models before they return a response.
+    const int token_limit =
+        ChatCompletions::IsOpenAiProvider(provider) && ChatCompletions::IsOpenAiReasoningModel(model) ? 32 : 1;
+    ChatCompletions::SetTokenLimit(body, provider, token_limit);
     if (provider == "deepseek")
         body["thinking"] = {{"type", "disabled"}};
     else if (provider == "siliconflow")

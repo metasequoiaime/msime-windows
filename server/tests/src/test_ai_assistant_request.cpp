@@ -99,11 +99,15 @@ TEST_CASE(ai_request_keeps_custom_provider_request_shape)
 
 TEST_CASE(credential_test_uses_openai_completion_limit)
 {
-    for (const char *model : {"gpt-4o-mini", "gpt-5.6-luna", "o3-mini"})
+    const auto older_model = ApiCredentialTest::detail::BuildChatRequestBody("openai", "gpt-4o-mini");
+    REQUIRE_EQ(older_model["max_completion_tokens"].get<int>(), 1);
+    REQUIRE(!older_model.contains("max_tokens"));
+
+    for (const char *model : {"gpt-5.6-luna", "gpt-6-luna", "o3-mini"})
     {
         const auto body = ApiCredentialTest::detail::BuildChatRequestBody("OpenAI", model);
         REQUIRE_EQ(body["model"].get<std::string>(), std::string(model));
-        REQUIRE_EQ(body["max_completion_tokens"].get<int>(), 1);
+        REQUIRE_EQ(body["max_completion_tokens"].get<int>(), 32);
         REQUIRE(!body.contains("max_tokens"));
         REQUIRE(!body.contains("reasoning_effort"));
         REQUIRE(!body.contains("thinking"));
