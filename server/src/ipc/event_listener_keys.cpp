@@ -1180,6 +1180,10 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             // 首词命中率：标点收尾带上屏候选时也是一次中文候选提交（用户决策 1：只有
             // 「纯标点收尾不带候选」才排除）。真正上屏的那条候选要么是高亮项，要么（高亮
             // 停在「📅日期」入口上时）是本页第一条；is_first 按实际提交的那条算。
+            // 日语候选与 ProcessSelectionKey 的 japanese_candidate 门同款排除：日语 UI
+            // 模式与 R 模式临时日语解析出的 WordItem scheme 都是 JapaneseRomaji，
+            // 标点收尾把它们带出来的路径不经过 ProcessSelectionKey，必须在这里单独
+            // 挡住（用户决策 3）。
             int committed_index_in_page = -2;
             if (highlighted_resolved && metasequoia::local_modes::is_date_time_menu_item(highlighted_item))
             {
@@ -1204,6 +1208,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
                 }
             }
             if (committed_index_in_page >= 0 && !g_english_input_mode &&
+                highlighted_item.scheme != SchemeType::JapaneseRomaji &&
                 MsimeStats::CountsTowardFirstWordSelection(highlighted_item))
             {
                 MsimeStats::RecordCandidateSelection(ui.page_index == 0 && committed_index_in_page == 0);

@@ -194,8 +194,17 @@ bool Store::ApplySchemaMigration(std::string &error)
                           kStoreColumnFirstWordTotal + " INTEGER NOT NULL DEFAULT 0;";
         if (!Exec(sql.c_str(), error))
         {
-            // Statistics are not critical-path: a failed migration must not
-            // block input; Open reports failure upward where it is logged.
+            // Two processes can pass the column checks together and then race
+            // the ALTER: busy_timeout serialises them and the loser fails with
+            // a duplicate-column error. If the winner has already extended the
+            // table, the failure is benign — re-check and accept. Statistics
+            // are not critical-path: any other failure must not block input;
+            // Open reports it upward where it is logged.
+            if (TableHasColumn("stats_daily", kStoreColumnFirstWordHits) &&
+                TableHasColumn("stats_daily", kStoreColumnFirstWordTotal))
+            {
+                return true;
+            }
             return false;
         }
     }
