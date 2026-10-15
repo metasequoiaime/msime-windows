@@ -61,7 +61,7 @@ pwsh -File ./Prepare-PackageFiles.ps1 -TargetVersion 1.2.3 -RepoRoot .. `
 
 运行 `python installer/tests/test_cloud_choice.py` 检查安装脚本的判断时序。
 Windows CI 运行 `installer/tests/cloud-choice.ps1`。它用 Inno Setup 执行六个隔离的配置场景。
-冲突场景检查两份配置、错误提示和停止进程前的拒绝行为。
+冲突场景检查两份配置和错误提示。Python 检查生产安装器先查冲突再停止进程。
 该测试使用安装器的云候选函数。完整安装包仍按上表在测试机检查。
 
 ## 运行时依赖检查

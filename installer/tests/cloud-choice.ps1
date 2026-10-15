@@ -33,7 +33,6 @@ try {
             [IO.File]::WriteAllText((Join-Path $target 'config.toml'), "[general]`ncloud_candidates = $($case.Target)`n")
         }
         $app = Join-Path $caseRoot 'app'
-        $stopMarker = Join-Path $caseRoot 'processes-stopped'
         $installLog = Join-Path $caseRoot 'install.log'
         $oldConfig = Join-Path $previous 'config.toml'
         $targetConfig = Join-Path $target 'config.toml'
@@ -41,10 +40,9 @@ try {
             $oldBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($oldConfig))
             $targetBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($targetConfig))
         }
-        & $binary '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' "/DIR=$app" "/TARGET=$target" "/PREVIOUS=$previous" "/CLOUD=$($case.Choice)" "/STOPMARKER=$stopMarker" "/LOG=$installLog" | Out-Null
+        & $binary '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' "/DIR=$app" "/TARGET=$target" "/PREVIOUS=$previous" "/CLOUD=$($case.Choice)" "/LOG=$installLog" | Out-Null
         if ($case.Name -eq 'migration-conflict') {
             if ($LASTEXITCODE -eq 0) { throw 'migration-conflict: setup accepted both configs' }
-            if (Test-Path -LiteralPath $stopMarker) { throw 'migration-conflict: processes stopped before rejection' }
             if ($oldBefore -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($oldConfig))) {
                 throw 'migration-conflict: previous config changed'
             }
