@@ -681,10 +681,7 @@ function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   if (NetworkPage <> nil) and (PageID = NetworkPage.ID) then
-  begin
-    UserConfigExistedBeforeInstall := UserConfigExistsBeforeInstall;
-    Result := UserConfigExistedBeforeInstall;
-  end;
+    Result := UserConfigExistsBeforeInstall;
 end;
 
 procedure LaunchInstalledComponents;
@@ -741,6 +738,14 @@ begin
       exit;
     end;
     Reason := DataDirRejectionReason(Adopted);
+    if Reason <> '' then
+    begin
+      MsgBox(Reason, mbError, MB_OK);
+      Result := False;
+      exit;
+    end;
+    { 冲突要在这一页拦下，等到「安装」才报错时用户已经回不到这里了。}
+    Reason := ConfigMigrationProblem(ResolvePreviousDataDir, Adopted);
     if Reason <> '' then
     begin
       MsgBox(Reason, mbError, MB_OK);
@@ -1405,6 +1410,7 @@ begin
 
   Log('Migrating user data from ' + OldDir + ' to ' + NewDir);
   ForceDirectories(NewDir);
+  DropMigratedConfigCopy(OldDir, NewDir);
 
   Moved := Exec(
     ExpandConstant('{sys}\robocopy.exe'),
@@ -1476,12 +1482,14 @@ begin
     { 用户词库没搬成必须让安装失败。否则新版本会对着一个空的 msime_user.db 启动，
       ssPostInstall 的回放只会记一句 skipped，用户的自造词和词频就这么静悄悄没了——
       这正是 ReplayUserDictionary 失败时也要中止安装的那条理由。
-      其他文件（config.toml、皮肤）搬不动只记日志：它们丢了可以重建。}
+      config.toml 同理，见 ConfigMigrationFailure。皮肤等搬不动只记日志：它们丢了可以重建。}
     if FileExists(AddBackslash(OldDir) + 'msime_user.db') then
       Result :=
         '无法把用户词库从 ' + OldDir + ' 移动到 ' + NewDir + '。' + #13#10 +
         '请确认输入法相关进程已全部退出、目标磁盘可写且空间足够，然后重试安装。' + #13#10 +
-        '你的用户词库仍留在 ' + OldDir + '，本次安装没有改动它。';
+        '你的用户词库仍留在 ' + OldDir + '，本次安装没有改动它。'
+    else
+      Result := ConfigMigrationFailure(OldDir, NewDir);
     exit;
   end;
 
@@ -1691,7 +1699,6 @@ begin
     WriteDataDirMarker(GetDataDir(''), DataDirAdoptedEmpty);
 #ifndef LightPackage
     ReplayUserDictionary;
-    ApplyNetworkChoiceToUserConfig;
 #endif
     CreateWatchdogLogonTask;
     EnsureImeUserDataDir;
@@ -1703,6 +1710,10 @@ begin
       'Software\Microsoft\Windows\CurrentVersion\Run',
       'MetasequoiaImeWatchdog'
     );
+#ifndef LightPackage
+    { 偏好写入放在最后：它失败只弹提示，不能挡住上面这些必需步骤。}
+    ApplyNetworkChoiceToUserConfig;
+#endif
   end;
 end;
 

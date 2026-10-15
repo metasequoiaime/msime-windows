@@ -57,12 +57,14 @@ pwsh -File ./Prepare-PackageFiles.ps1 -TargetVersion 1.2.3 -RepoRoot .. `
 | 目标目录已有配置 | 新目录有安装标记，`cloud_candidates = true` | 改到该目录 | 网络页跳过，配置保持 `true` |
 | 原目录已有配置 | 原目录的 `cloud_candidates = true`，新目录为空 | 升级时改目录 | 网络页跳过，新目录保持 `true` |
 | 原目录已有配置 | 原目录的 `cloud_candidates = false` | 原目录升级 | 网络页跳过，配置保持 `false` |
-| 两处都有配置 | 原目录和新目录都有 `config.toml` | 升级时改目录 | 安装停止，两份配置保持原样 |
+| 两处都有配置 | 原目录和新目录都有内容不同的 `config.toml` | 升级时改目录 | 数据目录页直接拦下；静默安装在停进程前停止，两份配置保持原样 |
+| 上次迁移只复制未删除 | 两处 `config.toml` 内容相同 | 重试升级 | 视为同一份，删掉原目录副本后继续 |
+| 配置搬不动 | 原目录 `config.toml` 被占用 | 升级时改目录 | 安装停止，原配置保持原样，不会装上出厂配置 |
 
-运行 `python installer/tests/test_cloud_choice.py` 检查安装脚本的判断时序。
-Windows CI 运行 `installer/tests/cloud-choice.ps1`。它用 Inno Setup 执行六个隔离的配置场景。
-冲突场景检查两份配置和错误提示。Python 检查生产安装器先查冲突再停止进程。
-该测试使用安装器的云候选函数。完整安装包仍按上表在测试机检查。
+写回「不启用云候选」失败时不中止安装（此时文件已落盘，中止只会留下半成品），而是在其他安装后步骤完成后提示用户到设置页手动关闭。
+
+运行 `python installer/tests/test_cloud_choice.py` 检查生产安装器的时序：先查冲突再停进程，数据目录页也查冲突，写回选择排在必需的安装后步骤之后。
+Windows CI 运行 `installer/tests/cloud-choice.ps1`，用 Inno Setup 跑八个隔离场景。探针复用 `cloud_choice.iss` 里的判断、冲突、去重和失败函数，并按生产顺序用同样的 `robocopy /MOVE` 搬 `config.toml`；`MigrateUserDataDir` 里搬词库、皮肤和清理旧目录的部分不在探针里，完整安装包仍按上表在测试机检查。
 
 ## 运行时依赖检查
 
