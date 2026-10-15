@@ -595,8 +595,14 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
             isInputKey = CCompositionProcessorEngine::IsVModeInputKey(*classifiedWch, shadow.rawInput.data(),
                                                                       shadow.rawInput.size(), shadow.caret);
         }
-        if (ShouldPassCapsLockAlphabet((GetKeyState(VK_CAPITAL) & 0x0001) != 0, shadow.inputLength != 0,
-                                       *classifiedCode, *classifiedWch))
+        // Same "input in progress" as _IsKeyEaten: a live candidate list or the
+        // #35 retraction window keeps the key IME-owned even with an empty
+        // projected buffer, and without a projection the real state decides.
+        const bool inputInProgress =
+            shadow.inputLength != 0 || shadow.candidateActive || !GlobalIme::word_for_creating_word.empty() ||
+            (!_deferredKeyProjectionValid && (_IsComposing() != FALSE || _candidateMode != CANDIDATE_NONE));
+        if (ShouldPassCapsLockAlphabet((GetKeyState(VK_CAPITAL) & 0x0001) != 0, inputInProgress, *classifiedCode,
+                                       *classifiedWch))
         {
             // Match the normal fresh-composition path for CapsLock with or without Shift
             isInputKey = false;
