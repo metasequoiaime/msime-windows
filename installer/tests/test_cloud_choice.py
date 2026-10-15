@@ -5,11 +5,13 @@ import re
 import unittest
 
 
-SCRIPT = (Path(__file__).resolve().parents[1] / "msime_setup.iss").read_text(encoding="utf-8")
+INSTALLER = Path(__file__).resolve().parents[1]
+SCRIPT = (INSTALLER / "msime_setup.iss").read_text(encoding="utf-8")
+CHOICE = (INSTALLER / "cloud_choice.iss").read_text(encoding="utf-8")
 
 
-def body(signature: str) -> str:
-    match = re.search(rf"(?m)^{re.escape(signature)}\b.*?^end;", SCRIPT, re.DOTALL)
+def body(signature: str, source: str = SCRIPT) -> str:
+    match = re.search(rf"(?m)^{re.escape(signature)}\b.*?^end;", source, re.DOTALL)
     if match is None:
         raise AssertionError(f"Missing installer function: {signature}")
     return match.group()
@@ -20,9 +22,10 @@ class CloudChoiceTests(unittest.TestCase):
         wizard = body("procedure InitializeWizard")
         skip = body("function ShouldSkipPage")
         prepare = body("function PrepareToInstall")
-        existing = body("function UserConfigExistsBeforeInstall")
+        existing = body("function UserConfigExistsBeforeInstall", CHOICE)
 
         self.assertNotIn("UserConfigExistedBeforeInstall :=", wizard)
+        self.assertIn('#include "cloud_choice.iss"', SCRIPT)
         self.assertIn("UserConfigExistedBeforeInstall := UserConfigExistsBeforeInstall", skip)
         self.assertLess(
             prepare.index("DataDirValue := AdoptableDataDir"),
@@ -36,7 +39,7 @@ class CloudChoiceTests(unittest.TestCase):
         self.assertIn("FileExists(AddBackslash(ResolvePreviousDataDir) + 'config.toml')", existing)
 
     def test_new_config_uses_utf8_and_existing_config_is_not_replaced(self):
-        apply_choice = body("procedure ApplyNetworkChoiceToUserConfig")
+        apply_choice = body("procedure ApplyNetworkChoiceToUserConfig", CHOICE)
         migrate = body("function MigrateUserDataDir")
         self.assertIn("if UserConfigExistedBeforeInstall", apply_choice)
         self.assertIn("SaveStringsToUTF8FileWithoutBOM(UserConfigPath", apply_choice)

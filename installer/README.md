@@ -60,7 +60,8 @@ pwsh -File ./Prepare-PackageFiles.ps1 -TargetVersion 1.2.3 -RepoRoot .. `
 | 两处都有配置 | 原目录和新目录都有 `config.toml` | 升级时改目录 | 安装停止，两份配置保持原样 |
 
 运行 `python installer/tests/test_cloud_choice.py` 检查安装脚本的判断时序。
-该脚本检查源码约束。Windows 安装矩阵检查实际安装结果。
+Windows CI 运行 `installer/tests/cloud-choice.ps1`。它用 Inno Setup 执行五个隔离的配置场景。
+该测试使用安装器的云候选函数。完整安装包仍按上表在测试机检查。
 
 ## 运行时依赖检查
 
