@@ -159,7 +159,7 @@ ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
     if (!IsHttpEndpoint(endpoint) || model.empty())
         return {false, "请填写有效的 HTTPS 接口地址和模型名。"};
     const std::string provider = Value(request, "provider");
-    const std::string payload = ApiCredentialTest::detail::BuildChatRequestBody(provider, model).dump();
+    const std::string payload = ApiCredentialTest::detail::BuildChatProbeRequestBody(provider, model).dump();
     const HttpResponse response = PerformJsonRequest(endpoint, token, &payload);
     if (response.code == CURLE_OK && response.status >= 200 && response.status < 300)
         return {true, "连接成功，API Key 和模型配置有效。"};

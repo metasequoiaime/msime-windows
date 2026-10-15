@@ -99,13 +99,13 @@ TEST_CASE(ai_request_keeps_custom_provider_request_shape)
 
 TEST_CASE(credential_test_uses_openai_completion_limit)
 {
-    const auto older_model = ApiCredentialTest::detail::BuildChatRequestBody("openai", "gpt-4o-mini");
+    const auto older_model = ApiCredentialTest::detail::BuildChatProbeRequestBody("openai", "gpt-4o-mini");
     REQUIRE_EQ(older_model["max_completion_tokens"].get<int>(), 1);
     REQUIRE(!older_model.contains("max_tokens"));
 
     for (const char *model : {"gpt-5.6-luna", "gpt-6-luna", "o3-mini"})
     {
-        const auto body = ApiCredentialTest::detail::BuildChatRequestBody("OpenAI", model);
+        const auto body = ApiCredentialTest::detail::BuildChatProbeRequestBody("OpenAI", model);
         REQUIRE_EQ(body["model"].get<std::string>(), std::string(model));
         REQUIRE_EQ(body["max_completion_tokens"].get<int>(), 32);
         REQUIRE(!body.contains("max_tokens"));
@@ -118,18 +118,18 @@ TEST_CASE(credential_test_uses_openai_completion_limit)
 
 TEST_CASE(credential_test_keeps_other_provider_request_shape)
 {
-    const auto deepseek = ApiCredentialTest::detail::BuildChatRequestBody("deepseek", "deepseek-chat");
+    const auto deepseek = ApiCredentialTest::detail::BuildChatProbeRequestBody("deepseek", "deepseek-chat");
     REQUIRE_EQ(deepseek["max_tokens"].get<int>(), 1);
     REQUIRE(!deepseek.contains("max_completion_tokens"));
     REQUIRE_EQ(deepseek["thinking"]["type"].get<std::string>(), "disabled");
     REQUIRE(!deepseek.contains("enable_thinking"));
 
-    const auto siliconflow = ApiCredentialTest::detail::BuildChatRequestBody("siliconflow", "Qwen/Qwen3-8B");
+    const auto siliconflow = ApiCredentialTest::detail::BuildChatProbeRequestBody("siliconflow", "Qwen/Qwen3-8B");
     REQUIRE_EQ(siliconflow["max_tokens"].get<int>(), 1);
     REQUIRE_EQ(siliconflow["enable_thinking"].get<bool>(), false);
     REQUIRE(!siliconflow.contains("max_completion_tokens"));
 
-    const auto custom = ApiCredentialTest::detail::BuildChatRequestBody("custom", "gpt-5.6-luna");
+    const auto custom = ApiCredentialTest::detail::BuildChatProbeRequestBody("custom", "gpt-5.6-luna");
     REQUIRE_EQ(custom["max_tokens"].get<int>(), 1);
     REQUIRE(!custom.contains("max_completion_tokens"));
     REQUIRE(!custom.contains("thinking"));

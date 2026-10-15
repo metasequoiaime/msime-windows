@@ -7,7 +7,7 @@
 
 namespace ApiCredentialTest::detail
 {
-inline nlohmann::json BuildChatRequestBody(const std::string &provider, const std::string &model)
+inline nlohmann::json BuildChatProbeRequestBody(const std::string &provider, const std::string &model)
 {
     nlohmann::json body = {
         {"model", model}, {"stream", false}, {"messages", {{{"role", "user"}, {"content", "Reply OK"}}}}};
