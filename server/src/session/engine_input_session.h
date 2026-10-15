@@ -54,6 +54,7 @@ class EngineInputSession : public IInputSession
     void set_rescoring_context(std::string context) override;
     void set_pinyin_sequence(const std::string &pinyin_sequence) override;
     void set_pinyin_sequence_with_cases(const std::string &pinyin_sequence) override;
+    void set_wubi_literal_input(bool literal) override;
 
     void set_caret(std::optional<std::size_t> caret) override;
     std::size_t prefix_end() const override;

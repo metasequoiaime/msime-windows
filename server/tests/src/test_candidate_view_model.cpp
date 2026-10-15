@@ -36,6 +36,30 @@ TEST_CASE(candidate_view_wraps_part_of_speech_and_separators_in_translation)
                                                     "<span class=\"cand-pos\">n.</span> laugh</span>"));
 }
 
+TEST_CASE(candidate_view_pos_toggle_updates_display_and_refresh_signature)
+{
+    const std::string raw = "adj. <spreading>; n. laugh";
+    CandidateViewItem item;
+    item.text = "笑";
+    item.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw, true);
+    const auto shown_html = CandidateViewHtml(item);
+    const auto shown_signature = CandidatePageSignature({item});
+    const CandidateFramePageState page{2, 1, true, true};
+    const auto shown_frame = CandidateFrameSignature(L"xiao", {item}, 10, 20, page);
+
+    item.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw, false);
+    REQUIRE_EQ(item.translation, std::string("<spreading>; laugh"));
+    REQUIRE_EQ(CandidateViewHtml(item), std::string("笑<span class=\"cand-translation\">&lt;spreading&gt;"
+                                                    "<span class=\"cand-sep\">;</span> laugh</span>"));
+    REQUIRE(shown_signature != CandidatePageSignature({item}));
+    REQUIRE(shown_frame != CandidateFrameSignature(L"xiao", {item}, 10, 20, page));
+
+    item.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw, true);
+    REQUIRE_EQ(CandidateViewHtml(item), shown_html);
+    REQUIRE_EQ(CandidatePageSignature({item}), shown_signature);
+    REQUIRE_EQ(CandidateFrameSignature(L"xiao", {item}, 10, 20, page), shown_frame);
+}
+
 TEST_CASE(candidate_page_signature_distinguishes_comma_split_between_items)
 {
     CandidateViewItem ab, c, a, bc;
@@ -141,6 +165,44 @@ TEST_CASE(fixed_position_candidates_get_pin_badge_visible_in_both_backends)
     ApplyFixedPositionBadge(plain, true, "paperclip");
     REQUIRE(plain.badge.empty());
     REQUIRE_EQ(CandidateViewHtml(plain), std::string("世界"));
+}
+
+TEST_CASE(ai_suggestion_badge_switches_between_robot_and_whale)
+{
+    // 出厂默认是 🤖：与改动前的硬编码值逐字节一致，升级不改变默认观感。
+    REQUIRE_EQ(AiSuggestionBadge("robot"), std::string(" \xF0\x9F\xA4\x96"));
+    REQUIRE_EQ(AiSuggestionBadge("whale"), std::string(" \xF0\x9F\x90\xB3"));
+
+    // 映射表同时是配置层白名单：已知样式有各自的字形，未知样式没有。
+    REQUIRE(AiSuggestionBadgeGlyph("robot") != nullptr);
+    REQUIRE(AiSuggestionBadgeGlyph("whale") != nullptr);
+    REQUIRE(AiSuggestionBadgeGlyph("") == nullptr);
+    REQUIRE(AiSuggestionBadgeGlyph("smiley") == nullptr);
+
+    // 未列入白名单的样式按出厂默认处理，手改 TOML 写错也不会让 AI 候选失去来源标识。
+    REQUIRE_EQ(AiSuggestionBadge(""), AiSuggestionBadge("robot"));
+    REQUIRE_EQ(AiSuggestionBadge("smiley"), AiSuggestionBadge("robot"));
+
+    // 徽标经既有 badge 通道渲染进词条文本，两种样式在两个后端都可见。
+    CandidateViewItem whale;
+    whale.text = "联想";
+    whale.badge = AiSuggestionBadge("whale");
+    REQUIRE_EQ(whale.badge, std::string(" \xF0\x9F\x90\xB3"));
+    REQUIRE_EQ(CandidateViewHtml(whale), std::string("联想 \xF0\x9F\x90\xB3"));
+
+    CandidateViewItem robot;
+    robot.text = "联想";
+    robot.badge = AiSuggestionBadge("robot");
+    REQUIRE_EQ(robot.badge, std::string(" \xF0\x9F\xA4\x96"));
+    REQUIRE_EQ(CandidateViewHtml(robot), std::string("联想 \xF0\x9F\xA4\x96"));
+
+    // AI 徽标是覆盖而非追加：同一词条既固定又是 AI 候选时，两个徽标并存且各占一段。
+    CandidateViewItem both;
+    both.text = "联想";
+    both.fixed_position = true;
+    both.badge = AiSuggestionBadge("whale");
+    ApplyFixedPositionBadge(both, true, "paperclip");
+    REQUIRE_EQ(both.badge, std::string(" \xF0\x9F\x90\xB3 \xF0\x9F\x93\x8E"));
 }
 
 TEST_CASE(ui_backend_policy_keeps_settings_web_and_small_windows_native_by_default)

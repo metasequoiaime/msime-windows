@@ -200,8 +200,11 @@ class CCompositionProcessorEngine
 
   private:
     void InitKeyStrokeTable();
+    // registerOnLanguageBar == FALSE keeps the button object alive for teardown symmetry but never adds it
+    // to the taskbar language bar, so it is not shown. Mode/punctuation switching runs through the
+    // compartments, not the buttons, so hiding them does not affect input.
     BOOL InitLanguageBar(_In_ CLangBarItemButton *pLanguageBar, _In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId,
-                         REFGUID guidCompartment);
+                         REFGUID guidCompartment, bool registerOnLanguageBar);
 
     struct _KEYSTROKE;
     BOOL IsVirtualKeyKeystrokeComposition(UINT uCode, _Out_opt_ _KEYSTROKE_STATE *pKeyState,

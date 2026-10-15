@@ -338,6 +338,25 @@ bool SetConfiguredCandidateFixedBadgeStyle(const std::string &style)
     return true;
 }
 
+const std::string &GetConfiguredCandidateAiBadgeStyle()
+{
+    return g_candidate_ai_badge_style;
+}
+
+bool SetConfiguredCandidateAiBadgeStyle(const std::string &style)
+{
+    if (!IsValidCandidateAiBadgeStyle(style))
+    {
+        return false;
+    }
+    if (!WriteConfiguredValue("appearance", "candidate_ai_badge_style", EscapeTomlBasicString(style)))
+    {
+        return false;
+    }
+    g_candidate_ai_badge_style = style;
+    return true;
+}
+
 const std::string &GetConfiguredSettingsWindowLinger()
 {
     return g_settings_window_linger;

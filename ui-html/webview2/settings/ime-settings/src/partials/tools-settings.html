@@ -115,6 +115,49 @@
     </div>
   </div>
 
+  <!-- 语言栏：折叠头 + 总开关，展开后是三个语言栏按钮的子开关。总开关关闭时子开关置灰禁用，勾选状态仍保留展示 -->
+  <div class="section language-bar-section">
+    <div class="section-header toggle-section-header">
+      <button class="toggle-section-expand" id="languageBarExpand" type="button" aria-expanded="false" aria-controls="languageBarDetails">
+        <span class="section-title">语言栏</span><span class="toggle-section-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="ftb-toggle-btn active" id="languageBarToggleBtn" role="switch" aria-checked="true" tabindex="0">
+        <div class="ftb-toggle-knob"></div>
+      </div>
+    </div>
+    <div class="toggle-section-details" id="languageBarDetails">
+      <div class="input-setting-description">在任务栏语言栏（输入法指示器旁）分别控制中/英模式、全/半角、中文标点三个按钮的显示。修改后需重启生效。</div>
+      <div class="section-header">
+        <div>
+          <div class="section-title">中/英模式按钮</div>
+          <div class="input-setting-description">显示中/英文输入模式切换按钮</div>
+        </div>
+        <div class="ftb-toggle-btn active" id="languageBarImeModeToggleBtn" role="switch" aria-checked="true" tabindex="0">
+          <div class="ftb-toggle-knob"></div>
+        </div>
+      </div>
+      <div class="section-header">
+        <div>
+          <div class="section-title">全/半角按钮</div>
+          <div class="input-setting-description">显示全角/半角切换按钮（只在使用桌面语言栏时才显示）</div>
+        </div>
+        <div class="ftb-toggle-btn active" id="languageBarDoubleSingleByteToggleBtn" role="switch" aria-checked="true" tabindex="0">
+          <div class="ftb-toggle-knob"></div>
+        </div>
+      </div>
+      <div class="section-header">
+        <div>
+          <div class="section-title">中文标点按钮</div>
+          <div class="input-setting-description">显示中文/英文标点切换按钮（只在使用桌面语言栏时才显示）</div>
+        </div>
+        <div class="ftb-toggle-btn active" id="languageBarPunctuationToggleBtn" role="switch" aria-checked="true" tabindex="0">
+          <div class="ftb-toggle-knob"></div>
+        </div>
+      </div>
+      <div class="toggle-section-disabled-hint is-hidden" id="languageBarDisabledHint">开启总开关后生效</div>
+    </div>
+  </div>
+
   <div class="dict-card quick-phrase-card">
     <div class="quick-phrase-heading section-header">
       <div>
@@ -152,7 +195,7 @@
     <div class="section-header">
       <div>
         <div class="section-title">日期与时间快捷输入(T 模式)</div>
-        <div class="quick-phrase-description">中文模式下按 Shift+T，再输入 rq / riqi / date 可输入当前日期；输入 sj / shijian / time 可输入当前时间；输入 xq / xingqi / week 可输入当前星期。</div>
+        <div class="quick-phrase-description">中文模式下按 Shift+T，再输入 rq / riqi / date 可输入当前日期；输入 sj / shijian / time 可输入当前时间；输入 xq / xingqi / week 可输入当前星期。全拼、双拼、五笔都支持。</div>
       </div>
       <div class="ftb-toggle-btn active" id="dateTimeModeToggleBtn" role="switch" aria-checked="true" tabindex="0">
         <div class="ftb-toggle-knob"></div>
@@ -236,7 +279,7 @@
     <div class="section-header">
       <div>
         <div class="section-title">数字与计算(V 模式)</div>
-        <div class="quick-phrase-description">中文模式下输入 V 再接数字或算式：V123 → 一百二十三 / 壹佰贰拾叁；V123.45 → 壹佰贰拾叁元肆角伍分；V1+2*3 → 7（支持 + - * / 和括号）。双拼按 Shift+V；全拼大小写 v 都可以。空格上屏；数字键用来输入，Shift+数字选词。</div>
+        <div class="quick-phrase-description">中文模式下输入 V 再接数字或算式：V123 → 一百二十三 / 壹佰贰拾叁；V123.45 → 壹佰贰拾叁元肆角伍分；V1+2*3 → 7（支持 + - * / 和括号）。双拼和五笔按 Shift+V；全拼大小写 v 都可以。空格上屏；数字键用来输入，Shift+数字选词。</div>
       </div>
       <div class="ftb-toggle-btn active" id="vModeToggleBtn" role="switch" aria-checked="true" tabindex="0">
         <div class="ftb-toggle-knob"></div>

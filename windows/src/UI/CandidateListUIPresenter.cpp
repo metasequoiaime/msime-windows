@@ -831,14 +831,11 @@ void CCandidateListUIPresenter::_SetText(_In_ CMetasequoiaImeArray<CCandidateLis
     {
         // Prefer the synchronous UiLessComposition pipe payload (already applied
         // via _ApplyUiLessCandidatePage). Fall back to shared memory if needed.
+        // Never to pCandidateList: that is the local engine's placeholder, not the Server's candidates, and a host
+        // draws it as one garbled entry.
         if (_candidateState.GetCount() == 0)
         {
             _LoadUiLessCandidatesFromSharedMemory();
-        }
-        if (_candidateState.GetCount() == 0 && pCandidateList != nullptr && pCandidateList->Count() != 0)
-        {
-            AddCandidateToCandidateListUI(pCandidateList, isAddFindKeyCode);
-            SetPageIndexWithScrollInfo(pCandidateList);
         }
         _NotifyUiLessHost();
         return;
@@ -907,6 +904,8 @@ void CCandidateListUIPresenter::SetPageIndexWithScrollInfo(       //
 void CCandidateListUIPresenter::_ClearList()
 {
     _candidateState.Clear();
+    // An emptied list must reload even when the Server's page text is unchanged.
+    _lastUiLessCandidatePage.clear();
 }
 
 //+---------------------------------------------------------------------------
@@ -1258,20 +1257,32 @@ HRESULT CCandidateListUIPresenter::BeginUIElement()
 
     ITfUIElementMgr *pUIElementMgr = nullptr;
     hr = pThreadMgr->QueryInterface(IID_ITfUIElementMgr, (void **)&pUIElementMgr);
+    HRESULT beginHr = E_NOINTERFACE;
     if (hr == S_OK)
     {
-        pUIElementMgr->BeginUIElement(this, &_isShowMode, &_uiElementId);
+        beginHr = pUIElementMgr->BeginUIElement(this, &_isShowMode, &_uiElementId);
         pUIElementMgr->Release();
     }
+    const BOOL hostShow = _isShowMode;
 
     // Hosts that activate with TF_TMF_UIELEMENTENABLEDONLY (typical for games)
     // must never get an IME-owned candidate HWND, even if BeginUIElement left
     // pbShow TRUE.
-    if (_pTextService->_IsUiLessMode())
+    if (Global::IgnoreHostUiLess)
+    {
+        _isShowMode = TRUE;
+    }
+    else if (_pTextService->_IsUiLessMode())
     {
         _isShowMode = FALSE;
     }
     Global::CandidateUiLessMode = (_isShowMode == FALSE);
+    QueueTsfHostWindowDiagnostic(
+        L"begin-ui-element",
+        fmt::format(L"hr={:#x} host_pbShow={} element_id={} activate_flags={:#x} uielement_enabled_only={} "
+                    L"uiless_ignored={} final_show={} host_uiless={}",
+                    static_cast<unsigned>(beginHr), hostShow, _uiElementId, _pTextService->_dwActivateFlags,
+                    _pTextService->_IsUiLessMode(), Global::IgnoreHostUiLess, _isShowMode, Global::HostUiLessMode));
 
 Exit:
     return hr;
@@ -1298,6 +1309,10 @@ HRESULT CCandidateListUIPresenter::EndUIElement()
     }
 
     Global::CandidateUiLessMode = false;
+    // The next candidate session may talk to a restarted Server, whose generations start over.
+    _lastUiLessGeneration = 0;
+    _serverUiLessPageSeen = false;
+    QueueTsfHostWindowDiagnostic(L"end-ui-element", fmt::format(L"hr={:#x}", static_cast<unsigned>(hr)));
 
 Exit:
     return hr;
@@ -1367,7 +1382,6 @@ void CCandidateListUIPresenter::_RecordSentCaretPoint(bool sent)
 
 void CCandidateListUIPresenter::_ReplaceCandidateListFromPage(_In_ const std::wstring &page)
 {
-    const UINT previousSelection = _candidateState.GetSelection();
     _candidateState.Clear();
     _lastUiLessCandidatePage = page;
 
@@ -1402,7 +1416,9 @@ void CCandidateListUIPresenter::_ReplaceCandidateListFromPage(_In_ const std::ws
         pageIndexSource.Append();
     }
     SetPageIndexWithScrollInfo(&pageIndexSource);
-    _candidateState.SetSelectionSilently(previousSelection < count ? static_cast<int>(previousSelection) : 0);
+    // A different page means the Server rebuilt it, and every rebuild highlights the first item. Keeping the old
+    // index would show the host one highlight while Space commits another.
+    _candidateState.SetSelectionSilently(0);
 }
 
 void CCandidateListUIPresenter::_ApplyUiLessCandidatePage(_In_ const std::wstring &page, int selectedIndex)
@@ -1428,29 +1444,25 @@ bool CCandidateListUIPresenter::_ConsumeUiLessCompositionReply(uint64_t requestI
         return false;
     }
 
-    const std::wstring payload(receivedData->candidate_string);
-    std::wstring page;
-    int selection = 0;
-    const size_t firstTab = payload.find(L'\t');
-    if (firstTab == std::wstring::npos)
+    if (_ApplyUiLessPayload(FanyImeUiLessPage::Parse(receivedData->candidate_string)))
     {
-        page = payload;
+        _NotifyUiLessHost();
     }
-    else
+    return true;
+}
+
+bool CCandidateListUIPresenter::_ApplyUiLessPayload(_In_ const FanyImeUiLessPage::Payload &payload)
+{
+    if (!FanyImeUiLessPage::IsCurrent(payload.generation, _lastUiLessGeneration))
     {
-        const size_t secondTab = payload.find(L'\t', firstTab + 1);
-        if (secondTab == std::wstring::npos)
-        {
-            page = payload.substr(firstTab + 1);
-        }
-        else
-        {
-            page = payload.substr(firstTab + 1, secondTab - firstTab - 1);
-            selection = _wtoi(payload.c_str() + secondTab + 1);
-        }
+        return false;
     }
-    _ApplyUiLessCandidatePage(page, selection);
-    _NotifyUiLessHost();
+    if (payload.generation != 0)
+    {
+        _lastUiLessGeneration = payload.generation;
+    }
+    _serverUiLessPageSeen = _serverUiLessPageSeen || payload.hasPage;
+    _ApplyUiLessCandidatePage(payload.page, payload.selection);
     return true;
 }
 
@@ -1464,7 +1476,7 @@ void CCandidateListUIPresenter::_NotifyUiLessHost()
 void CCandidateListUIPresenter::_LoadUiLessCandidatesFromSharedMemory()
 {
     std::wstring page;
-    if (!TryReadCandidatePageFromSharedMemory(&page) || page == _lastUiLessCandidatePage)
+    if (!_serverUiLessPageSeen || !TryReadCandidatePageFromSharedMemory(&page) || page == _lastUiLessCandidatePage)
     {
         return;
     }

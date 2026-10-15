@@ -72,12 +72,18 @@ void ScheduleDiagnosticFlushLocked()
     {
         return;
     }
+    // A loader reference, not DllAddRef: the host can unload this TIP without asking DllCanUnloadNow, and a callback
+    // sleeping in here would then return into whatever was mapped at this address next (CS2 crashed in SDL3 that way).
+    HMODULE self = PinThisModuleForCallback();
+    if (!self)
+    {
+        return;
+    }
     diagnosticFlushScheduled = true;
-    DllAddRef();
-    if (!TrySubmitThreadpoolCallback(FlushTsfDiagnosticLogs, nullptr, nullptr))
+    if (!TrySubmitThreadpoolCallback(FlushTsfDiagnosticLogs, self, nullptr))
     {
         diagnosticFlushScheduled = false;
-        DllRelease();
+        FreeLibrary(self);
     }
 }
 
@@ -115,8 +121,10 @@ bool SendDiagnosticBatch(const FanyImeTsfDiagnosticBatchHeader &header, const st
     return writeResult && bytesWritten == frame.size();
 }
 
-void CALLBACK FlushTsfDiagnosticLogs(PTP_CALLBACK_INSTANCE, PVOID)
+void CALLBACK FlushTsfDiagnosticLogs(PTP_CALLBACK_INSTANCE instance, PVOID context)
 {
+    // Released by the thread pool after this function has fully returned.
+    FreeLibraryWhenCallbackReturns(instance, static_cast<HMODULE>(context));
     Sleep(DiagnosticFlushDelayMs);
 
     FanyImeTsfDiagnosticBatchHeader header;
@@ -163,7 +171,6 @@ void CALLBACK FlushTsfDiagnosticLogs(PTP_CALLBACK_INSTANCE, PVOID)
     }
     if (loggingDisabled)
     {
-        DllRelease();
         return;
     }
 
@@ -187,7 +194,6 @@ void CALLBACK FlushTsfDiagnosticLogs(PTP_CALLBACK_INSTANCE, PVOID)
             ScheduleDiagnosticFlushLocked();
         }
     }
-    DllRelease();
 }
 // These tokens fence messages that can outlive a CMetasequoiaIME instance.
 // Per-instance counters can collide after HWND/HANDLE reuse during a rapid
@@ -1118,6 +1124,43 @@ void DebugTsfIssue47(const wchar_t *stage, uint64_t requestId, UINT code, WCHAR 
                     function, eaten, composing ? 1 : 0, virtualKeyLength, static_cast<unsigned long>(result),
                     correlationToken, Global::current_process_name.empty() ? L"unknown" : Global::current_process_name);
     QueueTsfDiagnosticLog(message);
+}
+
+namespace
+{
+std::wstring DescribeWindowForDiagnostic(HWND hwnd)
+{
+    if (!hwnd)
+    {
+        return L"null";
+    }
+    WCHAR className[128] = {};
+    GetClassNameW(hwnd, className, ARRAYSIZE(className));
+    RECT rect{};
+    GetWindowRect(hwnd, &rect);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    return fmt::format(L"{:#x}[{} pid={} visible={} rect=({},{},{},{})]", reinterpret_cast<uintptr_t>(hwnd), className,
+                       pid, IsWindowVisible(hwnd) ? 1 : 0, rect.left, rect.top, rect.right, rect.bottom);
+}
+} // namespace
+
+void QueueTsfHostWindowDiagnostic(_In_z_ const wchar_t *event, const std::wstring &detail)
+{
+    if (!Global::TsfDiagnosticLogEnabled.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    GUITHREADINFO gui{};
+    gui.cbSize = sizeof(gui);
+    const BOOL haveGui = GetGUIThreadInfo(GetCurrentThreadId(), &gui);
+    QueueTsfDiagnosticLog(fmt::format(
+        L"[host-window] {} {} process={} fg={} focus={} active={} caret_hwnd={} caret=({},{},{},{}) gui_flags={:#x}",
+        event, detail, Global::current_process_name, DescribeWindowForDiagnostic(GetForegroundWindow()),
+        DescribeWindowForDiagnostic(haveGui ? gui.hwndFocus : nullptr),
+        DescribeWindowForDiagnostic(haveGui ? gui.hwndActive : nullptr),
+        DescribeWindowForDiagnostic(haveGui ? gui.hwndCaret : nullptr), gui.rcCaret.left, gui.rcCaret.top,
+        gui.rcCaret.right, gui.rcCaret.bottom, gui.flags));
 }
 
 void QueueTsfDiagnosticLog(const std::wstring &line)

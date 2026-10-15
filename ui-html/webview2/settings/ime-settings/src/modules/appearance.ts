@@ -36,6 +36,7 @@ export type CandidateAppearanceConfig = {
   candidate_window_follow_cursor?: boolean;
   candidate_fixed_badge?: boolean;
   candidate_fixed_badge_style?: string;
+  candidate_ai_badge_style?: string;
   candidate_window_preedit_shuangpin_quanpin?: boolean;
   tsf_preedit_shuangpin_quanpin?: boolean;
   ui_backend?: string;
@@ -518,6 +519,7 @@ export function applyAppearanceConfig(
     applyToggleState('candidateFixedBadgeToggleBtn', candidateAppearance.candidate_fixed_badge);
   }
   applyDropdownValue('candFixedBadgeStyleBtn', 'candFixedBadgeStyleMenu', candidateAppearance?.candidate_fixed_badge_style);
+  applyDropdownValue('candAiBadgeStyleBtn', 'candAiBadgeStyleMenu', candidateAppearance?.candidate_ai_badge_style);
   if (typeof candidateAppearance?.candidate_window_preedit_shuangpin_quanpin === 'boolean') {
     applyToggleState('candPreeditShuangpinQuanpinToggleBtn', candidateAppearance.candidate_window_preedit_shuangpin_quanpin);
   }
@@ -608,6 +610,7 @@ export async function setupAppearance() {
     postConfigUpdate('appearance.candidate_fixed_badge', active);
   });
   setupDropdownMenu('candFixedBadgeStyleBtn', 'candFixedBadgeStyleMenu', '', true, 'appearance.candidate_fixed_badge_style');
+  setupDropdownMenu('candAiBadgeStyleBtn', 'candAiBadgeStyleMenu', '', true, 'appearance.candidate_ai_badge_style');
 
   // 候选窗样式
   FONT_MENUS.forEach((menu) => {

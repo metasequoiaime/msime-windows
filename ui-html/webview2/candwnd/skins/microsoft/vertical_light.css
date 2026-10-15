@@ -77,7 +77,7 @@
     .cand {
       position: relative;
       box-sizing: border-box;
-      padding: 0.235em 0.9em 0.235em 0.76em;
+      padding: 0.12em 0.3em 0.12em 0.4em;
       border-radius: 4px;
     }
 
@@ -89,15 +89,15 @@
       background-color: var(--ms-selected);
     }
 
-    /* 选中条落在高亮左缘之内，比字高一些。 */
+    /* 选中条落在高亮左缘之内，细而略矮于字。 */
     .first::before {
       content: "";
       position: absolute;
       left: 0;
       top: 50%;
       transform: translateY(-50%);
-      height: 1.1em;
-      width: max(3px, 0.24em);
+      height: 0.9em;
+      width: 3px;
       background: var(--ms-accent);
       border-radius: 99px;
     }
@@ -151,27 +151,27 @@
     }
 
     /* 翻页：实心三角。竖排是最后一项下面的一矮行；共享脚本按 0.72em 的按钮对齐序号，
-       这里的按钮宽 1.2em，三角左侧多出 0.145em，用 prev 的负外边距抵掉。 */
+       这里的按钮宽 0.81em，三角左侧少 0.035em，用 prev 的外边距补上。 */
     html[data-page-arrows="on"] .page-arrows {
       gap: 0;
     }
     .page-arrow {
-      width: 1.2em;
+      width: 0.81em;
       height: 1.2em;
       border-radius: 4px;
       color: var(--cand-text);
     }
     .page-arrow::before {
-      width: 0.47em;
-      height: 0.56em;
+      width: 0.44em;
+      height: 0.52em;
       border: none;
       transform: none;
       background: currentColor;
-      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M7.43 4.46L2.57 1.54Q0 0 0 3L0 9Q0 12 2.57 10.46L7.43 7.54Q10 6 7.43 4.46Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
-      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M7.43 4.46L2.57 1.54Q0 0 0 3L0 9Q0 12 2.57 10.46L7.43 7.54Q10 6 7.43 4.46Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M6.14 3.69L3.86 2.31Q0 0 0 4.5L0 7.5Q0 12 3.86 9.69L6.14 8.31Q10 6 6.14 3.69Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M6.14 3.69L3.86 2.31Q0 0 0 4.5L0 7.5Q0 12 3.86 9.69L6.14 8.31Q10 6 6.14 3.69Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
     }
     .page-arrow-prev {
-      margin-left: -0.145em;
+      margin-left: 0.035em;
     }
     .page-arrow-prev::before {
       transform: scaleX(-1);

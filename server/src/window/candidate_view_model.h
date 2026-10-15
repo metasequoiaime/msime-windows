@@ -63,6 +63,28 @@ inline void ApplyFixedPositionBadge(CandidateViewItem &view, bool show, const st
         view.badge += " \xF0\x9F\x93\x8E"; // 📎
 }
 
+// AI 联想候选的来源徽标：与固定排位徽标走同一条展示路径（badge 字段），同样是纯展示字段。
+// 出厂默认 🤖（机器人头），可切到 🐳。设计取舍与固定排位徽标一致：存枚举名而不是字面
+// emoji，TOML/日志/diff 里不出现图形字符。样式到字形的映射只有这一张表，配置层白名单
+// IsValidCandidateAiBadgeStyle 也查它，新增样式只改这里，两边不会漂移。
+// 未知样式返回 nullptr。
+inline const char *AiSuggestionBadgeGlyph(const std::string &style)
+{
+    if (style == "robot")
+        return "\xF0\x9F\xA4\x96"; // 🤖
+    if (style == "whale")
+        return "\xF0\x9F\x90\xB3"; // 🐳
+    return nullptr;
+}
+
+// 返回完整徽标串（含前导空格）：AI 候选的 badge 由本函数独占，不是追加，因此用覆盖语义。
+// 未列出的样式按出厂默认处理，手改 TOML 写错不至于让 AI 候选彻底失去标识。
+inline std::string AiSuggestionBadge(const std::string &style)
+{
+    const char *glyph = AiSuggestionBadgeGlyph(style);
+    return std::string(" ") + (glyph ? glyph : AiSuggestionBadgeGlyph("robot"));
+}
+
 // 词性与分隔符各包一层 span，皮肤用 .cand-pos / .cand-sep 单独配色；没配时继承 .cand-translation。
 inline std::string CandidateTranslationHtml(const std::string &translation)
 {

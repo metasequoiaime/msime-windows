@@ -1102,7 +1102,17 @@ std::size_t InputSession::quantized_prefix_end() const
     // Floor to the last complete unit at or before the caret: an incomplete trailing unit
     // belongs to the pending suffix. boundaries always contains 0, so the boundary before
     // upper_bound always exists.
-    return *std::prev(std::upper_bound(boundaries.begin(), boundaries.end(), caret_position()));
+    const auto next = std::upper_bound(boundaries.begin(), boundaries.end(), caret_position());
+    const std::size_t floored = *std::prev(next);
+    // A floor of 0 with the caret past the string head means the caret sits inside the FIRST
+    // unit, not at the true head. Round up to the end of that unit instead (the whole string
+    // when it is the only unit): prefix_end == 0 is reserved for caret == 0, which the host
+    // reads as an empty prefix and hides the candidate window for (IsCaretPrefixEmpty).
+    if (floored == 0 && caret_position() > 0)
+    {
+        return next != boundaries.end() ? *next : raw.size();
+    }
+    return floored;
 }
 
 std::size_t InputSession::prefix_end() const
@@ -1148,8 +1158,9 @@ void InputSession::refresh_prefix_candidates()
         prefix_candidates_ = engine_.query_raw_candidates(prefix, raw_with_cases.substr(0, end));
         prefix_query_input_ = prefix;
     }
-    // An empty prefix (caret at/before the first boundary) decodes to no candidates on purpose:
-    // the host hides its candidate window while the preedit keeps showing the full pinyin.
+    // An empty prefix (caret == 0; a caret inside the first unit rounds up to its end instead)
+    // decodes to no candidates on purpose: the host hides its candidate window while the
+    // preedit keeps showing the full pinyin.
     prefix_candidates_active_ = true;
 }
 

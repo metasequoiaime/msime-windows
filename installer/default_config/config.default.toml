@@ -56,6 +56,8 @@ cn_en_mixed_input = true
 cn_en_mixed_input_min_chars = 5
 # 在竖排候选窗口中显示中英文互译（每项最多两个简短释义）
 candidate_translations = false
+# 在候选译文中显示 n.、v. 等词性标记，关闭后仅显示释义
+candidate_translation_show_pos = true
 # 中文输入状态下显示 emoji 前缀候选（排在候选项列表最后）
 emoji_mixed_input = false
 # 中文输入状态下显示颜文字前缀候选（排在 emoji 之后）
@@ -219,6 +221,8 @@ candidate_window_preedit_shuangpin_quanpin = false
 candidate_fixed_badge = true
 # 固定排位候选词徽标样式，可选："paperclip", "pushpin", "dot"
 candidate_fixed_badge_style = "paperclip"
+# AI 联想候选词的来源徽标样式，可选："robot"（🤖）, "whale"（🐳）
+candidate_ai_badge_style = "robot"
 # TSF 行内预编辑样式，可选："raw", "pinyin", "empty"
 #   raw    -> 原始按键序列
 #   pinyin -> 分词后的拼音序列（Server 回包 Preedit）
@@ -228,6 +232,20 @@ tsf_preedit_style = "raw"
 # tsf_preedit_style = "empty"
 # 双拼方案下行内预编辑显示转换后的全拼：raw 显示不带分词符号的全拼（nihao），pinyin 显示带分词符号的全拼（ni'hao）
 tsf_preedit_shuangpin_quanpin = false
+
+#
+# Language bar
+# 语言栏
+#
+[language_bar]
+# 总开关：是否在任务栏语言栏（输入法指示器旁）显示任何按钮。关闭后下面三个子开关一并隐藏，且不注册任何语言栏按钮。
+enabled = true
+# 是否在任务栏语言栏（输入法指示器旁）显示中/英模式按钮
+show_ime_mode = true
+# 是否在任务栏语言栏显示全/半角按钮
+show_double_single_byte = true
+# 是否在任务栏语言栏显示中文标点按钮
+show_punctuation = true
 
 #
 # Input
@@ -506,13 +524,13 @@ mixed_candidates = true
 date_time_candidates = false # 全拼/双拼下输入 rq / riqi / date、sj / shijian / time、xq / xingqi / week 时，把当前日期、时间、星期混进候选
 date_time_menu = true # 日期时间混入候选时，在第三位放一个「📅日期」入口，选中后候选框换成全部日期格式（与 Shift+T 模式相同）
 unicode_mode = true # Shift+U 进入 Unicode 码位输入模式
-date_time_mode = true # Shift+T 进入日期与时间快捷输入模式
+date_time_mode = true # Shift+T 进入日期与时间快捷输入模式（全拼/双拼/五笔）
 emoji_mode = false # Shift+E 进入 Emoji 快捷输入模式（支持全拼/简拼/双拼/英文）；默认关闭，避免截走大写 E 开头的英文
 kaomoji_mode = false # Shift+M 进入颜文字快捷输入模式（支持全拼/简拼/双拼/英文）
 jianpin_mode = true # Shift+J 进入超级简拼模式（每个字母作为简拼；双拼按方案转换 zh/ch/sh）
 y_mode = true # Shift+Y 进入临时英文模式（中文状态下直接打英文，上屏后回到中文）
 r_mode = true # Shift+R 进入临时日语模式（中文状态下使用罗马字输入日语，上屏后回到中文）
-v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，V123.45 → 壹佰贰拾叁元肆角伍分）或计算算式（V1+2*3 → 7）；双拼用大写 V，全拼大小写均可
+v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，V123.45 → 壹佰贰拾叁元肆角伍分）或计算算式（V1+2*3 → 7）；双拼和五笔用大写 V，全拼大小写均可
 
 #
 # AI Assistant

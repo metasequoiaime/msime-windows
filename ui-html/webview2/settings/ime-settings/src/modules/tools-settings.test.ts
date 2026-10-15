@@ -6,6 +6,7 @@ const toggles = vi.hoisted(() => new Map<string, (active: boolean) => void>());
 vi.mock('./shared', () => ({
   applyDropdownValue: vi.fn(),
   applyToggleState: vi.fn(),
+  setLanguageBarOptionsDisabled: vi.fn(),
   setMixedCandidateOptionsDisabled: vi.fn(),
   setupDropdownMenu: vi.fn(),
   setupToggleButton: (id: string, onChanged: (active: boolean) => void) => { toggles.set(id, onChanged); }
@@ -17,7 +18,7 @@ vi.mock('../utils/confirm-dialog', () => ({ confirmDialog: vi.fn() }));
 vi.mock('../utils/overlay-host', () => ({ hoistOverlay: vi.fn() }));
 
 import { updateConfig } from './config-sync';
-import { setMixedCandidateOptionsDisabled, setupDropdownMenu } from './shared';
+import { setLanguageBarOptionsDisabled, setMixedCandidateOptionsDisabled, setupDropdownMenu } from './shared';
 import { setupToolsSettings } from './tools-settings';
 
 class StubElement extends EventTarget {
@@ -37,6 +38,8 @@ class StubElement extends EventTarget {
 let expand: StubElement;
 let details: StubElement;
 let zhEnOptions: StubElement;
+let langBarExpand: StubElement;
+let langBarDetails: StubElement;
 
 beforeEach(() => {
   toggles.clear();
@@ -44,6 +47,8 @@ beforeEach(() => {
   expand = new StubElement();
   details = new StubElement();
   zhEnOptions = new StubElement();
+  langBarExpand = new StubElement();
+  langBarDetails = new StubElement();
   vi.stubGlobal('document', {
     querySelectorAll: () => [],
     querySelector: () => null,
@@ -51,6 +56,8 @@ beforeEach(() => {
       if (id === 'mixedCandidatesExpand') return expand;
       if (id === 'mixedCandidatesDetails') return details;
       if (id === 'zhEnMixedInputOptions') return zhEnOptions;
+      if (id === 'languageBarExpand') return langBarExpand;
+      if (id === 'languageBarDetails') return langBarDetails;
       return null;
     },
     addEventListener: vi.fn()
@@ -107,4 +114,33 @@ it('toggles the details container from the section header', () => {
   expand.dispatchEvent(new Event('click'));
   expect(expand.getAttribute('aria-expanded')).toBe('false');
   expect(details.classes.has('open')).toBe(false);
+});
+
+it('reports every language bar switch to its config path', () => {
+  const options: [string, string][] = [
+    ['languageBarToggleBtn', 'language_bar.enabled'],
+    ['languageBarImeModeToggleBtn', 'language_bar.show_ime_mode'],
+    ['languageBarDoubleSingleByteToggleBtn', 'language_bar.show_double_single_byte'],
+    ['languageBarPunctuationToggleBtn', 'language_bar.show_punctuation']
+  ];
+  for (const [id, path] of options) {
+    toggles.get(id)?.(true);
+    expect(updateConfig).toHaveBeenCalledWith(path, true);
+  }
+});
+
+it('greys out the language bar sub-switches together with the master switch', () => {
+  toggles.get('languageBarToggleBtn')?.(false);
+  expect(setLanguageBarOptionsDisabled).toHaveBeenCalledWith(true);
+  toggles.get('languageBarToggleBtn')?.(true);
+  expect(setLanguageBarOptionsDisabled).toHaveBeenLastCalledWith(false);
+});
+
+it('toggles the language bar details container from the section header', () => {
+  langBarExpand.dispatchEvent(new Event('click'));
+  expect(langBarExpand.getAttribute('aria-expanded')).toBe('true');
+  expect(langBarDetails.classes.has('open')).toBe(true);
+  langBarExpand.dispatchEvent(new Event('click'));
+  expect(langBarExpand.getAttribute('aria-expanded')).toBe('false');
+  expect(langBarDetails.classes.has('open')).toBe(false);
 });

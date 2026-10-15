@@ -14,6 +14,13 @@ POINT GetPhysicalTextAnchor(_In_ ITfContextView *pContextView, _In_ const RECT &
     if (SUCCEEDED(pContextView->GetWnd(&hostWindow)) && hostWindow)
     {
         hostWindow = GetAncestor(hostWindow, GA_ROOT);
+        MONITORINFO monitorInfo{sizeof(monitorInfo)};
+        if (hostWindow && Global::IsCandidatePinnedTopLeftProcess(Global::current_process_name) &&
+            GetMonitorInfoW(MonitorFromWindow(hostWindow, MONITOR_DEFAULTTONEAREST), &monitorInfo))
+        {
+            // The Server clamps the card inside the work area, so this lands it flush in the corner.
+            anchor = {monitorInfo.rcWork.left, monitorInfo.rcWork.top};
+        }
         POINT physicalAnchor = anchor;
         if (hostWindow && LogicalToPhysicalPointForPerMonitorDPI(hostWindow, &physicalAnchor))
         {

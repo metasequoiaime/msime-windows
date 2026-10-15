@@ -635,7 +635,8 @@ LRESULT CALLBACK WndProcCaretStateWindow(HWND hwnd, UINT message, WPARAM wParam,
             reinterpret_cast<CaretStateIndicator::ShowRequest *>(lParam));
         if (!request ||
             !FanyImeUi::ShouldShowCaretStateIndicator(GetConfiguredCaretStateIndicatorEnabled(), g_is_ime_active,
-                                                      request->uiLess, request->caret.x, request->caret.y))
+                                                      request->uiLess, request->caret.x, request->caret.y) ||
+            IsForegroundD3DExclusiveFullscreen())
         {
             CaretStateIndicator::Hide(hwnd);
             ::is_global_wnd_caret_state_shown = false;

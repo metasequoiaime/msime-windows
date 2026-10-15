@@ -434,6 +434,8 @@ bool GetConfiguredEnglishCandidatesEnabled();
 bool SetConfiguredEnglishCandidatesEnabled(bool enabled);
 bool GetConfiguredCandidateTranslationsEnabled();
 bool SetConfiguredCandidateTranslationsEnabled(bool enabled);
+bool GetConfiguredCandidateTranslationShowPos();
+bool SetConfiguredCandidateTranslationShowPos(bool show);
 int GetConfiguredEnglishMixedInputMinChars();
 bool SetConfiguredEnglishMixedInputMinChars(int min_chars);
 bool GetConfiguredEmojiMixedInputEnabled();
@@ -504,10 +506,19 @@ bool SetConfiguredRModeEnabled(bool enabled);
 // engine/contracts/v_mode_input.h。
 bool GetConfiguredVModeEnabled();
 bool SetConfiguredVModeEnabled(bool enabled);
-// VModeChanged 的载荷："0" 关着或不是全拼/双拼，"1" 双拼（只认大写 V），"2" 全拼（V、v 都认）。
+// VModeChanged 的载荷："0" 关着或不是全拼/双拼/五笔，"1" 双拼或五笔（只认大写 V），
+// "2" 全拼（V、v 都认）。
 std::wstring FormatVModeWorkerPayload();
 bool GetConfiguredClipboardHistoryEnabled();
 bool SetConfiguredClipboardHistoryEnabled(bool enabled);
+bool GetConfiguredLanguageBarEnabled();
+bool SetConfiguredLanguageBarEnabled(bool enabled);
+bool GetConfiguredLanguageBarShowImeMode();
+bool SetConfiguredLanguageBarShowImeMode(bool enabled);
+bool GetConfiguredLanguageBarShowDoubleSingleByte();
+bool SetConfiguredLanguageBarShowDoubleSingleByte(bool enabled);
+bool GetConfiguredLanguageBarShowPunctuation();
+bool SetConfiguredLanguageBarShowPunctuation(bool enabled);
 bool GetConfiguredPagingMinusEqualEnabled();
 bool SetConfiguredPagingMinusEqualEnabled(bool enabled);
 bool GetConfiguredPagingCommaPeriodEnabled();
@@ -561,6 +572,9 @@ bool GetConfiguredCandidateFixedBadge();
 bool SetConfiguredCandidateFixedBadge(bool enabled);
 const std::string &GetConfiguredCandidateFixedBadgeStyle();
 bool SetConfiguredCandidateFixedBadgeStyle(const std::string &style);
+// AI 联想候选词的来源徽标样式（"robot" | "whale"），出厂 "robot"（🤖）。
+const std::string &GetConfiguredCandidateAiBadgeStyle();
+bool SetConfiguredCandidateAiBadgeStyle(const std::string &style);
 // 设置窗口关闭后隐藏驻留多久再退出进程：
 // "off" | "1m" | "5m" | "10m" | "30m" | "60m" | "forever"，默认 "10m"。
 const std::string &GetConfiguredSettingsWindowLinger();

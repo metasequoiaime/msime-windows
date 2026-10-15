@@ -9,6 +9,7 @@
 #include <winuser.h>
 #include <dwmapi.h>
 #include <shellscalingapi.h>
+#include <shellapi.h>
 
 #pragma comment(lib, "Shcore.lib")
 
@@ -383,6 +384,44 @@ double ClampHeightDipToHalfScreen(double heightDip, const HalfScreenDipLimits &l
 MonitorCoordinates GetMonitorCoordinatesFromPoint(POINT pt)
 {
     return MonitorWorkAreaCoordinatesFromHandle(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST));
+}
+
+bool IsForegroundD3DExclusiveFullscreen()
+{
+    // Long enough to keep a typing burst from asking the shell on every key, short against a game
+    // switching display modes, which takes seconds.
+    constexpr ULONGLONG kProbeTtlMs = 300;
+    static ULONGLONG lastProbeTick = 0;
+    static bool lastAnswer = false;
+
+    const ULONGLONG now = GetTickCount64();
+    if (lastProbeTick != 0 && now - lastProbeTick < kProbeTtlMs)
+    {
+        return lastAnswer;
+    }
+    // While a game drops out of exclusive mode or re-enters it, the shell reports QUNS_BUSY for a second or so with
+    // the same window in front; a frame shown then is what makes the mode switch back and forth. Treat that gap as
+    // still exclusive for the window that was last seen exclusive.
+    constexpr ULONGLONG kTransitionGraceMs = 5000;
+    static HWND lastExclusiveWindow = nullptr;
+    static ULONGLONG lastExclusiveTick = 0;
+
+    QUERY_USER_NOTIFICATION_STATE state{};
+    const bool queried = SUCCEEDED(SHQueryUserNotificationState(&state));
+    const HWND foreground = GetForegroundWindow();
+    if (queried && state == QUNS_RUNNING_D3D_FULL_SCREEN)
+    {
+        lastExclusiveWindow = foreground;
+        lastExclusiveTick = now;
+        lastAnswer = true;
+    }
+    else
+    {
+        lastAnswer = queried && state == QUNS_BUSY && foreground != nullptr && foreground == lastExclusiveWindow &&
+                     now - lastExclusiveTick < kTransitionGraceMs;
+    }
+    lastProbeTick = now;
+    return lastAnswer;
 }
 
 //+---------------------------------------------------------------------------

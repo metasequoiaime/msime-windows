@@ -274,6 +274,11 @@ void EngineInputSession::set_pinyin_sequence_with_cases(const std::string &pinyi
     return session_.set_pinyin_sequence_with_cases(pinyin_sequence);
 }
 
+void EngineInputSession::set_wubi_literal_input(bool literal)
+{
+    return session_.set_wubi_literal_input(literal);
+}
+
 void EngineInputSession::set_caret(std::optional<std::size_t> caret)
 {
     return session_.set_caret(caret);

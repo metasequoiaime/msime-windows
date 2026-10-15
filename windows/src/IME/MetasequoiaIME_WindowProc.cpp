@@ -462,6 +462,7 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
                 KillTimer(hWnd, TIMER_CONNECT_ALL_NAMEDPIPE);
                 pIME->_ipcReconnectDelayMs = CONNECT_NAMEDPIPE_RETRY_INTERVAL_MS;
                 pIME->_ipcConsecutiveFailures = 0;
+                pIME->_TryLeaveServerUnavailableFallback();
                 SendCurrentImeStatusSnapshot(pIME);
                 pIME->_ScheduleDeferredKeyDownDrain();
                 break;
@@ -620,6 +621,25 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
     case WM_CancelVoiceComposition:
         pIME->_DispatchUnsolicitedVoiceText(wParam, FUNCTION_CANCEL_VOICE_COMPOSITION);
         break;
+    case WM_ApplyUiLessCandidates: {
+        CMetasequoiaIME::WorkerCandidateCommit request;
+        if (!pIME->_TakeServerCandidateCommit(static_cast<UINT>(wParam), request))
+        {
+            break;
+        }
+        CCandidateListUIPresenter *presenter = pIME->_pCandidateListUIPresenter;
+        if (!pIME->_IsFocusSessionCurrent(request.focusToken) ||
+            !pIME->_IsCompositionEpochCurrent(request.compositionEpoch) || !Global::IsUiLessMode() || !presenter ||
+            presenter->_IsAsyncCleanupPending())
+        {
+            break;
+        }
+        if (presenter->_ApplyUiLessPayload(FanyImeUiLessPage::Parse(request.text)))
+        {
+            presenter->_NotifyUiLessHost();
+        }
+        break;
+    }
     case WM_AsyncFinalizeCandidate: {
         CMetasequoiaIME::AsyncKeyRequest request;
         if (!pIME->_TakeAsyncKeyRequest(WM_AsyncFinalizeCandidate, static_cast<UINT>(wParam), request))
@@ -805,6 +825,19 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
             }
             break;
         }
+        if (receivedData->msg_type == Global::DataFromServerMsgType::UiLessComposition)
+        {
+            // For a host that draws the candidates, the reply to a paging or highlight key is the new page: without
+            // it the host keeps showing page one while Space commits from the page the Server turned to.
+            CCandidateListUIPresenter *presenter = pIME->_pCandidateListUIPresenter;
+            if (Global::IsUiLessMode() && presenter && !presenter->_IsAsyncCleanupPending() &&
+                presenter->_ApplyUiLessPayload(FanyImeUiLessPage::Parse(receivedData->candidate_string)))
+            {
+                presenter->_NotifyUiLessHost();
+            }
+            pIME->_CompleteDeferredKeyReplay(request.deferredReplayToken);
+            break;
+        }
         if (navigationOnly)
         {
             // The Server never commits for these keys, so the reply (or the
@@ -907,6 +940,9 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         SendCurrentImeStatusSnapshot(pIME);
         break;
     }
+    case WM_ApplyCapsLockEdge:
+        pIME->_ApplyCapsLockKeyDownSideEffects((GetKeyState(VK_CAPITAL) & 0x0001) != 0);
+        break;
     case WM_SyncCapsLockPunctuation: {
         CCompositionProcessorEngine *engine = pIME->GetCompositionProcessorEngine();
         if (engine)

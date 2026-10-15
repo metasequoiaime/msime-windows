@@ -863,5 +863,79 @@
     "direction": "server",
     "surface": "settings",
     "valid": true
+  },
+  {
+    "name": "game compat status request",
+    "message": {
+      "type": "gameCompatRequest",
+      "protocolVersion": 1,
+      "data": {
+        "requestId": "game-compat-1",
+        "action": "status"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "game compat apply request",
+    "message": {
+      "type": "gameCompatRequest",
+      "protocolVersion": 1,
+      "data": {
+        "requestId": "game-compat-2",
+        "action": "apply",
+        "enabled": true,
+        "name": "拼音输入法"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "game compat request rejects unknown action",
+    "message": {
+      "type": "gameCompatRequest",
+      "data": {
+        "requestId": "game-compat-1",
+        "action": "register"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": false
+  },
+  {
+    "name": "game compat request rejected from toolbar",
+    "message": {
+      "type": "gameCompatRequest",
+      "data": {
+        "requestId": "game-compat-1",
+        "action": "status"
+      }
+    },
+    "direction": "client",
+    "surface": "toolbar",
+    "valid": false
+  },
+  {
+    "name": "game compat status response",
+    "message": {
+      "type": "gameCompatResponse",
+      "protocolVersion": 1,
+      "requestId": "game-compat-1",
+      "action": "status",
+      "ok": true,
+      "message": "",
+      "enabled": true,
+      "name": "拼音输入法",
+      "registeredName": "拼音输入法",
+      "defaultName": "拼音输入法"
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": true
   }
 ]

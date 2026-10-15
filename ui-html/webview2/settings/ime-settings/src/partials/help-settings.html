@@ -32,6 +32,23 @@
     </div>
   </div>
 
+  <div class="section default-ime-section game-compat-section">
+    <div class="section-title">游戏兼容（CS2 / Dota 2）</div>
+    <div class="input-setting-description">CS2、Dota 2 只给内置名单里的输入法画候选；不在名单里时会在左上角弹出系统组合小框，独占全屏下还会把游戏踢出全屏（黑屏）。开启后水杉在系统里登记为下面的名称，游戏会自己画候选。</div>
+    <div class="input-setting-description">代价：语言栏和 Windows 设置里也会显示这个名称；需要管理员权限（会弹一次 UAC）；要重启游戏才生效；已知上屏后的第一下退格会被游戏吞掉（游戏那边的行为）。</div>
+    <label class="check-option game-compat-toggle"><input id="gameCompatEnabled" type="checkbox"><span>启用游戏兼容名称</span></label>
+    <div class="default-ime-row">
+      <label class="network-proxy-server game-compat-name">
+        <span>登记名称</span>
+        <input id="gameCompatName" type="text" maxlength="64" placeholder="拼音输入法" autocomplete="off" spellcheck="false" disabled>
+      </label>
+      <div class="default-ime-actions">
+        <button id="gameCompatApplyButton" type="button" class="default-ime-button default-ime-primary" disabled>应用</button>
+      </div>
+    </div>
+    <div id="gameCompatStatus" class="input-setting-description default-ime-status" role="status" aria-live="polite">正在检查…</div>
+  </div>
+
   <div class="section network-proxy-section">
     <div class="section-title">网络代理</div>
     <div class="input-setting-description">云输入、语法模型下载、AI 联想、翻译和语音识别等联网功能共用这里的设置，修改后立即生效</div>

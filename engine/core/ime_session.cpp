@@ -195,7 +195,8 @@ void ImeSession::replace_quanpin_raw_input(const std::string &raw_input, const s
     refresh_candidates();
 }
 
-void ImeSession::replace_wubi_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases)
+void ImeSession::replace_wubi_raw_input(const std::string &raw_input, const std::string &raw_input_with_cases,
+                                        bool literal_input)
 {
     if (scheme_->type() != SchemeType::Wubi)
     {
@@ -212,6 +213,7 @@ void ImeSession::replace_wubi_raw_input(const std::string &raw_input, const std:
     // answer. Without this, moving the caret through a mixed composition silently drops everything
     // past the fourth letter. refresh_candidates puts the query-derived value back.
     wubi_scheme_->set_extended_length_allowed(wubi_options_.mixed_pinyin);
+    wubi_scheme_->set_literal_input(literal_input);
     wubi_scheme_->set_raw_input(raw_input, raw_input_with_cases);
     refresh_candidates();
 }
@@ -398,7 +400,10 @@ void ImeSession::refresh_candidates()
     ApplyShuangpinHelpcodeSegmentation(state_.request, shuangpin_profile_);
     resolve_direct_helpcode(state_.request);
 
-    if (!state_.request.valid)
+    // A special mode's literal input on a wubi session gets its candidates from the host (dates,
+    // V-mode numbers); a table or pinyin query on the letters it happens to contain would only be
+    // thrown away, on every key of the mode.
+    if (!state_.request.valid || (wubi_scheme_ != nullptr && wubi_scheme_->literal_input()))
     {
         state_.candidates.clear();
         return;

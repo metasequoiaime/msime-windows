@@ -1,5 +1,6 @@
 #include "window/ui_backend_policy.h"
 #include "window/caret_state_indicator_policy.h"
+#include "window/candidate_view_model.h"
 #include "ime_config.h"
 #include "config/ime_config_internal.h"
 #include <Windows.h>
@@ -129,6 +130,7 @@ int g_floating_toolbar_auto_hide_delay = kFloatingToolbarAutoHideDelayDefault;
 bool g_floating_toolbar_shadow = true;
 bool g_english_candidates_enabled = false;
 bool g_candidate_translations_enabled = false;
+std::atomic_bool g_candidate_translation_show_pos{true};
 int g_english_mixed_input_min_chars = kEnglishMixedInputMinCharsDefault;
 bool g_cloud_candidates_enabled = true;
 // 整句候选来源与去重补位开关：词格、Google 和神经速度档默认开，神经效果档与去重补位默认关。
@@ -167,6 +169,10 @@ bool g_y_mode_enabled = true;
 bool g_r_mode_enabled = true;
 bool g_v_mode_enabled = true;
 bool g_clipboard_history_enabled = false;
+bool g_language_bar_enabled = true;
+bool g_language_bar_show_ime_mode = true;
+bool g_language_bar_show_double_single_byte = true;
+bool g_language_bar_show_punctuation = true;
 bool g_paging_minus_equal_enabled = true;
 bool g_paging_comma_period_enabled = false;
 bool g_paging_brackets_enabled = false;
@@ -194,6 +200,7 @@ std::string g_candidate_skin = "fluent";
 std::string g_candidate_window_preedit_style = "pinyin";
 bool g_candidate_fixed_badge = true;
 std::string g_candidate_fixed_badge_style = "paperclip";
+std::string g_candidate_ai_badge_style = "robot";
 std::string g_settings_window_linger = "off";
 std::string g_theme_mode = "system";
 std::string g_theme_settings = "follow";
@@ -278,6 +285,13 @@ bool IsValidCandidateSkinId(const std::string &skin)
 bool IsValidCandidateFixedBadgeStyle(const std::string &style)
 {
     return style == "paperclip" || style == "pushpin" || style == "dot";
+}
+
+// AI 联想徽标样式白名单，理由同上：存 "robot"/"whale" 而不是字面 emoji。
+// 直接查展示层的映射表，避免两份样式列表各自维护。
+bool IsValidCandidateAiBadgeStyle(const std::string &style)
+{
+    return AiSuggestionBadgeGlyph(style) != nullptr;
 }
 
 bool IsValidSettingsWindowLinger(const std::string &linger)
@@ -557,6 +571,8 @@ bool LoadImeConfig()
         }
         g_english_candidates_enabled = tbl["general"]["cn_en_mixed_input"].value_or(false);
         g_candidate_translations_enabled = tbl["general"]["candidate_translations"].value_or(false);
+        g_candidate_translation_show_pos.store(tbl["general"]["candidate_translation_show_pos"].value_or(true),
+                                               std::memory_order_relaxed);
         {
             const int min_chars =
                 tbl["general"]["cn_en_mixed_input_min_chars"].value_or(kEnglishMixedInputMinCharsDefault);
@@ -609,6 +625,10 @@ bool LoadImeConfig()
             clipboard_history_loaded = true;
             ClipboardMonitor::Sync(g_clipboard_history_enabled);
         }
+        g_language_bar_enabled = tbl["language_bar"]["enabled"].value_or(true);
+        g_language_bar_show_ime_mode = tbl["language_bar"]["show_ime_mode"].value_or(true);
+        g_language_bar_show_double_single_byte = tbl["language_bar"]["show_double_single_byte"].value_or(true);
+        g_language_bar_show_punctuation = tbl["language_bar"]["show_punctuation"].value_or(true);
         const auto legacy_paging_mode = tbl["general"]["paging_mode"].value<std::string>();
         g_paging_minus_equal_enabled =
             tbl["general"]["paging_minus_equal"].value_or(!legacy_paging_mode || *legacy_paging_mode == "-/=");
@@ -698,6 +718,12 @@ bool LoadImeConfig()
             const std::string badge_style =
                 tbl["appearance"]["candidate_fixed_badge_style"].value_or(std::string("paperclip"));
             g_candidate_fixed_badge_style = IsValidCandidateFixedBadgeStyle(badge_style) ? badge_style : "paperclip";
+        }
+        {
+            // 同上：非法值回退到出厂 🤖，AI 候选不会因此失去来源标识
+            const std::string ai_badge_style =
+                tbl["appearance"]["candidate_ai_badge_style"].value_or(std::string("robot"));
+            g_candidate_ai_badge_style = IsValidCandidateAiBadgeStyle(ai_badge_style) ? ai_badge_style : "robot";
         }
         {
             const std::string linger = tbl["appearance"]["settings_window_linger"].value_or(std::string("off"));

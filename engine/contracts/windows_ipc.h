@@ -448,7 +448,12 @@ constexpr std::uint32_t TrilingualCycleChanged = 33;
 // read the focused field's input scope and mark password fields with FanyImePipeFlags::SensitiveField, so with
 // the assistant off the key path does no extra TSF work.
 constexpr std::uint32_t AiContextUploadChanged = 34;
-constexpr std::uint32_t MaxKnown = AiContextUploadChanged;
+// UI-less hosts only: the Server replaced the candidate page outside a key reply (cloud/AI suggestion, reranking,
+// mixed English). Payload has the UiLessComposition shape "<preedit>\t<page>\t<selection>\t<generation>" with an
+// empty preedit; see FanyImeUiLessPage. Without it the host keeps drawing the page it read on the last key while
+// digits commit from the new one.
+constexpr std::uint32_t UiLessCandidatesChanged = 35;
+constexpr std::uint32_t MaxKnown = UiLessCandidatesChanged;
 // Source compatibility for the Server's historical spellings.
 constexpr std::uint32_t SwitchToEn = SwitchToEnglish;
 constexpr std::uint32_t SwitchToCn = SwitchToChinese;

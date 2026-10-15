@@ -28,13 +28,23 @@ class WubiScheme : public IInputScheme
     // QueryRequest::wubi_z_wildcard. Independent of mixed input: a host can enable either, both or
     // neither.
     void set_z_wildcard(bool enabled);
+    // The host says the next raw string is a special mode's literal input (T mode's Tdate,
+    // V mode's V1+2), not a code. The raw string with cases is then kept exactly as typed, and the
+    // code derived from it is never complete and never queried: a mode's keyword can normalize to a
+    // real code (Tdate -> tdat), and treating that as wubi would commit a word and end the mode.
+    // Cleared by reset(); a host that drives the session by raw string sets it with every string.
+    void set_literal_input(bool literal);
+    bool literal_input() const
+    {
+        return literal_input_;
+    }
     // A complete wubi code is the four letters the table is indexed by. Mixed input only lifts the
     // length limit after the table has already failed the code in hand, so "complete" stays the
     // fixed four letters rather than max_code_length() (32 while extended input is on): a longer
     // spelling is a pinyin answer and is never a complete wubi code.
     bool has_complete_code() const
     {
-        return raw_input_.size() == kMaxCodeLength;
+        return !literal_input_ && raw_input_.size() == kMaxCodeLength;
     }
 
   private:
@@ -44,9 +54,16 @@ class WubiScheme : public IInputScheme
 
     size_t max_code_length() const;
 
+    // For a code: the code letters as typed, cases kept, so lowercasing it gives raw_input_ exactly
+    // -- same letters, same length, same clipping. A host that counts this string to find the fourth
+    // letter counts code letters. For literal input: the string as typed, so a host reading it back
+    // still sees the uppercase T or V prefix and the digits its mode decisions match on. Queries
+    // never see it: they use raw_input_, the normalized code below.
+    std::string raw_input_with_cases_;
     std::string raw_input_;
     std::vector<KeyStroke> key_strokes_;
     bool extended_length_allowed_ = false;
     bool mixed_pinyin_allowed_ = false;
     bool z_wildcard_ = false;
+    bool literal_input_ = false;
 };

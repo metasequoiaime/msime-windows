@@ -9,6 +9,8 @@
 #include "Private.h"
 #include "Globals.h"
 #include "RegKey.h"
+#include "GameCompat.h"
+#include <string>
 
 static const WCHAR RegInfo_Prefix_CLSID[] = L"CLSID\\";
 static const WCHAR RegInfo_Key_InProSvr32[] = L"InProcServer32";
@@ -16,6 +18,12 @@ static const WCHAR RegInfo_Key_ThreadModel[] = L"ThreadingModel";
 
 // IME text service description, will be displayed in the language menu when switching IME
 static const WCHAR TEXTSERVICE_DESC[] = L"Metasequoia \u6c34\u6749\u8f93\u5165\u6cd5";
+
+// Valve game compatibility: CS2 / Dota 2 only handle IME messages for input methods whose registered profile name is
+// on a whitelist inside the game, and otherwise let Windows pop its default composition window, which throws an
+// exclusive-fullscreen game out of fullscreen. Registration has to honor the name the user chose in the settings
+// page: RegisterProfile overwrites the name on every install or upgrade, and unregistering first deletes the CTF key,
+// so the current Description cannot tell us what the user chose.
 
 static const GUID SupportCategories[] = {
     GUID_TFCAT_TIP_KEYBOARD,
@@ -112,15 +120,19 @@ BOOL RegisterProfiles()
         }
     }
 
-    size_t lenOfDesc = 0;
-    hr = StringCchLength(TEXTSERVICE_DESC, STRSAFE_MAX_CCH, &lenOfDesc);
-    if (hr != S_OK)
     {
-        goto Exit;
+        const std::wstring compatName = Global::ReadGameCompatProfileName();
+        const WCHAR *profileName = compatName.empty() ? TEXTSERVICE_DESC : compatName.c_str();
+        size_t lenOfDesc = 0;
+        hr = StringCchLength(profileName, STRSAFE_MAX_CCH, &lenOfDesc);
+        if (hr != S_OK)
+        {
+            goto Exit;
+        }
+        hr = pITfInputProcessorProfileMgr->RegisterProfile(
+            Global::MetasequoiaIMECLSID, TEXTSERVICE_LANGID, Global::MetasequoiaIMEGuidProfile, profileName,
+            static_cast<ULONG>(lenOfDesc), achIconFile, cchA, iconIndex, NULL, 0, TRUE, 0);
     }
-    hr = pITfInputProcessorProfileMgr->RegisterProfile(
-        Global::MetasequoiaIMECLSID, TEXTSERVICE_LANGID, Global::MetasequoiaIMEGuidProfile, TEXTSERVICE_DESC,
-        static_cast<ULONG>(lenOfDesc), achIconFile, cchA, iconIndex, NULL, 0, TRUE, 0);
 
     if (FAILED(hr))
     {

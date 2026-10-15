@@ -171,9 +171,10 @@ class InputSession
     // recompute_candidates() or key handling.
     void set_caret(std::optional<std::size_t> caret);
     // Raw length consumed by the current decode: the caret moved onto the last complete
-    // syllable-unit boundary at or before it (floor). The caret being unset, or a scheme
-    // without the unit model (segment_raw_boundaries() empty), decodes the whole string and
-    // this equals the raw length.
+    // syllable-unit boundary at or before it (floor). A caret inside the first unit rounds up to
+    // the end of that unit instead, so prefix_end() == 0 means caret == 0. The caret being
+    // unset, or a scheme without the unit model (segment_raw_boundaries() empty), decodes the
+    // whole string and this equals the raw length.
     std::size_t prefix_end() const;
     // raw[prefix_end, size) with its original casing: the pending input this decode did not
     // consume. Empty unless the caret prefix is strictly shorter than the raw string.
@@ -237,6 +238,11 @@ class InputSession
 
     void set_pinyin_sequence(const std::string &pinyin_sequence);
     void set_pinyin_sequence_with_cases(const std::string &pinyin_sequence);
+    // Marks the pending sequence as a special mode's literal input on a wubi session (T mode's
+    // Tdate, V mode's V1+2): kept as typed, never queried, never a complete code. Applies to the
+    // sequence set alongside it and is dropped with it, so a host that does not call it gets an
+    // ordinary code. Other schemes keep every typed character anyway and ignore it.
+    void set_wubi_literal_input(bool literal);
 
     int store_user_phrase(std::string pinyin, std::string word);
     int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word);
@@ -304,7 +310,8 @@ class InputSession
     KeyResult replace_editing_text(std::string text, std::size_t caret);
     std::optional<std::size_t> caret_;
     // Last complete unit boundary at or before the caret; only consumes segment_raw_boundaries()
-    // (segmentation contract #187). caret unset or no unit model yields the full raw length.
+    // (segmentation contract #187). A caret inside the first unit rounds up to that unit's end,
+    // so only caret == 0 yields 0. Caret unset or no unit model yields the full raw length.
     std::size_t quantized_prefix_end() const;
     // Decodes the quantized caret prefix into prefix_candidates_ when it is strictly shorter
     // than the raw string, caching by prefix so unchanged keystrokes skip the extra query.
@@ -347,6 +354,7 @@ class InputSession
     std::string pending_pinyin_sequence_with_cases_;
     bool has_pending_pinyin_sequence_ = false;
     bool has_pending_pinyin_sequence_with_cases_ = false;
+    bool pending_wubi_literal_input_ = false;
 
     RuntimePaths paths_;
     CandidateQueries candidate_queries_;

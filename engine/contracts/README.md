@@ -2,7 +2,7 @@
 
 These headers are independently consumable C++17 contracts. Including them does not link the input engine, start threads, access dictionaries, or require any third-party code. The TSF text service consumes only these headers; the server consumes the same source by linking the engine. Both live in this repository — `windows/` and `server/` — and so does the engine, so one commit covers all three and there is no pin to keep in step.
 
-`windows_ipc.h` owns the wire layouts, pipe names and opcodes. `voice_composition_pipe.h` owns voice framing. Consumers may wrap these headers but must not duplicate their definitions.
+`windows_ipc.h` owns the wire layouts, pipe names and opcodes. `voice_composition_pipe.h` owns voice framing. `uiless_page.h` owns the candidate-page payload for UI-less (host-drawn) clients. Consumers may wrap these headers but must not duplicate their definitions.
 
 `punctuation/policy.json` is the source of truth for the ASCII punctuation keys and their Chinese
 translations. Its generated `policy.h` is consumed by the engine and included directly by the hosts

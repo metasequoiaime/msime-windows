@@ -367,6 +367,18 @@ void CMetasequoiaIME::_ApplyCapsLockKeyDownSideEffects(bool capsLockEnabled)
     }
 }
 
+// Whether the thread's toggle already reflects this press differs by host: TSF-aware hosts call TestKeyDown before
+// Windows applies it, IMM hosts such as Minecraft (GLFW / Bedrock) after, and the latter never call OnKeyDown for an
+// uneaten key. Reading the toggle once the key message has been handled is right in both.
+void CMetasequoiaIME::_QueueCapsLockEdge(bool actualKeyDown)
+{
+    if (_msgWndHandle && PostMessage(_msgWndHandle, WM_ApplyCapsLockEdge, 0, 0))
+    {
+        return;
+    }
+    _ApplyCapsLockKeyDownSideEffects(ResultingCapsLockState(actualKeyDown, (GetKeyState(VK_CAPITAL) & 0x0001) != 0));
+}
+
 //+---------------------------------------------------------------------------
 //
 // _IsKeyEaten
@@ -827,12 +839,10 @@ STDAPI CMetasequoiaIME::OnTestKeyDown(ITfContext *pContext, WPARAM wParam, LPARA
     _capsLockTestKeyDownPending = false;
     if (IsFreshCapsLockKeyDown(wParam, lParam))
     {
-        // TestKeyDown observes the toggle before Windows applies this press.
-        // It may run more than once for one key event; apply the edge once.
+        // TestKeyDown may run more than once for one key event; apply the edge once.
         if (!repeatedTestKeyDown)
         {
-            const bool capsLockEnabled = ResultingCapsLockState(false, (GetKeyState(VK_CAPITAL) & 0x0001) != 0);
-            _ApplyCapsLockKeyDownSideEffects(capsLockEnabled);
+            _QueueCapsLockEdge(false);
         }
         _capsLockTestKeyDownMessageTime = testKeyMessageTime;
         _capsLockTestKeyDownPending = true;
@@ -989,9 +999,7 @@ STDAPI CMetasequoiaIME::OnKeyDown(ITfContext *pContext, WPARAM wParam, LPARAM lP
     _capsLockTestKeyDownPending = false;
     if (ShouldApplyCapsLockActualKeyDownSideEffects(matchingTestKeyDownHandled, wParam, lParam))
     {
-        // Unlike TestKeyDown, the actual callback observes the resulting toggle state.
-        const bool capsLockEnabled = ResultingCapsLockState(true, (GetKeyState(VK_CAPITAL) & 0x0001) != 0);
-        _ApplyCapsLockKeyDownSideEffects(capsLockEnabled);
+        _QueueCapsLockEdge(true);
     }
     PerfTimer onKeyDownTimer;
     const uint64_t focusGeneration = _deferredKeyFocusGeneration;

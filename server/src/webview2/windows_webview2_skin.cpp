@@ -706,10 +706,9 @@ int PrepareHtmlForWnds()
     if (!CandidateSkinCatalog::IsBuiltIn(candidateSkin))
     {
         const std::wstring skinsRoot = assetPath + L"\\skins";
-        activeExternalCandidateSkin = CandidateSkinCatalog::Load(skinsRoot, candidateSkin);
-        if (activeExternalCandidateSkin &&
-            !CandidateSkinCatalog::Supports(*activeExternalCandidateSkin, candidateLayout, candidateTheme))
-            activeExternalCandidateSkin.reset();
+        // LoadSupported 只在皮肤声明支持当前布局与主题时才返回，两个后端走同一条规则。
+        activeExternalCandidateSkin =
+            CandidateSkinCatalog::LoadSupported(skinsRoot, candidateSkin, candidateLayout, candidateTheme);
         baseCandidateSkin = activeExternalCandidateSkin ? activeExternalCandidateSkin->base : "fluent";
     }
     std::wstring htmlCandWnd;
@@ -846,7 +845,21 @@ int PrepareHtmlForWnds()
 
 bool ApplyConfiguredCandidateWindowLayout()
 {
+    // 外部皮肤可能只声明了部分布局，换布局后皮肤是否生效会变，工具栏跟着候选窗皮肤走，要一起刷新。
+    if (FloatingToolbarPresenter::Instance().IsBound())
+    {
+        FloatingToolbarPresenter::Instance().ApplyTheme();
+    }
+    const std::wstring previousFtbHtml = HTMLStringFtbWnd;
     PrepareHtmlForWnds();
+    if (webviewFtbWnd && !HTMLStringFtbWnd.empty() && HTMLStringFtbWnd != previousFtbHtml)
+    {
+        ClearFloatingToolbarNavigationState();
+        if (SUCCEEDED(webviewFtbWnd->NavigateToString(HTMLStringFtbWnd.c_str())))
+        {
+            loadedFloatingToolbarSkin = preparedCandidateSkin;
+        }
+    }
     if (CandidatePresenter::Instance().IsBound() && !webviewCandWnd)
     {
         return true;

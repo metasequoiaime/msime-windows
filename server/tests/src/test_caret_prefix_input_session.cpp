@@ -306,7 +306,7 @@ TEST_CASE(CaretPrefixLeavesSchemesWithoutUnitModelUntouched)
 }
 
 // 双拼贪心配对（engine spec #187）：nihkb; → {0,2,4,6}、nihcb; → {0,2,3,5,6}，
-// caret 落在段中间时同样 floor 到完整段边界。
+// caret 落在段中间时同样 floor 到完整段边界；首单元内侧向上取整到首单元末尾。
 TEST_CASE(CaretPrefixFloorsInsideShuangpinGreedyUnits)
 {
     const auto directory = CreateCaretPrefixFixture();
@@ -321,9 +321,9 @@ TEST_CASE(CaretPrefixFloorsInsideShuangpinGreedyUnits)
 
         session.set_caret(1);
         session.recompute_candidates();
-        REQUIRE(session.candidates().empty());
-        REQUIRE_EQ(session.prefix_end(), std::size_t{0});
-        REQUIRE_EQ(session.pending_suffix(), std::string("nihkb;"));
+        REQUIRE_EQ(session.prefix_end(), std::size_t{2});
+        REQUIRE_EQ(session.pending_suffix(), std::string("hkb;"));
+        REQUIRE(SameCandidateWords(session, ShuangpinCandidateWordsFor("ni", paths)));
 
         session.set_caret(3);
         session.recompute_candidates();

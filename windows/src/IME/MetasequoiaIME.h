@@ -53,6 +53,8 @@ const DWORD WM_ApplyPunctuationLock = WM_USER + 27;
 const DWORD WM_CommitCandidateAndContinue = WM_USER + 28;
 const DWORD WM_AsyncCycleInputMode = WM_USER + 29;
 const DWORD WM_SyncCapsLockPunctuation = WM_USER + 30;
+const DWORD WM_ApplyUiLessCandidates = WM_USER + 31;
+const DWORD WM_ApplyCapsLockEdge = WM_USER + 32;
 constexpr ULONG_PTR SMART_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535050u;
 constexpr ULONG_PTR PAIRED_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535051u;
 // Synthetic input that this tip generates carries a marker meaning "this tip
@@ -670,6 +672,7 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     bool _IsCompositionActiveForKeyGuard();
     bool _ApplyBackspaceHoldGuard(WPARAM wParam, LPARAM lParam);
     void _ApplyCapsLockKeyDownSideEffects(bool capsLockEnabled);
+    void _QueueCapsLockEdge(bool actualKeyDown);
 
     BOOL _IsRangeCovered(TfEditCookie ec, _In_ ITfRange *pRangeTest, _In_ ITfRange *pRangeCover);
     VOID _DeleteCandidateList(BOOL fForce, _In_opt_ ITfContext *pContext);

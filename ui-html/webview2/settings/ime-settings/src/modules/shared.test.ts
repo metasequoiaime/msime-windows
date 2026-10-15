@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyCollocationModelStatus, applyNeuralModelStatus, setupDropdownMenu, setupNeuralModelControls } from './shared';
+import { applyCollocationModelStatus, applyNeuralModelStatus, applyToggleState, setCandidateTranslationOptionsDisabled, setupDropdownMenu, setupNeuralModelControls, setupToggleButton } from './shared';
 
 vi.mock('./theme', () => ({ setSurfaceTheme: vi.fn(), setThemeMode: vi.fn() }));
 
@@ -75,7 +75,7 @@ it('supports arrow and Enter keyboard selection through the shared dropdown hand
   expect(postMessage).toHaveBeenCalledTimes(1);
 });
 
-function pressKey(target: MenuElement, key: string) {
+function pressKey(target: EventTarget, key: string) {
   const event = new Event('keydown');
   Object.defineProperty(event, 'key', { value: key });
   target.dispatchEvent(event);
@@ -147,6 +147,72 @@ it('allows the item after the host clears its disabled state', () => {
     type: 'configUpdate', data: { path: 'input.word_to_character_keys', value: 'minus_equal' }
   });
   expect(menu.classList.remove).toHaveBeenCalledWith('open');
+});
+
+describe('translation part-of-speech toggle', () => {
+  class ToggleElement extends EventTarget {
+    classes = new Set<string>();
+    attributes = new Map<string, string>();
+    tabIndex = 0;
+    classList = {
+      contains: (name: string) => this.classes.has(name),
+      toggle: (name: string, force?: boolean) => {
+        const active = force ?? !this.classes.has(name);
+        if (active) this.classes.add(name);
+        else this.classes.delete(name);
+        return active;
+      }
+    };
+    getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+  }
+  let toggle: ToggleElement;
+  let options: ToggleElement;
+  let changed: ReturnType<typeof vi.fn<(active: boolean) => void>>;
+  const id = 'candidateTranslationShowPosToggleBtn';
+
+  beforeEach(() => {
+    toggle = new ToggleElement();
+    options = new ToggleElement();
+    changed = vi.fn();
+    vi.stubGlobal('document', {
+      getElementById: (name: string) => name === id ? toggle : name === 'candidateTranslationApiOptions' ? options : null
+    });
+    applyToggleState(id, true);
+    setupToggleButton(id, changed);
+  });
+
+  it('preserves the preference while preventing mouse and keyboard activation when disabled', () => {
+    setCandidateTranslationOptionsDisabled(true);
+    expect(options.classList.contains('is-disabled')).toBe(true);
+    expect(toggle.getAttribute('aria-disabled')).toBe('true');
+    expect(toggle.tabIndex).toBe(-1);
+    toggle.dispatchEvent(new Event('click'));
+    pressKey(toggle, 'Enter');
+    pressKey(toggle, ' ');
+    expect(changed).not.toHaveBeenCalled();
+    expect(toggle.classList.contains('active')).toBe(true);
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('restores keyboard access and synchronizes the checked state after re-enabling', () => {
+    applyToggleState(id, false);
+    setCandidateTranslationOptionsDisabled(true);
+    setCandidateTranslationOptionsDisabled(false);
+    expect(options.classList.contains('is-disabled')).toBe(false);
+    expect(toggle.getAttribute('aria-disabled')).toBe('false');
+    expect(toggle.tabIndex).toBe(0);
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    pressKey(toggle, 'Enter');
+    expect(changed).toHaveBeenLastCalledWith(true);
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    pressKey(toggle, ' ');
+    expect(changed).toHaveBeenLastCalledWith(false);
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    toggle.dispatchEvent(new Event('click'));
+    expect(changed).toHaveBeenLastCalledWith(true);
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+  });
 });
 
 describe('collocation model status gating', () => {

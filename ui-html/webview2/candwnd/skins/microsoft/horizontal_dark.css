@@ -34,8 +34,8 @@
       margin-top: 0px;
       margin-left: 0px;
       background: #2c2c2c;
-      /* 候选行换行时行间也隔 0.28em（写在 .row-wrapper 的下外边距上），底边内边距扣掉这一段，四周仍是 0.3em。 */
-      padding: 0.3em 0.3em 0.02em;
+      /* 候选行换行时行间也隔 0.15em（写在 .row-wrapper 的下外边距上），底边内边距扣掉这一段，四周仍是 0.3em。 */
+      padding: 0.3em 0.3em 0.15em;
       border-radius: 8px;
       box-shadow: 8px 10px 24px rgba(0, 0, 0, 0.34), 2px 3px 8px rgba(0, 0, 0, 0.22);
       min-width: 7em;
@@ -68,15 +68,15 @@
       margin: 0;
     }
 
-    /* 每项至少 4.35em 宽、项间隔 0.28em，与微软拼音一样短候选也占一格。 */
+    /* 每项至少 3.5em 宽、项间隔 0.15em，与微软拼音一样短候选也占一格。 */
     .row-wrapper {
       position: relative;
       display: inline-block;
       vertical-align: top;
       max-width: 100%;
       min-width: 0;
-      margin-right: 0.28em;
-      margin-bottom: 0.28em;
+      margin-right: 0.15em;
+      margin-bottom: 0.15em;
       box-sizing: border-box;
       white-space: normal;
       overflow-wrap: anywhere;
@@ -90,8 +90,8 @@
     .cand {
       position: relative;
       box-sizing: border-box;
-      min-width: 4.35em;
-      padding: 0.235em 0.9em 0.235em 0.76em;
+      min-width: 3.5em;
+      padding: 0.12em 0.3em 0.12em 0.4em;
       border-radius: 4px;
     }
 
@@ -103,15 +103,15 @@
       background-color: var(--ms-selected);
     }
 
-    /* 选中条落在高亮左缘之内，比字高一些。 */
+    /* 选中条落在高亮左缘之内，细而略矮于字。 */
     .first::before {
       content: "";
       position: absolute;
       left: 0;
       top: 50%;
       transform: translateY(-50%);
-      height: 1.1em;
-      width: max(3px, 0.24em);
+      height: 0.9em;
+      width: 3px;
       background: var(--ms-accent);
       border-radius: 99px;
     }
@@ -168,24 +168,24 @@
     html[data-page-arrows="on"][data-candidate-layout="horizontal"] .page-arrows {
       vertical-align: top;
       gap: 0;
-      margin: 0 0 0.28em 0.3em;
+      margin: 0 0 0.15em 0.3em;
       padding-left: 0.12em;
       border-left: 1px solid var(--ms-divider);
     }
     .page-arrow {
-      width: 1.73em;
-      height: 1.82em;
+      width: 0.96em;
+      height: 1.59em;
       border-radius: 4px;
       color: var(--cand-text);
     }
     .page-arrow::before {
-      width: 0.47em;
-      height: 0.56em;
+      width: 0.44em;
+      height: 0.52em;
       border: none;
       transform: none;
       background: currentColor;
-      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M7.43 4.46L2.57 1.54Q0 0 0 3L0 9Q0 12 2.57 10.46L7.43 7.54Q10 6 7.43 4.46Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
-      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M7.43 4.46L2.57 1.54Q0 0 0 3L0 9Q0 12 2.57 10.46L7.43 7.54Q10 6 7.43 4.46Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M6.14 3.69L3.86 2.31Q0 0 0 4.5L0 7.5Q0 12 3.86 9.69L6.14 8.31Q10 6 6.14 3.69Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M6.14 3.69L3.86 2.31Q0 0 0 4.5L0 7.5Q0 12 3.86 9.69L6.14 8.31Q10 6 6.14 3.69Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
     }
     .page-arrow-prev::before {
       transform: scaleX(-1);

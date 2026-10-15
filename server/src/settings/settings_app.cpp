@@ -8,6 +8,7 @@
 #include "settings/collocation_model.h"
 #include "settings/neural_model.h"
 #include "settings/default_input_method.h"
+#include "settings/game_compat_name.h"
 #include "settings/settings_splash.h"
 #include "settings/dictionary_manager.h"
 #include "settings/serial_task_queue.h"
@@ -535,6 +536,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"floating_toolbar_shadow", GetConfiguredFloatingToolbarShadow()},
             {"cn_en_mixed_input", GetConfiguredEnglishCandidatesEnabled()},
             {"candidate_translations", GetConfiguredCandidateTranslationsEnabled()},
+            {"candidate_translation_show_pos", GetConfiguredCandidateTranslationShowPos()},
             {"cn_en_mixed_input_min_chars", GetConfiguredEnglishMixedInputMinChars()},
             {"emoji_mixed_input", GetConfiguredEmojiMixedInputEnabled()},
             {"kaomoji_mixed_input", GetConfiguredKaomojiMixedInputEnabled()},
@@ -607,6 +609,11 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"r_mode", GetConfiguredRModeEnabled()},
             {"v_mode", GetConfiguredVModeEnabled()},
             {"clipboard_history", GetConfiguredClipboardHistoryEnabled()}}},
+          {"language_bar",
+           {{"enabled", GetConfiguredLanguageBarEnabled()},
+            {"show_ime_mode", GetConfiguredLanguageBarShowImeMode()},
+            {"show_double_single_byte", GetConfiguredLanguageBarShowDoubleSingleByte()},
+            {"show_punctuation", GetConfiguredLanguageBarShowPunctuation()}}},
           {"appearance",
            {{"ui_backend", GetConfiguredUiBackend()},
             {"settings_window_linger", GetConfiguredSettingsWindowLinger()},
@@ -618,6 +625,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"candidate_window_preedit_shuangpin_quanpin", GetConfiguredCandidateWindowPreeditShuangpinQuanpin()},
             {"candidate_fixed_badge", GetConfiguredCandidateFixedBadge()},
             {"candidate_fixed_badge_style", GetConfiguredCandidateFixedBadgeStyle()},
+            {"candidate_ai_badge_style", GetConfiguredCandidateAiBadgeStyle()},
             {"tsf_preedit_style", GetConfiguredTsfPreeditStyle()},
             {"tsf_preedit_shuangpin_quanpin", GetConfiguredTsfPreeditShuangpinQuanpin()},
             {"theme_mode", GetConfiguredThemeMode()},
@@ -887,6 +895,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredCandidateFixedBadge(json::value_to<bool>(data.at("value")));
     if (path == "appearance.candidate_fixed_badge_style")
         return SetConfiguredCandidateFixedBadgeStyle(json::value_to<std::string>(data.at("value")));
+    if (path == "appearance.candidate_ai_badge_style")
+        return SetConfiguredCandidateAiBadgeStyle(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.page_size")
         return SetConfiguredCandidatePageSize(static_cast<int>(data.at("value").as_int64()));
     if (path == "appearance.font")
@@ -959,6 +969,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEnglishCandidatesEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.candidate_translations")
         return SetConfiguredCandidateTranslationsEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "general.candidate_translation_show_pos")
+        return SetConfiguredCandidateTranslationShowPos(json::value_to<bool>(data.at("value")));
     if (path == "general.cn_en_mixed_input_min_chars")
         return SetConfiguredEnglishMixedInputMinChars(static_cast<int>(data.at("value").as_int64()));
     if (path == "general.emoji_mixed_input")
@@ -1013,6 +1025,14 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredVModeEnabled(json::value_to<bool>(data.at("value")));
     if (path == "utility.clipboard_history")
         return SetConfiguredClipboardHistoryEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "language_bar.enabled")
+        return SetConfiguredLanguageBarEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "language_bar.show_ime_mode")
+        return SetConfiguredLanguageBarShowImeMode(json::value_to<bool>(data.at("value")));
+    if (path == "language_bar.show_double_single_byte")
+        return SetConfiguredLanguageBarShowDoubleSingleByte(json::value_to<bool>(data.at("value")));
+    if (path == "language_bar.show_punctuation")
+        return SetConfiguredLanguageBarShowPunctuation(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_minus_equal")
         return SetConfiguredPagingMinusEqualEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_tab")
@@ -1687,6 +1707,46 @@ void HandleWebMessage(HWND hwnd, ICoreWebView2WebMessageReceivedEventArgs *args)
                 };
             });
         }
+        else if (type == "gameCompatRequest")
+        {
+            const auto &data = value.at("data").as_object();
+            const std::string request_id = json::value_to<std::string>(data.at("requestId"));
+            const std::string action = json::value_to<std::string>(data.at("action"));
+            const bool enabled = data.contains("enabled") && data.at("enabled").as_bool();
+            const std::wstring name =
+                data.contains("name") ? string_to_wstring(json::value_to<std::string>(data.at("name"))) : L"";
+            // Apply waits for the UAC prompt and the elevated instance; keep it off the window thread.
+            g_worker->Submit([request_id, action, enabled, name, hwnd]() -> SerialTaskQueue::Completion {
+                bool ok = true;
+                std::string message;
+                if (action == "apply")
+                {
+                    ok = game_compat_name::Apply(hwnd, enabled, name, message);
+                    if (ok)
+                        message = enabled ? "已应用。请完全退出并重新启动游戏后生效。"
+                                          : "已恢复原名称。请重新启动游戏后生效。";
+                }
+                const game_compat_name::Status status = game_compat_name::QueryStatus();
+                json::value response = {
+                    {"type", "gameCompatResponse"},
+                    {"requestId", request_id},
+                    {"action", action},
+                    {"ok", ok},
+                    {"message", message},
+                    {"enabled", status.enabled},
+                    {"name", wstring_to_string(status.name)},
+                    {"registeredName", wstring_to_string(status.registeredName)},
+                    {"defaultName", wstring_to_string(std::wstring(game_compat_name::kDefaultName))},
+                    {"protocolVersion", metasequoia::webview::Version}};
+                if (!metasequoia::webview::Validate(response, "server"))
+                    throw std::runtime_error("Invalid game compat response");
+                auto serialized = string_to_wstring(json::serialize(response));
+                return [serialized = std::move(serialized)] {
+                    if (g_webview)
+                        g_webview->PostWebMessageAsJson(serialized.c_str());
+                };
+            });
+        }
         else if (type == "statsRequest")
         {
             const auto data = value.at("data").as_object();
@@ -2341,6 +2401,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_command)
 {
     TraceStartup("wWinMain");
+    // The elevated half of the game-compat switch: write HKLM and exit, no window, no single-instance check.
+    if (const int elevated_result = game_compat_name::RunElevatedApplyIfRequested(command_line); elevated_result >= 0)
+        return elevated_result;
     g_open_about_on_ready = command_line && std::wstring(command_line).find(L"--about") != std::wstring::npos;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

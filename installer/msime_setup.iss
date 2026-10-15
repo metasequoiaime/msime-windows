@@ -34,6 +34,11 @@
 #define MyReplayName   "MetasequoiaImeDictionaryReplay.exe"
 #define MyVersionDirBase "msime_v" + MyAppVersion
 #define MySourceRoot   "."
+; TSF DLL 装在系统目录下：CS2 等开启 Trusted Mode 的游戏只放行「位于系统目录且有代码签名」的
+; 第三方 in-proc DLL，装在 Program Files 的 DLL 连加载都会被拒，输入法在游戏里根本切不出来。
+; 本安装器是 32 位进程，[Code] 里访问 64 位那份要先过 ApplyPathRedirRulesForCurrentProcess。
+#define MyTsfRoot64    "{sys}\IME\MetasequoiaIME"
+#define MyTsfRoot32    "{syswow64}\IME\MetasequoiaIME"
 #ifdef LightPackage
 #define MyOutputSuffix "_light"
 #else
@@ -71,8 +76,8 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Dirs]
-Name: "{commonpf32}\metasequoiaime\{code:GetVersionDir}"
-Name: "{commonpf64}\metasequoiaime\{code:GetVersionDir}"
+Name: "{#MyTsfRoot32}\{code:GetVersionDir}"
+Name: "{#MyTsfRoot64}\{code:GetVersionDir}"
 Name: "{commonpf64}\metasequoiaime\server"
 ; 用户数据（词库、配置、皮肤、前端资源）。默认在 LocalAppData，安装时可以改到别的盘，
 ; 选择写进 HKLM 的 DataDir，Server / TSF DLL / 引擎三方都从那里读。
@@ -107,29 +112,29 @@ Source: "{#MySourceRoot}\LICENSE.txt"; \
 ; 资源管理器重启。DLL 注册时发现自己上一级目录有这个文件就改用它（windows/src/Register/Register.cpp），
 ; 所以这两条必须排在下面两个 regserver 条目之前；32 位和 64 位 DLL 各按自己的上一级目录找，各放一份。
 Source: "{#MySourceRoot}\MetasequoiaImeTip.ico"; \
-    DestDir: "{commonpf32}\metasequoiaime"; Flags: ignoreversion
+    DestDir: "{#MyTsfRoot32}"; Flags: ignoreversion 32bit
 
 Source: "{#MySourceRoot}\MetasequoiaImeTip.ico"; \
-    DestDir: "{commonpf64}\metasequoiaime"; Flags: ignoreversion
+    DestDir: "{#MyTsfRoot64}"; Flags: ignoreversion
 
-; TSF DLL 使用版本独立目录，避免升级时覆盖仍被进程加载的 DLL。
+; TSF DLL 使用版本独立目录，避免升级时覆盖仍被进程加载的 DLL。系统目录的原因见 MyTsfRoot64。
 ; PDB 与对应 DLL 放在同一目录，调试器可按二进制的内嵌路径自动找到符号。
 ; 只有 Prepare-PackageFiles.ps1 -IncludeSymbols 才会把 PDB 放进 tsf_dll\；默认本地打包不含符号，
 ; 所以这两条必须带 skipifsourcedoesntexist，否则通配符匹配不到文件时 ISCC 会直接报错。
 Source: "{#MySourceRoot}\tsf_dll\32\*.dll"; \
-    DestDir: "{commonpf32}\metasequoiaime\{code:GetVersionDir}"; \
+    DestDir: "{#MyTsfRoot32}\{code:GetVersionDir}"; \
     Flags: ignoreversion regserver 32bit
 
 Source: "{#MySourceRoot}\tsf_dll\64\*.dll"; \
-    DestDir: "{commonpf64}\metasequoiaime\{code:GetVersionDir}"; \
+    DestDir: "{#MyTsfRoot64}\{code:GetVersionDir}"; \
     Flags: ignoreversion regserver
 
 Source: "{#MySourceRoot}\tsf_dll\32\*.pdb"; \
-    DestDir: "{commonpf32}\metasequoiaime\{code:GetVersionDir}"; \
-    Flags: ignoreversion skipifsourcedoesntexist
+    DestDir: "{#MyTsfRoot32}\{code:GetVersionDir}"; \
+    Flags: ignoreversion skipifsourcedoesntexist 32bit
 
 Source: "{#MySourceRoot}\tsf_dll\64\*.pdb"; \
-    DestDir: "{commonpf64}\metasequoiaime\{code:GetVersionDir}"; \
+    DestDir: "{#MyTsfRoot64}\{code:GetVersionDir}"; \
     Flags: ignoreversion skipifsourcedoesntexist
 
 Source: "{#MySourceRoot}\server_exe\*"; \
@@ -789,6 +794,17 @@ begin
       '现有数据将从这里迁移：' + NewLine + Space + ResolvePreviousDataDir;
 end;
 
+{ 本进程能直接访问的 TSF 根目录。32 位安装器里不经改写的 System32 会被 WOW64 落到 SysWOW64。}
+function TsfRoot64: String;
+begin
+  Result := ApplyPathRedirRulesForCurrentProcess(True, ExpandConstant('{#MyTsfRoot64}'));
+end;
+
+function TsfRoot32: String;
+begin
+  Result := ExpandConstant('{#MyTsfRoot32}');
+end;
+
 function GetVersionDir(Param: String): String;
 var
   Candidate: String;
@@ -799,10 +815,8 @@ begin
     Candidate := '{#MyVersionDirBase}';
     Suffix := 0;
     while
-      DirExists(ExpandConstant(
-        '{commonpf32}\metasequoiaime\' + Candidate)) or
-      DirExists(ExpandConstant(
-        '{commonpf64}\metasequoiaime\' + Candidate))
+      DirExists(AddBackslash(TsfRoot32) + Candidate) or
+      DirExists(AddBackslash(TsfRoot64) + Candidate)
     do
     begin
       Suffix := Suffix + 1;
@@ -1667,10 +1681,16 @@ begin
   TryDeleteTree(ExpandConstant('{commonappdata}\metasequoiaime\webview2-settings'));
   TryDeleteTree(ExpandConstant(
     '{commonpf64}\metasequoiaime\server'));
+  TryDeleteOldVersionDirs(TsfRoot32);
+  TryDeleteOldVersionDirs(TsfRoot64);
+  { 旧版把 TSF DLL 装在 Program Files 下，升级上来时一并清掉。}
   TryDeleteOldVersionDirs(ExpandConstant(
     '{commonpf32}\metasequoiaime'));
   TryDeleteOldVersionDirs(ExpandConstant(
     '{commonpf64}\metasequoiaime'));
+  DeleteFile(ExpandConstant('{commonpf32}\metasequoiaime\MetasequoiaImeTip.ico'));
+  DeleteFile(ExpandConstant('{commonpf64}\metasequoiaime\MetasequoiaImeTip.ico'));
+  RemoveDir(ExpandConstant('{commonpf32}\metasequoiaime'));
   { 随后的 [Files] 与 ssPostInstall 会写入新 Server 和登录任务。}
   Result := '';
 end;
@@ -1717,6 +1737,9 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     ClearOurInputMethodOverride;
+    { 设置页「游戏兼容」记下的登记名称。升级时要留着（TSF DLL 注册时读它），卸载时不能留：
+      否则日后重装会悄悄沿用别名。}
+    RegDeleteValue(HKLM, 'Software\Metasequoia\MetasequoiaIME', 'GameCompatProfileName');
     DeleteWatchdogLogonTask;
     RegDeleteValue(
       HKLM,
@@ -1729,13 +1752,9 @@ begin
   begin
     TryDeleteTree(ExpandConstant(
       '{commonpf64}\metasequoiaime\server'));
-    if VersionDirName <> '' then
-    begin
-      TryDeleteTree(ExpandConstant(
-        '{commonpf32}\metasequoiaime\' + VersionDirName));
-      TryDeleteTree(ExpandConstant(
-        '{commonpf64}\metasequoiaime\' + VersionDirName));
-    end;
+    { 还被宿主进程加载着的 DLL 删不掉，会留到重启后由用户或下次安装清理。}
+    TryDeleteTree(TsfRoot32);
+    TryDeleteTree(TsfRoot64);
     TryDeleteTree(ExpandConstant('{commonpf32}\metasequoiaime'));
     TryDeleteTree(ExpandConstant('{commonpf64}\metasequoiaime'));
     { 数据目录可能被用户指到了别的盘，甚至指到一个本来就有文件的文件夹（#537）。}

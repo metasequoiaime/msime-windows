@@ -452,6 +452,37 @@
         "additionalProperties": false
       }
     },
+    "gameCompatRequest": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "apply"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
     "openKeyboardPanel": {
       "surfaces": [
         "settings",
@@ -920,6 +951,41 @@
         },
         "isDefault": {
           "type": "boolean"
+        }
+      },
+      "required": [
+        "requestId",
+        "action",
+        "ok",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "gameCompatResponse": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "registeredName": {
+          "type": "string"
+        },
+        "defaultName": {
+          "type": "string"
         }
       },
       "required": [

@@ -1,6 +1,7 @@
 import { serializeHostMessage } from '../../../../shared/messages';
 import { updateConfig } from './config-sync';
 import { setupDefaultIme } from './default-ime';
+import { setupGameCompat } from './game-compat';
 
 // 网络代理设置（[network] 段）。代理的权威在宿主：地址由 Server 规范化后随快照回放，
 // 页面只做与宿主同规则的格式预检，避免把坏值发过去换来一次「设置保存失败」。
@@ -49,6 +50,7 @@ export function setupHelpSettings(): void {
     });
   });
   setupDefaultIme();
+  setupGameCompat();
 
   document.querySelectorAll<HTMLInputElement>('input[name="network-proxy-mode"]').forEach((radio) => {
     radio.addEventListener('change', () => {

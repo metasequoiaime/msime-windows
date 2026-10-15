@@ -36,6 +36,14 @@ bool IsShiftLetterSpecialModeTriggered()
            g_r_mode_triggered;
 }
 
+// 字母键写进 raw 的那个字母：键产生了字母就照收（保留大小写），否则取键位本身的小写字母。
+// 插入与顶字重建共用这一条，preedit 才与用户敲键一致。
+char CompositionLetter(UINT keycode, WCHAR wch)
+{
+    return (wch >= L'A' && wch <= L'Z') || (wch >= L'a' && wch <= L'z') ? static_cast<char>(wch)
+                                                                        : static_cast<char>(keycode + ('a' - 'A'));
+}
+
 // 日语模式使用已同步给 TSF 的实际语言，和 R 模式（中文里临时切日语）无关。
 bool IsJapaneseInputMode()
 {
@@ -432,8 +440,7 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         char input = 0;
         if (keycode >= 'A' && keycode <= 'Z')
         {
-            input = wch >= L'A' && wch <= L'Z' || wch >= L'a' && wch <= L'z' ? static_cast<char>(wch)
-                                                                             : static_cast<char>(keycode + ('a' - 'A'));
+            input = CompositionLetter(keycode, wch);
         }
         else if (keycode == VK_OEM_7 && wch == L'\'')
         {
@@ -500,6 +507,9 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
 
     g_inputSession->set_pinyin_sequence(raw);
     g_inputSession->set_pinyin_sequence_with_cases(raw);
+    // 五笔会把普通码的原样串裁成四码；T/V 模式的串得原样留着，形状判定才读得到，
+    // 其中的字母也不能被当成码去查表、自动上屏或顶字（Tdate 归一出 tdat）。
+    g_inputSession->set_wubi_literal_input(IsWubiLiteralComposition(raw));
     if (caret_resegmentation && composition.caret_position < raw.size())
     {
         // apply_pending_sequence() 会复位引擎光标：先让新 raw 生效，再喂光标做前缀
@@ -1026,8 +1036,12 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     const std::size_t raw_length_before_key = input_before_key.size();
     const std::size_t caret_before_key = GlobalIme::composition.caret_position;
     const bool shift_only = (Global::ModifiersDown & 0b00000111u) == 0b00000001u;
-    const bool chinese_scheme = g_inputSession && (g_inputSession->current_scheme_type() == SchemeType::Quanpin ||
-                                                   g_inputSession->current_scheme_type() == SchemeType::Shuangpin);
+    const std::optional<SchemeType> scheme =
+        g_inputSession ? std::optional<SchemeType>(g_inputSession->current_scheme_type()) : std::nullopt;
+    const bool chinese_scheme = scheme == SchemeType::Quanpin || scheme == SchemeType::Shuangpin;
+    // T 模式对五笔同样开放，但五笔不能并进 chinese_scheme：那个变量还给 K/U/E/M/J/Y/R 触发与
+    // ShouldLearnEnteredEnglishWord 用，并进去会让五笔连带打开其它本地模式（R7）。
+    const bool date_time_scheme = chinese_scheme || scheme == SchemeType::Wubi;
     const bool pinyin_commit =
         FanyImeIpc::IsPinyinCommitKey(Global::Keycode, Global::ModifiersDown) && !input_before_key.empty();
     const bool convert_shuangpin = pinyin_commit && g_inputSession->current_scheme_type() == SchemeType::Shuangpin &&
@@ -1061,7 +1075,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     if (chinese_scheme && !g_english_input_mode && GetConfiguredUnicodeModeEnabled() && input_before_key.empty() &&
         Global::Keycode == 'U' && Global::Wch == L'U' && shift_only)
         g_unicode_mode_triggered = true;
-    if (chinese_scheme && !g_english_input_mode && GetConfiguredDateTimeModeEnabled() && input_before_key.empty() &&
+    if (date_time_scheme && !g_english_input_mode && GetConfiguredDateTimeModeEnabled() && input_before_key.empty() &&
         Global::Keycode == 'T' && Global::Wch == L'T' && shift_only)
         g_date_time_mode_triggered = true;
     if (chinese_scheme && !g_english_input_mode && GetConfiguredEmojiModeEnabled() && input_before_key.empty() &&
@@ -1357,16 +1371,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         // 用刚敲下的这个字母重建服务端组合。ProcessSelectionKey 已经把引擎与组合清空，这里
         // 把字母写回去；引擎此刻的 raw 仍是被裁回的四码，所以必须显式设置而不是继续追加。
         // 大小写照 ApplyCompositionEditKey 的同一套规则取，保持 preedit 与用户敲键一致。
-        char next_char = static_cast<char>(Global::Keycode + ('a' - 'A'));
-        if (Global::Wch >= L'A' && Global::Wch <= L'Z')
-        {
-            next_char = static_cast<char>(Global::Wch);
-        }
-        else if (Global::Wch >= L'a' && Global::Wch <= L'z')
-        {
-            next_char = static_cast<char>(Global::Wch);
-        }
-        const std::string next_raw(1, next_char);
+        const std::string next_raw(1, CompositionLetter(Global::Keycode, Global::Wch));
         GlobalIme::composition.clear_creating_word();
         GlobalIme::composition.selection_history.clear();
         g_inputSession->set_pinyin_sequence(next_raw);

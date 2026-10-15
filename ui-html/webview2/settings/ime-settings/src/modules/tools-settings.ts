@@ -5,7 +5,7 @@ import { hoistOverlay } from '../utils/overlay-host';
 import type { SettingsMessage } from '../../../../shared/messages';
 type DictionaryRequest = Extract<SettingsMessage, { type: 'dictionaryRequest' }>['data'];
 import { serializeHostMessage } from '../../../../shared/messages';
-import { applyDropdownValue, applyToggleState, setMixedCandidateOptionsDisabled, setupDropdownMenu, setupToggleButton } from './shared';
+import { applyDropdownValue, applyToggleState, setLanguageBarOptionsDisabled, setMixedCandidateOptionsDisabled, setupDropdownMenu, setupToggleButton } from './shared';
 import { updateConfig } from './config-sync';
 
 type QuickPhraseRow = { code: string; word: string; weight: number };
@@ -161,6 +161,31 @@ function setupMixedCandidatesSection(): void {
   });
 }
 
+// 语言栏分区：折叠头 + 总开关 + 三个语言栏按钮子开关。折叠交互与候选混输一致，默认收起。
+// 三个子开关的配置键在 [language_bar]；总开关关闭时子开关置灰禁用，勾选状态仍按已存值展示。
+function setupLanguageBarSection(): void {
+  setupToggleButton('languageBarToggleBtn', (active) => {
+    updateConfig('language_bar.enabled', active);
+    setLanguageBarOptionsDisabled(!active);
+  });
+  setupToggleButton('languageBarImeModeToggleBtn', (active) => {
+    updateConfig('language_bar.show_ime_mode', active);
+  });
+  setupToggleButton('languageBarDoubleSingleByteToggleBtn', (active) => {
+    updateConfig('language_bar.show_double_single_byte', active);
+  });
+  setupToggleButton('languageBarPunctuationToggleBtn', (active) => {
+    updateConfig('language_bar.show_punctuation', active);
+  });
+  const expand = document.getElementById('languageBarExpand');
+  const details = document.getElementById('languageBarDetails');
+  expand?.addEventListener('click', () => {
+    const expanded = expand.getAttribute('aria-expanded') !== 'true';
+    expand.setAttribute('aria-expanded', String(expanded));
+    details?.classList.toggle('open', expanded);
+  });
+}
+
 export function setupToolsSettings(): void {
   hoistOverlay(document.getElementById('quickPhraseToast'));
   hoistOverlay(document.getElementById('quickPhraseModal'));
@@ -170,6 +195,7 @@ export function setupToolsSettings(): void {
     updateConfig('utility.clipboard_history', active);
   });
   setupMixedCandidatesSection();
+  setupLanguageBarSection();
   setupToggleButton('quickPhraseToggleBtn', (active) => {
     updateConfig('utility.quick_phrase', active);
   });

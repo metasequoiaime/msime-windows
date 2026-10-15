@@ -5,6 +5,7 @@
 #include "../../english/english_dictionary.h"
 #include "../../core/input_session.h"
 #include "../../core/runtime_paths.h"
+#include "../../schemes/wubi_scheme.h"
 #include "../../user_dictionary/user_dictionary_journal.h"
 #include "test_directory_cleanup.h"
 
@@ -236,6 +237,78 @@ int main()
             require(type(mixed_unique, "wqaa").size() == 1,
                     "The fixture answered wqaa with more than the one wubi row.");
             require(mixed_unique.wubi_unique_four_code(), "A unique wubi code was not reported unique in mixed input.");
+        }
+
+        // A host that drives the session by raw string (the Server) counts the cased raw it reads
+        // back to find the fourth letter, and reads its shape to tell T and V mode from a code. For a
+        // code that raw is the cased code itself; a special mode's literal input is kept as typed and
+        // is never a code, even when its letters spell one (Taaab -> taaa, a unique code here).
+        {
+            const auto set_raw = [](InputSession &session, const std::string &raw, bool literal) {
+                session.set_pinyin_sequence(raw);
+                session.set_pinyin_sequence_with_cases(raw);
+                session.set_wubi_literal_input(literal);
+                session.recompute_candidates();
+            };
+
+            InputSession clipped(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths_for(resources, root, next()));
+            clipped.set_wubi_input_options(WubiInputOptions{false});
+            set_raw(clipped, "Wqaab", false);
+            require(clipped.get_pinyin_sequence_with_cases() == "Wqaa" && clipped.get_pinyin_sequence() == "wqaa",
+                    "The raw-case string of a wubi code was not clipped with the code.");
+            require(clipped.wubi_unique_four_code(), "An uppercase letter stopped a wubi code from being a code.");
+
+            InputSession wildcard(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths_for(resources, root, next()));
+            wildcard.set_wubi_input_options(WubiInputOptions{false, true});
+            set_raw(wildcard, "wqazb", false);
+            require(wildcard.get_pinyin_sequence_with_cases() == "wqaz" && wildcard.get_pinyin_sequence() == "wqaz",
+                    "A wildcard code kept a letter past the fourth in its raw-case string.");
+
+            InputSession code(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths_for(resources, root, next()));
+            code.set_wubi_input_options(WubiInputOptions{false});
+            set_raw(code, "Taaa", false);
+            require(code.wubi_unique_four_code(), "The fixture did not answer taaa with one candidate.");
+
+            for (const bool mixed : {false, true})
+            {
+                InputSession literal(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths_for(resources, root, next()));
+                literal.set_wubi_input_options(WubiInputOptions{mixed});
+                set_raw(literal, "Taaab", true);
+                require(literal.get_pinyin_sequence_with_cases() == "Taaab",
+                        "Literal input was not kept as typed in the raw-case string.");
+                require(!literal.wubi_unique_four_code() && !literal.wubi_four_code_is_complete(),
+                        "Literal input whose letters spell a code was reported as a complete code.");
+                require(literal.candidates().empty(), "Literal input was queried as a code.");
+
+                // The flag belongs to the sequence it was set with: the next one is a code again.
+                literal.set_pinyin_sequence("taaa");
+                literal.set_pinyin_sequence_with_cases("taaa");
+                literal.recompute_candidates();
+                require(literal.wubi_unique_four_code(), "The literal flag outlived the sequence it was set with.");
+            }
+        }
+
+        // The scheme's two views stay in step under key-driven editing too: Backspace after literal
+        // input drops one typed character and rederives the code, and a letter key takes the letter
+        // the key produced for both views.
+        {
+            WubiScheme scheme;
+            scheme.set_literal_input(true);
+            scheme.set_raw_input("V1+2", "V1+2");
+            scheme.handle_key(ImeKey::Backspace, 0, 0);
+            require(scheme.build_request().raw_input_with_cases == "V1+" && scheme.build_request().raw_input == "v",
+                    "Backspace after literal input drifted the raw-case string from the code.");
+            scheme.handle_key(ImeKey::Backspace, 0, 0);
+            scheme.handle_key(ImeKey::Backspace, 0, 0);
+            scheme.handle_key(ImeKey::Backspace, 0, 0);
+            require(scheme.build_request().raw_input_with_cases.empty() && scheme.build_request().raw_input.empty(),
+                    "Backspace left part of the literal input behind.");
+
+            WubiScheme layout;
+            layout.handle_key('A', 0, u'q');
+            layout.handle_key('B', 0, 0);
+            require(layout.build_request().raw_input_with_cases == "qb" && layout.build_request().raw_input == "qb",
+                    "A letter key put different letters in the raw-case string and the code.");
         }
 
         // z is a pinyin letter in mixed input and a wildcard only in wildcard mode -- two

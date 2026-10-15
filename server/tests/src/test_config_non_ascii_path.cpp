@@ -145,6 +145,57 @@ TEST_CASE(config_round_trips_under_non_ascii_profile_path)
     fs::remove_all(unique_root, ec);
 }
 
+TEST_CASE(candidate_translation_show_pos_defaults_and_round_trips)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"translation-pos";
+    const fs::path data_dir = unique_root / L"metasequoiaime";
+    const fs::path config_path = data_dir / L"config.toml";
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    fs::create_directories(data_dir, ec);
+    REQUIRE(!ec);
+
+    {
+        ScopedConfigLocation location(unique_root);
+        // No template: exercise the reader's fallback independently of template merging.
+        WriteText(config_path, "[general]\ncandidate_translations = true\n");
+        InitImeConfig();
+        REQUIRE(GetConfiguredCandidateTranslationShowPos());
+
+        for (const bool show : {false, true, false})
+        {
+            REQUIRE(SetConfiguredCandidateTranslationShowPos(show));
+            REQUIRE_EQ(GetConfiguredCandidateTranslationShowPos(), show);
+            const auto stored = toml::parse(ReadText(config_path));
+            REQUIRE_EQ(stored["general"]["candidate_translation_show_pos"].value_or(!show), show);
+            InitImeConfig();
+            REQUIRE_EQ(GetConfiguredCandidateTranslationShowPos(), show);
+        }
+        for (const bool enabled : {false, true})
+        {
+            REQUIRE(SetConfiguredCandidateTranslationsEnabled(enabled));
+            InitImeConfig();
+            REQUIRE_EQ(GetConfiguredCandidateTranslationsEnabled(), enabled);
+            REQUIRE(!GetConfiguredCandidateTranslationShowPos());
+        }
+
+        for (const std::string value : {"\"false\"", "1", "[]"})
+        {
+            REQUIRE(SetConfiguredCandidateTranslationShowPos(false));
+            WriteText(config_path, "[general]\ncandidate_translation_show_pos = " + value + "\n");
+            InitImeConfig();
+            REQUIRE(GetConfiguredCandidateTranslationShowPos());
+        }
+        REQUIRE(SetConfiguredCandidateTranslationShowPos(false));
+        WriteText(config_path, "[general]\ncandidate_translations = false\n");
+        InitImeConfig();
+        REQUIRE(GetConfiguredCandidateTranslationShowPos());
+    }
+
+    fs::remove_all(unique_root, ec);
+}
+
 TEST_CASE(trilingual_runtime_language_preserves_preferences_without_writing_config)
 {
     namespace fs = std::filesystem;

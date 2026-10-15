@@ -72,13 +72,22 @@ try {
     # 注册成随版本目录变化的 DLL 路径。32 位、64 位 DLL 各自找自己的上一级目录，两份都要有。
     $issForIcon = [IO.File]::ReadAllText((Join-Path $installer 'msime_setup.iss'))
     $dllEntry = $issForIcon.IndexOf('Source: "{#MySourceRoot}\tsf_dll\')
-    foreach ($root in @('{commonpf32}', '{commonpf64}')) {
+    foreach ($root in @('{#MyTsfRoot32}', '{#MyTsfRoot64}')) {
         $iconEntry = [regex]::Match($issForIcon,
-            'Source: "\{#MySourceRoot\}\\MetasequoiaImeTip\.ico";\s*\\\s*DestDir: "' + [regex]::Escape($root) + '\\metasequoiaime";')
-        if (-not $iconEntry.Success) { throw "MetasequoiaImeTip.ico is not installed to $root\metasequoiaime" }
+            'Source: "\{#MySourceRoot\}\\MetasequoiaImeTip\.ico";\s*\\\s*DestDir: "' + [regex]::Escape($root) + '";')
+        if (-not $iconEntry.Success) { throw "MetasequoiaImeTip.ico is not installed to $root" }
         if ($dllEntry -lt 0 -or $iconEntry.Index -gt $dllEntry) {
             throw "MetasequoiaImeTip.ico for $root must be installed before the TSF DLL entries"
         }
+    }
+    # CS2 等 Trusted Mode 游戏只放行系统目录下的签名 DLL，TSF DLL 装回 Program Files 就进不了游戏。
+    foreach ($arch in @('32', '64')) {
+        if ($issForIcon -notmatch ('Source: "\{#MySourceRoot\}\\tsf_dll\\' + $arch + '\\\*\.dll";\s*\\\s*DestDir: "\{#MyTsfRoot' + $arch + '\}\\')) {
+            throw "The $arch-bit TSF DLL must be installed under MyTsfRoot$arch"
+        }
+    }
+    if ($issForIcon -notmatch '#define MyTsfRoot64\s+"\{sys\}\\IME\\' -or $issForIcon -notmatch '#define MyTsfRoot32\s+"\{syswow64\}\\IME\\') {
+        throw 'MyTsfRoot32/MyTsfRoot64 must point into the system directories'
     }
     # 神经整句效果档模型由设置页按需下载，仓库的 neural-model/ 里有它也不能进安装包。
     if (Test-Path (Join-Path $installer 'app_data/sentence-model-desktop.safetensors')) {

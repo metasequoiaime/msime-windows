@@ -86,6 +86,8 @@ FanyImeVModeInput::Trigger CurrentVModeTrigger();
 bool IsVModeCompositionActive(const std::string &raw);
 void ClearSpecialModeTriggers();
 bool IsSpecialModeCompositionActive(const std::string &raw);
+// 五笔会话里属于 T/V 模式的串：交给引擎时标成字面输入，原样保留、不查码表、不算完整四码。
+bool IsWubiLiteralComposition(const std::string &raw);
 
 void PublishCandidateUiOwner(uint64_t client_id, uint64_t activation_epoch);
 FanyImeIpc::CandidateUiOwner SnapshotCandidateUiOwner();
@@ -219,6 +221,9 @@ void HandleToolbarLanguageToggle(bool from_ime_enabled);
 
 // event_listener.cpp
 bool SendUiLessCompositionToClient(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id);
+// UI-less only: tell the candidate owner that its page changed outside a key reply, so the host redraws the list
+// that digits and Space now commit from. A no-op for clients that draw nothing themselves.
+void PushUiLessCandidatesToOwner();
 
 // 拆分前 event_listener.cpp 里的前置声明，定义分布在各个 event_listener*.cpp。
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch);

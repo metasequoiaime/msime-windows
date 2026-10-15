@@ -41,6 +41,11 @@ ResolvedCandidateScale ResolveCandidateScaleForCaret(POINT caret);
 // Candidate placement uses that monitor's work area to avoid taskbars/app bars.
 MonitorCoordinates GetMonitorCoordinatesFromPoint(POINT pt);
 
+// A D3D exclusive-fullscreen app owns the screen: another process's window cannot be drawn over it,
+// and showing one can throw the game out of exclusive mode (black flicker, mode switch, hangs).
+// UI thread only; the answer is cached briefly because candidate shows arrive once per keystroke.
+bool IsForegroundD3DExclusiveFullscreen();
+
 MonitorCoordinates GetMonitorCoordinates();
 MonitorCoordinates GetMainMonitorCoordinates();
 int GetTaskbarHeight();

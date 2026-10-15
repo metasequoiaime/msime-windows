@@ -7,6 +7,8 @@
 #include "MetasequoiaIMEBaseStructure.h"
 #include "KeyHandlerEditSession.h"
 #include "TfTextLayoutSink.h"
+#include "../../../engine/contracts/uiless_page.h"
+#include <cstdint>
 #include <string>
 
 class CReadingLine;
@@ -82,6 +84,8 @@ class CCandidateListUIPresenter : public CTfTextLayoutSink,
     void _SetText(_In_ CMetasequoiaImeArray<CCandidateListItem> *pCandidateList, BOOL isAddFindKeyCode);
     void _ClearList();
     void _ApplyUiLessCandidatePage(_In_ const std::wstring &page, int selectedIndex = 0);
+    // Applies a Server page unless an older generation than the one shown; returns whether it was applied.
+    bool _ApplyUiLessPayload(_In_ const FanyImeUiLessPage::Payload &payload);
     void _NotifyUiLessHost();
     bool _ConsumeUiLessCompositionReply(uint64_t requestId);
     UINT _GetCount() const
@@ -158,4 +162,10 @@ class CCandidateListUIPresenter : public CTfTextLayoutSink,
     int _sentCaretPoint[2] = {};
     BOOL _asyncCleanupPending;
     std::wstring _lastUiLessCandidatePage;
+    // Generation of the Server page shown to a UI-less host. The worker push and the key reply arrive on
+    // different pipes, so a page may land after a newer one.
+    std::uint64_t _lastUiLessGeneration = 0;
+    // Shared memory only holds a plain word list once the Server treats this session as UI-less; before that it is
+    // the Server's own HTML page (helpcodes, translation spans), which a host would show as garbage.
+    bool _serverUiLessPageSeen = false;
 };

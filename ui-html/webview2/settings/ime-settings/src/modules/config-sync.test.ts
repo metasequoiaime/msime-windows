@@ -12,9 +12,11 @@ vi.mock('./shared', () => ({
   applyCandidateArrange: vi.fn(),
   applyDropdownValue: vi.fn(),
   applyToggleState: vi.fn(),
+  setCandidateTranslationOptionsDisabled: vi.fn(),
   applyCollocationModelStatus: vi.fn(),
   applyNeuralModelStatus: vi.fn(),
   setFuzzyRuleOptionsDisabled: vi.fn(),
+  setLanguageBarOptionsDisabled: vi.fn(),
   setMixedCandidateOptionsDisabled: vi.fn(),
   setSmartPunctuationOptionsDisabled: vi.fn()
 }));
@@ -44,7 +46,7 @@ vi.mock('./floating-toolbar', () => ({
 vi.mock('./stats', () => ({ applyStatisticsEnabled: vi.fn(), applyStatisticsRetention: vi.fn() }));
 vi.mock('./shortcut', () => ({ applyShortcutConfig: vi.fn() }));
 
-import { applyToggleState, setMixedCandidateOptionsDisabled } from './shared';
+import { applyToggleState, setCandidateTranslationOptionsDisabled, setLanguageBarOptionsDisabled, setMixedCandidateOptionsDisabled } from './shared';
 import { setupConfigSync } from './config-sync';
 
 beforeEach(() => {
@@ -91,6 +93,30 @@ it('backfills the focus announcement switch only from a boolean', () => {
   expect(applyToggleState).not.toHaveBeenCalledWith('caretStateIndicatorOnFocusToggleBtn', expect.anything());
 });
 
+it('backfills the translation part-of-speech preference only from a boolean', () => {
+  const snapshot = handlers.get('configSnapshot')!;
+  for (const show of [false, true]) {
+    snapshot({ data: { general: { candidate_translation_show_pos: show } } });
+    expect(applyToggleState).toHaveBeenLastCalledWith('candidateTranslationShowPosToggleBtn', show);
+  }
+  vi.mocked(applyToggleState).mockClear();
+  for (const value of ['false', 1, undefined]) {
+    snapshot({ data: { general: { candidate_translation_show_pos: value } } });
+    expect(applyToggleState).not.toHaveBeenCalled();
+  }
+});
+
+it('disables translation options without resetting the part-of-speech preference', () => {
+  const snapshot = handlers.get('configSnapshot')!;
+  snapshot({ data: { general: { candidate_translations: false, candidate_translation_show_pos: false } } });
+  expect(setCandidateTranslationOptionsDisabled).toHaveBeenCalledWith(true);
+  expect(applyToggleState).toHaveBeenCalledWith('candidateTranslationShowPosToggleBtn', false);
+  vi.mocked(applyToggleState).mockClear();
+  snapshot({ data: { general: { candidate_translations: true } } });
+  expect(setCandidateTranslationOptionsDisabled).toHaveBeenLastCalledWith(false);
+  expect(applyToggleState).not.toHaveBeenCalledWith('candidateTranslationShowPosToggleBtn', expect.anything());
+});
+
 it('greys out the mixed candidate sub-switches when the master switch is off', () => {
   const snapshot = handlers.get('configSnapshot')!;
   snapshot({ data: { utility: { mixed_candidates: false, date_time_candidates: true, date_time_menu: false } } });
@@ -100,4 +126,20 @@ it('greys out the mixed candidate sub-switches when the master switch is off', (
   expect(applyToggleState).toHaveBeenCalledWith('dateTimeMenuToggleBtn', false);
   snapshot({ data: { utility: { mixed_candidates: true } } });
   expect(setMixedCandidateOptionsDisabled).toHaveBeenLastCalledWith(false);
+});
+
+it('greys out the language bar sub-switches when the master switch is off', () => {
+  const snapshot = handlers.get('configSnapshot')!;
+  snapshot({
+    data: {
+      language_bar: { enabled: false, show_ime_mode: true, show_double_single_byte: false, show_punctuation: true }
+    }
+  });
+  expect(applyToggleState).toHaveBeenCalledWith('languageBarToggleBtn', false);
+  expect(setLanguageBarOptionsDisabled).toHaveBeenCalledWith(true);
+  expect(applyToggleState).toHaveBeenCalledWith('languageBarImeModeToggleBtn', true);
+  expect(applyToggleState).toHaveBeenCalledWith('languageBarDoubleSingleByteToggleBtn', false);
+  expect(applyToggleState).toHaveBeenCalledWith('languageBarPunctuationToggleBtn', true);
+  snapshot({ data: { language_bar: { enabled: true } } });
+  expect(setLanguageBarOptionsDisabled).toHaveBeenLastCalledWith(false);
 });

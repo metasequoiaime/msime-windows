@@ -1,6 +1,17 @@
 #include "Private.h"
 #include "Globals.h"
 
+HMODULE PinThisModuleForCallback()
+{
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                            reinterpret_cast<LPCWSTR>(&PinThisModuleForCallback), &module))
+    {
+        return nullptr;
+    }
+    return module;
+}
+
 //+---------------------------------------------------------------------------
 //
 // DllMain

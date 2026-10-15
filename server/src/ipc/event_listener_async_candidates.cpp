@@ -86,6 +86,7 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
     RefreshCandidatePageUi(true);
+    PushUiLessCandidatesToOwner();
 }
 
 // 候选列表当初是按词格的静态顺序发出去的，因为打分那会儿还没算完。现在算完了：把引擎的候选缓存
@@ -135,6 +136,7 @@ void ApplyRescoredOrder()
 
     PrepareCandidateList(owner.client_id, owner.activation_epoch);
     RequestShowCandidateWindow();
+    PushUiLessCandidatesToOwner();
 }
 
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,
@@ -187,6 +189,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
     RefreshCandidatePageUi(true);
+    PushUiLessCandidatesToOwner();
 }
 
 // 专用英文（英文状态、Shift+Y）的整页英文候选。中文里混进来的英文走 ApplyMixedCandidates。
@@ -239,6 +242,7 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
     Global::candidate_ui.clear_page();
     g_dedicated_english_answer_pending = false;
     RefreshCandidatePageUi(true);
+    PushUiLessCandidatesToOwner();
 }
 
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge)
@@ -405,5 +409,6 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
     RefreshCandidatePageUi(true);
+    PushUiLessCandidatesToOwner();
 }
 } // namespace FanyNamedPipe

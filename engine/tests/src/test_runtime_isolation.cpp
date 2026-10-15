@@ -263,10 +263,10 @@ void test_runtime_isolation()
         session.command(Command::DeleteForward);
         require(session.snapshot().editing_text == "i", "Forward delete removed the wrong character");
         session.character('n');
-        // The caret sits inside the single unit "ni": the quantized prefix is empty and no
-        // candidate may be offered (PRD R3/R4). The empty list itself proves the refresh ran.
+        // The caret sits inside the single unit "ni": this is not the true string head, so the
+        // whole string decodes and "你" stays offered; only caret == 0 hides the window.
         require(session.snapshot().editing_text == "ni" && session.snapshot().caret_position == 1 &&
-                    session.snapshot().candidates.empty(),
+                    !session.snapshot().candidates.empty() && session.snapshot().candidates.front().word == "你",
                 "Middle insertion did not refresh candidates");
         session.command(Command::MoveEnd);
         require(session.snapshot().candidates.front().word == "你",

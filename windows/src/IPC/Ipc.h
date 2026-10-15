@@ -71,6 +71,9 @@ void DebugTsfIssue47(_In_z_ const wchar_t *stage, uint64_t requestId, UINT code,
                      UINT function, int eaten, BOOL composing, size_t virtualKeyLength, HRESULT result,
                      uint64_t correlationToken = 0);
 void QueueTsfDiagnosticLog(const std::wstring &line);
+// Game-host troubleshooting: `event` plus the host process and the calling GUI thread's
+// foreground/focus/caret windows. Window state only, never text. No-op while TSF diagnostics are off.
+void QueueTsfHostWindowDiagnostic(_In_z_ const wchar_t *event, const std::wstring &detail);
 int SendHideCandidateWndEventToUIProcess();
 int SendShowCandidateWndEventToUIProcess();
 int SendMoveCandidateWndEventToUIProcess();
@@ -158,6 +161,9 @@ inline thread_local std::wstring PinyinString = L"";
 // TF_TMF_UIELEMENTENABLEDONLY at ActivateEx, and/or BeginUIElement pbShow=FALSE.
 inline thread_local bool HostUiLessMode = false;
 inline thread_local bool CandidateUiLessMode = false;
+// The host claims to draw candidates but will not (Valve games without the compatibility name), so the
+// UI-less declaration is ignored and the Server's candidate window shows. Decided at ActivateEx.
+inline thread_local bool IgnoreHostUiLess = false;
 inline bool IsUiLessMode()
 {
     return HostUiLessMode || CandidateUiLessMode;

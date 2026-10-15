@@ -6,6 +6,7 @@ const toggles = vi.hoisted(() => new Map<string, (active: boolean) => void>());
 vi.mock('./shared', () => ({
   applyDropdownValue: vi.fn(),
   applyToggleState: vi.fn(),
+  setCandidateTranslationOptionsDisabled: vi.fn(),
   setFuzzyRuleOptionsDisabled: vi.fn(),
   setSmartPunctuationOptionsDisabled: vi.fn(),
   setupDropdownMenu: vi.fn(),
@@ -17,7 +18,7 @@ vi.mock('./appearance', () => ({ updateCandidatePreviewHelpcode: vi.fn() }));
 vi.mock('./credential-test', () => ({ setupCredentialTest: vi.fn() }));
 
 import { updateConfig } from './config-sync';
-import { setSmartPunctuationOptionsDisabled } from './shared';
+import { setCandidateTranslationOptionsDisabled, setSmartPunctuationOptionsDisabled } from './shared';
 import { applyTranslationConfig, setupInput } from './input';
 import { isUsableAiAssistantState, setAiAssistantState } from './ai-assistant-state';
 
@@ -81,6 +82,20 @@ it('disables the sub-switches together with the master switch', () => {
   expect(setSmartPunctuationOptionsDisabled).toHaveBeenCalledWith(true);
   toggles.get('smartPunctuationToggleBtn')?.(true);
   expect(setSmartPunctuationOptionsDisabled).toHaveBeenLastCalledWith(false);
+});
+
+it('reports the translation part-of-speech preference independently of the master switch', () => {
+  for (const show of [false, true]) {
+    toggles.get('candidateTranslationShowPosToggleBtn')?.(show);
+    expect(updateConfig).toHaveBeenLastCalledWith('general.candidate_translation_show_pos', show);
+  }
+  vi.mocked(updateConfig).mockClear();
+  for (const enabled of [false, true]) {
+    toggles.get('candidateTranslationsToggleBtn')?.(enabled);
+    expect(setCandidateTranslationOptionsDisabled).toHaveBeenLastCalledWith(!enabled);
+    expect(updateConfig).toHaveBeenLastCalledWith('general.candidate_translations', enabled);
+  }
+  expect(updateConfig).not.toHaveBeenCalledWith('general.candidate_translation_show_pos', expect.anything());
 });
 
 it('toggles the details container from the section header', () => {

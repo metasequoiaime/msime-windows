@@ -92,6 +92,19 @@ bool SetConfiguredCandidateTranslationsEnabled(bool enabled)
     return true;
 }
 
+bool GetConfiguredCandidateTranslationShowPos()
+{
+    return g_candidate_translation_show_pos.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredCandidateTranslationShowPos(bool show)
+{
+    if (!WriteConfiguredValue("general", "candidate_translation_show_pos", show ? "true" : "false"))
+        return false;
+    g_candidate_translation_show_pos.store(show, std::memory_order_relaxed);
+    return true;
+}
+
 int GetConfiguredEnglishMixedInputMinChars()
 {
     return g_english_mixed_input_min_chars;
@@ -522,10 +535,13 @@ std::wstring FormatVModeWorkerPayload()
 {
     using FanyImeVModeInput::Trigger;
     // 日语模式下当前方案是 JapaneseRomaji，自然落到 Off。
+    // 五笔与双拼同款：只认大写 V。小写 v 是合法码字，v+数字现状是「码 v 选第 N 个候选」，
+    // 大小写都认会把它变成 V 模式，破坏选词。
     const SchemeType scheme = GetConfiguredActiveInputScheme();
     const Trigger trigger = !g_v_mode_enabled                 ? Trigger::Off
                             : scheme == SchemeType::Quanpin   ? Trigger::AnyCase
                             : scheme == SchemeType::Shuangpin ? Trigger::UppercaseOnly
+                            : scheme == SchemeType::Wubi      ? Trigger::UppercaseOnly
                                                               : Trigger::Off;
     return std::wstring(1, FanyImeVModeInput::PayloadFromTrigger(trigger));
 }
@@ -546,5 +562,65 @@ bool SetConfiguredClipboardHistoryEnabled(bool enabled)
     if (was_enabled && !enabled)
         ClipboardHistory::Clear();
     ClipboardMonitor::Sync(enabled);
+    return true;
+}
+
+bool GetConfiguredLanguageBarEnabled()
+{
+    return g_language_bar_enabled;
+}
+
+bool SetConfiguredLanguageBarEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("language_bar", "enabled", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_language_bar_enabled = enabled;
+    return true;
+}
+
+bool GetConfiguredLanguageBarShowImeMode()
+{
+    return g_language_bar_show_ime_mode;
+}
+
+bool SetConfiguredLanguageBarShowImeMode(bool enabled)
+{
+    if (!WriteConfiguredValue("language_bar", "show_ime_mode", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_language_bar_show_ime_mode = enabled;
+    return true;
+}
+
+bool GetConfiguredLanguageBarShowDoubleSingleByte()
+{
+    return g_language_bar_show_double_single_byte;
+}
+
+bool SetConfiguredLanguageBarShowDoubleSingleByte(bool enabled)
+{
+    if (!WriteConfiguredValue("language_bar", "show_double_single_byte", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_language_bar_show_double_single_byte = enabled;
+    return true;
+}
+
+bool GetConfiguredLanguageBarShowPunctuation()
+{
+    return g_language_bar_show_punctuation;
+}
+
+bool SetConfiguredLanguageBarShowPunctuation(bool enabled)
+{
+    if (!WriteConfiguredValue("language_bar", "show_punctuation", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_language_bar_show_punctuation = enabled;
     return true;
 }

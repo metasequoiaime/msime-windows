@@ -615,6 +615,13 @@ export function applyToggleState(btnId: string, active: boolean): void {
   toggle?.setAttribute('aria-checked', String(active));
 }
 
+export function setCandidateTranslationOptionsDisabled(disabled: boolean): void {
+  document.getElementById('candidateTranslationApiOptions')?.classList.toggle('is-disabled', disabled);
+  const toggle = document.getElementById('candidateTranslationShowPosToggleBtn');
+  toggle?.setAttribute('aria-disabled', String(disabled));
+  if (toggle) toggle.tabIndex = disabled ? -1 : 0;
+}
+
 // 模糊音规则复选随总开关联动：禁用 + 置灰 + 提示。input.ts（点击总开关）与
 // config-sync.ts（快照回填）共用这一份 DOM 名单，不要在两侧各写一遍。
 export function setFuzzyRuleOptionsDisabled(disabled: boolean): void {
@@ -664,6 +671,24 @@ export function setMixedCandidateOptionsDisabled(disabled: boolean): void {
   }
   document.getElementById('mixedCandidatesDetails')?.classList.toggle('is-disabled', disabled);
   document.getElementById('mixedCandidatesDisabledHint')?.classList.toggle('is-hidden', !disabled);
+}
+
+// 语言栏子开关随总开关联动：置灰 + 禁用 + 提示，勾选状态保留展示。
+// tools-settings.ts（点击总开关）与 config-sync.ts（快照回填）共用这一份 DOM 名单。
+const LANGUAGE_BAR_OPTION_IDS = [
+  'languageBarImeModeToggleBtn',
+  'languageBarDoubleSingleByteToggleBtn',
+  'languageBarPunctuationToggleBtn'
+];
+
+export function setLanguageBarOptionsDisabled(disabled: boolean): void {
+  for (const id of LANGUAGE_BAR_OPTION_IDS) {
+    const toggle = document.getElementById(id);
+    toggle?.setAttribute('aria-disabled', String(disabled));
+    if (toggle) toggle.tabIndex = disabled ? -1 : 0;
+  }
+  document.getElementById('languageBarDetails')?.classList.toggle('is-disabled', disabled);
+  document.getElementById('languageBarDisabledHint')?.classList.toggle('is-hidden', !disabled);
 }
 
 export function applyCandidateArrange(value: string | undefined): void {

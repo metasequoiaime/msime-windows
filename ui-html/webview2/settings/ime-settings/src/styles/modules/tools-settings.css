@@ -14,7 +14,8 @@
 }
 
 .clipboard-history-section,
-.mixed-candidates-section {
+.mixed-candidates-section,
+.language-bar-section {
   margin-bottom: 18px;
 }
 

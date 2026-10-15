@@ -412,7 +412,7 @@
 }
 .candidate.skin-microsoft .row.cand {
   margin: 0;
-  padding: 0.235em 0.9em 0.235em 0.76em;
+  padding: 0.12em 0.3em 0.12em 0.4em;
   border-radius: 4px;
 }
 .candidate.skin-microsoft .row.pinyin {
@@ -429,51 +429,51 @@
 }
 .candidate.skin-microsoft .first::before {
   top: 50%;
-  height: 1.1em;
-  width: max(3px, 0.24em);
+  height: 0.9em;
+  width: 3px;
   border-radius: 99px;
 }
 .candidate.skin-microsoft.wnd-v .row-wrapper + .row-wrapper { margin-top: 2px; }
-/* 换行的候选行之间隔 0.28em：挂在每项的下外边距上，底边内边距扣掉这一段。 */
-.candidate.skin-microsoft.wnd-h .container { letter-spacing: -0.31em; padding-bottom: 0.02em; }
+/* 换行的候选行之间隔 0.15em：挂在每项的下外边距上，底边内边距扣掉这一段。 */
+.candidate.skin-microsoft.wnd-h .container { letter-spacing: -0.31em; padding-bottom: 0.15em; }
 .candidate.skin-microsoft.wnd-h .row.pinyin { letter-spacing: normal; }
 .candidate.skin-microsoft.wnd-h .row-wrapper {
   letter-spacing: normal;
-  margin: 0 0.28em 0.28em 0;
+  margin: 0 0.15em 0.15em 0;
 }
 .candidate.skin-microsoft.wnd-h .container > .row-wrapper:is(:last-child, .last-visible) { margin-right: 0; }
 .candidate.skin-microsoft.wnd-h .row.cand {
   box-sizing: border-box;
-  min-width: 4.35em;
+  min-width: 3.5em;
 }
-/* 翻页：实心三角。横排与候选行等高、前面一条分隔线；竖排是 1.2em 见方的按钮，三角左端对齐序号。 */
+/* 翻页：实心三角。横排与候选行等高、前面一条分隔线；竖排是 0.81em 宽、1.2em 高的按钮，三角左端对齐序号。 */
 .candidate.skin-microsoft.page-arrows-on .page-arrows { gap: 0; letter-spacing: normal; }
 .candidate.skin-microsoft.page-arrows-on.wnd-h .page-arrows {
   vertical-align: top;
-  margin: 0 0 0.28em 0.3em;
+  margin: 0 0 0.15em 0.3em;
   padding-left: 0.12em;
   border-left: 1px solid var(--ms-divider);
 }
-.candidate.skin-microsoft.page-arrows-on.wnd-v .page-arrows { margin-left: -0.365em; }
+.candidate.skin-microsoft.page-arrows-on.wnd-v .page-arrows { margin-left: -0.185em; }
 .candidate.skin-microsoft .page-arrow {
-  width: 1.2em;
+  width: 0.81em;
   height: 1.2em;
   border-radius: 4px;
   color: var(--cand-text);
 }
 .candidate.skin-microsoft.wnd-h .page-arrow {
-  width: 1.73em;
-  height: 1.82em;
+  width: 0.96em;
+  height: 1.59em;
 }
 .candidate.skin-microsoft .page-arrow::before,
 .candidate.skin-microsoft .page-arrow-next::before {
-  width: 0.47em;
-  height: 0.56em;
+  width: 0.44em;
+  height: 0.52em;
   border: none;
   transform: none;
   background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M7.43 4.46L2.57 1.54Q0 0 0 3L0 9Q0 12 2.57 10.46L7.43 7.54Q10 6 7.43 4.46Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M7.43 4.46L2.57 1.54Q0 0 0 3L0 9Q0 12 2.57 10.46L7.43 7.54Q10 6 7.43 4.46Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M6.14 3.69L3.86 2.31Q0 0 0 4.5L0 7.5Q0 12 3.86 9.69L6.14 8.31Q10 6 6.14 3.69Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12'%3E%3Cpath d='M6.14 3.69L3.86 2.31Q0 0 0 4.5L0 7.5Q0 12 3.86 9.69L6.14 8.31Q10 6 6.14 3.69Z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .candidate.skin-microsoft .page-arrow-prev::before { transform: scaleX(-1); }
 .candidate.skin-microsoft .page-arrow.disabled { opacity: 0.25; }

@@ -312,6 +312,17 @@ bool Supports(const Package &package, const std::string &layout, const std::stri
            std::find(package.themes.begin(), package.themes.end(), theme) != package.themes.end();
 }
 
+std::optional<Package> LoadSupported(const std::filesystem::path &skinsRoot, const std::string &id,
+                                     const std::string &layout, const std::string &theme)
+{
+    std::optional<Package> package = Load(skinsRoot, id);
+    if (package && !Supports(*package, layout, theme))
+    {
+        return std::nullopt;
+    }
+    return package;
+}
+
 std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::string &id, std::string *error)
 {
     if (!IsSafeId(id) || IsBuiltIn(id) || id == kDefaultSkinsFolder)

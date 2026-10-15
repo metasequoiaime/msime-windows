@@ -556,6 +556,20 @@
   color: var(--danger-text);
 }
 
+/* 帮助页的游戏兼容：沿用默认输入法卡片与网络代理的输入框外观，名称框与「应用」按钮底部对齐 */
+.game-compat-toggle {
+  margin-top: 8px;
+}
+
+.game-compat-section .default-ime-row {
+  align-items: flex-end;
+}
+
+.game-compat-name {
+  flex: 1 1 auto;
+  margin-top: 4px;
+}
+
 /* 帮助页的网络代理：与其他设置页同款的卡片与单选组，地址输入沿用 AI 页的输入框外观 */
 .network-proxy-section {
   margin-top: 24px;

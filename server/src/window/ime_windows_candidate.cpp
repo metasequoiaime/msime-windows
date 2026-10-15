@@ -93,6 +93,20 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             CAND_DIAG_LOGF(L"candidate-frame path=superseded");
             return 0;
         }
+        // Checked here rather than when the show is requested: a game can enter exclusive fullscreen
+        // after the IME activated, and a single frame over it is enough to throw it out of the mode.
+        // Hiding also clears the rendered-visible flag, so digit/space selection does not wait for a
+        // paint that will never come.
+        if (IsForegroundD3DExclusiveFullscreen())
+        {
+            CAND_DIAG_LOGF(L"candidate-frame path=exclusive-fullscreen shown={}", ::is_global_wnd_cand_shown);
+            if (::is_global_wnd_cand_shown)
+            {
+                return WndProcCandWindow(hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+            }
+            Global::SetCandidateWindowRenderedVisible(false);
+            return 0;
+        }
         const uint64_t contentGeneration = ++g_candidate_content_generation;
         const ULONGLONG updateStartedTick = GetTickCount64();
         ::ReadDataFromSharedMemory(0b1000000);
@@ -500,6 +514,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const bool previous_trilingual_cycle = GetConfiguredTrilingualCycleEnabled();
             const std::string previous_shuangpin_schema = GetConfiguredShuangpinSchema();
             const std::string previous_character_set = GetConfiguredCharacterSet();
+            const bool previous_translation_show_pos = GetConfiguredCandidateTranslationShowPos();
             const std::string previous_layout = GetConfiguredCandidateWindowLayout();
             const std::string previous_candidate_skin = GetConfiguredCandidateSkin();
             const bool previous_fit_content = GetConfiguredCandidateWindowFitContent();
@@ -556,6 +571,10 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
                 if (previous_character_set != GetConfiguredCharacterSet())
                 {
                     UpdateFtbCharacterSetState(::webviewFtbWnd);
+                }
+                if (previous_character_set != GetConfiguredCharacterSet() ||
+                    previous_translation_show_pos != GetConfiguredCandidateTranslationShowPos())
+                {
                     FanyNamedPipe::EnqueueRefreshCandidatePageTask();
                 }
                 // 收紧宽度写在候选页的 <html> 属性上，开关变了与换排列方式一样重建候选页；D2D 由皮肤指纹重新套用。

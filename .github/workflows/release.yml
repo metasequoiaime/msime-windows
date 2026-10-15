@@ -1,4 +1,5 @@
 name: Release
+run-name: ${{ inputs.test_signing && 'SignPath test signing' || 'Release' }}
 
 # Releasing is automatic. A push to main that carries a fix or a feat ends with a published installer, without anybody merging or dispatching anything: this workflow refreshes release-please's pull request, tests it, merges it, turns the merge into a draft release, then builds, signs and publishes that draft.
 #
@@ -6,7 +7,8 @@ name: Release
 #
 # This spends code signing signatures on every releasable merge to main -- one per payload EXE/DLL plus one for the installer, so roughly fifteen per release rather than one. The certificate allows 3000 signatures a month, so the quota is still not what constrains this; what it spends is release hygiene -- see docs/product-release.md.
 #
-# workflow_dispatch stays, and is now a repair path rather than the normal one. It builds an existing draft, which is what a run that failed after creating the draft leaves behind.
+# workflow_dispatch either repairs an existing draft or tests SignPath with the selected commit.
+# Test signing uses the same build and packaging steps, but never creates or publishes a release.
 on:
   push:
     branches:
@@ -15,8 +17,13 @@ on:
     inputs:
       tag:
         description: Draft release tag to build, sign and publish, for example v2026.9.1
-        required: true
+        required: false
         type: string
+      test_signing:
+        description: Test SignPath on the selected ref without creating or publishing a release (leave tag empty)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,7 +31,7 @@ permissions:
 concurrency:
   # A push refreshes release-please metadata while workflow_dispatch builds a
   # selected draft. They must not block each other on the same branch lock.
-  group: release-${{ github.event_name }}-${{ github.ref }}
+  group: release-${{ inputs.test_signing && 'test-signing' || github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -38,15 +45,35 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      should_publish: ${{ github.event_name == 'workflow_dispatch' || steps.target.outputs.release_created == 'true' }}
-      tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || steps.target.outputs.tag_name }}
-      version: ${{ github.event_name == 'workflow_dispatch' && steps.requested_release.outputs.version || steps.target.outputs.version }}
-      target_sha: ${{ github.event_name == 'workflow_dispatch' && steps.requested_release.outputs.target_sha || steps.target.outputs.target_sha }}
+      should_publish: ${{ inputs.test_signing || github.event_name == 'workflow_dispatch' || steps.target.outputs.release_created == 'true' }}
+      tag_name: ${{ inputs.test_signing && format('test-{0}', github.run_id) || (github.event_name == 'workflow_dispatch' && inputs.tag || steps.target.outputs.tag_name) }}
+      signing_provider: ${{ inputs.test_signing && 'signpath' || vars.WINDOWS_SIGNING_PROVIDER }}
+      signing_policy: ${{ inputs.test_signing && 'test-signing' || vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+      test_certificate_sha256: ${{ steps.test_signing.outputs.certificate_sha256 }}
+      version: ${{ inputs.test_signing && steps.test_signing.outputs.version || (github.event_name == 'workflow_dispatch' && steps.requested_release.outputs.version || steps.target.outputs.version) }}
+      target_sha: ${{ inputs.test_signing && github.sha || (github.event_name == 'workflow_dispatch' && steps.requested_release.outputs.target_sha || steps.target.outputs.target_sha) }}
     steps:
       - name: Check out release automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Validate the test signing policy and download its public certificate
+        if: ${{ inputs.test_signing }}
+        id: test_signing
+        env:
+          SIGNPATH_TOKEN: ${{ secrets.SIGNPATH_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+        run: python3 scripts/ci/prepare-test-signing.py
+
+      - name: Upload the test signing public certificate
+        if: ${{ inputs.test_signing }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signpath-test-certificate
+          path: ${{ runner.temp }}/signpath-test.cer
+          if-no-files-found: error
 
       # Separate release metadata from PR updates to preserve release-please ordering.
       # Recover an already-merged release before calculating the next PR, matching release-please's
@@ -116,7 +143,7 @@ jobs:
         run: bash scripts/ci/resolve-auto-release.sh
 
       - name: Validate requested draft release
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.test_signing }}
         id: requested_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -154,13 +181,13 @@ jobs:
     needs: [prepare, dependencies]
     if: ${{ needs.prepare.outputs.should_publish == 'true' }}
     # SignPath's open-source plan accepts a signing request only when every job leading up to it ran on a GitHub-hosted runner, so under SignPath the three Windows jobs move off the release machine. The certificate path keeps the self-hosted runner, where the certificate lives.
-    runs-on: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
+    runs-on: ${{ needs.prepare.outputs.signing_provider == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
     env:
       # Each self-hosted runner has a different default vcpkg installation.
       # Keep every matrix job aligned with the registry selected below even
       # when GitHub schedules x64 and Win32 on different runner instances.
       # A GitHub-hosted runner has one, at C:\vcpkg on windows-2025 (VCPKG_INSTALLATION_ROOT); the verification step below checks the image still puts it there.
-      VCPKG_ROOT: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'C:\vcpkg' || matrix.vcpkg_root }}
+      VCPKG_ROOT: ${{ needs.prepare.outputs.signing_provider == 'signpath' && 'C:\vcpkg' || matrix.vcpkg_root }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -215,7 +242,7 @@ jobs:
       - name: Verify the selected vcpkg root
         shell: pwsh
         env:
-          EXPECTED_VCPKG_ROOT: ${{ vars.WINDOWS_SIGNING_PROVIDER != 'signpath' && matrix.vcpkg_root || '' }}
+          EXPECTED_VCPKG_ROOT: ${{ needs.prepare.outputs.signing_provider != 'signpath' && matrix.vcpkg_root || '' }}
         run: |
           # On a hosted runner the image's own vcpkg is the expected one.
           $expected = if ($env:EXPECTED_VCPKG_ROOT) { $env:EXPECTED_VCPKG_ROOT } else { $env:VCPKG_INSTALLATION_ROOT }
@@ -225,7 +252,7 @@ jobs:
 
       # A hosted runner starts with no vcpkg binaries, so it restores the archives ci.yml's TSF job saves under the same scope. A run on main can read the caches develop's CI wrote, since develop is the default branch.
       - name: Restore dependency binaries
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' }}
         id: vcpkg-cache
         uses: ./.github/actions/vcpkg-cache
         with:
@@ -238,7 +265,7 @@ jobs:
           & "$env:VCPKG_ROOT\\vcpkg.exe" install --triplet ${{ matrix.triplet }}
 
       - name: Save dependency binaries before compiling
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.vcpkg-cache.outputs.path }}
@@ -278,15 +305,15 @@ jobs:
     name: Build Server
     needs: [prepare, dependencies]
     if: ${{ needs.prepare.outputs.should_publish == 'true' }}
-    runs-on: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
+    runs-on: ${{ needs.prepare.outputs.signing_provider == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
     env:
       # windows-2025 already sets this to its own vcpkg; the self-hosted runner's default is replaced with the instance reserved for this job.
-      VCPKG_INSTALLATION_ROOT: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'C:\vcpkg' || 'E:\\msime-runner\\vcpkg-3' }}
+      VCPKG_INSTALLATION_ROOT: ${{ needs.prepare.outputs.signing_provider == 'signpath' && 'C:\vcpkg' || 'E:\\msime-runner\\vcpkg-3' }}
       # Only the GitHub-hosted path compiles through sccache (see Configure); the variable is inert where sccache is not the compiler launcher.
-      SCCACHE_GHA_ENABLED: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'true' || '' }}
-      SCCACHE_IGNORE_SERVER_IO_ERROR: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && '1' || '' }}
+      SCCACHE_GHA_ENABLED: ${{ needs.prepare.outputs.signing_provider == 'signpath' && 'true' || '' }}
+      SCCACHE_IGNORE_SERVER_IO_ERROR: ${{ needs.prepare.outputs.signing_provider == 'signpath' && '1' || '' }}
     # A 4-core hosted runner is slower than the release machine; sccache hits from ci.yml's Server job on develop carry most of it.
-    timeout-minutes: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 120 || 90 }}
+    timeout-minutes: ${{ needs.prepare.outputs.signing_provider == 'signpath' && 120 || 90 }}
     steps:
       - name: Check out release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -318,7 +345,7 @@ jobs:
 
       # The job env replaces the image's own VCPKG_INSTALLATION_ROOT, so check C:\vcpkg against the vcpkg the image puts on PATH before install-boost.ps1, the cache key and the toolchain all read it.
       - name: Verify the hosted vcpkg root
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' }}
         shell: pwsh
         run: |
           $onPath = Get-Command vcpkg.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -330,18 +357,18 @@ jobs:
 
       # The GitHub-hosted steps below are ci.yml's Server job: the same vcpkg cache scope, MSVC environment and sccache, so a release run on main restores what develop's CI saved instead of compiling Boost and the whole server cold on four cores.
       - name: Restore dependency binaries
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' }}
         id: vcpkg-cache
         uses: ./.github/actions/vcpkg-cache
         with:
           scope: server-x64-windows-and-static-md
 
       - name: Set up MSVC environment
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' }}
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
       - name: Set up sccache
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' }}
         id: sccache
         continue-on-error: true
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -351,7 +378,7 @@ jobs:
         run: ./scripts/ci/install-boost.ps1
 
       - name: Save Boost binaries before configuring
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) && steps.vcpkg-cache.outputs.matched-key != format('{0}-boost', steps.vcpkg-cache.outputs.key) }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) && steps.vcpkg-cache.outputs.matched-key != format('{0}-boost', steps.vcpkg-cache.outputs.key) }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.vcpkg-cache.outputs.path }}
@@ -359,7 +386,7 @@ jobs:
 
       # The package job stages these outputs into the installer's expected directory.
       - name: Configure
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER != 'signpath' }}
+        if: ${{ needs.prepare.outputs.signing_provider != 'signpath' }}
         shell: pwsh
         run: >
           cmake -S server -B server/build-release -A x64
@@ -368,7 +395,7 @@ jobs:
 
       # Ninja Multi-Config because sccache plugs in through CMAKE_<LANG>_COMPILER_LAUNCHER, which the Visual Studio generator ignores; it keeps the --config Release / bin/Release layout the later steps read.
       - name: Configure hosted build
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' }}
         shell: pwsh
         run: |
           $cmakeArgs = @(
@@ -381,7 +408,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Save dependency binaries before compiling
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' && steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.vcpkg-cache.outputs.path }}
@@ -392,7 +419,7 @@ jobs:
         run: cmake --build server/build-release --config Release --parallel
 
       - name: Report sccache hit rate
-        if: ${{ !cancelled() && vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && steps.sccache.outcome == 'success' }}
+        if: ${{ !cancelled() && needs.prepare.outputs.signing_provider == 'signpath' && steps.sccache.outcome == 'success' }}
         continue-on-error: true
         shell: pwsh
         run: sccache --show-stats
@@ -478,9 +505,9 @@ jobs:
     # that spends a signature, so the condition that stops it belongs here rather than being a
     # consequence of four other jobs' conditions that a later edit could quietly undo.
     if: ${{ needs.prepare.outputs.should_publish == 'true' }}
-    runs-on: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
+    runs-on: ${{ needs.prepare.outputs.signing_provider == 'signpath' && 'windows-2025' || fromJSON('["self-hosted","Windows","X64","msime-windows"]') }}
     # A SignPath signing request waits for an approver, twice per release, so that path gets room for both approvals on top of the build.
-    timeout-minutes: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' && 150 || 60 }}
+    timeout-minutes: ${{ needs.prepare.outputs.signing_provider == 'signpath' && 150 || 60 }}
     permissions:
       contents: write
       # Build provenance. Unlike Authenticode this costs nothing and needs no certificate, and the
@@ -529,12 +556,31 @@ jobs:
           throw "Could not add $workspace to the global safe.directory list"
 
       - name: Verify the release commit is on main
+        if: ${{ !inputs.test_signing }}
         shell: bash
         run: bash scripts/ci/verify-commit-on-main.sh
 
+      - name: Download the test signing public certificate
+        if: ${{ inputs.test_signing }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signpath-test-certificate
+          path: ${{ runner.temp }}/signpath-test-certificate
+
+      - name: Trust the pinned test certificate on this ephemeral runner
+        if: ${{ inputs.test_signing }}
+        id: test_certificate
+        shell: pwsh
+        env:
+          EXPECTED_SHA256: ${{ needs.prepare.outputs.test_certificate_sha256 }}
+        run: >
+          ./scripts/ci/trust-test-signing-certificate.ps1
+          -Path "$env:RUNNER_TEMP/signpath-test-certificate/signpath-test.cer"
+          -ExpectedSha256 $env:EXPECTED_SHA256
+
       # The hosted image's preinstalled ISCC compiles the installer only after the payload signing request has been approved. Prove now, before any signature is spent, that it resolves the Chinese language file and is new enough (6.6+) for msime_setup.iss.
       - name: Check the hosted Inno Setup can compile the installer
-        if: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'signpath' }}
+        if: ${{ needs.prepare.outputs.signing_provider == 'signpath' }}
         shell: pwsh
         run: ./scripts/ci/check-inno-language.ps1
 
@@ -592,11 +638,11 @@ jobs:
           CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
           CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT }}
-          SIGNING_PROVIDER: ${{ vars.WINDOWS_SIGNING_PROVIDER }}
+          SIGNING_PROVIDER: ${{ needs.prepare.outputs.signing_provider }}
           SIGNPATH_TOKEN: ${{ secrets.SIGNPATH_TOKEN }}
           SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ needs.prepare.outputs.signing_policy }}
         run: ./scripts/ci/detect-release-signing.ps1
 
       # -IncludeSymbols is what makes the published installer carry the PDBs matching its binaries.
@@ -653,13 +699,14 @@ jobs:
           if-no-files-found: error
 
       - name: Sign the payload binaries with SignPath
+        id: signed_payload
         if: ${{ steps.signing.outputs.signing_provider == 'signpath' }}
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          signing-policy-slug: ${{ needs.prepare.outputs.signing_policy }}
           artifact-configuration-slug: payload
           github-artifact-id: ${{ steps.signpath-payload.outputs.artifact-id }}
           wait-for-completion: true
@@ -670,7 +717,9 @@ jobs:
         if: ${{ steps.signing.outputs.signing_provider == 'signpath' }}
         shell: pwsh
         working-directory: installer
-        run: ../scripts/ci/signpath-files.ps1 -Mode Restore -Set Payload -Directory "$env:RUNNER_TEMP/signpath-payload-signed"
+        env:
+          EXPECTED_SIGNER: ${{ steps.test_certificate.outputs.thumbprint }}
+        run: ../scripts/ci/signpath-files.ps1 -ExpectedSignerThumbprint "$env:EXPECTED_SIGNER" -AllowUntrustedSigner:${{ inputs.test_signing }} -Mode Restore -Set Payload -Directory "$env:RUNNER_TEMP/signpath-payload-signed"
 
       - name: Install the Chinese language file for Inno Setup
         shell: pwsh
@@ -711,13 +760,14 @@ jobs:
           if-no-files-found: error
 
       - name: Sign the installer with SignPath
+        id: signed_installer
         if: ${{ steps.signing.outputs.signing_provider == 'signpath' }}
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          signing-policy-slug: ${{ needs.prepare.outputs.signing_policy }}
           artifact-configuration-slug: installer
           github-artifact-id: ${{ steps.signpath-installer.outputs.artifact-id }}
           wait-for-completion: true
@@ -730,7 +780,24 @@ jobs:
         working-directory: installer
         env:
           TARGET_VERSION: ${{ needs.prepare.outputs.version }}
-        run: ../scripts/ci/signpath-files.ps1 -Mode Restore -Set Installer -Version $env:TARGET_VERSION -Directory "$env:RUNNER_TEMP/signpath-installer-signed"
+          EXPECTED_SIGNER: ${{ steps.test_certificate.outputs.thumbprint }}
+        run: ../scripts/ci/signpath-files.ps1 -ExpectedSignerThumbprint "$env:EXPECTED_SIGNER" -AllowUntrustedSigner:${{ inputs.test_signing }} -Mode Restore -Set Installer -Version $env:TARGET_VERSION -Directory "$env:RUNNER_TEMP/signpath-installer-signed"
+
+      - name: Record the signing request links for review
+        if: ${{ always() && steps.signing.outputs.signing_provider == 'signpath' }}
+        shell: pwsh
+        env:
+          PAYLOAD_REQUEST: ${{ steps.signed_payload.outputs.signing-request-web-url }}
+          INSTALLER_REQUEST: ${{ steps.signed_installer.outputs.signing-request-web-url }}
+          TEST_SIGNING: ${{ inputs.test_signing }}
+        run: |
+          $mode = if ($env:TEST_SIGNING -eq 'true') { 'Test signing (not for distribution)' } else { 'Release signing' }
+          @(
+            "## SignPath: $mode"
+            "GitHub Actions run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            "Payload request: $env:PAYLOAD_REQUEST"
+            "Installer request: $env:INSTALLER_REQUEST"
+          ) >> $env:GITHUB_STEP_SUMMARY
 
       - name: Name the asset and record its checksum
         id: asset
@@ -738,24 +805,26 @@ jobs:
         working-directory: installer
         env:
           TARGET_VERSION: ${{ needs.prepare.outputs.version }}
-          ASSET_SUFFIX: ${{ steps.signing.outputs.asset_suffix }}
+          ASSET_SUFFIX: ${{ inputs.test_signing && '-test-signed' || steps.signing.outputs.asset_suffix }}
         run: ../scripts/ci/name-installer-asset.ps1
 
       - name: Upload the installer as a workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: installer
+          name: ${{ inputs.test_signing && 'installer-test-signed' || 'installer' }}
           path: |
             ${{ steps.asset.outputs.asset_path }}
             installer/app_data/product-manifest.json
           if-no-files-found: error
 
       - name: Attest the installer's build provenance
+        if: ${{ !inputs.test_signing }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.asset.outputs.asset_path }}
 
       - name: Revalidate the draft release target
+        if: ${{ !inputs.test_signing }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -765,6 +834,7 @@ jobs:
         run: bash scripts/ci/revalidate-draft-release.sh
 
       - name: Upload and publish the release
+        if: ${{ !inputs.test_signing }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -791,6 +861,7 @@ jobs:
       #
       # No event condition: the enclosing job already only runs when a release is being published, and gating this on workflow_dispatch limited the notification to the repair path -- the one branch of this workflow that almost never runs. Every release from the normal push path published in silence, MSIME-Web received no dispatch at all, and the site waited for a cron that GitHub delivers roughly seven times a day rather than the forty-eight the schedule asks for. 0.8.0 reached msime.app a day late that way.
       - name: Refresh the download manifest on msime.app
+        if: ${{ !inputs.test_signing }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}

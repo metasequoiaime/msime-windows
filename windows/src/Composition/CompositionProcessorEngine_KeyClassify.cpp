@@ -923,7 +923,7 @@ bool CCompositionProcessorEngine::IsDateTimeInputKey(UINT uCode, WCHAR wch, cons
 }
 
 // 只看字符不看键位：主键盘和小键盘的数字、运算符一样收，Server 也只看字符。前缀认哪个由 Server 的
-// VModeChanged 决定（双拼只认 V，全拼 V、v 都认）。
+// VModeChanged 决定（双拼和五笔只认 V，全拼 V、v 都认）。
 bool CCompositionProcessorEngine::IsVModeShiftDigitSelectionKey(UINT uCode, const WCHAR *buffer, DWORD_PTR length)
 {
     const bool shift_only = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0 &&

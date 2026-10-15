@@ -30,6 +30,12 @@ Approvers are the people configured as approvers of the `release-signing` policy
 
 Contributors without write access can still propose changes through pull requests. Their changes are reviewed and merged by a committer before they can reach a release.
 
+## Test signing review
+
+The Release workflow has a manual `test_signing` dispatch mode. It builds the selected commit on GitHub-hosted runners, validates the SignPath `test-signing` policy and certificate, submits the payload and installer through the same reviewed artifact configurations as a release, and stores the signed installer only as a workflow artifact. It does not create or publish a GitHub Release. The run summary records both SignPath request URLs for review.
+
+The test certificate is imported only into the ephemeral runner for signature verification; it is never committed or published as a secret.
+
 ## Build and release process
 
 This is the process every SignPath-signed release goes through.

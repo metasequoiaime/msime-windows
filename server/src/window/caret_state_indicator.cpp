@@ -25,6 +25,7 @@ struct PaletteCache
     std::string skinId;
     std::string textColor;
     bool light = false;
+    std::string layout;
     uint64_t revision = 0;
     CandidateSkinPalette palette{};
     bool valid = false;
@@ -39,15 +40,19 @@ void RefreshPalette()
     const bool light = ResolveConfiguredTheme(GetConfiguredThemeCand()) == "light";
     const std::string skinId = GetConfiguredCandidateSkin();
     const std::string textColor = GetConfiguredCandidateTextColor();
+    const std::string layout = GetConfiguredCandidateWindowLayout();
     const uint64_t revision = GetCandidateSkinReloadRevision();
     if (g_paletteCache.valid && g_paletteCache.skinId == skinId && g_paletteCache.textColor == textColor &&
-        g_paletteCache.light == light && g_paletteCache.revision == revision)
+        g_paletteCache.light == light && g_paletteCache.layout == layout && g_paletteCache.revision == revision)
         return;
 
+    // 外部皮肤在当前布局/主题下不生效时不套用，与两个候选窗后端同一条判定；
+    // 布局因此要进缓存键，切换布局后徽标才会跟着回退。
     std::optional<CandidateSkinCatalog::Package> package;
     if (!CandidateSkinCatalog::IsBuiltIn(skinId))
         package =
-            CandidateSkinCatalog::Load(std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"skins", skinId);
+            CandidateSkinCatalog::LoadSupported(std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"skins",
+                                                skinId, layout, light ? "light" : "dark");
     const CandidateSkinCatalog::CandidateColors *packageColors =
         package ? &(light ? package->light : package->dark) : nullptr;
     const std::string baseSkinId = package ? package->base : std::string{};
@@ -57,8 +62,9 @@ void RefreshPalette()
     // surface is flattened onto its opaque built-in base.
     const CandidateSkinPalette opaqueBase =
         ResolveCandidateSkinPalette(baseSkinId.empty() ? skinId : baseSkinId, light, textColor);
-    g_paletteCache = {
-        skinId, textColor, light, revision, FlattenCandidateSkinPaletteForGdi(resolved, opaqueBase.surface), true};
+    g_paletteCache = {skinId, textColor, light,
+                      layout, revision,  FlattenCandidateSkinPaletteForGdi(resolved, opaqueBase.surface),
+                      true};
 }
 
 struct State

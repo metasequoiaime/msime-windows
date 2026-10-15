@@ -10,6 +10,10 @@
 
 void DllAddRef();
 void DllRelease();
+// A loader reference on this DLL for work that runs after the TIP may be gone (thread-pool callbacks, threads):
+// DllAddRef only answers DllCanUnloadNow, which a host is free to bypass. Release with
+// FreeLibraryWhenCallbackReturns / FreeLibraryAndExitThread. nullptr on failure.
+HMODULE PinThisModuleForCallback();
 
 using namespace Microsoft::WRL;
 

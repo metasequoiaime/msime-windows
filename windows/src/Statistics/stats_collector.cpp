@@ -5,9 +5,8 @@
 #include <cstring>
 #include <string>
 
-// from Server.cpp
-void DllAddRef();
-void DllRelease();
+// from DllMain.cpp; see Globals.h.
+HMODULE PinThisModuleForCallback();
 
 namespace
 {
@@ -99,8 +98,10 @@ bool SendStatsBatch(const FanyImeStatsBatchHeader &header, const FanyImeStatsEve
     return writeResult && bytesWritten == frameBytes;
 }
 
-void CALLBACK FlushStatisticsEvents(PTP_CALLBACK_INSTANCE, PVOID)
+void CALLBACK FlushStatisticsEvents(PTP_CALLBACK_INSTANCE instance, PVOID context)
 {
+    // Released by the thread pool after this function has fully returned.
+    FreeLibraryWhenCallbackReturns(instance, static_cast<HMODULE>(context));
     FanyImeStatsEvent batch[MsimeStats::StatsEventQueue::kCapacity] = {};
     for (;;)
     {
@@ -145,7 +146,6 @@ void CALLBACK FlushStatisticsEvents(PTP_CALLBACK_INSTANCE, PVOID)
             break;
         }
     }
-    DllRelease();
 }
 } // namespace
 
@@ -180,12 +180,16 @@ void MsimeStats::QueueStatisticsEvent(const CharClassCounts &counts)
         // In-memory enqueue plus one threadpool submission: the connection
         // attempt and the write happen off the host's commit path, and a
         // running flush keeps the flag set until it has drained the queue.
-        g_flushInFlight.store(true, std::memory_order_relaxed);
-        DllAddRef();
-        if (!TrySubmitThreadpoolCallback(FlushStatisticsEvents, nullptr, nullptr))
+        // A loader reference, not DllAddRef: the host may unload this TIP without asking DllCanUnloadNow.
+        HMODULE self = PinThisModuleForCallback();
+        if (self)
         {
-            g_flushInFlight.store(false, std::memory_order_relaxed);
-            DllRelease();
+            g_flushInFlight.store(true, std::memory_order_relaxed);
+            if (!TrySubmitThreadpoolCallback(FlushStatisticsEvents, self, nullptr))
+            {
+                g_flushInFlight.store(false, std::memory_order_relaxed);
+                FreeLibrary(self);
+            }
         }
     }
     ReleaseSRWLockExclusive(&g_queueLock);

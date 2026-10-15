@@ -250,8 +250,11 @@ std::string BuildCurrentCandidatePage()
     // 组页时读一次徽标配置，循环内不再逐条查
     const bool show_fixed_badge = GetConfiguredCandidateFixedBadge();
     const std::string fixed_badge_style = GetConfiguredCandidateFixedBadgeStyle();
+    // AI 联想候选的来源徽标随配置切换（🤖 / 🐳），同样每次组页解析一次。
+    const std::string ai_badge = AiSuggestionBadge(GetConfiguredCandidateAiBadgeStyle());
     const bool show_sentence_source_badge = GetConfiguredAssocSentenceSourceBadge();
     const bool show_autocorrect_marker = GetConfiguredQuanpinAutocorrectMarker();
+    const bool show_translation_pos = GetConfiguredCandidateTranslationShowPos();
     // 徽标开启时才解析模型包的来源标签，每次组页解析一次，不逐候选查。标签由目录条目
     // 自己声明（万象/八股/墨奇），各家互不冒名；激活值留空时不产生整句候选，徽章分支
     // 不会被走到。
@@ -299,7 +302,7 @@ std::string BuildCurrentCandidatePage()
         if (item.source == CandidateSource::CloudSuggestion)
             view.badge = " ☁️";
         else if (item.source == CandidateSource::AiSuggestion)
-            view.badge = " 🤖";
+            view.badge = ai_badge;
         // 整句来源标签与设置页名称保持一致，方便同时比较四个来源。两家选中同一句时只剩一行，
         // 标签归先保留下来的来源；开启去重补位后，其余来源会改为显示自己的下一条不同结果。
         // Generated/Fallback 也被原样上屏、英文、日期等合成候选借用，只有引擎标了整句联想的才挂标签。
@@ -319,17 +322,20 @@ std::string BuildCurrentCandidatePage()
         }
         view.fixed_position = item.fixed_position > 0;
         ApplyFixedPositionBadge(view, show_fixed_badge, fixed_badge_style);
+        std::string raw_translation;
         EnglishIme::TranslationQuery translation_query;
         if (!translation_page && BuildTranslationQuery(item, translation_query))
         {
             const auto gloss = g_candidate_translation_glosses.find(TranslationIdentity(translation_query));
             if (gloss != g_candidate_translation_glosses.end())
-                view.translation = gloss->second;
+                raw_translation = gloss->second;
         }
+        view.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw_translation, show_translation_pos);
         const std::string visible = view.text + view.annotation + view.badge;
         const int display_length = static_cast<int>(utf8::distance(visible.begin(), visible.end()));
         candidate_string += CandidateViewHtml(view);
-        ui.page_glosses.push_back(string_to_wstring(view.translation));
+        // Ctrl+Enter consumes the original senses, independently of display preferences.
+        ui.page_glosses.push_back(string_to_wstring(raw_translation));
         ui.page_views.push_back(std::move(view));
         maxCount = (std::max)(maxCount, display_length);
         ui.page_words.push_back(string_to_wstring(word));

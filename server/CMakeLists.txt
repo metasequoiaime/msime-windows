@@ -460,6 +460,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/neural_model.h"
     "./src/settings/default_input_method.cpp"
     "./src/settings/default_input_method.h"
+    "./src/settings/game_compat_name.cpp"
+    "./src/settings/game_compat_name.h"
     "./src/settings/settings_splash.cpp"
     "./src/settings/settings_splash.h"
     "./src/settings/settings_launcher.cpp"

@@ -515,18 +515,23 @@ void CandidatePresenter::ApplySkin()
         tokens.menuHover = ColorFromRgb(0xECECEC);
     }
     const std::wstring skinsRoot = AssetRoot() + L"\\skins";
+    // 外部皮肤用声明支持当前布局与主题的那一份；不支持或读不出来就回退 fluent，和 WebView2 端同一条规则。
+    const std::string candidateLayout = GetConfiguredCandidateWindowLayout();
+    const std::string candidateTheme = candLight ? "light" : "dark";
     std::optional<CandidateSkinCatalog::Package> package;
     if (!CandidateSkinCatalog::IsBuiltIn(skinId))
     {
-        package = CandidateSkinCatalog::Load(std::filesystem::path(skinsRoot), skinId);
+        package = CandidateSkinCatalog::LoadSupported(std::filesystem::path(skinsRoot), skinId, candidateLayout,
+                                                      candidateTheme);
     }
     // 自定义包的几何取自它的 base 皮肤，与 WebView2 端注入 base 皮肤 CSS 一致；颜色随后由包覆盖。
-    const std::string baseSkin = package ? package->base : skinId;
+    const std::string baseSkin =
+        package ? package->base : (CandidateSkinCatalog::IsBuiltIn(skinId) ? skinId : std::string("fluent"));
     // Built-in skin palettes mirror ui-html/webview2/candwnd/skins/<skin>/;
     // the WebView2 CSS is the reference for both the light and dark values.
     // 横排时高亮内缩于外框，首项、尾项落在卡片四角上的那几个角与卡片同 R，其余角保持
     // itemRadius，对应 CSS 横排的 .pinyin + .row-wrapper / .last-visible 规则。
-    const bool horizontalLayout = GetConfiguredCandidateWindowLayout() == "horizontal";
+    const bool horizontalLayout = candidateLayout == "horizontal";
     // 翻页箭头改变的是场景结构（竖排多一行、横排多一列），开关或排列方式变了就整棵重建，
     // 再往下套用配色与尺寸。重建会清掉指纹，这里补回去。
     const bool pageArrows = CandidateSkinCatalog::ResolvePageArrows(std::filesystem::path(skinsRoot), skinId,
@@ -724,19 +729,19 @@ void CandidatePresenter::ApplySkin()
         tokens.radius = 8.0f;
         tokens.containerPad = std::round(fontSize * 0.3f);
         tokens.itemRadius = 4.0f;
-        tokens.itemExtraHeight = std::round(fontSize * 0.47f);
-        // 序号左端距高亮左缘 0.76em，其中 5 DIP 是列表固定的 textPadLeft。
-        tokens.itemPadLeft = (std::max)(0.0f, std::round(fontSize * 0.76f) - 5.0f);
-        tokens.itemPadRight = std::round(fontSize * 0.9f);
+        tokens.itemExtraHeight = std::round(fontSize * 0.24f);
+        // 序号左端距高亮左缘 0.4em，其中 5 DIP 是列表固定的 textPadLeft。
+        tokens.itemPadLeft = (std::max)(0.0f, std::round(fontSize * 0.4f) - 5.0f);
+        tokens.itemPadRight = std::round(fontSize * 0.3f);
         if (horizontalLayout)
         {
-            tokens.itemGap = std::round(fontSize * 0.28f);
-            tokens.minItemWidth = std::round(fontSize * 4.35f);
+            tokens.itemGap = std::round(fontSize * 0.15f);
+            tokens.minItemWidth = std::round(fontSize * 3.5f);
         }
         tokens.labelScale = 1.0f;
         tokens.labelGap = std::round(fontSize * 0.2f);
-        tokens.selectedBarWidth = (std::max)(3.0f, fontSize * 0.24f);
-        tokens.selectedBarHeightEm = 1.1f;
+        tokens.selectedBarWidth = 3.0f;
+        tokens.selectedBarHeightEm = 0.9f;
         tokens.selectedBarInside = true;
         tokens.trianglePager = true;
         tokens.trimHiddenPreeditGap = true;
@@ -787,8 +792,8 @@ void CandidatePresenter::ApplySkin()
     }
     const CandidateSkinCatalog::CandidateColors *packageColors =
         package ? &(candLight ? package->light : package->dark) : nullptr;
-    const CandidateSkinPalette palette = ResolveCandidateSkinPalette(
-        skinId, candLight, GetConfiguredCandidateTextColor(), packageColors, package ? package->base : std::string{});
+    const CandidateSkinPalette palette =
+        ResolveCandidateSkinPalette(baseSkin, candLight, GetConfiguredCandidateTextColor(), packageColors);
     tokens.surface = palette.surface;
     tokens.border = palette.border;
     tokens.text = palette.text;
@@ -799,7 +804,7 @@ void CandidatePresenter::ApplySkin()
     if (impl_->card)
     {
         const std::string shadow = package ? package->shadow : std::string{};
-        if ((CandidateSkinCatalog::IsBuiltIn(skinId) || package) && shadow != "none")
+        if (shadow != "none")
         {
             // 外部皮肤的 shadow = soft / strong 按同一系数缩放两层不透明度，与 WebView2 端一致。
             const float scale = ShadowAlphaScale(shadow);
@@ -919,9 +924,9 @@ void CandidatePresenter::ApplySkin()
             // 微软拼音式：候选文字色的实心三角，按钮与候选行等高。横排时按钮更宽，前面隔一条分隔线，
             // 与 CSS 的 .page-arrow 同一组 em 尺寸。
             pagerAppearance.glyph = msimeui::PagerArrows::Glyph::Triangle;
-            // 高 0.56em、宽 0.47em，三个角各圆掉高度的四分之一，尖端是钝的。
-            pagerAppearance.glyphSize = fontSize * 0.56f;
-            pagerAppearance.strokeWidth = pagerAppearance.glyphSize * 0.25f;
+            // 高 0.52em、宽 0.44em，三个角各圆掉高度的八分之三，尖端是钝的。
+            pagerAppearance.glyphSize = fontSize * 0.52f;
+            pagerAppearance.strokeWidth = pagerAppearance.glyphSize * 0.375f;
             pagerAppearance.cornerRadius = tokens.itemRadius;
             pagerAppearance.gap = 0.0f;
             pagerAppearance.glyphColor = palette.candidateText;
@@ -929,14 +934,14 @@ void CandidatePresenter::ApplySkin()
             pagerAppearance.buttonHeight = std::round(appearance.itemHeight);
             if (horizontalLayout)
             {
-                pagerAppearance.buttonWidth = std::round(fontSize * 1.73f);
+                pagerAppearance.buttonWidth = std::round(fontSize * 0.96f);
                 pagerAppearance.dividerWidth = 1.0f;
                 pagerAppearance.dividerGap = std::round(fontSize * 0.12f);
                 pagerAppearance.dividerColor = tokens.pagerDivider;
             }
             else
             {
-                pagerAppearance.buttonWidth = std::round(fontSize * 1.2f);
+                pagerAppearance.buttonWidth = std::round(fontSize * 0.81f);
                 pagerAppearance.buttonHeight = std::round(fontSize * 1.2f);
             }
         }

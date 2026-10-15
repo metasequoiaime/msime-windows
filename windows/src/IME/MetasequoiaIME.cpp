@@ -19,6 +19,7 @@
 #include "Ipc.h"
 #include "CommonUtils.h"
 #include "Global/FanyDefines.h"
+#include "Global/GameCompat.h"
 #include "Utils/FanyUtils.h"
 #include "../Utils/PerfTimer.h"
 #include "MetasequoiaIMEInternal.h"
@@ -346,7 +347,6 @@ CMetasequoiaIME::~CMetasequoiaIME()
         _pCandidateListUIPresenter = nullptr;
     }
     _DrainPendingCandidatePresenterCleanup();
-    DllRelease();
 
     /* 处理线程的清理 */
     if (_pIpcThread)
@@ -375,6 +375,8 @@ CMetasequoiaIME::~CMetasequoiaIME()
     }
     // The owner-aware unbind above already cleared the TLS copies.
     _CloseIpcWakeEvents();
+    // Last: once the count drops, another thread may unload this DLL while code above is still running.
+    DllRelease();
 }
 
 uint64_t CMetasequoiaIME::_CaptureFocusSessionToken() const
@@ -773,7 +775,15 @@ STDAPI CMetasequoiaIME::ActivateEx(ITfThreadMgr *pThreadMgr, TfClientId tfClient
 
     _tfClientId = tfClientId;
     _dwActivateFlags = dwFlags;
-    Global::HostUiLessMode = _IsUiLessMode() ? true : false;
+    Global::current_process_name = GetCurrentProcessName();
+    // With the Valve compatibility name registered the game does draw the candidates; showing ours as well would
+    // give two lists.
+    const bool valveGame = Global::IsUiLessIgnoredProcess(Global::current_process_name);
+    const bool gameCompatName = valveGame && !Global::ReadGameCompatProfileName().empty();
+    Global::IgnoreHostUiLess = valveGame && !gameCompatName;
+    // These games only say so in BeginUIElement, which runs after the first key of a composition has already gone to
+    // the Server without the UI-less flag; that key would then get the Server's HTML candidate page. Known upfront.
+    Global::HostUiLessMode = (_IsUiLessMode() && !Global::IgnoreHostUiLess) || gameCompatName;
     Global::CandidateUiLessMode = false;
     // Match Weasel's activation-time recovery: switching to this TIP is an
     // explicit user request, so revive a missing Server immediately. Merely
@@ -802,8 +812,6 @@ STDAPI CMetasequoiaIME::ActivateEx(ITfThreadMgr *pThreadMgr, TfClientId tfClient
     // InitIpc();
     // TODO: 去掉共享内存，只保留命名管道
     // InitNamedpipe();
-
-    Global::current_process_name = GetCurrentProcessName();
 
     if (!_InitThreadMgrEventSink())
     {

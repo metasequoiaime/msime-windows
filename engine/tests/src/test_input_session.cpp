@@ -1725,6 +1725,9 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
                          "INSERT INTO tbl_1_s VALUES('shi','sh','是',100);");
         database.execute("CREATE TABLE tbl_1_j(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                          "INSERT INTO tbl_1_j VALUES('jie','j','接',100);");
+        database.execute("CREATE TABLE tbl_1_y(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_y VALUES('ya','y','呀',100);"
+                         "INSERT INTO tbl_1_y VALUES('ya','y','压',90);");
         database.execute("CREATE TABLE wubi86(key TEXT,value TEXT,weight INTEGER);"
                          "INSERT INTO wubi86 VALUES('aaaa','工',100);"
                          "INSERT INTO wubi86 VALUES('aaaa','或',50);");
@@ -1785,6 +1788,17 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
                     "The floored prefix must decode exactly like the typed prefix spelling");
         }
 
+        // 首单元内侧不是串首：向上取整到首单元末尾，与 caret 落在 ni 边界上解码相同。
+        for (const std::size_t caret : {std::size_t(1), std::size_t(2)})
+        {
+            session.set_caret(caret);
+            session.recompute_candidates();
+            require(session.prefix_end() == 3 && session.pending_suffix() == "hao'shi'jie",
+                    "A caret inside the first unit must round up to the end of that unit");
+            require(same_word_list(session, quanpin_words("ni")),
+                    "The rounded-up first unit must decode exactly like the typed spelling");
+        }
+
         session.set_caret(7);
         session.recompute_candidates();
         require(session.prefix_end() == 7 && session.pending_suffix() == "shi'jie",
@@ -1826,6 +1840,22 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
         require(same_word_list(session, full_words), "Unsetting the caret must restore the full-string decode");
     }
 
+    // 只有一个单元时首单元内侧向上取整就是整串：按整串解码而非空前缀，
+    // 候选窗不被 IsCaretPrefixEmpty 收起。
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0, true, true, false, paths);
+        type(session, "ya");
+        require(session.prefix_end() == 2 && !session.candidates().empty(),
+                "The unset 'ya' caret must decode the whole string");
+        const auto full_words = words_of(session);
+        session.set_caret(1);
+        session.recompute_candidates();
+        require(session.prefix_end() == 2 && session.pending_suffix().empty(),
+                "A caret inside the first unit must not be mistaken for the string head");
+        require(same_word_list(session, full_words) && same_word_list(session, quanpin_words("ya")),
+                "An intra-first-unit caret must decode exactly like the whole 'ya'");
+    }
+
     // pending_suffix 保留原始大小写：大写字母从光标处插入后原样留在后缀里。
     {
         metasequoia::InputSession session(SchemeType::Quanpin, 0, true, true, false, paths);
@@ -1861,7 +1891,7 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
     }
 
     // 双拼贪心配对（engine spec #187）：nihkb; → {0,2,4,6}、nihcb; → {0,2,3,5,6}，
-    // caret 落在段中间时同样 floor 到完整段边界。
+    // caret 落在段中间时同样 floor 到完整段边界；首单元内侧向上取整到首单元末尾。
     const auto shuangpin_words = [&](const std::string &typed) {
         metasequoia::InputSession other(SchemeType::Shuangpin, GetMicrosoftShuangpinProfile(), paths);
         type(other, typed);
@@ -1877,8 +1907,9 @@ void run_caret_prefix_session_tests(const std::filesystem::path &data_directory)
 
         session.set_caret(1);
         session.recompute_candidates();
-        require(session.candidates().empty() && session.prefix_end() == 0 && session.pending_suffix() == "nihkb;",
-                "A caret inside the first shuangpin unit must quantize to an empty prefix");
+        require(session.prefix_end() == 2 && session.pending_suffix() == "hkb;" &&
+                    same_word_list(session, shuangpin_words("ni")),
+                "A caret inside the first shuangpin unit must round up to the end of that unit");
 
         session.set_caret(3);
         session.recompute_candidates();
@@ -3116,6 +3147,71 @@ int run_test()
     require(!wubi_date_time.handle_character('T', true).handled && !wubi_date_time.has_composition() &&
                 wubi_date_time.local_input_mode() == metasequoia::LocalInputMode::None,
             "Shift+T was swallowed outside a pinyin scheme.");
+
+    // 五笔保留原样串：Server 端的 T/V 形状判定（大写 T 前缀、V＋数字）读的是宿主回读的原样串，
+    // 而五笔码表查询和自动上屏用的是归一后的码。宿主把 T/V 模式的串标成字面输入，原样串才
+    // 留全用户敲的字符；普通码的原样串就是带大小写的码，与查询码逐位对应、一起截断。
+    const std::filesystem::path wubi_raw_directory = data_directory / "wubi-raw";
+    std::filesystem::create_directories(wubi_raw_directory);
+    {
+        Database database(wubi_raw_directory / "msime.db");
+        database.execute("CREATE TABLE wubi86(key TEXT, value TEXT, weight INTEGER)");
+    }
+    set_data_directory(wubi_raw_directory);
+    for (const bool mixed_pinyin : {false, true})
+    {
+        metasequoia::WubiInputOptions wubi_options;
+        wubi_options.mixed_pinyin = mixed_pinyin;
+
+        metasequoia::InputSession v_mode_wubi(SchemeType::Wubi);
+        v_mode_wubi.set_wubi_input_options(wubi_options);
+        v_mode_wubi.set_pinyin_sequence("V1+2");
+        v_mode_wubi.set_pinyin_sequence_with_cases("V1+2");
+        v_mode_wubi.set_wubi_literal_input(true);
+        v_mode_wubi.recompute_candidates();
+        require(v_mode_wubi.get_pinyin_sequence_with_cases() == "V1+2" && v_mode_wubi.get_pinyin_sequence() == "v",
+                "Wubi did not keep the raw-case V-mode prefix apart from the query code.");
+
+        // 不标字面输入时同一串就是普通码：数字不是码字，回读里也不能有。
+        metasequoia::InputSession v_code_wubi(SchemeType::Wubi);
+        v_code_wubi.set_wubi_input_options(wubi_options);
+        v_code_wubi.set_pinyin_sequence("V1+2");
+        v_code_wubi.set_pinyin_sequence_with_cases("V1+2");
+        v_code_wubi.recompute_candidates();
+        require(v_code_wubi.get_pinyin_sequence_with_cases() == "V" && v_code_wubi.get_pinyin_sequence() == "v",
+                "A wubi code kept characters that are not code letters in its raw-case string.");
+
+        metasequoia::InputSession t_mode_wubi(SchemeType::Wubi);
+        t_mode_wubi.set_wubi_input_options(wubi_options);
+        t_mode_wubi.set_pinyin_sequence("T2024/12/25");
+        t_mode_wubi.set_pinyin_sequence_with_cases("T2024/12/25");
+        t_mode_wubi.set_wubi_literal_input(true);
+        t_mode_wubi.recompute_candidates();
+        require(t_mode_wubi.get_pinyin_sequence_with_cases() == "T2024/12/25" &&
+                    t_mode_wubi.get_pinyin_sequence() == "t" && t_mode_wubi.preedit() == "t",
+                "Wubi did not keep the raw-case date/time prefix apart from the query code.");
+
+        // 反向保护：普通小写码字两个 getter 逐字节相同，预编辑也照旧。
+        metasequoia::InputSession plain_wubi(SchemeType::Wubi);
+        plain_wubi.set_wubi_input_options(wubi_options);
+        plain_wubi.set_pinyin_sequence("wqaa");
+        plain_wubi.set_pinyin_sequence_with_cases("wqaa");
+        plain_wubi.recompute_candidates();
+        require(plain_wubi.get_pinyin_sequence_with_cases() == "wqaa" && plain_wubi.get_pinyin_sequence() == "wqaa" &&
+                    plain_wubi.preedit() == "wqaa",
+                "A plain wubi code no longer round-trips unchanged.");
+
+        // z 不是码字时（混输与通配都关）必须从原样串里也丢掉：Server 按原样串长度数四码，
+        // 留着它会比码多一格，顶字提前一个键触发。混输开启时 z 是合法码字，照旧保留。
+        metasequoia::InputSession z_wubi(SchemeType::Wubi);
+        z_wubi.set_wubi_input_options(wubi_options);
+        z_wubi.set_pinyin_sequence("wqaz");
+        z_wubi.set_pinyin_sequence_with_cases("wqaz");
+        z_wubi.recompute_candidates();
+        require(z_wubi.get_pinyin_sequence_with_cases() == (mixed_pinyin ? "wqaz" : "wqa") &&
+                    z_wubi.get_pinyin_sequence() == (mixed_pinyin ? "wqaz" : "wqa"),
+                "A dropped wubi z did not stay dropped in the raw-case string.");
+    }
 
     const std::filesystem::path quick_phrase_directory = data_directory / "quick-phrase";
     std::filesystem::create_directories(quick_phrase_directory);

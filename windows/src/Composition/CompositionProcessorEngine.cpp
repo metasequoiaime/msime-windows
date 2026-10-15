@@ -569,6 +569,11 @@ void CCompositionProcessorEngine::SetupConfiguration()
 void CCompositionProcessorEngine::SetupLanguageBar(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId,
                                                    BOOL isSecureMode)
 {
+    // Taskbar language-bar buttons are optional per the [language_bar] config; a hidden button is never
+    // registered with ITfLangBarItemMgr and therefore never shown next to the input indicator. The master
+    // `enabled` flag hides every button at once, and each per-button flag hides only its own button.
+    const FanyUtils::LanguageBarVisibility langBar = FanyUtils::ReadConfiguredLanguageBarVisibility();
+
     DWORD dwEnable = 1;
     CreateLanguageBarButton(dwEnable, GUID_LBI_INPUTMODE, Global::LangbarImeModeDescription, Global::ImeModeDescription,
                             Global::ImeModeOnIcoIndex, Global::ImeModeOffIcoIndex, &_pLanguageBar_IMEMode,
@@ -582,11 +587,13 @@ void CCompositionProcessorEngine::SetupLanguageBar(_In_ ITfThreadMgr *pThreadMgr
                             Global::PunctuationOnIcoIndex, Global::PunctuationOffIcoIndex, &_pLanguageBar_Punctuation,
                             isSecureMode);
 
-    InitLanguageBar(_pLanguageBar_IMEMode, pThreadMgr, tfClientId, GUID_COMPARTMENT_KEYBOARD_OPENCLOSE);
+    InitLanguageBar(_pLanguageBar_IMEMode, pThreadMgr, tfClientId, GUID_COMPARTMENT_KEYBOARD_OPENCLOSE,
+                    langBar.enabled && langBar.ime_mode);
     InitLanguageBar(_pLanguageBar_DoubleSingleByte, pThreadMgr, tfClientId,
-                    Global::MetasequoiaIMEGuidCompartmentDoubleSingleByte);
-    InitLanguageBar(_pLanguageBar_Punctuation, pThreadMgr, tfClientId,
-                    Global::MetasequoiaIMEGuidCompartmentPunctuation);
+                    Global::MetasequoiaIMEGuidCompartmentDoubleSingleByte,
+                    langBar.enabled && langBar.double_single_byte);
+    InitLanguageBar(_pLanguageBar_Punctuation, pThreadMgr, tfClientId, Global::MetasequoiaIMEGuidCompartmentPunctuation,
+                    langBar.enabled && langBar.punctuation);
 
     _pCompartmentConversion =
         new (std::nothrow) CCompartment(pThreadMgr, tfClientId, GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION);
@@ -646,9 +653,9 @@ void CCompositionProcessorEngine::CreateLanguageBarButton(
 
 BOOL CCompositionProcessorEngine::InitLanguageBar(_In_ CLangBarItemButton *pLangBarItemButton,
                                                   _In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId,
-                                                  REFGUID guidCompartment)
+                                                  REFGUID guidCompartment, bool registerOnLanguageBar)
 {
-    if (pLangBarItemButton)
+    if (pLangBarItemButton && registerOnLanguageBar)
     {
         if (pLangBarItemButton->_AddItem(pThreadMgr) == S_OK)
         {

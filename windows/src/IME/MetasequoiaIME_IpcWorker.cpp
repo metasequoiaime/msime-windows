@@ -353,7 +353,8 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
         if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitCurCandidate ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitCandidateAndContinue ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InsertText ||
-            buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition)
+            buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition ||
+            buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
         {
             bool hasTerminator = false;
             for (const wchar_t ch : buf.data)
@@ -513,7 +514,8 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::FocusSessionReady ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateVoiceComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitVoiceComposition ||
-                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition)
+                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition ||
+                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
             {
                 continue;
             }
@@ -578,6 +580,11 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             {
                 pIME->_PostServerTextDelivery(WM_CancelVoiceComposition, L"");
             }
+        }
+        else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
+        {
+            // Whether this thread is UI-less is only known on the TSF thread; the handler checks.
+            pIME->_PostServerTextDelivery(WM_ApplyUiLessCandidates, buf.data);
         }
         else if (buf.msg_type >= Global::DataToTsfWorkerThreadMsgType::SwitchToEnglish &&
                  buf.msg_type <= Global::DataToTsfWorkerThreadMsgType::SwitchToHalfwidth)

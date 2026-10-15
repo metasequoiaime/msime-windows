@@ -3,6 +3,7 @@
 #include "../ipc_negotiation.h"
 #include "../mid_sentence_helpcode.h"
 #include "../trilingual_input.h"
+#include "../uiless_page.h"
 #include "../v_mode_input.h"
 #include "../voice_composition_pipe.h"
 
@@ -215,7 +216,21 @@ int main()
     CHECK(FanyImeWorkerReplyType::VModeChanged == 32);
     CHECK(FanyImeWorkerReplyType::TrilingualCycleChanged == 33);
     CHECK(FanyImeWorkerReplyType::AiContextUploadChanged == 34);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::AiContextUploadChanged);
+    CHECK(FanyImeWorkerReplyType::UiLessCandidatesChanged == 35);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::UiLessCandidatesChanged);
+    {
+        const auto full = FanyImeUiLessPage::Parse(FanyImeUiLessPage::Format(L"ni hao", L"你好,拟好", 1, 42));
+        CHECK(full.preedit == L"ni hao" && full.page == L"你好,拟好" && full.selection == 1 && full.generation == 42);
+        // A Server predating the generation field.
+        CHECK(full.hasPage && !FanyImeUiLessPage::Parse(L"ni hao").hasPage);
+        const auto legacy = FanyImeUiLessPage::Parse(L"\t你好,拟好\t1");
+        CHECK(legacy.page == L"你好,拟好" && legacy.selection == 1 && legacy.generation == 0);
+        // A DLL predating the field reads selection with _wtoi, which must stop at the third tab.
+        const std::wstring formatted = FanyImeUiLessPage::Format(L"", L"你好", 3, 7);
+        CHECK(std::wcstol(formatted.c_str() + formatted.find(L'\t', 1) + 1, nullptr, 10) == 3);
+        CHECK(FanyImeUiLessPage::IsCurrent(0, 9) && FanyImeUiLessPage::IsCurrent(9, 9));
+        CHECK(FanyImeUiLessPage::IsCurrent(10, 9) && !FanyImeUiLessPage::IsCurrent(8, 9));
+    }
     // The sensitive-field flag stays clear of Shift/Ctrl/Alt, every pipe flag and the cycle request bits.
     CHECK((FanyImePipeFlags::SensitiveField & 7u) == 0);
     CHECK((FanyImePipeFlags::SensitiveField &
