@@ -2,6 +2,7 @@
 
 #include "config/ime_config.h"
 
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,12 @@ Config FromConfiguredTranslation(const TranslationConfig &config);
 
 // token 按 CloudTranslation::IsUsableSecret 校验，出厂模板里的占位符不算可用。
 bool IsUsableConfig(const Config &config);
+
+namespace detail
+{
+nlohmann::json BuildRequestBody(const Config &config, const std::vector<std::string> &texts, const std::string &source,
+                                const std::string &target);
+}
 
 // Translates the whole batch in a single Chat Completions request, reusing the
 // provider, endpoint, token and model configured on the AI 辅助 page. Empty

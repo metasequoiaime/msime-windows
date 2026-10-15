@@ -69,7 +69,7 @@ TEST_CASE(ai_request_uses_openai_completion_limit_for_older_models)
 
 TEST_CASE(ai_request_omits_unsupported_sampling_for_openai_reasoning_models)
 {
-    for (const char *model : {"gpt-5.6-luna", "gpt-5", "o3-mini"})
+    for (const char *model : {"gpt-5.6-luna", "GPT-5.6-Luna", "gpt-5", "o3-mini", "O3-mini"})
     {
         auto request = MakeRequest("OpenAI", "disabled");
         request.config.model = model;
@@ -103,7 +103,7 @@ TEST_CASE(credential_test_uses_openai_completion_limit)
     REQUIRE_EQ(older_model["max_completion_tokens"].get<int>(), 1);
     REQUIRE(!older_model.contains("max_tokens"));
 
-    for (const char *model : {"gpt-5.6-luna", "gpt-6-luna", "o3-mini"})
+    for (const char *model : {"gpt-5.6-luna", "GPT-5.6-Luna", "gpt-6-luna", "o3-mini"})
     {
         const auto body = ApiCredentialTest::detail::BuildChatProbeRequestBody("OpenAI", model);
         REQUIRE_EQ(body["model"].get<std::string>(), std::string(model));

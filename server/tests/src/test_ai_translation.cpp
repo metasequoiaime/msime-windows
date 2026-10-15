@@ -44,6 +44,40 @@ TEST_CASE(AiTranslationBuildsConfigFromTranslationSnapshot)
     REQUIRE(AiTranslation::IsUsableConfig(config));
 }
 
+TEST_CASE(AiTranslationOmitsSamplingForOpenAiReasoningModels)
+{
+    AiTranslation::Config config{"OpenAI", "https://example.test", "sk-test", "GPT-5.6-Luna"};
+    const auto body = AiTranslation::detail::BuildRequestBody(config, {"你好", "世界"}, "zh", "en");
+    REQUIRE_EQ(body["model"].get<std::string>(), config.model);
+    REQUIRE_EQ(body["stream"].get<bool>(), false);
+    REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
+    REQUIRE_EQ(body["messages"][1]["content"].get<std::string>(), R"(["你好","世界"])");
+    REQUIRE(!body.contains("temperature"));
+    REQUIRE(!body.contains("max_tokens"));
+    REQUIRE(!body.contains("max_completion_tokens"));
+    REQUIRE(!body.contains("thinking"));
+
+    config.model = "gpt-4o-mini";
+    const auto older_model = AiTranslation::detail::BuildRequestBody(config, {"你好"}, "zh", "en");
+    REQUIRE_EQ(older_model["temperature"].get<double>(), 0.0);
+}
+
+TEST_CASE(AiTranslationKeepsOtherProviderRequestShape)
+{
+    AiTranslation::Config config{"deepseek", "https://example.test", "sk-test", "deepseek-chat"};
+    const auto deepseek = AiTranslation::detail::BuildRequestBody(config, {"你好"}, "zh", "en");
+    REQUIRE_EQ(deepseek["temperature"].get<double>(), 0.0);
+    REQUIRE_EQ(deepseek["thinking"]["type"].get<std::string>(), "disabled");
+    REQUIRE(!deepseek.contains("max_tokens"));
+    REQUIRE(!deepseek.contains("max_completion_tokens"));
+
+    config.provider = "custom";
+    config.model = "GPT-5.6-Luna";
+    const auto custom = AiTranslation::detail::BuildRequestBody(config, {"你好"}, "zh", "en");
+    REQUIRE_EQ(custom["temperature"].get<double>(), 0.0);
+    REQUIRE(!custom.contains("thinking"));
+}
+
 TEST_CASE(AiTranslationRejectsRepliesThatDoNotLineUp)
 {
     // 合法 JSON 但没有约定的键：不能把整段回复当译文。
