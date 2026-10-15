@@ -22,6 +22,9 @@ TEST_CASE(ai_request_disables_deepseek_thinking_by_default)
     REQUIRE_EQ(body["thinking"]["type"].get<std::string>(), "disabled");
     REQUIRE(!body.contains("reasoning_effort"));
     REQUIRE_EQ(body["max_tokens"].get<int>(), 512);
+    REQUIRE(!body.contains("max_completion_tokens"));
+    REQUIRE_EQ(body["temperature"].get<double>(), 0.2);
+    REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
     REQUIRE_EQ(AiAssistant::detail::RequestTimeoutMs(MakeRequest("deepseek", "disabled").config), 8000L);
 }
 
@@ -34,6 +37,8 @@ TEST_CASE(ai_request_sends_deepseek_thinking_level)
         REQUIRE_EQ(body["thinking"]["type"].get<std::string>(), "enabled");
         REQUIRE_EQ(body["reasoning_effort"].get<std::string>(), std::string(level));
         REQUIRE(body["max_tokens"].get<int>() > 512);
+        REQUIRE(!body.contains("max_completion_tokens"));
+        REQUIRE_EQ(body["temperature"].get<double>(), 0.2);
         REQUIRE(AiAssistant::detail::RequestTimeoutMs(request.config) > 8000L);
     }
 }
@@ -46,4 +51,47 @@ TEST_CASE(ai_request_ignores_thinking_level_for_other_providers)
     REQUIRE(!body.contains("reasoning_effort"));
     REQUIRE_EQ(body["max_tokens"].get<int>(), 512);
     REQUIRE_EQ(AiAssistant::detail::RequestTimeoutMs(request.config), 8000L);
+}
+
+TEST_CASE(ai_request_uses_openai_completion_limit_for_older_models)
+{
+    auto request = MakeRequest("openai", "disabled");
+    request.config.model = "gpt-4o-mini";
+    const auto body = AiAssistant::detail::BuildRequestBody(request);
+    REQUIRE_EQ(body["max_completion_tokens"].get<int>(), 512);
+    REQUIRE(!body.contains("max_tokens"));
+    REQUIRE_EQ(body["temperature"].get<double>(), 0.2);
+    REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
+    REQUIRE(!body.contains("reasoning_effort"));
+    REQUIRE(!body.contains("thinking"));
+}
+
+TEST_CASE(ai_request_omits_unsupported_sampling_for_openai_reasoning_models)
+{
+    for (const char *model : {"gpt-5.6-luna", "gpt-5", "o3-mini"})
+    {
+        auto request = MakeRequest("OpenAI", "disabled");
+        request.config.model = model;
+        const auto body = AiAssistant::detail::BuildRequestBody(request);
+        REQUIRE_EQ(body["model"].get<std::string>(), std::string(model));
+        REQUIRE_EQ(body["max_completion_tokens"].get<int>(), 8192);
+        REQUIRE(!body.contains("max_tokens"));
+        REQUIRE(!body.contains("temperature"));
+        REQUIRE(!body.contains("reasoning_effort"));
+        REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
+        REQUIRE(!body.contains("thinking"));
+    }
+}
+
+TEST_CASE(ai_request_keeps_custom_provider_request_shape)
+{
+    auto request = MakeRequest("custom", "high");
+    request.config.model = "gpt-5.6-luna";
+    const auto body = AiAssistant::detail::BuildRequestBody(request);
+    REQUIRE_EQ(body["max_tokens"].get<int>(), 512);
+    REQUIRE(!body.contains("max_completion_tokens"));
+    REQUIRE_EQ(body["temperature"].get<double>(), 0.2);
+    REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
+    REQUIRE(!body.contains("reasoning_effort"));
+    REQUIRE(!body.contains("thinking"));
 }
