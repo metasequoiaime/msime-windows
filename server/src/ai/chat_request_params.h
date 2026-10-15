@@ -32,6 +32,17 @@ inline bool IsOpenAiReasoningModel(std::string_view model)
            (model.size() == 2 || model[2] == '-');
 }
 
+// Reasoning models reject sampling parameters and spend output tokens on hidden reasoning.
+inline bool IsOpenAiReasoningRequest(std::string_view provider, std::string_view model)
+{
+    return IsOpenAiProvider(provider) && IsOpenAiReasoningModel(model);
+}
+
+// The default effort is medium, which regularly outlasts an IME request. "low" is the lowest
+// level every o-series and GPT-5 family model accepts.
+inline constexpr const char *kOpenAiReasoningEffort = "low";
+inline constexpr long kReasoningTimeoutMs = 30000;
+
 inline void SetTokenLimit(nlohmann::json &body, std::string_view provider, int limit)
 {
     body[IsOpenAiProvider(provider) ? "max_completion_tokens" : "max_tokens"] = limit;

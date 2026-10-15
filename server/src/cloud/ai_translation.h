@@ -27,7 +27,8 @@ namespace detail
 {
 nlohmann::json BuildRequestBody(const Config &config, const std::vector<std::string> &texts, const std::string &source,
                                 const std::string &target);
-}
+long RequestTimeoutMs(const Config &config);
+} // namespace detail
 
 // Translates the whole batch in a single Chat Completions request, reusing the
 // provider, endpoint, token and model configured on the AI 辅助 page. Empty

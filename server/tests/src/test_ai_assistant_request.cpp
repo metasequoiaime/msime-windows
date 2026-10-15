@@ -65,6 +65,7 @@ TEST_CASE(ai_request_uses_openai_completion_limit_for_older_models)
     REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
     REQUIRE(!body.contains("reasoning_effort"));
     REQUIRE(!body.contains("thinking"));
+    REQUIRE_EQ(AiAssistant::detail::RequestTimeoutMs(request.config), 8000L);
 }
 
 TEST_CASE(ai_request_omits_unsupported_sampling_for_openai_reasoning_models)
@@ -78,9 +79,10 @@ TEST_CASE(ai_request_omits_unsupported_sampling_for_openai_reasoning_models)
         REQUIRE_EQ(body["max_completion_tokens"].get<int>(), 8192);
         REQUIRE(!body.contains("max_tokens"));
         REQUIRE(!body.contains("temperature"));
-        REQUIRE(!body.contains("reasoning_effort"));
+        REQUIRE_EQ(body["reasoning_effort"].get<std::string>(), "low");
         REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
         REQUIRE(!body.contains("thinking"));
+        REQUIRE(AiAssistant::detail::RequestTimeoutMs(request.config) > 8000L);
     }
 }
 
@@ -102,6 +104,7 @@ TEST_CASE(credential_test_uses_openai_completion_limit)
     const auto older_model = ApiCredentialTest::detail::BuildChatProbeRequestBody("openai", "gpt-4o-mini");
     REQUIRE_EQ(older_model["max_completion_tokens"].get<int>(), 1);
     REQUIRE(!older_model.contains("max_tokens"));
+    REQUIRE(!older_model.contains("reasoning_effort"));
 
     for (const char *model : {"gpt-5.6-luna", "GPT-5.6-Luna", "gpt-6-luna", "o3-mini"})
     {
@@ -109,7 +112,7 @@ TEST_CASE(credential_test_uses_openai_completion_limit)
         REQUIRE_EQ(body["model"].get<std::string>(), std::string(model));
         REQUIRE_EQ(body["max_completion_tokens"].get<int>(), 32);
         REQUIRE(!body.contains("max_tokens"));
-        REQUIRE(!body.contains("reasoning_effort"));
+        REQUIRE_EQ(body["reasoning_effort"].get<std::string>(), "low");
         REQUIRE(!body.contains("thinking"));
         REQUIRE(!body.contains("temperature"));
         REQUIRE_EQ(body["messages"][0]["content"].get<std::string>(), "Reply OK");

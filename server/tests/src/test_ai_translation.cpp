@@ -53,13 +53,17 @@ TEST_CASE(AiTranslationOmitsSamplingForOpenAiReasoningModels)
     REQUIRE_EQ(body["response_format"]["type"].get<std::string>(), "json_object");
     REQUIRE_EQ(body["messages"][1]["content"].get<std::string>(), R"(["你好","世界"])");
     REQUIRE(!body.contains("temperature"));
+    REQUIRE_EQ(body["reasoning_effort"].get<std::string>(), "low");
     REQUIRE(!body.contains("max_tokens"));
     REQUIRE(!body.contains("max_completion_tokens"));
     REQUIRE(!body.contains("thinking"));
+    REQUIRE(AiTranslation::detail::RequestTimeoutMs(config) > 8000L);
 
     config.model = "gpt-4o-mini";
     const auto older_model = AiTranslation::detail::BuildRequestBody(config, {"你好"}, "zh", "en");
     REQUIRE_EQ(older_model["temperature"].get<double>(), 0.0);
+    REQUIRE(!older_model.contains("reasoning_effort"));
+    REQUIRE_EQ(AiTranslation::detail::RequestTimeoutMs(config), 8000L);
 }
 
 TEST_CASE(AiTranslationKeepsOtherProviderRequestShape)

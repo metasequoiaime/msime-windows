@@ -183,7 +183,9 @@ nlohmann::json BuildRequestBody(const Config &config, const std::vector<std::str
                            {"messages",
                             {{{"role", "system"}, {"content", BuildSystemPrompt(source, target)}},
                              {{"role", "user"}, {"content", nlohmann::json(texts).dump()}}}}};
-    if (!(ChatCompletions::IsOpenAiProvider(config.provider) && ChatCompletions::IsOpenAiReasoningModel(config.model)))
+    if (ChatCompletions::IsOpenAiReasoningRequest(config.provider, config.model))
+        body["reasoning_effort"] = ChatCompletions::kOpenAiReasoningEffort;
+    else
         body["temperature"] = 0.0;
     if (config.provider == "deepseek")
     {
@@ -191,6 +193,13 @@ nlohmann::json BuildRequestBody(const Config &config, const std::vector<std::str
         body["thinking"] = {{"type", "disabled"}};
     }
     return body;
+}
+
+long RequestTimeoutMs(const Config &config)
+{
+    return ChatCompletions::IsOpenAiReasoningRequest(config.provider, config.model)
+               ? ChatCompletions::kReasoningTimeoutMs
+               : ChatCompletions::kDefaultTimeoutMs;
 }
 } // namespace detail
 
@@ -203,7 +212,7 @@ std::vector<std::string> TextTranslateBatch(const Config &config, const std::vec
 
     const auto body = detail::BuildRequestBody(config, texts, source, target);
     const auto content =
-        ChatCompletions::FetchContent(config.endpoint, config.token, body.dump(), ChatCompletions::kDefaultTimeoutMs);
+        ChatCompletions::FetchContent(config.endpoint, config.token, body.dump(), detail::RequestTimeoutMs(config));
     return content ? ParseTranslations(*content, texts.size()) : results;
 }
 } // namespace AiTranslation

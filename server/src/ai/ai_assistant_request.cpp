@@ -9,8 +9,7 @@ namespace AiAssistant::detail
 nlohmann::json BuildRequestBody(const Request &request)
 {
     const auto &config = request.config;
-    const bool openai_reasoning =
-        ChatCompletions::IsOpenAiProvider(config.provider) && ChatCompletions::IsOpenAiReasoningModel(config.model);
+    const bool openai_reasoning = ChatCompletions::IsOpenAiReasoningRequest(config.provider, config.model);
     const bool thinking = VoiceInput::UsesDeepSeekThinking(config.provider, config.thinking);
     nlohmann::json input = {{"segmented_pinyin", request.pinyin_segments},
                             {"context", request.context},
@@ -30,6 +29,10 @@ nlohmann::json BuildRequestBody(const Request &request)
         body["thinking"] = {{"type", "enabled"}};
         body["reasoning_effort"] = config.thinking;
     }
+    else if (openai_reasoning)
+    {
+        body["reasoning_effort"] = ChatCompletions::kOpenAiReasoningEffort;
+    }
     else if (config.provider == "deepseek")
     {
         // DeepSeek thinking can add hundreds of reasoning tokens and noticeably delay
@@ -41,7 +44,9 @@ nlohmann::json BuildRequestBody(const Request &request)
 
 long RequestTimeoutMs(const AiAssistantConfig &config)
 {
-    return VoiceInput::UsesDeepSeekThinking(config.provider, config.thinking) ? 30000L
-                                                                              : ChatCompletions::kDefaultTimeoutMs;
+    return VoiceInput::UsesDeepSeekThinking(config.provider, config.thinking) ||
+                   ChatCompletions::IsOpenAiReasoningRequest(config.provider, config.model)
+               ? ChatCompletions::kReasoningTimeoutMs
+               : ChatCompletions::kDefaultTimeoutMs;
 }
 } // namespace AiAssistant::detail
