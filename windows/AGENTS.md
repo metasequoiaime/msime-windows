@@ -95,11 +95,17 @@
 |---|---|---|
 | Stale | focus token、组合纪元、reset token 或焦点代已被取代 | 只丢这颗键，不再发起重置 |
 | Resync | 宿主拒绝 edit session（S_FALSE、E_NOTIMPL 等）、RequestEditSession 失败、异步投递失败，以及 OnEndEdit 组合属性检查、文档不匹配等非传输问题 | 丢键、吞队列、本地取消组合；不轮换 token、不关管道，闸门重开时在同一 token 上发 HideCandidateWnd 清 Server 组合 |
-| Transport | 写失败、回复读失败/坏帧、`TransportUnavailable`、`DefinitelyNotSent`、`DeliveryAmbiguous`、提交回复 300 ms 超时、worker 断开 | 丢键、吞队列、完整重置（新 focus token、重开回复管道） |
+| Transport | 写失败、回复读失败/坏帧、`TransportUnavailable`、`DefinitelyNotSent`、`DeliveryAmbiguous`、提交回复 1500 ms 窗口耗尽、已在等回复的提交键在同一焦点下被组合纪元取代、worker 断开 | 丢键、吞队列、完整重置（新 focus token、重开回复管道） |
 | Offline | 离线原始通道里的宿主失败 | 丢键、吞队列，保留本地组合（此时它是唯一权威） |
 
 翻页与高亮移动键（PageUp/PageDown/Up/Down/Tab）的回复只是确认，缺失是软错过，不拆管道、不清
-队列；其余候选键可能上屏，保留 300 ms 提交预算与「歧义即丢键 + 传输重置」。
+队列；其余候选键可能上屏，保留「歧义即丢键 + 传输重置」。提交回复的总窗口是
+`FANY_IME_COMMIT_REPLY_TIMEOUT_MS`（1500 ms），但等待跑在宿主 UI 线程上，不能一次阻塞读完：
+消息处理函数用 `_PollCommitReply` 做不阻塞的轮询，没到就把请求放回表里、由
+`TIMER_COMMIT_REPLY_POLL` 唤醒再试，并按请求 id 顺序结算。会进 edit session 的提交路径（确定、
+数字选词、标点顶高亮候选）在处理函数里先取回复、按请求 id 缓存，session 直接消费；session 自己的
+单次等待只剩 `FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS`（300 ms）兜底。新增会上屏的异步路径要接入
+同一套轮询，不要在 session 里阻塞等回复。
 
 ## 焦点、候选与离线回退
 

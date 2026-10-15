@@ -658,7 +658,7 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         if (!pIME->_IsFocusSessionCurrent(request.focusToken) ||
             !pIME->_IsCompositionEpochCurrent(request.compositionEpoch))
         {
-            pIME->_FailDeferredKey(request.deferredReplayToken, DeferredKeyFailureReason::Superseded);
+            pIME->_FailSupersededAsyncKeyRequest(request);
             break;
         }
         // Fetch the committing reply here, where the message pump can be
@@ -702,7 +702,20 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         if (!pIME->_IsFocusSessionCurrent(request.focusToken) ||
             !pIME->_IsCompositionEpochCurrent(request.compositionEpoch))
         {
-            pIME->_FailDeferredKey(request.deferredReplayToken, DeferredKeyFailureReason::Superseded);
+            pIME->_FailSupersededAsyncKeyRequest(request);
+            break;
+        }
+        // With no prefetched text, punctuation that commits the highlighted
+        // candidate reads that candidate's reply in the edit session
+        // (_HandleCompositionPunctuation). Fetch it here, where the message
+        // pump can be yielded, under the same condition the session uses; a
+        // wait that already started keeps going even if that state changed.
+        const bool commitsHighlightedCandidate =
+            request.prefetchedText.empty() && pIME->_candidateMode != CANDIDATE_NONE &&
+            pIME->_pCandidateListUIPresenter && Global::CommitWithHighlightedCandPunc.count(request.wch) > 0;
+        if ((request.commitReplyDeadlineTick != 0 || commitsHighlightedCandidate) &&
+            !pIME->_FetchCommitReplyForEditSession(WM_AsyncPunctuationCommit, static_cast<UINT>(wParam), request))
+        {
             break;
         }
         PerfTimer timer;
@@ -754,7 +767,7 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         if (!pIME->_IsFocusSessionCurrent(request.focusToken) ||
             !pIME->_IsCompositionEpochCurrent(request.compositionEpoch))
         {
-            pIME->_FailDeferredKey(request.deferredReplayToken, DeferredKeyFailureReason::Superseded);
+            pIME->_FailSupersededAsyncKeyRequest(request);
             break;
         }
         FanyImeNamedpipeDataToTsf *receivedData = nullptr;
@@ -815,7 +828,7 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         if (!pIME->_IsFocusSessionCurrent(request.focusToken) ||
             !pIME->_IsCompositionEpochCurrent(request.compositionEpoch))
         {
-            pIME->_FailDeferredKey(request.deferredReplayToken, DeferredKeyFailureReason::Superseded);
+            pIME->_FailSupersededAsyncKeyRequest(request);
             break;
         }
         const UINT code = request.code;
@@ -920,7 +933,7 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         if (!pIME->_IsFocusSessionCurrent(request.focusToken) ||
             !pIME->_IsCompositionEpochCurrent(request.compositionEpoch))
         {
-            pIME->_FailDeferredKey(request.deferredReplayToken, DeferredKeyFailureReason::Superseded);
+            pIME->_FailSupersededAsyncKeyRequest(request);
             break;
         }
         // Fetch the committing reply here, where the message pump can be

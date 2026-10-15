@@ -495,20 +495,31 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
                               uint64_t deferredReplayToken = 0);
     bool _TakeAsyncKeyRequest(UINT message, UINT token, _Out_ AsyncKeyRequest &request);
     // One slice of a committing key's reply wait. The wait runs on the host UI
-    // thread, so instead of blocking for the whole window this polls a short
-    // slice, re-queues the request and re-posts the message on "not ready", and
-    // returns false so the handler yields the message pump. Returns true with
-    // *receivedData set to the reply or to a TransportUnavailable frame.
+    // thread, so instead of blocking for the whole window this polls without
+    // blocking, re-queues the request on "not ready", and returns false so the
+    // handler yields the message pump. A request that is behind an older
+    // waiting commit yields without reading, so commits settle in send order.
+    // Returns true with *receivedData set to the reply or to a
+    // TransportUnavailable frame.
     bool _PollCommitReply(UINT message, UINT token, _Inout_ AsyncKeyRequest &request,
                           _Outptr_result_maybenull_ FanyImeNamedpipeDataToTsf **receivedData);
     bool _RequeueAsyncKeyRequest(UINT token, UINT message, AsyncKeyRequest request);
-    // Runs on TIMER_COMMIT_REPLY_POLL: re-dispatches every request that is
-    // still waiting for its committing reply, and stops the timer once none is.
+    // Runs on TIMER_COMMIT_REPLY_POLL: re-dispatches, oldest request first, the
+    // requests that yielded waiting for their committing reply, and stops the
+    // timer once none is left.
     void _DispatchPendingCommitReplyPolls();
     // Fetches the reply a commit key's edit session would otherwise wait for and
     // caches it by request id, so the session consumes it at once. Returns false
-    // when the caller must yield instead of invoking the session.
+    // when the caller must not invoke the session: it yielded, or the reply was
+    // a transport failure that has already been settled here.
     bool _FetchCommitReplyForEditSession(UINT message, UINT token, AsyncKeyRequest &request);
+    // A delivered commit key whose reply is lost: the Server may already have
+    // committed, so it is dropped and never resent, with a transport reset.
+    void _FailUnansweredCommitKey(uint64_t requestId, uint64_t deferredReplayToken);
+    // The request's focus token or composition epoch was replaced. A commit
+    // key that already yielded waiting for its reply was delivered, so on the
+    // same focus it fails as unanswered instead of being dropped as stale.
+    void _FailSupersededAsyncKeyRequest(const AsyncKeyRequest &request);
     struct WorkerCandidateCommit
     {
         std::wstring text;
