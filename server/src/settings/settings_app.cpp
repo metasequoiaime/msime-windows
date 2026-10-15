@@ -1987,34 +1987,41 @@ bool ForwardMouse(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param)
     case WM_LBUTTONDOWN:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN;
         SetFocus(hwnd);
+        SetCapture(hwnd);
         break;
     case WM_LBUTTONUP:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP;
         break;
     case WM_LBUTTONDBLCLK:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOUBLE_CLICK;
+        SetCapture(hwnd);
         break;
     case WM_RBUTTONDOWN:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN;
+        SetCapture(hwnd);
         break;
     case WM_RBUTTONUP:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP;
         break;
     case WM_RBUTTONDBLCLK:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOUBLE_CLICK;
+        SetCapture(hwnd);
         break;
     case WM_MBUTTONDOWN:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN;
+        SetCapture(hwnd);
         break;
     case WM_MBUTTONUP:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP;
         break;
     case WM_MBUTTONDBLCLK:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOUBLE_CLICK;
+        SetCapture(hwnd);
         break;
     case WM_XBUTTONDOWN:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_DOWN;
         data = GET_XBUTTON_WPARAM(w_param);
+        SetCapture(hwnd);
         break;
     case WM_XBUTTONUP:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_UP;
@@ -2023,6 +2030,7 @@ bool ForwardMouse(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param)
     case WM_XBUTTONDBLCLK:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_DOUBLE_CLICK;
         data = GET_XBUTTON_WPARAM(w_param);
+        SetCapture(hwnd);
         break;
     case WM_MOUSEWHEEL:
         kind = COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL;
@@ -2048,6 +2056,11 @@ bool ForwardMouse(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param)
     }
     g_composition_controller->SendMouseInput(
         kind, static_cast<COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS>(MouseKeys(w_param)), data, point);
+    // Keep receiving drag events outside the window until the last pressed button is released
+    constexpr WPARAM buttons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2;
+    if ((message == WM_LBUTTONUP || message == WM_RBUTTONUP || message == WM_MBUTTONUP || message == WM_XBUTTONUP) &&
+        (w_param & buttons) == 0 && GetCapture() == hwnd)
+        ReleaseCapture();
     return true;
 }
 
