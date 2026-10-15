@@ -229,7 +229,9 @@ void PushUiLessCandidatesToOwner();
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch);
 void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id);
 void ClearState();
-void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_epoch, int forced_index_in_page = -1);
+// count_first_word = false 时这次上屏不进首词命中率（五笔四码唯一自动上屏：用户没有做选择）。
+void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_epoch, int forced_index_in_page = -1,
+                         bool count_first_word = true);
 void WaitForCandidateRenderSync(UINT keycode);
 void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin, uint64_t generation,
                          const std::optional<metasequoia::OnlineQuery> &query);

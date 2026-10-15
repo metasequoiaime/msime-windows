@@ -815,6 +815,65 @@ TEST_CASE(stats_store_migrates_v1_database_without_version_key)
     REQUIRE_EQ(value, std::string(MsimeStats::kStoreSchemaVersion));
 }
 
+// The table shape decides, not the stamp: a database already stamped with the
+// current version but still missing the columns (an earlier open whose
+// migration step failed) must still be repaired.
+TEST_CASE(stats_store_migrates_database_stamped_current_but_missing_columns)
+{
+    ScopedTempDir temp;
+    const fs::path db_path = temp.Root() / L"stats.db";
+    {
+        RawDb raw(db_path);
+        const std::string sql =
+            std::string("CREATE TABLE stats_daily(day_key INTEGER PRIMARY KEY, cjk INTEGER NOT NULL DEFAULT 0, "
+                        "latin INTEGER NOT NULL DEFAULT 0, digit INTEGER NOT NULL DEFAULT 0, "
+                        "punct INTEGER NOT NULL DEFAULT 0, other INTEGER NOT NULL DEFAULT 0, "
+                        "active_ms INTEGER NOT NULL DEFAULT 0);"
+                        "CREATE TABLE stats_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                        "INSERT INTO stats_meta(key, value) VALUES('schema_version', '") +
+            MsimeStats::kStoreSchemaVersion + "');";
+        REQUIRE(sqlite3_exec(raw.get(), sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+    }
+
+    std::string error;
+    std::unique_ptr<Store> store = Store::Open(db_path, error);
+    REQUIRE(store != nullptr);
+    REQUIRE(store->UpsertFirstWordSelection(DayKey(2026, 9, 20), true, error));
+    std::vector<DailyRow> rows;
+    REQUIRE(store->DailyRows(rows, error));
+    REQUIRE_EQ(rows.size(), 1u);
+    REQUIRE_EQ(rows[0].first_word_total, 1);
+}
+
+// A migration interrupted after the first ALTER leaves one of the two columns;
+// the next open must add only the missing one instead of failing on the
+// duplicate.
+TEST_CASE(stats_store_migrates_half_applied_database)
+{
+    ScopedTempDir temp;
+    const fs::path db_path = temp.Root() / L"stats.db";
+    {
+        RawDb raw(db_path);
+        REQUIRE(sqlite3_exec(raw.get(),
+                             "CREATE TABLE stats_daily(day_key INTEGER PRIMARY KEY, cjk INTEGER NOT NULL DEFAULT 0, "
+                             "latin INTEGER NOT NULL DEFAULT 0, digit INTEGER NOT NULL DEFAULT 0, "
+                             "punct INTEGER NOT NULL DEFAULT 0, other INTEGER NOT NULL DEFAULT 0, "
+                             "active_ms INTEGER NOT NULL DEFAULT 0, first_word_hits INTEGER NOT NULL DEFAULT 0);"
+                             "INSERT INTO stats_daily(day_key, cjk, first_word_hits) VALUES(20260920, 7, 3);",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+    }
+
+    std::string error;
+    std::unique_ptr<Store> store = Store::Open(db_path, error);
+    REQUIRE(store != nullptr);
+    std::vector<DailyRow> rows;
+    REQUIRE(store->DailyRows(rows, error));
+    REQUIRE_EQ(rows.size(), 1u);
+    REQUIRE_EQ(rows[0].cjk, 7);
+    REQUIRE_EQ(rows[0].first_word_hits, 3);
+    REQUIRE_EQ(rows[0].first_word_total, 0);
+}
+
 // A brand-new database must be created at the current version directly.
 TEST_CASE(stats_store_fresh_database_is_created_at_current_version)
 {

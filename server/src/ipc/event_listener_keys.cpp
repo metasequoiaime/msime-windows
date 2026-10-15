@@ -1185,15 +1185,21 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             // 标点收尾把它们带出来的路径不经过 ProcessSelectionKey，必须在这里单独
             // 挡住（用户决策 3）。
             int committed_index_in_page = -2;
+            WordItem committed_item;
             if (highlighted_resolved && metasequoia::local_modes::is_date_time_menu_item(highlighted_item))
             {
                 // 「📅日期」入口不是要上屏的字：高亮停在它上面时，标点带出本页首个候选。
                 ui.selected_text = FanyImeIpc::HighlightedCandidateText(ui.page_words, 0);
-                committed_index_in_page = 0;
+                // 计数门要看真正上屏的那条（本页第一条），不是高亮的日期入口（DateTime 会被排除）。
+                if (ResolveCandidateItem(1, committed_item))
+                {
+                    committed_index_in_page = 0;
+                }
             }
             else if (highlighted_resolved)
             {
                 committed_index_in_page = ui.selected_index_in_page;
+                committed_item = highlighted_item;
                 if (word_character_direction != 0)
                 {
                     const auto edge = word_character_direction < 0 ? FanyImeIpc::HanCharacterEdge::First
@@ -1208,10 +1214,14 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
                 }
             }
             if (committed_index_in_page >= 0 && !g_english_input_mode &&
-                highlighted_item.scheme != SchemeType::JapaneseRomaji &&
-                MsimeStats::CountsTowardFirstWordSelection(highlighted_item))
+                committed_item.scheme != SchemeType::JapaneseRomaji &&
+                MsimeStats::CountsTowardFirstWordSelection(committed_item))
             {
-                MsimeStats::RecordCandidateSelection(ui.page_index == 0 && committed_index_in_page == 0);
+                // 造词途中按标点收尾时，前面各段也要都是首位才算命中（同 ProcessSelectionKey）。
+                const auto &creating_word = GlobalIme::composition.creating_word;
+                const bool prior_segments_first = !creating_word.active || creating_word.all_segments_first;
+                MsimeStats::RecordCandidateSelection(prior_segments_first && ui.page_index == 0 &&
+                                                     committed_index_in_page == 0);
             }
             SendCurrentDataToClient(client_id, activation_epoch, request_id);
         }
@@ -1336,7 +1346,8 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         prepare_auto_commit.Stop();
         Global::candidate_ui.select_first_on_page();
         ScopedKeyStage select_auto_commit{client_id, activation_epoch, request_id, L"handle-selection"};
-        ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0);
+        ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0,
+                            /*count_first_word=*/false);
         select_auto_commit.Stop();
         ScopedKeyStage push_auto_commit{client_id, activation_epoch, request_id, L"handle-worker-push"};
         if (Global::MsgTypeToTsf == Global::DataFromServerMsgType::Normal)

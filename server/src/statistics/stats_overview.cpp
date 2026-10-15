@@ -75,47 +75,50 @@ Overview ComputeOverview(const std::vector<DailyRow> &rows, const std::vector<Ho
     std::sort(sorted.begin(), sorted.end(),
               [](const DailyRow &left, const DailyRow &right) { return left.day_key < right.day_key; });
 
+    // A row can exist with selection counters only: the selection path writes
+    // them independently of the stats pipe (pipe down, or a frame credited to
+    // the neighbouring day). Such a row is not a typing day, so it stays out of
+    // the day count, average, streaks and the empty state.
+    std::vector<DailyRow> typed;
+    typed.reserve(sorted.size());
+    for (const DailyRow &row : sorted)
+    {
+        if (row.Total() > 0 || row.active_ms > 0)
+        {
+            typed.push_back(row);
+        }
+    }
+
     Overview overview;
     overview.today_day_key = today_day_key;
     overview.today_hourly.assign(24, 0);
     overview.daily = sorted;
     overview.categories = SumCategories(sorted);
-    overview.days = static_cast<int>(sorted.size());
+    overview.days = static_cast<int>(typed.size());
     int64_t total_speed_chars = 0;
     int64_t today_speed_chars = 0;
-    int64_t total_first_word_hits = 0;
-    int64_t total_first_word_total = 0;
-    int64_t today_first_word_hits = 0;
+    // Ratios are computed on the server (the frontend formats only, per the
+    // contract in stats_types.h). Zero selections mean "no measurement",
+    // surfaced as nullopt so the page can show the no-data marker instead of
+    // reading like a 0% hit rate.
+    DailyRow first_word_sum;
     for (const DailyRow &row : sorted)
     {
         overview.total_chars += row.Total();
         overview.total_active_ms += row.active_ms;
         total_speed_chars += row.SpeedChars();
-        total_first_word_hits += row.first_word_hits;
-        total_first_word_total += row.first_word_total;
+        first_word_sum.first_word_hits += row.first_word_hits;
+        first_word_sum.first_word_total += row.first_word_total;
         if (row.day_key == today_day_key)
         {
             overview.today_chars = row.Total();
             overview.today_active_ms = row.active_ms;
             today_speed_chars = row.SpeedChars();
-            today_first_word_hits = row.first_word_hits;
             overview.today_first_word_total = row.first_word_total;
+            overview.today_first_word_ratio = row.FirstWordRatio();
         }
     }
-    // Ratios are computed on the server (the frontend formats only, per the
-    // contract in stats_types.h). Zero selections mean "no measurement",
-    // surfaced as nullopt so the page can show the no-data marker instead of
-    // reading like a 0% hit rate.
-    if (total_first_word_total > 0)
-    {
-        overview.total_first_word_ratio =
-            static_cast<double>(total_first_word_hits) / static_cast<double>(total_first_word_total);
-    }
-    if (overview.today_first_word_total > 0)
-    {
-        overview.today_first_word_ratio =
-            static_cast<double>(today_first_word_hits) / static_cast<double>(overview.today_first_word_total);
-    }
+    overview.total_first_word_ratio = first_word_sum.FirstWordRatio();
     for (const HourlyRow &bucket : today_hourly)
     {
         if (bucket.day_key == today_day_key && bucket.hour >= 0 && bucket.hour < 24)
@@ -124,18 +127,18 @@ Overview ComputeOverview(const std::vector<DailyRow> &rows, const std::vector<Ho
         }
     }
 
-    overview.has_data = !sorted.empty();
+    overview.has_data = !typed.empty();
     if (!overview.has_data)
     {
         return overview;
     }
 
-    overview.first_day_key = sorted.front().day_key;
-    overview.last_day_key = sorted.back().day_key;
-    overview.average_per_day = static_cast<double>(overview.total_chars) / static_cast<double>(sorted.size());
-    overview.current_streak = CurrentStreak(sorted, today_day_key);
-    overview.longest_streak = LongestStreak(sorted);
-    const std::pair<int, int64_t> best = BestDay(sorted);
+    overview.first_day_key = typed.front().day_key;
+    overview.last_day_key = typed.back().day_key;
+    overview.average_per_day = static_cast<double>(overview.total_chars) / static_cast<double>(typed.size());
+    overview.current_streak = CurrentStreak(typed, today_day_key);
+    overview.longest_streak = LongestStreak(typed);
+    const std::pair<int, int64_t> best = BestDay(typed);
     overview.best_day_key = best.first;
     overview.best_day_chars = best.second;
     overview.today_speed = CharsPerMinute(today_speed_chars, overview.today_active_ms);

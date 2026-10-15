@@ -329,12 +329,15 @@ function renderCards(overview: StatsOverview): void {
   }
   // 首词命中率：数值/比率都由 Server 算好（statsResponse 契约），这里只做格式化。
   // 无候选上屏的日子（ratio 为 null）显示「–」，绝不能读成 0%。
-  const ratio = overview.todayFirstWordRatio ?? null;
-  const ratioValue = ratio === null ? '–' : `${Math.round(ratio * 100)}%`;
-  const ratioNote =
+  const ratioValue = formatFirstWordRatio(overview.todayFirstWordRatio);
+  const todayNote =
     overview.todayFirstWordTotal > 0
       ? `今日 ${formatNumber(overview.todayFirstWordTotal)} 次选词`
       : '今日无候选上屏';
+  const ratioNote =
+    overview.totalFirstWordRatio === null
+      ? todayNote
+      : `${todayNote} · 累计 ${formatFirstWordRatio(overview.totalFirstWordRatio)}`;
   container.replaceChildren(
     statCard('今日输入', formatNumber(overview.todayChars), '字', `活跃 ${formatDuration(overview.todayActiveMs)}`),
     statCard('累计输入', formatNumber(overview.totalChars), '字', `共记录 ${overview.days} 天`),

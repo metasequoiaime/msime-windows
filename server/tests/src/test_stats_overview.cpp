@@ -326,6 +326,29 @@ TEST_CASE(stats_overview_first_word_ratio_today_and_total)
     REQUIRE(NearlyEqual(*overview.total_first_word_ratio, 0.55)); // 共 11/20
 }
 
+// 选词路径与统计管道各写各的：只有选词计数、没有字数的日线不是打字日，不进天数、
+// 日均与连续天数，但它的选词仍计入命中率。
+TEST_CASE(stats_overview_selection_only_row_is_not_a_typing_day)
+{
+    DailyRow typed_day = Row(20260918, 100);
+    DailyRow selection_only = Row(20260919);
+    selection_only.first_word_hits = 1;
+    selection_only.first_word_total = 2;
+    const Overview overview = MsimeStats::ComputeOverview({typed_day, selection_only}, {}, kToday);
+
+    REQUIRE_EQ(overview.days, 1);
+    REQUIRE(NearlyEqual(overview.average_per_day, 100.0));
+    REQUIRE_EQ(overview.last_day_key, 20260918);
+    REQUIRE_EQ(overview.current_streak, 0);
+    REQUIRE_EQ(overview.longest_streak, 1);
+    REQUIRE(overview.total_first_word_ratio.has_value());
+    REQUIRE(NearlyEqual(*overview.total_first_word_ratio, 0.5));
+
+    const Overview only_selections = MsimeStats::ComputeOverview({selection_only}, {}, kToday);
+    REQUIRE(!only_selections.has_data);
+    REQUIRE_EQ(only_selections.days, 0);
+}
+
 // 昨天有选词、今天没有：今日比率无测量，但累计比率仍然可算——
 // 「已产生过选词的历史」不能因为今天还没打字就整页变成无数据。
 TEST_CASE(stats_overview_first_word_ratio_today_without_selections)

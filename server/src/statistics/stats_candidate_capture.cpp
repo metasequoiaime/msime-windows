@@ -6,6 +6,7 @@
 #include "config/ime_config.h"
 #include "log/candidate_diag_log.h"
 #include "utils/common_utils.h"
+#include "utils/serial_task_runner.h"
 
 #include <Windows.h>
 
@@ -24,6 +25,13 @@ std::unique_ptr<Store> g_stats_store;
 // open/close bookkeeping must not race even though every use of the handle is
 // serialised by Store's own mutex.
 std::mutex g_stats_store_open_mutex;
+
+// Selection counters are written here, off the keystroke path.
+SerialTaskRunner &SelectionWriter()
+{
+    static SerialTaskRunner writer(/*below_normal_priority=*/true);
+    return writer;
+}
 } // namespace
 
 Store *EnsureStatsStoreOpen()
@@ -51,38 +59,44 @@ Store *EnsureStatsStoreOpen()
 
 void CloseSharedStatsStore()
 {
+    // Drain the pending selection writes before the handle goes away; posts
+    // that arrive after this are dropped by the stopped runner.
+    SelectionWriter().Stop();
     std::lock_guard<std::mutex> lock(g_stats_store_open_mutex);
     g_stats_store.reset();
 }
 
 void RecordCandidateSelection(bool is_first, int day_key_override)
 {
-    // The switch can be flipped from the settings page at any time; the
-    // observable contract is the same as the stats pipe: no store, no counters.
-    // ReloadImeConfigIfChanged is a cheap timestamp check that reloads config
-    // only after an external edit, matching the per-frame behaviour of the
-    // stats pipe.
-    ReloadImeConfigIfChanged();
-    if (!GetConfiguredStatisticsEnabled())
-    {
-        return;
-    }
-    Store *store = EnsureStatsStoreOpen();
-    if (store == nullptr)
-    {
-        return;
-    }
-
-    // Local wall-clock day attribution, the same resolver the retention
-    // cleanup uses (GetLocalTime). Each commit is one small WAL upsert; the
-    // single-store mutex serialises it against the pipe thread.
+    // Called on the keystroke/IPC path, often right before the synchronous TSF
+    // reply: the upsert can wait up to busy_timeout on a lock held by the stats
+    // pipe or the settings process, so it runs on the writer thread, like the
+    // dictionary learning writes. The day is taken now so a commit just before
+    // midnight is not credited to the next day.
     SYSTEMTIME now{};
     GetLocalTime(&now);
     const int day_key = day_key_override != 0 ? day_key_override : DayKeyOf(now.wYear, now.wMonth, now.wDay);
-    std::string error;
-    if (!store->UpsertFirstWordSelection(day_key, is_first, error))
-    {
-        DIAG_LOGF(L"stats: failed to record the first-word hit: {}", string_to_wstring(error));
-    }
+    SelectionWriter().Post([day_key, is_first] {
+        // The switch can be flipped from the settings page at any time; the
+        // observable contract is the same as the stats pipe: no store, no
+        // counters. ReloadImeConfigIfChanged is a cheap timestamp check that
+        // reloads config only after an external edit, matching the per-frame
+        // behaviour of the stats pipe.
+        ReloadImeConfigIfChanged();
+        if (!GetConfiguredStatisticsEnabled())
+        {
+            return;
+        }
+        Store *store = EnsureStatsStoreOpen();
+        if (store == nullptr)
+        {
+            return;
+        }
+        std::string error;
+        if (!store->UpsertFirstWordSelection(day_key, is_first, error))
+        {
+            DIAG_LOGF(L"stats: failed to record the first-word hit: {}", string_to_wstring(error));
+        }
+    });
 }
 } // namespace MsimeStats

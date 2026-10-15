@@ -5,8 +5,8 @@
 // The Chinese candidate selection authority lives here in the Server process:
 // ProcessSelectionKey holds (keycode, index, page_index) and derives the
 // is-first decision (event_listener_selection.cpp). Once text leaves for TSF
-// the reply carries no index, so the counters are bumped straight from the
-// selection path through the shared stats.db handle — the TSF statistics pipe
+// the reply carries no index, so the selection path queues the counter bumps
+// for the shared stats.db handle — the TSF statistics pipe
 // (engine/contracts/windows_ipc.h) is deliberately untouched.
 //
 // The store is shared with the stats pipe listener thread; access is
@@ -71,7 +71,8 @@ void CloseSharedStatsStore();
 
 // RecordCandidateSelection credits one Chinese candidate commit: a silent
 // no-op while the statistics switch is off (the observable half of the
-// privacy contract: no stats.db is created while disabled). Runs on the IPC
-// worker/selection path, so the work is one small WAL upsert.
+// privacy contract: no stats.db is created while disabled). Called on the IPC
+// worker/selection path, so it only resolves the day and queues the upsert on
+// a background writer; CloseSharedStatsStore drains that queue.
 void RecordCandidateSelection(bool is_first, int day_key = 0);
 } // namespace MsimeStats

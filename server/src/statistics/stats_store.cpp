@@ -171,44 +171,48 @@ bool Store::Initialize(std::string &error)
 
 bool Store::ApplySchemaMigration(std::string &error)
 {
-    std::string stored_version;
-    bool present = false;
-    if (!Meta(kStoreMetaSchemaVersion, stored_version, present, error) ||
-        (present && stored_version == kStoreSchemaVersion))
+    // The table shape is the source of truth, not the stored version: a stamp
+    // written after a failed or half-applied migration must not hide missing
+    // columns forever. Checking two columns is cheap enough for every open.
+    const char *const columns[] = {kStoreColumnFirstWordHits, kStoreColumnFirstWordTotal};
+    const auto has_all_columns = [this, &columns] {
+        for (const char *column : columns)
+        {
+            if (!TableHasColumn("stats_daily", column))
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (has_all_columns())
     {
-        // Meta() can read freely before the version stamp exists; an absent key
-        // plus the fresh-table shape means nothing to migrate.
         return true;
     }
 
-    // Explicit column checks, not a try-ALTER: a v1 database might already have
-    // been extended by another process (Settings vs Server race) and ALTER
-    // TABLE ADD COLUMN has no IF NOT EXISTS form. Ever-darkening cores are not
-    // the case here; the two versions differ exactly in these two columns.
-    if (!TableHasColumn("stats_daily", kStoreColumnFirstWordHits) ||
-        !TableHasColumn("stats_daily", kStoreColumnFirstWordTotal))
+    // ALTER TABLE ADD COLUMN has no IF NOT EXISTS form, and Settings and Server
+    // can open a v1 database at the same time. Re-check under the write lock
+    // and add only the missing columns in one transaction, so a crash or a
+    // lost race leaves either the old shape or the new one, never a half.
+    if (!BeginTransaction(error))
     {
-        std::string sql = std::string("ALTER TABLE stats_daily ADD COLUMN ") + kStoreColumnFirstWordHits +
-                          " INTEGER NOT NULL DEFAULT 0;"
-                          "ALTER TABLE stats_daily ADD COLUMN " +
-                          kStoreColumnFirstWordTotal + " INTEGER NOT NULL DEFAULT 0;";
+        return false;
+    }
+    for (const char *column : columns)
+    {
+        if (TableHasColumn("stats_daily", column))
+        {
+            continue;
+        }
+        const std::string sql =
+            std::string("ALTER TABLE stats_daily ADD COLUMN ") + column + " INTEGER NOT NULL DEFAULT 0";
         if (!Exec(sql.c_str(), error))
         {
-            // Two processes can pass the column checks together and then race
-            // the ALTER: busy_timeout serialises them and the loser fails with
-            // a duplicate-column error. If the winner has already extended the
-            // table, the failure is benign — re-check and accept. Statistics
-            // are not critical-path: any other failure must not block input;
-            // Open reports it upward where it is logged.
-            if (TableHasColumn("stats_daily", kStoreColumnFirstWordHits) &&
-                TableHasColumn("stats_daily", kStoreColumnFirstWordTotal))
-            {
-                return true;
-            }
+            Rollback();
             return false;
         }
     }
-    return true;
+    return Commit(error);
 }
 
 bool Store::Exec(const char *sql, std::string &error) const
