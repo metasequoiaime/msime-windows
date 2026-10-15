@@ -594,7 +594,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"trigger_count", frequency.trigger_count},
             {"linear_step", frequency.linear_step}}},
           {"utility",
-           {{"unicode_mode", GetConfiguredUnicodeModeEnabled()},
+           {{"radical_mode", GetConfiguredRadicalModeEnabled()},
             {"quick_phrase", GetConfiguredQuickPhraseEnabled()},
             {"quick_phrase_candidates", GetConfiguredQuickPhraseCandidatesEnabled()},
             {"quick_phrase_frequency", GetConfiguredQuickPhraseFrequencyEnabled()},
@@ -995,8 +995,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredAssocSentenceCollocationEnabled(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_collocation_model")
         return SetConfiguredAssocSentenceCollocationModel(json::value_to<std::string>(data.at("value")));
-    if (path == "utility.unicode_mode")
-        return SetConfiguredUnicodeModeEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "utility.radical_mode")
+        return SetConfiguredRadicalModeEnabled(json::value_to<bool>(data.at("value")));
     if (path == "utility.quick_phrase")
         return SetConfiguredQuickPhraseEnabled(json::value_to<bool>(data.at("value")));
     if (path == "utility.quick_phrase_candidates")

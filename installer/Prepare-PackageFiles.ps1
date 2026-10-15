@@ -8,6 +8,8 @@ param(
     [string]$ServerDirectory = 'server',
     [string]$UiHtmlDirectory = 'ui-html',
     [string]$HelpCodeDirectory = 'engine/helpcode',
+    # U 模式的部件拆字反查表（decomposition.txt）随包发布到数据目录的 radical\ 下。
+    [string]$RadicalDirectory = 'engine/radical',
     # Google 解码器的系统词典。仓库里有两份完全相同的副本：这一份是 engine/contracts/assets
     # 的清单声明的来源，server/assets/tables 下那份是跑测试时拷进数据目录的开发副本。打包
     # 取清单声明的那份，免得哪天两份不同步了装出来的和测出来的不是一个东西。
@@ -71,6 +73,7 @@ $factoryConfig = Join-Path $PSScriptRoot 'default_config\config.default.toml'
 $pinyinTable = Join-Path $RepoRoot (Join-Path $ServerDirectory 'assets\tables\pinyin.txt')
 $pinyinModel = Join-Path $RepoRoot (Join-Path $PinyinModelDirectory 'dict_pinyin.dat')
 $helpcodeSource = Join-Path $RepoRoot (Join-Path $HelpCodeDirectory 'helpcodes')
+$radicalTable = Join-Path $RepoRoot (Join-Path $RadicalDirectory 'decomposition.txt')
 $appIcon = Join-Path $RepoRoot (Join-Path $ServerDirectory 'src\resource\MetasequoiaIME.ico')
 # 输入法语言配置的图标，与 TSF DLL 里的 IDIS_METASEQUOIAIME 是同一个文件。安装器把它放到固定路径，
 # DLL 注册时优先用它，免得图标路径随版本目录变化（见 msime_setup.iss）。
@@ -126,6 +129,7 @@ if (-not $Light) {
     Assert-PathExists -LiteralPath $pinyinTable -Description '完整拼音音节表 pinyin.txt'
     Assert-PathExists -LiteralPath $pinyinModel -Description 'Google 解码器系统词典 dict_pinyin.dat'
     Assert-PathExists -LiteralPath $helpcodeSource -Description '辅助码目录'
+    Assert-PathExists -LiteralPath $radicalTable -Description 'U 模式部件拆字表 decomposition.txt'
     Assert-PathExists -LiteralPath $dictionaryDb -Description '词库数据库 msime.db'
     Assert-PathExists -LiteralPath $japaneseModel -Description '日语整句模型 dict_japanese.dat'
     Assert-PathExists -LiteralPath $japaneseModelLicense -Description 'Mozc 日语词典授权声明'
@@ -224,6 +228,11 @@ else {
     $targetHelpcodes = Join-Path $targetAppData 'helpcodes'
     Reset-Directory -LiteralPath $targetHelpcodes
     Copy-DirectoryContents -Source $helpcodeSource -Destination $targetHelpcodes
+
+    # U 模式的拆字表落在数据目录的 radical\ 下，路径由 engine/contracts/assets 清单声明。
+    $targetRadical = Join-Path $targetAppData 'radical'
+    Reset-Directory -LiteralPath $targetRadical
+    Copy-Item -LiteralPath $radicalTable -Destination (Join-Path $targetRadical 'decomposition.txt') -Force
 }
 
 $targetHtml = Join-Path $targetAppData 'html'

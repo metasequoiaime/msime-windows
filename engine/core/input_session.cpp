@@ -8,7 +8,6 @@
 #include "../local_modes/jianpin_query.h"
 #include "../local_modes/kaomoji_query.h"
 #include "../local_modes/quick_phrase_query.h"
-#include "../local_modes/unicode_query.h"
 #include "../quanpin/quanpin_query.h"
 #include "../quanpin/quanpin_utils.h"
 #include "../shuangpin/shuangpin_query.h"
@@ -97,10 +96,10 @@ KeyResult InputSession::handle_character(char character, bool shift_only)
         return handle_local_character(character);
     }
 
-    if (shift_only && character == 'U' && local_mode_options_.unicode && !has_composition() &&
+    if (shift_only && character == 'U' && local_mode_options_.radical && !has_composition() &&
         (scheme() == SchemeType::Quanpin || scheme() == SchemeType::Shuangpin))
     {
-        local_input_mode_ = LocalInputMode::Unicode;
+        local_input_mode_ = LocalInputMode::Radical;
         local_preedit_ = "U";
         local_candidates_.clear();
         return {true, std::nullopt, std::nullopt};
@@ -550,7 +549,7 @@ void InputSession::set_local_mode_options(LocalModeOptions options)
     {
         update_mixed_candidates();
     }
-    if ((local_input_mode_ == LocalInputMode::Unicode && !local_mode_options_.unicode) ||
+    if ((local_input_mode_ == LocalInputMode::Radical && !local_mode_options_.radical) ||
         (local_input_mode_ == LocalInputMode::DateTime && !local_mode_options_.date_time) ||
         (local_input_mode_ == LocalInputMode::QuickPhrase && !local_mode_options_.quick_phrase) ||
         (local_input_mode_ == LocalInputMode::Emoji && !local_mode_options_.emoji) ||
@@ -937,19 +936,18 @@ KeyResult InputSession::handle_local_character(char character)
         local_preedit_.push_back(character);
         return {true, std::nullopt, update_local_candidates()};
     }
-    if (local_input_mode_ != LocalInputMode::Unicode)
+    if (local_input_mode_ == LocalInputMode::Radical)
     {
-        return {};
+        // U 模式只收小写 a-z（部件拼音连写，撇号已被去段规则挡在外面）：其它键吞掉、预编辑不变。
+        if (character < 'a' || character > 'z')
+        {
+            return {true, std::nullopt, std::nullopt};
+        }
+        local_preedit_.push_back(character);
+        return {true, std::nullopt, update_local_candidates()};
     }
 
-    const auto unsigned_character = static_cast<unsigned char>(character);
-    const bool optional_plus = character == '+' && local_preedit_ == "U";
-    if (!optional_plus && std::isxdigit(unsigned_character) == 0)
-    {
-        return {true, std::nullopt, std::nullopt};
-    }
-    local_preedit_.push_back(character);
-    return {true, std::nullopt, update_local_candidates()};
+    return {};
 }
 
 std::optional<std::string> InputSession::update_local_candidates()

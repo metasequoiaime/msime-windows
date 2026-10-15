@@ -246,6 +246,8 @@ set(SRC_FILES
     "./src/utils/candidate_size_estimator.h"
     "./src/utils/common_utils.cpp"
     "./src/utils/common_utils.h"
+    "./src/utils/hanzi_pinyin.cpp"
+    "./src/utils/hanzi_pinyin.h"
     "./src/utils/ime_paths.cpp"
     "./src/utils/ime_utils.cpp"
     "./src/utils/ime_utils.h"
@@ -323,6 +325,8 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME} PRIVATE MetasequoiaIme::Engine MetasequoiaIme::Voice MetasequoiaIme::VoiceCapture)
 target_link_libraries(${PROJECT_NAME} PRIVATE unofficial::sqlite3::sqlite3 fmt::fmt spdlog::spdlog Boost::locale Boost::json nlohmann_json::nlohmann_json)
+# U 模式候选的注音（utils/hanzi_pinyin）与设置页的导入注音共用 cpp-pinyin。
+target_link_libraries(${PROJECT_NAME} PRIVATE cpp-pinyin::cpp-pinyin)
 target_link_libraries(${PROJECT_NAME} PRIVATE OpenCC::OpenCC)
 add_dependencies(${PROJECT_NAME} Dictionaries)
 target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)

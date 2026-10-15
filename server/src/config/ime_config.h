@@ -470,8 +470,9 @@ double GetConfiguredAssocSentenceCollocationPenalty();
 double GetConfiguredAssocSentenceCollocationNonPenalty();
 double GetConfiguredAssocSentenceCollocationWeakPenalty();
 double GetConfiguredAssocSentenceCollocationRearPenalty();
-bool GetConfiguredUnicodeModeEnabled();
-bool SetConfiguredUnicodeModeEnabled(bool enabled);
+// Shift+U 部件拆字反查（U 模式）。
+bool GetConfiguredRadicalModeEnabled();
+bool SetConfiguredRadicalModeEnabled(bool enabled);
 // Shift+K 快捷短语模式。
 bool GetConfiguredQuickPhraseEnabled();
 bool SetConfiguredQuickPhraseEnabled(bool enabled);

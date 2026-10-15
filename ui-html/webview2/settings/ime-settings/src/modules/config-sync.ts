@@ -237,8 +237,8 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
   if (typeof data?.association?.sentence_collocation_enabled === 'boolean') {
     applyToggleState('sentenceCollocationToggleBtn', data.association.sentence_collocation_enabled);
   }
-  if (typeof data?.utility?.unicode_mode === 'boolean') {
-    applyToggleState('unicodeModeToggleBtn', data.utility.unicode_mode);
+  if (typeof data?.utility?.radical_mode === 'boolean') {
+    applyToggleState('radicalModeToggleBtn', data.utility.radical_mode);
   }
   if (typeof data?.utility?.quick_phrase === 'boolean') {
     applyToggleState('quickPhraseToggleBtn', data.utility.quick_phrase);

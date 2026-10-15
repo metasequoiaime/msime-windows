@@ -2958,108 +2958,100 @@ int run_test()
 #endif
 
 #ifndef METASEQUOIA_FREQUENCY_TESTS_ONLY
-    metasequoia::InputSession unicode_session(SchemeType::Quanpin);
-    require(unicode_session.handle_character('U', true).handled &&
-                unicode_session.local_input_mode() == metasequoia::LocalInputMode::Unicode &&
-                unicode_session.preedit() == "U" && unicode_session.candidates().empty(),
-            "Shift+U did not enter an empty Unicode composition.");
-    require(unicode_session.handle_character('g').handled && unicode_session.preedit() == "U" &&
-                unicode_session.candidates().empty(),
-            "Unicode mode accepted or forwarded a non-hexadecimal character.");
-    for (const char character : std::string("4e00"))
-    {
-        require(unicode_session.handle_character(character).handled, "Unicode mode rejected a hexadecimal character.");
-    }
-    require(unicode_session.preedit() == "U4e00" && unicode_session.candidates().size() == 1 &&
-                unicode_session.candidates().front().word == "一" &&
-                unicode_session.candidates().front().pinyin == "U+4E00" &&
-                unicode_session.candidates().front().source == CandidateSource::Generated,
-            "Unicode mode did not produce the Windows-compatible BMP candidate.");
-    const auto unicode_commit = unicode_session.select_candidate(0);
-    require(unicode_commit.handled && unicode_commit.commit == "一" && !unicode_session.has_composition() &&
-                unicode_session.local_input_mode() == metasequoia::LocalInputMode::None,
-            "Committing a Unicode candidate did not leave the local mode.");
+    // 拆字查表走数据目录下的 radical/decomposition.txt。写一份最小表，测试不依赖部署数据
+    // 目录里的真实表，字频只用来验证「同前缀内高频在前」。
+    const std::filesystem::path radical_directory = data_directory / "radical-fixture";
+    write_file(radical_directory / "radical" / "decomposition.txt", "# 部件拼音连写<Tab>汉字<Tab>字频\n"
+                                                                    "ririri\t晶\t106\n"
+                                                                    "ririri\t曑\t1\n"
+                                                                    "heng\t一\t18584\n"
+                                                                    "hengheng\t丁\t900\n");
+    set_data_directory(radical_directory);
 
+    metasequoia::InputSession radical_session(SchemeType::Quanpin);
+    require(radical_session.handle_character('U', true).handled &&
+                radical_session.local_input_mode() == metasequoia::LocalInputMode::Radical &&
+                radical_session.preedit() == "U" && radical_session.candidates().empty(),
+            "Shift+U did not enter an empty radical composition.");
+    // 非小写字母（数字）被吞：预编辑保持 "U"、候选不变，也不让给普通拼音。
+    require(radical_session.handle_character('4').handled && radical_session.preedit() == "U" &&
+                radical_session.candidates().empty(),
+            "Radical mode accepted or forwarded a non-lowercase-letter key.");
+    for (const char character : std::string("ririri"))
+    {
+        require(radical_session.handle_character(character).handled, "Radical mode rejected a lowercase letter.");
+    }
+    require(radical_session.preedit() == "Uririri" && !radical_session.candidates().empty() &&
+                radical_session.candidates().front().word == "晶" &&
+                radical_session.candidates().front().source == CandidateSource::Generated,
+            "Radical mode did not rank the highest-frequency decomposition of 晶 first.");
+    const auto radical_commit = radical_session.select_candidate(0);
+    require(radical_commit.handled && radical_commit.commit == "晶" && !radical_session.has_composition() &&
+                radical_session.local_input_mode() == metasequoia::LocalInputMode::None,
+            "Committing a radical candidate did not leave the local mode.");
+
+    // 前缀收窄：连写码 heng 的最高频命中是 一（18584，高于任何 heng* 的更长码）。
+    require(radical_session.handle_character('U', true).handled, "Radical mode could not be re-entered for prefixing.");
+    type(radical_session, "heng");
+    require(radical_session.preedit() == "Uheng" && !radical_session.candidates().empty() &&
+                radical_session.candidates().front().word == "一",
+            "A radical prefix did not return its highest-frequency character first.");
+    require(radical_session.handle_command(metasequoia::Command::Cancel).handled &&
+                radical_session.local_input_mode() == metasequoia::LocalInputMode::None,
+            "Cancel did not leave radical mode.");
+
+    // 大写字母与预编辑里的其它按键都被吞、预编辑不变（沿用「非法字符被吞」的语义）。
+    require(radical_session.handle_character('U', true).handled,
+            "Radical mode could not be re-entered for illegal-key coverage.");
+    require(radical_session.handle_character('A').handled && radical_session.handle_character('9').handled &&
+                radical_session.preedit() == "U" && radical_session.candidates().empty(),
+            "Radical mode leaked an uppercase letter or digit into the preedit.");
     // Segment boundaries are the engine's unit model: quanpin reports one offset
     // per displayed syllable, and a local mode reports none so the host keeps
     // single-character editing (PRD R4).
+    require(radical_session.segment_raw_boundaries().empty(), "A local mode must report no pinyin segment boundaries.");
+    require(radical_session.handle_command(metasequoia::Command::Cancel).handled,
+            "Cancel did not leave radical mode after the boundary check.");
+
+    metasequoia::InputSession boundary_session(SchemeType::Quanpin);
+    for (const char character : std::string("nihaoma"))
     {
-        require(unicode_session.handle_character('U', true).handled,
-                "Unicode mode could not be re-entered for the boundary check.");
-        require(unicode_session.segment_raw_boundaries().empty(),
-                "A local mode must report no pinyin segment boundaries.");
-        require(unicode_session.handle_command(metasequoia::Command::Cancel).handled,
-                "Cancel did not leave Unicode mode after the boundary check.");
-
-        metasequoia::InputSession boundary_session(SchemeType::Quanpin);
-        for (const char character : std::string("nihaoma"))
-        {
-            require(boundary_session.handle_character(character).handled, "Quanpin rejected a letter.");
-        }
-        require(boundary_session.segment_raw_boundaries() == std::vector<std::size_t>({0, 2, 5, 7}),
-                "Quanpin unit boundaries did not follow the displayed syllables.");
+        require(boundary_session.handle_character(character).handled, "Quanpin rejected a letter.");
     }
+    require(boundary_session.segment_raw_boundaries() == std::vector<std::size_t>({0, 2, 5, 7}),
+            "Quanpin unit boundaries did not follow the displayed syllables.");
 
-    require(unicode_session.handle_character('U', true).handled && unicode_session.handle_character('+').handled,
-            "Unicode mode rejected its optional plus prefix.");
-    for (const char character : std::string("1f600"))
-    {
-        require(unicode_session.handle_character(character).handled,
-                "Unicode mode rejected a supplementary-plane hexadecimal character.");
-    }
-    require(unicode_session.preedit() == "U+1f600" && unicode_session.candidates().size() == 1 &&
-                unicode_session.candidates().front().word == "😀",
-            "Unicode mode did not produce a supplementary-plane scalar.");
-    require(unicode_session.handle_command(metasequoia::Command::Cancel).handled && !unicode_session.has_composition(),
-            "Cancel did not leave Unicode mode.");
-
-    const auto require_invalid_unicode = [&](const std::string &hex) {
-        require(unicode_session.handle_character('U', true).handled,
-                "Unicode mode could not be re-entered for invalid-scalar coverage.");
-        for (const char character : hex)
-        {
-            require(unicode_session.handle_character(character).handled,
-                    "Unicode mode rejected an invalid scalar's hexadecimal spelling.");
-        }
-        require(unicode_session.candidates().empty(), "Unicode mode produced an invalid scalar candidate.");
-        require(unicode_session.handle_command(metasequoia::Command::Cancel).handled,
-                "Unicode invalid-scalar fixture could not be cancelled.");
-    };
-    require_invalid_unicode("d800");
-    require_invalid_unicode("110000");
-    require_invalid_unicode("0000001");
-
-    require(unicode_session.handle_character('U', true).handled,
-            "Unicode prefix was not handled before Backspace coverage.");
-    require(unicode_session.handle_command(metasequoia::Command::Backspace).handled &&
-                !unicode_session.has_composition() &&
-                unicode_session.local_input_mode() == metasequoia::LocalInputMode::None,
-            "Backspace on a bare Unicode prefix did not leave the mode.");
+    require(radical_session.handle_character('U', true).handled,
+            "Radical prefix was not handled before Backspace coverage.");
+    require(radical_session.handle_command(metasequoia::Command::Backspace).handled &&
+                !radical_session.has_composition() &&
+                radical_session.local_input_mode() == metasequoia::LocalInputMode::None,
+            "Backspace on a bare radical prefix did not leave the mode.");
 
     metasequoia::InputSession plain_uppercase(SchemeType::Quanpin);
     require(!plain_uppercase.handle_character('U').handled && !plain_uppercase.has_composition() &&
                 plain_uppercase.local_input_mode() == metasequoia::LocalInputMode::None,
             "An uppercase character without Shift-only was swallowed.");
     metasequoia::LocalModeOptions disabled_local_modes;
-    disabled_local_modes.unicode = false;
-    metasequoia::InputSession disabled_unicode(SchemeType::Quanpin);
-    disabled_unicode.set_local_mode_options(disabled_local_modes);
-    require(!disabled_unicode.handle_character('U', true).handled && !disabled_unicode.has_composition() &&
-                disabled_unicode.local_input_mode() == metasequoia::LocalInputMode::None,
-            "A disabled Unicode shortcut swallowed Shift+U.");
+    disabled_local_modes.radical = false;
+    metasequoia::InputSession disabled_radical(SchemeType::Quanpin);
+    disabled_radical.set_local_mode_options(disabled_local_modes);
+    require(!disabled_radical.handle_character('U', true).handled && !disabled_radical.has_composition() &&
+                disabled_radical.local_input_mode() == metasequoia::LocalInputMode::None,
+            "A disabled radical shortcut swallowed Shift+U.");
 
-    metasequoia::InputSession wubi_unicode(SchemeType::Wubi);
-    require(!wubi_unicode.handle_character('U', true).handled && !wubi_unicode.has_composition() &&
-                wubi_unicode.local_input_mode() == metasequoia::LocalInputMode::None,
+    metasequoia::InputSession wubi_radical(SchemeType::Wubi);
+    require(!wubi_radical.handle_character('U', true).handled && !wubi_radical.has_composition() &&
+                wubi_radical.local_input_mode() == metasequoia::LocalInputMode::None,
             "Shift+U was swallowed outside a pinyin scheme.");
-    metasequoia::InputSession switch_clears_unicode(SchemeType::Shuangpin);
-    require(switch_clears_unicode.handle_character('U', true).handled &&
-                switch_clears_unicode.local_input_mode() == metasequoia::LocalInputMode::Unicode,
-            "Shuangpin could not enter Unicode mode.");
-    switch_clears_unicode.switch_scheme(SchemeType::Quanpin);
-    require(!switch_clears_unicode.has_composition() &&
-                switch_clears_unicode.local_input_mode() == metasequoia::LocalInputMode::None,
-            "Switching schemes did not clear Unicode mode.");
+    metasequoia::InputSession switch_clears_radical(SchemeType::Shuangpin);
+    require(switch_clears_radical.handle_character('U', true).handled &&
+                switch_clears_radical.local_input_mode() == metasequoia::LocalInputMode::Radical,
+            "Shuangpin could not enter radical mode.");
+    switch_clears_radical.switch_scheme(SchemeType::Quanpin);
+    require(!switch_clears_radical.has_composition() &&
+                switch_clears_radical.local_input_mode() == metasequoia::LocalInputMode::None,
+            "Switching schemes did not clear radical mode.");
 
     metasequoia::InputSession date_time_session(SchemeType::Quanpin);
     date_time_session.set_local_date_time_provider(

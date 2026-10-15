@@ -64,7 +64,8 @@ try {
                          'tsf_dll/64/MetasequoiaImeTsf.dll', 'tsf_dll/64/MetasequoiaImeTsf.pdb',
                          'server_exe/MetasequoiaImeServer.pdb',
                          'server_exe/MetasequoiaImeDictionaryReplay.pdb',
-                         'app_data/helpcodes/helpcode.txt', 'default_skins/fluent/skin.toml',
+                         'app_data/helpcodes/helpcode.txt', 'app_data/radical/decomposition.txt',
+                         'default_skins/fluent/skin.toml',
                          'THIRD_PARTY_NOTICES.txt', 'LICENSE.txt', 'MetasequoiaImeTip.ico')) {
         if (-not (Test-Path (Join-Path $installer $file))) { throw "Missing packaged file: $file" }
     }

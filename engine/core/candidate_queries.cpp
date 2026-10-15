@@ -5,7 +5,7 @@
 #include "../local_modes/jianpin_query.h"
 #include "../local_modes/kaomoji_query.h"
 #include "../local_modes/quick_phrase_query.h"
-#include "../local_modes/unicode_query.h"
+#include "../local_modes/radical_query.h"
 #include <algorithm>
 #include <cctype>
 #include <iterator>
@@ -21,8 +21,10 @@ local_modes::LocalQueryResult CandidateQueries::local(LocalInputMode mode, const
 
     switch (mode)
     {
-    case LocalInputMode::Unicode:
-        result.candidates = local_modes::query_unicode(preedit.substr(1));
+    case LocalInputMode::Radical:
+        // 拆字表是会话级资源：按会话的 RuntimePaths 解析，和 other_dictionary、translations 一致。
+        result.candidates =
+            local_modes::query_radical(paths_.resource(assets::radical_decomposition), preedit.substr(1));
         return result;
     case LocalInputMode::DateTime: {
         const local_modes::LocalDateTime now = clock ? clock() : local_modes::current_local_date_time();

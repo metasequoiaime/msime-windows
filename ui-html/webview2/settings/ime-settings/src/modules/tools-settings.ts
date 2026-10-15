@@ -199,8 +199,8 @@ export function setupToolsSettings(): void {
   setupToggleButton('quickPhraseToggleBtn', (active) => {
     updateConfig('utility.quick_phrase', active);
   });
-  setupToggleButton('unicodeModeToggleBtn', (active) => {
-    updateConfig('utility.unicode_mode', active);
+  setupToggleButton('radicalModeToggleBtn', (active) => {
+    updateConfig('utility.radical_mode', active);
   });
   setupToggleButton('dateTimeModeToggleBtn', (active) => {
     updateConfig('utility.date_time_mode', active);

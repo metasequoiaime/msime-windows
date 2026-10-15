@@ -304,7 +304,6 @@ CMetasequoiaIME::CMetasequoiaIME()
     _deferredProjectedRawInput.clear();
     _deferredProjectedCaret = 0;
     _deferredProjectedCandidateActive = false;
-    _deferredProjectedUnicodeMode = false;
     _deferredKeyFocusGeneration = 1;
     _deferredKeyDrainPosted = false;
     _serverUnavailableFallbackActive = false;

@@ -126,12 +126,11 @@ constexpr bool InputSessionMatchesConfig(bool configured_scheme_matches, bool te
 // is_date_time_input_key：Shift+T 指定日期时间里进输入串的数字、/ 和 :。TSF 把它们当输入键，pinyin 预编辑
 // 样式和 UILess 下同样要等这一帧。
 constexpr bool ShouldSendCompositionReply(bool is_alpha_key, bool is_manual_pinyin_separator,
-                                          bool is_microsoft_shuangpin_ing_key, bool is_unicode_hex_digit,
-                                          bool is_unicode_plus, bool is_japanese_long_vowel,
+                                          bool is_microsoft_shuangpin_ing_key, bool is_japanese_long_vowel,
                                           bool is_date_time_input_key = false)
 {
-    return is_alpha_key || is_manual_pinyin_separator || is_microsoft_shuangpin_ing_key || is_unicode_hex_digit ||
-           is_unicode_plus || is_japanese_long_vowel || is_date_time_input_key;
+    return is_alpha_key || is_manual_pinyin_separator || is_microsoft_shuangpin_ing_key || is_japanese_long_vowel ||
+           is_date_time_input_key;
 }
 
 // Backspace inside a live creating-word state retracts the newest selection

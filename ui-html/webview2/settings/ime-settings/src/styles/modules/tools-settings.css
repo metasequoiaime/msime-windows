@@ -26,7 +26,7 @@
 }
 
 .quick-phrase-heading .ftb-toggle-btn,
-.unicode-mode-section .ftb-toggle-btn,
+.radical-mode-section .ftb-toggle-btn,
 .emoji-mode-section .ftb-toggle-btn,
 .kaomoji-mode-section .ftb-toggle-btn,
 .clipboard-history-section .ftb-toggle-btn {
@@ -34,23 +34,23 @@
   margin-top: 2px;
 }
 
-.unicode-mode-section .section-header,
+.radical-mode-section .section-header,
 .emoji-mode-section .section-header,
 .kaomoji-mode-section .section-header,
 .clipboard-history-section .section-header {
   align-items: flex-start;
 }
 
-.unicode-mode-section .section-title,
+.radical-mode-section .section-title,
 .emoji-mode-section .section-title,
 .kaomoji-mode-section .section-title,
 .clipboard-history-section .section-title {
   color: var(--text-color);
 }
 
-.unicode-mode-section .quick-phrase-description,
-.unicode-mode-section .voice-description,
-.unicode-mode-section p,
+.radical-mode-section .quick-phrase-description,
+.radical-mode-section .voice-description,
+.radical-mode-section p,
 .emoji-mode-section .quick-phrase-description,
 .emoji-mode-section .voice-description,
 .emoji-mode-section p,

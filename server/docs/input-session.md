@@ -5,7 +5,7 @@ The old Shuangpin session implementation is removed; stored `legacy` backend val
 shared engine. Scheme profiles remain explicit constructor inputs.
 
 The shared session owns composition advancement, canonical phrase progress, cloud query preparation,
-candidate storage and engine cache state. Unicode, date/time, quick phrases, emoji, kaomoji and super-jianpin
+candidate storage and engine cache state. Radical (U), date/time, quick phrases, emoji, kaomoji and super-jianpin
 queries all delegate to Engine local-mode APIs. Windows keeps focus epochs, key swallowing, TSF insertion,
 worker scheduling and UI ownership. In particular, delayed insertion/learning runs on the existing Windows
 queues; moving query algorithms does not make those operations synchronous on the pipe thread.

@@ -61,7 +61,7 @@ class CCompositionProcessorEngine
     // engine/contracts/v_mode_input.h，前缀由 Server 的 VModeChanged 决定。
     static bool IsVModeInputKey(WCHAR wch, _In_reads_opt_(length) const WCHAR *buffer, DWORD_PTR length,
                                 DWORD_PTR caret);
-    // V 模式里数字键用来输入，选词改用 Shift+数字（同 U 模式）。放在 IsVModeInputKey 之后判断：Shift+8/9
+    // V 模式里数字键用来输入，选词改用 Shift+数字。放在 IsVModeInputKey 之后判断：Shift+8/9
     // 打出的 * ( 在那里已经当编码键收下了。
     static bool IsVModeShiftDigitSelectionKey(UINT uCode, _In_reads_opt_(length) const WCHAR *buffer, DWORD_PTR length);
     // 当句中辅助码触发键的分号在缓冲里记成反引号（与 Server 的 raw 一致），其余字符原样返回。
@@ -95,8 +95,6 @@ class CCompositionProcessorEngine
         return _keystrokeBuffer;
     };
     WCHAR GetVirtualKey(DWORD_PTR dwIndex);
-    // Shift+U unicode input: composition buffer starts with 'U'.
-    BOOL IsUnicodeModeComposition() const;
 
     void GetReadingStrings(                                          //
         _Inout_ CMetasequoiaImeArray<CStringRange> *pReadingStrings, //

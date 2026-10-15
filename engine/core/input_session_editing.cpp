@@ -216,10 +216,8 @@ KeyResult InputSession::insert_at_caret(char character)
     {
         switch (local_input_mode_)
         {
-        case LocalInputMode::Unicode:
-            accepted = (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') ||
-                       (character >= 'A' && character <= 'F') ||
-                       (character == '+' && caret == 1 && text.find('+') == std::string::npos);
+        case LocalInputMode::Radical:
+            accepted = lower;
             break;
         case LocalInputMode::QuickPhrase:
             accepted = lower;

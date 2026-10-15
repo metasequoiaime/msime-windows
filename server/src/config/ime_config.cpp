@@ -154,7 +154,7 @@ double g_assoc_sentence_collocation_rear_penalty = -18.0;
 bool g_assoc_sentence_source_badge = false;
 bool g_emoji_mixed_input_enabled = false;
 bool g_kaomoji_mixed_input_enabled = false;
-bool g_unicode_mode_enabled = true;
+bool g_radical_mode_enabled = true;
 bool g_quick_phrase_enabled = true;
 bool g_quick_phrase_candidates_enabled = false;
 bool g_quick_phrase_frequency_enabled = true;
@@ -602,7 +602,7 @@ bool LoadImeConfig()
         g_assoc_sentence_source_badge = tbl["association"]["sentence_source_badge"].value_or(false);
         g_emoji_mixed_input_enabled = tbl["general"]["emoji_mixed_input"].value_or(false);
         g_kaomoji_mixed_input_enabled = tbl["general"]["kaomoji_mixed_input"].value_or(false);
-        g_unicode_mode_enabled = tbl["utility"]["unicode_mode"].value_or(true);
+        g_radical_mode_enabled = tbl["utility"]["radical_mode"].value_or(true);
         g_quick_phrase_enabled = tbl["utility"]["quick_phrase"].value_or(true);
         g_quick_phrase_candidates_enabled = tbl["utility"]["quick_phrase_candidates"].value_or(false);
         g_quick_phrase_frequency_enabled = tbl["utility"]["quick_phrase_frequency"].value_or(true);

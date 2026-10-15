@@ -2,6 +2,7 @@
 #include "../../local_modes/emoji_query.h"
 #include "../../local_modes/kaomoji_query.h"
 #include "../../local_modes/quick_phrase_query.h"
+#include "../../local_modes/radical_query.h"
 #include "../../local_modes/v_mode_query.h"
 #include "../../core/data_path.h"
 
@@ -414,6 +415,47 @@ int run_test()
                 corrupt_kaomoji.diagnostic->find("privatecode") == std::string::npos &&
                 corrupt_kaomoji.diagnostic->find("private-corrupt") == std::string::npos,
             "A corrupt kaomoji database lacked a privacy-safe diagnostic.");
+    // U 模式：拆字表按「码前缀」查，命中按表内顺序（字频降序）取前 limit 条。
+    const std::filesystem::path decomposition = quick_phrase_directory / "decomposition-fixture.txt";
+    {
+        std::ofstream stream(decomposition, std::ios::binary);
+        // 故意带上首行 BOM、行尾 CRLF、末尾注释行、少列行和字频非整数的行：加载器的几种防御
+        // 都要能过，且被丢弃的行不能变成候选。
+        stream << "\xEF\xBB\xBFheng\t一\t18584\r\n"
+                  "hengheng\t丁\t900\r\n"
+                  "ac\t乙\t500\r\n"
+                  "ab\t甲\t400\r\n"
+                  "ririri\t晶\t106\r\n"
+                  "ririri\t晿\t1\r\n"
+                  "riririri\t𣊭\t1\r\n"
+                  "# 末尾注释\r\n"
+                  "heng\t少一列\r\n"
+                  "heng\t字频非整数\txx\r\n";
+    }
+    const auto radical_prefixed = metasequoia::local_modes::query_radical(decomposition, "ririri", 50);
+    require(radical_prefixed.size() == 3 && radical_prefixed[0].word == "晶" && radical_prefixed[1].word == "晿" &&
+                radical_prefixed[2].word == "𣊭" && radical_prefixed[0].source == CandidateSource::Generated &&
+                radical_prefixed[0].pinyin.empty(),
+            "Radical lookup did not prefix-match in frequency order with the pinyin left to the server.");
+    const auto radical_prefix_widening = metasequoia::local_modes::query_radical(decomposition, "heng", 50);
+    require(radical_prefix_widening.size() == 2 && radical_prefix_widening[0].word == "一" &&
+                radical_prefix_widening[0].weight == 18584 && radical_prefix_widening[1].word == "丁",
+            "Radical lookup did not widen a short prefix or dropped the frequency column.");
+    const auto radical_limit = metasequoia::local_modes::query_radical(decomposition, "heng", 1);
+    require(radical_limit.size() == 1 && radical_limit[0].word == "一",
+            "Radical lookup ignored its limit or ranked a shorter match below a longer one.");
+    const auto radical_file_order = metasequoia::local_modes::query_radical(decomposition, "a", 50);
+    require(radical_file_order.size() == 2 && radical_file_order[0].word == "乙" && radical_file_order[1].word == "甲",
+            "Radical lookup ranked by spelling instead of the table's frequency order.");
+    require(
+        metasequoia::local_modes::query_radical(decomposition, "", 50).empty() &&
+            metasequoia::local_modes::query_radical(decomposition, "Ri", 50).empty() &&
+            metasequoia::local_modes::query_radical(decomposition, "fa4", 50).empty() &&
+            metasequoia::local_modes::query_radical(decomposition, "zz", 50).empty() &&
+            metasequoia::local_modes::query_radical(decomposition, "heng", 0).empty() &&
+            metasequoia::local_modes::query_radical(quick_phrase_directory / "private-missing.txt", "heng", 50).empty(),
+        "Radical lookup accepted an empty, non-lowercase or unmatched code, a zero limit, or a missing table.");
+
     std::filesystem::remove_all(quick_phrase_directory);
     return 0;
 }

@@ -226,6 +226,15 @@
       ]
     },
     {
+      "id": "radical_decomposition",
+      "path": "radical/decomposition.txt",
+      "role": "resource",
+      "source": "radical/decomposition.txt",
+      "profiles": [
+        "desktop"
+      ]
+    },
+    {
       "id": "user_journal",
       "path": "msime_user.db",
       "role": "user",

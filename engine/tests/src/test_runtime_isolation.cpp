@@ -300,7 +300,8 @@ void test_runtime_isolation()
         options.learning = false;
         Session session(options);
         session.character(marker, true);
-        const std::string payload = marker == 'U' ? "41" : "ka";
+        // U 模式是部件拆字：受理小写字母，数字会被吞，所以这里用字母载荷。
+        const std::string payload = marker == 'U' ? "ri" : "ka";
         type(session, payload);
         session.command(Command::MoveHome);
         require(session.snapshot().caret_position == 1, "Local-mode caret crossed its marker");

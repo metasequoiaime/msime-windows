@@ -57,7 +57,7 @@ struct WordItem
     // QuanpinDictionary::mark_autocorrect_candidates；前端仅据非空与否附加轻标记。
     std::string corrected_from;
     // 只有整句联想（Google 解码器的 Fallback、kenlm 词格的 Generated）产出的那一行才置位。
-    // Generated/Fallback 同时被原样上屏、英文、日期、Unicode、假名、译文等合成候选借用，
+    // Generated/Fallback 同时被原样上屏、英文、日期、拆字、假名、译文等合成候选借用，
     // 候选窗的〔Trigram〕/〔Unigram〕来源标签只认这个标记，不能单凭 source 判断。
     bool sentence_association = false;
 

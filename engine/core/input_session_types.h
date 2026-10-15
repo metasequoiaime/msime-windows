@@ -58,7 +58,8 @@ struct FrequencyAdjustmentOptions
 enum class LocalInputMode
 {
     None,
-    Unicode,
+    // U 模式：部件拆字反查（输入各部件拼音连写，候选出汉字）。
+    Radical,
     DateTime,
     QuickPhrase,
     Emoji,
@@ -70,7 +71,8 @@ enum class LocalInputMode
 
 struct LocalModeOptions
 {
-    bool unicode = true;
+    // Shift+U 部件拆字反查。
+    bool radical = true;
     bool date_time = true;
     // Shift+K 快捷短语模式，按编码前缀查。
     bool quick_phrase = true;

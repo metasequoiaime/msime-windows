@@ -1118,8 +1118,8 @@ The installer writes dictionary and helpcode data from these sources:
    attribution below is retained)
 
 Installed as msime.db, others.db, english.db, dict_japanese.dat, sc.lm,
-dict_pinyin.dat, pinyin.txt and helpcodes/*.txt under the application data
-directory.
+dict_pinyin.dat, pinyin.txt, helpcodes/*.txt and radical/decomposition.txt
+under the application data directory.
 
 The sources do not declare a license of their own, because most of their content
 is not their own work. They aggregate word lists and code tables from upstream
@@ -1160,5 +1160,13 @@ Sources of helpcodes/*.txt, via MSIME-HelpCode:
                                                embedded in the commercial 拼音加加 5.x
                                                installer (fzm.bin); not an official
                                                拼音加加 table
+
+Sources of radical/decomposition.txt, the U-mode radical-reverse-lookup table:
+
+  rime-radical-pinyin  GPL-3.0  https://github.com/mirtlecn/rime-radical-pinyin
+                               its decomposition data aggregates chaizi
+                               (CC-BY-3.0), CHISE (GPL-2.0-or-later) and
+                               yi-bai/ids (MIT); the converted table keeps the
+                               GPL-3.0 terms
 
 Unresolved: CustomPinyinDictionary, rime-jp_sela and ZRM_Aux-code publish no license; the English word list in english.db includes word forms extracted from a commercial dictionary, whose rights belong to its publisher; and the helpcode tables reproduce input schemes whose rights belong to their respective authors. jiajia_helpcode.txt additionally aligns its codes with a data table extracted from the commercial 拼音加加 5.x installer. Redistributors who need an explicit grant for those parts should raise it with the Metasequoia IME maintainers rather than assume one. This notice will be updated as those terms are clarified.

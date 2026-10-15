@@ -321,18 +321,18 @@ bool SetConfiguredAssocSentenceSourceBadge(bool enabled)
     return true;
 }
 
-bool GetConfiguredUnicodeModeEnabled()
+bool GetConfiguredRadicalModeEnabled()
 {
-    return g_unicode_mode_enabled;
+    return g_radical_mode_enabled;
 }
 
-bool SetConfiguredUnicodeModeEnabled(bool enabled)
+bool SetConfiguredRadicalModeEnabled(bool enabled)
 {
-    if (!WriteConfiguredValue("utility", "unicode_mode", enabled ? "true" : "false"))
+    if (!WriteConfiguredValue("utility", "radical_mode", enabled ? "true" : "false"))
     {
         return false;
     }
-    g_unicode_mode_enabled = enabled;
+    g_radical_mode_enabled = enabled;
     return true;
 }
 

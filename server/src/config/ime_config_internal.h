@@ -200,7 +200,7 @@ extern double g_assoc_sentence_collocation_weak_penalty;
 extern double g_assoc_sentence_collocation_rear_penalty;
 extern bool g_emoji_mixed_input_enabled;
 extern bool g_kaomoji_mixed_input_enabled;
-extern bool g_unicode_mode_enabled;
+extern bool g_radical_mode_enabled;
 extern bool g_quick_phrase_enabled;
 extern bool g_quick_phrase_candidates_enabled;
 extern bool g_quick_phrase_frequency_enabled;

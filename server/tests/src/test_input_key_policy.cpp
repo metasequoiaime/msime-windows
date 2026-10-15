@@ -78,7 +78,7 @@ TEST_CASE(word_to_character_uses_only_the_selected_unmodified_key_pair)
     REQUIRE_EQ(WordToCharacterDirection(0xBD, '-', 0, true, false), 0);
     REQUIRE_EQ(WordToCharacterDirection(0xBD, '-', 0, false, true), 0);
     REQUIRE_EQ(WordToCharacterDirection(0xDB, '[', 0, false, false), 0);
-    // Unicode U+ entry and shifted punctuation must not select a character.
+    // Shifted punctuation (and the plain '+') must not select a character.
     REQUIRE_EQ(WordToCharacterDirection(0xBB, '+', 1, true, true), 0);
     REQUIRE_EQ(WordToCharacterDirection(0xBD, '_', 1, true, true), 0);
     REQUIRE_EQ(WordToCharacterDirection(0xDB, '{', 1, true, false), 0);
@@ -140,11 +140,11 @@ TEST_CASE(english_mode_toggle_requires_ctrl_shift_e)
 
 TEST_CASE(composition_reply_includes_microsoft_shuangpin_ing_key)
 {
-    REQUIRE(FanyImeIpc::ShouldSendCompositionReply(false, false, true, false, false, false));
-    REQUIRE(FanyImeIpc::ShouldSendCompositionReply(true, false, false, false, false, false));
-    REQUIRE(!FanyImeIpc::ShouldSendCompositionReply(false, false, false, false, false, false));
+    REQUIRE(FanyImeIpc::ShouldSendCompositionReply(false, false, true, false));
+    REQUIRE(FanyImeIpc::ShouldSendCompositionReply(true, false, false, false));
+    REQUIRE(!FanyImeIpc::ShouldSendCompositionReply(false, false, false, false));
     // T 模式指定日期时间的数字、/ 和 : 进输入串，TSF 同样在等这一帧。
-    REQUIRE(FanyImeIpc::ShouldSendCompositionReply(false, false, false, false, false, false, true));
+    REQUIRE(FanyImeIpc::ShouldSendCompositionReply(false, false, false, false, true));
 }
 
 TEST_CASE(backspace_retracts_the_last_selected_segment_before_deleting)
@@ -396,7 +396,7 @@ TEST_CASE(segment_deletion_does_not_leave_a_dangling_delimiter)
 TEST_CASE(composition_reply_includes_japanese_long_vowel_key)
 {
     // 日语模式下 '-' 打长音符，必须回包刷新候选框。
-    REQUIRE(FanyImeIpc::ShouldSendCompositionReply(false, false, false, false, false, true));
+    REQUIRE(FanyImeIpc::ShouldSendCompositionReply(false, false, false, true));
 }
 
 TEST_CASE(japanese_long_vowel_key_is_not_word_to_character_key)

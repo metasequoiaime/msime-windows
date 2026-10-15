@@ -13,6 +13,7 @@
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/input_key_policy.h"
 #include "utils/common_utils.h"
+#include "utils/hanzi_pinyin.h"
 #include <utf8.h>
 #include "global/globals.h"
 #include "engine/common/helpcode_utils.h"
@@ -23,7 +24,7 @@
 #include "config/ime_config.h"
 #include "settings/collocation_model.h"
 #include "engine/local_modes/quick_phrase_query.h"
-#include "engine/local_modes/unicode_query.h"
+#include "engine/local_modes/radical_query.h"
 #include "engine/local_modes/date_time_query.h"
 #include "engine/local_modes/emoji_query.h"
 #include "engine/local_modes/kaomoji_query.h"
@@ -159,14 +160,10 @@ std::string DateTimeMixedKeyword(const std::string &current_input, SchemeType sc
     return metasequoia::local_modes::is_date_time_keyword(quanpin) ? quanpin : std::string{};
 }
 
-bool IsUnicodeInput(const std::string &raw)
+// U 模式（部件拆字反查）：唤醒键 U 之后已经输入了至少一个部件字母才算一次可查询的输入。
+bool IsRadicalInput(const std::string &raw)
 {
-    if (!IsUnicodeCompositionActive(raw) || raw.size() <= 1)
-        return false;
-    size_t index = 1;
-    if (raw[index] == '+')
-        ++index;
-    return index < raw.size();
+    return IsRadicalCompositionActive(raw) && raw.size() > 1;
 }
 
 bool IsDateTimeInput(const std::string &raw)
@@ -246,6 +243,10 @@ std::string BuildCurrentCandidatePage()
                                GetConfiguredShowShuangpinHelpcodeInCandidateWindow()) ||
                               (current_scheme == SchemeType::Quanpin && GetConfiguredQuanpinHelpcodeEnabled() &&
                                GetConfiguredShowQuanpinHelpcodeInCandidateWindow()));
+    // U 模式（部件拆字反查）：候选上反显该字的注音。annotation 在这个模式下专属注音，辅助码
+    // 提示不在该模式出现（候选来源是 Generated，本来也不走辅助码的整句规则）。
+    const bool radical_mode =
+        !translation_page && IsRadicalCompositionActive(g_inputSession->get_pinyin_sequence_with_cases());
 
     // 组页时读一次徽标配置，循环内不再逐条查
     const bool show_fixed_badge = GetConfiguredCandidateFixedBadge();
@@ -284,7 +285,16 @@ std::string BuildCurrentCandidatePage()
             // the marker suffix.
             view.text += "*";
         }
-        if (item.source == CandidateSource::Generated && show_helpcodes)
+        if (radical_mode)
+        {
+            // U 模式：候选上反显该字的注音；扩展区字没有注音时留空，属可接受降级。
+            const std::string pinyin = HanziPinyin::Annotate(item.word);
+            if (!pinyin.empty())
+            {
+                view.annotation = " " + pinyin;
+            }
+        }
+        else if (item.source == CandidateSource::Generated && show_helpcodes)
         {
             // Generated whole-sentence candidates carry the raw spelling in
             // item.pinyin.  When helpcodes are enabled, do not expose that
@@ -662,9 +672,9 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
         // Do not expose transient Chinese/raw fallback candidates while the
         // dedicated English query is in flight.
     }
-    else if (IsUnicodeInput(current_input))
+    else if (IsRadicalInput(current_input))
     {
-        items = metasequoia::local_modes::query_unicode(current_input.substr(1));
+        items = metasequoia::local_modes::query_radical(current_input.substr(1));
     }
     else if (IsQuickPhraseInput(current_input))
     {

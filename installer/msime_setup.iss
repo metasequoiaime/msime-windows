@@ -913,6 +913,7 @@ begin
     (CompareText(FileName, 'chinese-ime-lm-NOTICE.md') = 0) or
     (CompareText(FileName, 'config.default.toml') = 0) or
     (CompareText(FileName, 'helpcodes') = 0) or
+    (CompareText(FileName, 'radical') = 0) or
     (CompareText(FileName, 'html') = 0);
 end;
 

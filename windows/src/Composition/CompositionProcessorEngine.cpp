@@ -264,11 +264,6 @@ Exit:
 //     State of Text Processor Engine.
 //----------------------------------------------------------------------------
 
-BOOL CCompositionProcessorEngine::IsUnicodeModeComposition() const
-{
-    return _keystrokeBuffer.GetLength() > 0 && _keystrokeBuffer.Get() && _keystrokeBuffer.Get()[0] == L'U';
-}
-
 BOOL CCompositionProcessorEngine::AddVirtualKey(WCHAR wch)
 {
     if (!wch)
