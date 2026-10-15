@@ -53,6 +53,8 @@ inline bool Matches(const boost::json::value &value, const boost::json::object &
             return false;
         else if (name == "boolean" && !value.is_bool())
             return false;
+        else if (name == "null" && !value.is_null())
+            return false;
         else if (name == "number" || name == "integer")
         {
             if (!value.is_number())

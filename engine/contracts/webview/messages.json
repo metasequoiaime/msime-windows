@@ -1155,6 +1155,29 @@
             "fastestDayKey": {
               "type": "integer"
             },
+            "todayFirstWordRatio": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "totalFirstWordRatio": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "todayFirstWordTotal": {
+              "type": "integer"
+            },
             "categories": {
               "type": "object",
               "properties": {
@@ -1214,6 +1237,12 @@
                   },
                   "activeMs": {
                     "type": "integer"
+                  },
+                  "firstWordHits": {
+                    "type": "integer"
+                  },
+                  "firstWordTotal": {
+                    "type": "integer"
                   }
                 },
                 "required": [
@@ -1223,7 +1252,9 @@
                   "digit",
                   "punct",
                   "other",
-                  "activeMs"
+                  "activeMs",
+                  "firstWordHits",
+                  "firstWordTotal"
                 ],
                 "additionalProperties": false
               }
@@ -1248,6 +1279,9 @@
             "averageSpeed",
             "fastestSpeed",
             "fastestDayKey",
+            "todayFirstWordRatio",
+            "totalFirstWordRatio",
+            "todayFirstWordTotal",
             "categories",
             "todayHourly",
             "daily"

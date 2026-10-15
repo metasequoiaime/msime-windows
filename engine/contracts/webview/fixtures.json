@@ -600,6 +600,9 @@
         "averageSpeed": 80.0,
         "fastestSpeed": 100.0,
         "fastestDayKey": 20260919,
+        "todayFirstWordRatio": 0.75,
+        "totalFirstWordRatio": 0.5,
+        "todayFirstWordTotal": 40,
         "categories": {
           "cjk": 80,
           "latin": 20,
@@ -616,7 +619,9 @@
             "digit": 5,
             "punct": 5,
             "other": 0,
-            "activeMs": 60000
+            "activeMs": 60000,
+            "firstWordHits": 10,
+            "firstWordTotal": 20
           },
           {
             "dayKey": 20260920,
@@ -625,7 +630,9 @@
             "digit": 5,
             "punct": 5,
             "other": 0,
-            "activeMs": 30000
+            "activeMs": 30000,
+            "firstWordHits": 30,
+            "firstWordTotal": 40
           }
         ]
       }
@@ -713,6 +720,9 @@
         "averageSpeed": 0.0,
         "fastestSpeed": 0.0,
         "fastestDayKey": 0,
+        "todayFirstWordRatio": null,
+        "totalFirstWordRatio": null,
+        "todayFirstWordTotal": 0,
         "categories": {
           "cjk": 0,
           "latin": 0,

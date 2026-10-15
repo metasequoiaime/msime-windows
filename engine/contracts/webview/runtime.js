@@ -21,6 +21,8 @@
       if (!Number.isSafeInteger(value)) return false;
     } else if (rule.type === 'number') {
       if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+    } else if (rule.type === 'null') {
+      if (value !== null) return false;
     } else if (rule.type && typeof value !== rule.type) return false;
     if (rule.enum && !rule.enum.includes(value)) return false;
     if (rule.minimum !== undefined && value < rule.minimum) return false;

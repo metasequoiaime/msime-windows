@@ -20,7 +20,7 @@ def ts_type(rule):
         if rule.get("additionalProperties"):
             fields.append("[key: string]: unknown")
         return "{ " + "; ".join(fields) + " }"
-    return {"integer": "number", "number": "number", "string": "string", "boolean": "boolean"}.get(rule.get("type"), "unknown")
+    return {"integer": "number", "number": "number", "string": "string", "boolean": "boolean", "null": "null"}.get(rule.get("type"), "unknown")
 
 
 def union(messages):
