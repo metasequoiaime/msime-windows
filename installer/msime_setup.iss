@@ -494,6 +494,15 @@ begin
   Result := AddBackslash(GetDataDir('')) + 'config.toml';
 end;
 
+{ 升级换目录时，旧配置会迁移到新目录。任一目录已有配置，就跳过安装选项。}
+function UserConfigExistsBeforeInstall: Boolean;
+begin
+  Result := FileExists(UserConfigPath);
+  if (not Result) and
+     (CompareText(GetDataDir(''), ResolvePreviousDataDir) <> 0) then
+    Result := FileExists(AddBackslash(ResolvePreviousDataDir) + 'config.toml');
+end;
+
 function IsPathInside(const Child, Parent: String): Boolean;
 begin
   Result :=
@@ -658,7 +667,6 @@ begin
   DataDirPage.Buttons[0].OnClick := @DataDirBrowseClick;
 
 #ifndef LightPackage
-  UserConfigExistedBeforeInstall := FileExists(UserConfigPath);
   NetworkPage := CreateInputOptionPage(
     DataDirPage.ID,
     '联网功能',
@@ -680,11 +688,13 @@ function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   if (NetworkPage <> nil) and (PageID = NetworkPage.ID) then
+  begin
+    UserConfigExistedBeforeInstall := UserConfigExistsBeforeInstall;
     Result := UserConfigExistedBeforeInstall;
+  end;
 end;
 
-{ 只在本次安装刚生成 config.toml 时写入，且只改 [general] 段里的这一个键。找不到就什么都不做——
-  这一步失败不应该让安装失败。}
+{ 只改本次安装新生成的 config.toml。用户取消云候选时，写入失败必须报错。}
 procedure ApplyNetworkChoiceToUserConfig;
 var
   Lines: TArrayOfString;
@@ -697,7 +707,7 @@ begin
   if NetworkPage.Values[CloudCandidatesIndex] then
     Exit;
   if not LoadStringsFromFile(UserConfigPath, Lines) then
-    Exit;
+    RaiseException('无法读取新安装的用户配置：' + UserConfigPath);
 
   InGeneral := False;
   for Index := 0 to GetArrayLength(Lines) - 1 do
@@ -708,10 +718,12 @@ begin
     else if InGeneral and (Pos('cloud_candidates', Trimmed) = 1) then
     begin
       Lines[Index] := 'cloud_candidates = false';
-      SaveStringsToFile(UserConfigPath, Lines, False);
+      if not SaveStringsToUTF8FileWithoutBOM(UserConfigPath, Lines, False) then
+        RaiseException('无法保存云候选选择到 ' + UserConfigPath);
       Exit;
     end;
   end;
+  RaiseException('新安装的用户配置缺少 cloud_candidates：' + UserConfigPath);
 end;
 
 procedure LaunchInstalledComponents;
@@ -1426,6 +1438,13 @@ begin
   if (OldDir = '') or (CompareText(OldDir, NewDir) = 0) or (not DirExists(OldDir)) then
     exit;
 
+  if FileExists(AddBackslash(OldDir) + 'config.toml') and
+     FileExists(AddBackslash(NewDir) + 'config.toml') then
+  begin
+    Result := '目标数据目录已有 config.toml，不能覆盖原有配置。请选择其他数据目录。';
+    exit;
+  end;
+
   Log('Migrating user data from ' + OldDir + ' to ' + NewDir);
   ForceDirectories(NewDir);
 
@@ -1637,6 +1656,10 @@ begin
     Result := '数据目录 ' + GetDataDir('') + ' 不可用：' + DataDirProblem;
     exit;
   end;
+#ifndef LightPackage
+  { 静默安装也必须在最终目录确定后、配置迁移前检查。}
+  UserConfigExistedBeforeInstall := UserConfigExistsBeforeInstall;
+#endif
   { 迁移会往目录里搬文件，所以要在那之前记下它是不是空着被接手的。}
   DataDirAdoptedEmpty :=
     OwnsDataDirExclusively(GetDataDir('')) or DirectoryIsEmpty(GetDataDir(''));

@@ -383,6 +383,8 @@ jobs:
         run: ./installer/tests/package-files.ps1
       - name: Test that the installer preserves user data on upgrade
         run: ./installer/tests/preserve-user-data.ps1
+      - name: Check installer cloud choice and config preservation
+        run: python ./installer/tests/test_cloud_choice.py
       - name: Test that bundled skins back up changed user copies before overwriting
         run: ./installer/tests/bundled-skins.ps1
       - name: Test that upgrades keep the desktop neural model shipped by 0.9.x
