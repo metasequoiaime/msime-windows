@@ -141,6 +141,16 @@ constexpr UINT_PTR TIMER_DEFERRED_FOCUS_LOSS = 4;
 constexpr UINT_PTR TIMER_FOCUS_STATUS_RESEND = 5;
 constexpr UINT_PTR TIMER_PAIRED_PUNCTUATION_CARET = 6;
 constexpr UINT_PTR TIMER_FOCUS_CARET_STATE = 7;
+// Re-arms a committing key's reply poll between slices. The wake-up must be a
+// timer, not a message posted to self: GetMessage only generates WM_PAINT and
+// WM_TIMER while the thread queue is empty, so a self-posted re-dispatch keeps
+// the queue non-empty for the whole window and defers every paint the host is
+// waiting on (measured: zero WM_PAINT and zero WM_TIMER during a one-second
+// re-post loop, all of them delivered the moment it drained). WM_TIMER ranks
+// below WM_PAINT, so with a timer the host repaints between slices.
+// The id must not collide with the constants above.
+constexpr UINT_PTR TIMER_COMMIT_REPLY_POLL = 8;
+constexpr UINT COMMIT_REPLY_POLL_INTERVAL_MS = 1;
 // Runs after the focus status resend and the reconnect it may trigger, so the
 // Server has activated this client before the badge request arrives.
 constexpr UINT FOCUS_CARET_STATE_DELAY_MS = 120;
@@ -475,11 +485,30 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
         uint64_t compositionEpoch = 0;
         uint64_t deferredReplayToken = 0;
         std::wstring prefetchedText;
+        // End of the cooperative commit-reply window (GetTickCount64 domain),
+        // 0 until the first slice starts it. Kept on the request so a re-posted
+        // slice resumes the same window instead of restarting it.
+        ULONGLONG commitReplyDeadlineTick = 0;
     };
     bool _PostAsyncKeyRequest(UINT message, UINT code, WCHAR wch, uint64_t requestId, std::wstring prefetchedText = {},
                               uint64_t expectedFocusToken = 0, uint64_t expectedCompositionEpoch = 0,
                               uint64_t deferredReplayToken = 0);
     bool _TakeAsyncKeyRequest(UINT message, UINT token, _Out_ AsyncKeyRequest &request);
+    // One slice of a committing key's reply wait. The wait runs on the host UI
+    // thread, so instead of blocking for the whole window this polls a short
+    // slice, re-queues the request and re-posts the message on "not ready", and
+    // returns false so the handler yields the message pump. Returns true with
+    // *receivedData set to the reply or to a TransportUnavailable frame.
+    bool _PollCommitReply(UINT message, UINT token, _Inout_ AsyncKeyRequest &request,
+                          _Outptr_result_maybenull_ FanyImeNamedpipeDataToTsf **receivedData);
+    bool _RequeueAsyncKeyRequest(UINT token, UINT message, AsyncKeyRequest request);
+    // Runs on TIMER_COMMIT_REPLY_POLL: re-dispatches every request that is
+    // still waiting for its committing reply, and stops the timer once none is.
+    void _DispatchPendingCommitReplyPolls();
+    // Fetches the reply a commit key's edit session would otherwise wait for and
+    // caches it by request id, so the session consumes it at once. Returns false
+    // when the caller must yield instead of invoking the session.
+    bool _FetchCommitReplyForEditSession(UINT message, UINT token, AsyncKeyRequest &request);
     struct WorkerCandidateCommit
     {
         std::wstring text;

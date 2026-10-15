@@ -43,7 +43,7 @@ TEST_CASE(candidate_render_sync_wait_is_bounded_to_a_visible_stall)
 {
     // The bound is a UX contract and a transport constraint: a wedged UI thread may delay a
     // committed keystroke by at most this, and the wait must stay well inside the TSF commit reply
-    // timeout (300ms, windows/src/IPC/Ipc.h FANY_IME_COMMIT_REPLY_TIMEOUT_MS) or TSF tears the pipe
-    // down and the user has to choose again.
+    // timeout (1500ms, windows/src/IPC/Ipc.h FANY_IME_COMMIT_REPLY_TIMEOUT_MS) or TSF tears the
+    // pipe down and the user has to choose again.
     REQUIRE_EQ(FanyImeIpc::kCandidateSelectionRenderWaitMaxMs, 80);
 }

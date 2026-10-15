@@ -30,6 +30,14 @@ using namespace metasequoia_ime_detail;
 
 namespace
 {
+// Messages whose handler waits for a committing reply and re-queues its request
+// when the reply is not in yet (see _PollCommitReply).
+bool IsCommitReplyPollMessage(UINT message)
+{
+    return message == WM_AsyncServerCandidateKey || message == WM_AsyncCycleInputMode ||
+           message == WM_AsyncFinalizeCandidate || message == WM_AsyncNumberCandidateCommit;
+}
+
 class CPunctuationCommitEditSession : public CEditSessionBase
 {
   public:
@@ -459,6 +467,142 @@ bool CMetasequoiaIME::_TakeAsyncKeyRequest(UINT message, UINT token, _Out_ Async
     }
     request = std::move(entry->second);
     _pendingAsyncKeyMessages.erase(entry);
+    return true;
+}
+
+bool CMetasequoiaIME::_RequeueAsyncKeyRequest(UINT token, UINT message, AsyncKeyRequest request)
+{
+    const HWND ownerWindow = _msgWndHandle;
+    if (token == 0 || !ownerWindow || !IsWindow(ownerWindow))
+    {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(_pendingCommitCandidateMutex);
+        _pendingAsyncKeyMessages[token] = std::move(request);
+    }
+    // Wake on a timer instead of re-posting the message: a posted message keeps
+    // the thread queue non-empty for the whole wait, which defers every WM_PAINT
+    // and WM_TIMER the host is waiting on. A timer yields the same slice and
+    // still lets the host repaint (see TIMER_COMMIT_REPLY_POLL).
+    if (SetTimer(ownerWindow, TIMER_COMMIT_REPLY_POLL, COMMIT_REPLY_POLL_INTERVAL_MS, nullptr) != 0)
+    {
+        return true;
+    }
+    // No timer slot left: the posted message is the pre-timer behaviour and
+    // only costs the host its repaints, so it stays as the fallback.
+    if (PostMessage(ownerWindow, message, static_cast<WPARAM>(token), 0))
+    {
+        return true;
+    }
+    std::lock_guard<std::mutex> lock(_pendingCommitCandidateMutex);
+    _pendingAsyncKeyMessages.erase(token);
+    return false;
+}
+
+void CMetasequoiaIME::_DispatchPendingCommitReplyPolls()
+{
+    const HWND ownerWindow = _msgWndHandle;
+    if (!ownerWindow || !IsWindow(ownerWindow))
+    {
+        return;
+    }
+
+    std::vector<std::pair<UINT, UINT>> polls;
+    {
+        std::lock_guard<std::mutex> lock(_pendingCommitCandidateMutex);
+        for (const auto &entry : _pendingAsyncKeyMessages)
+        {
+            if (IsCommitReplyPollMessage(entry.second.message))
+            {
+                polls.emplace_back(entry.first, entry.second.message);
+            }
+        }
+    }
+
+    // Synchronous dispatch: the timer pass already yielded to the host, and
+    // returning with an empty queue is what lets the system generate the next
+    // WM_PAINT. Every handler either settles its request or re-arms the timer.
+    // Nothing is held while dispatching: the handlers take the same mutex.
+    for (const auto &poll : polls)
+    {
+        SendMessage(ownerWindow, poll.second, static_cast<WPARAM>(poll.first), 0);
+    }
+
+    bool stillPolling = false;
+    {
+        std::lock_guard<std::mutex> lock(_pendingCommitCandidateMutex);
+        for (const auto &entry : _pendingAsyncKeyMessages)
+        {
+            if (IsCommitReplyPollMessage(entry.second.message))
+            {
+                stillPolling = true;
+                break;
+            }
+        }
+    }
+    if (!stillPolling)
+    {
+        // Self-limiting: with nothing left to poll the timer would otherwise
+        // wake this thread once a tick for the life of the message window.
+        KillTimer(ownerWindow, TIMER_COMMIT_REPLY_POLL);
+    }
+}
+
+bool CMetasequoiaIME::_PollCommitReply(UINT message, UINT token, _Inout_ AsyncKeyRequest &request,
+                                       _Outptr_result_maybenull_ FanyImeNamedpipeDataToTsf **receivedData)
+{
+    *receivedData = nullptr;
+    if (request.commitReplyDeadlineTick == 0)
+    {
+        request.commitReplyDeadlineTick = GetTickCount64() + FANY_IME_COMMIT_REPLY_TIMEOUT_MS;
+    }
+
+    FanyImeNamedpipeDataToTsf *reply = nullptr;
+    const CommitReplyWaitStatus status =
+        TryReadCommitReplySlice(request.requestId, request.commitReplyDeadlineTick, &reply);
+    if (status != CommitReplyWaitStatus::NotReady)
+    {
+        *receivedData = reply;
+        return true;
+    }
+
+    // Yield instead of blocking: keep the request pending and re-post it, so the
+    // host message pump runs until the next slice. The fresh dispatch revalidates
+    // the token, the focus token and the composition epoch before touching state.
+    const uint64_t requestId = request.requestId;
+    const uint64_t deferredReplayToken = request.deferredReplayToken;
+    if (_RequeueAsyncKeyRequest(token, message, std::move(request)))
+    {
+        return false;
+    }
+
+    // The request was delivered but can no longer be re-posted, so its reply may
+    // never be observed. That is the same "delivered but unanswered" state the
+    // transport branch reports: drop the key and never resend it.
+    const DeferredKeyFailureReason reason = IsDeliveredServerRequestId(requestId)
+                                                ? DeferredKeyFailureReason::DeliveryAmbiguous
+                                                : DeferredKeyFailureReason::TransportBroken;
+    if (deferredReplayToken != 0)
+    {
+        _FailDeferredKey(deferredReplayToken, reason);
+    }
+    else
+    {
+        _ResetSessionAfterFailure(DeferredKeyFailureKind::Transport);
+    }
+    return false;
+}
+
+bool CMetasequoiaIME::_FetchCommitReplyForEditSession(UINT message, UINT token, AsyncKeyRequest &request)
+{
+    FanyImeNamedpipeDataToTsf *receivedData = nullptr;
+    if (!_PollCommitReply(message, token, request, &receivedData))
+    {
+        return false;
+    }
+    // The session that applies the key must not wait for the same reply again.
+    CacheCommitReplyForEditSession(request.requestId, *receivedData);
     return true;
 }
 

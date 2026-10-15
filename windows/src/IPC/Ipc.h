@@ -119,15 +119,48 @@ bool TryReadCandidatePageFromSharedMemory(_Out_ std::wstring *candidatePage);
 // returns a non-TransportUnavailable empty frame for the caller to fall back.
 struct FanyImeNamedpipeDataToTsf *TryReadDataFromServerPipeWithTimeout(uint64_t expectedRequestId,
                                                                        bool abortTransportOnTimeout);
-// Replies that commit text (candidate selection, candidate + punctuation) get
-// a longer budget than ordinary keys. The request has already been written, so
-// a miss is DeliveryAmbiguous: the Server may have committed the selection.
-// Waiting for the same request_id is the only way to learn which candidate it
-// chose; a slow machine (battery, throttled disk) routinely needs more than
-// the ordinary 50ms. A miss past this budget drops the key and resets the
-// transport; the selection is never sent a second time.
-constexpr DWORD FANY_IME_COMMIT_REPLY_TIMEOUT_MS = 300;
+// Replies that commit text (candidate selection, candidate + punctuation) are
+// authoritative: the request has already been written, so a miss is
+// DeliveryAmbiguous and the Server may have committed the selection. Waiting
+// for the same request_id is the only way to learn which candidate it chose; a
+// slow key-handling thread (measured at 984ms) routinely needs far more than
+// the ordinary 50ms. That wait runs on the host UI thread, so this is the *total*
+// window a committing key may spend waiting, not a single blocking read:
+// callers poll it in short slices with TryReadCommitReplySlice and yield the
+// message pump between them. Only a real transfer failure, or the end of this
+// window, tears the transport down; the selection is never sent a second time.
+constexpr DWORD FANY_IME_COMMIT_REPLY_TIMEOUT_MS = 1500;
+// An edit session that applies a commit key does not wait that window: the
+// message handler already fetched the reply and cached it by request id (see
+// CacheCommitReplyForEditSession), so the session consumes it at once. This
+// shorter bound is the pre-existing single-shot wait, kept for the paths with
+// no handler-side fetch (the synchronous fallback) and for the race where a
+// transport reset clears the cache in between. It must stay small enough that
+// a miss cannot visibly freeze the host.
+constexpr DWORD FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS = 300;
 struct FanyImeNamedpipeDataToTsf *TryReadCommitReplyFromServerPipe(uint64_t expectedRequestId);
+// How one slice of a committing key's reply wait ended.
+enum class CommitReplyWaitStatus
+{
+    // *reply holds the authoritative reply (or a cached one).
+    Ready,
+    // No reply yet and the total window is not over. The pipe is left up, the
+    // reply is not consumed and nothing is torn down: the caller must yield
+    // (re-post its message) and poll again.
+    NotReady,
+    // A real transfer failure, or the total window expired. *reply holds a
+    // TransportUnavailable frame; the caller takes the existing reset path.
+    Transport,
+};
+// Polls one slice of the commit reply for expectedRequestId, never past
+// deadlineTick (GetTickCount64 domain). *reply is set for Ready and Transport.
+CommitReplyWaitStatus TryReadCommitReplySlice(uint64_t expectedRequestId, ULONGLONG deadlineTick,
+                                              _Out_ struct FanyImeNamedpipeDataToTsf **reply);
+// Puts a reply a message handler already fetched back into the pending-reply
+// cache, keyed by the request the edit session will look up (the
+// TransportUnavailable control frame carries no request id). The session that
+// applies the key then consumes it without waiting again.
+void CacheCommitReplyForEditSession(uint64_t expectedRequestId, const struct FanyImeNamedpipeDataToTsf &reply);
 // True when requestId names a request that was actually written to the Server,
 // i.e. a lost reply is DeliveryAmbiguous rather than DefinitelyNotSent.
 inline bool IsDeliveredServerRequestId(uint64_t requestId)

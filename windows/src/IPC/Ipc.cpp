@@ -1329,22 +1329,83 @@ bool SendToNamedpipe(bool *deliveryAmbiguous = nullptr)
 
 static struct FanyImeNamedpipeDataToTsf *TryReadDataFromServerPipeWithDeadline(uint64_t expectedRequestId,
                                                                                bool abortTransportOnTimeout,
-                                                                               DWORD timeoutMs);
+                                                                               DWORD timeoutMs, bool *notReady);
 
 struct FanyImeNamedpipeDataToTsf *TryReadDataFromServerPipeWithTimeout(uint64_t expectedRequestId,
                                                                        bool abortTransportOnTimeout)
 {
-    return TryReadDataFromServerPipeWithDeadline(expectedRequestId, abortTransportOnTimeout, 50);
+    return TryReadDataFromServerPipeWithDeadline(expectedRequestId, abortTransportOnTimeout, 50, nullptr);
 }
 
 struct FanyImeNamedpipeDataToTsf *TryReadCommitReplyFromServerPipe(uint64_t expectedRequestId)
 {
-    return TryReadDataFromServerPipeWithDeadline(expectedRequestId, true, FANY_IME_COMMIT_REPLY_TIMEOUT_MS);
+    return TryReadDataFromServerPipeWithDeadline(expectedRequestId, true, FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS,
+                                                 nullptr);
+}
+
+CommitReplyWaitStatus TryReadCommitReplySlice(uint64_t expectedRequestId, ULONGLONG deadlineTick,
+                                              struct FanyImeNamedpipeDataToTsf **reply)
+{
+    // One slice is about a frame: short enough that the host message pump gets
+    // a turn between reads, long enough that the wait is not pure polling.
+    constexpr DWORD kSliceMs = 16;
+    constexpr ULONGLONG kWindowMs = FANY_IME_COMMIT_REPLY_TIMEOUT_MS;
+
+    *reply = nullptr;
+    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG remainingMs = now >= deadlineTick ? 0 : deadlineTick - now;
+    const DWORD sliceMs = static_cast<DWORD>(std::min<ULONGLONG>(remainingMs, kSliceMs));
+
+    bool notReady = false;
+    struct FanyImeNamedpipeDataToTsf *fetched =
+        TryReadDataFromServerPipeWithDeadline(expectedRequestId, /*abortTransportOnTimeout=*/true, sliceMs, &notReady);
+    if (!notReady)
+    {
+        *reply = fetched;
+        return fetched->msg_type == Global::DataFromServerMsgType::TransportUnavailable
+                   ? CommitReplyWaitStatus::Transport
+                   : CommitReplyWaitStatus::Ready;
+    }
+
+    if (GetTickCount64() < deadlineTick)
+    {
+        return CommitReplyWaitStatus::NotReady;
+    }
+
+    // The total window is over with no reply. The request was delivered, so the
+    // Server may already have committed the selection: take exactly the
+    // transport reset a single blocking miss always took.
+    const ULONGLONG startedAt = deadlineTick >= kWindowMs ? deadlineTick - kWindowMs : 0;
+    DebugTsfKeyLatency(L"reply-id-timeout", expectedRequestId, static_cast<double>(GetTickCount64() - startedAt),
+                       HRESULT_FROM_WIN32(ERROR_TIMEOUT));
+    ClosePipeHandleIfValid(hFromServerPipe);
+    RequestNamedpipeReconnect();
+    transportUnavailableReply = {};
+    transportUnavailableReply.msg_type = Global::DataFromServerMsgType::TransportUnavailable;
+    *reply = &transportUnavailableReply;
+    return CommitReplyWaitStatus::Transport;
+}
+
+void CacheCommitReplyForEditSession(uint64_t expectedRequestId, const struct FanyImeNamedpipeDataToTsf &reply)
+{
+    if (expectedRequestId == FANY_IME_UNSOLICITED_REQUEST_ID || expectedRequestId == FANY_IME_NO_REQUEST_ID ||
+        reply.msg_type == Global::DataFromServerMsgType::PipeReady ||
+        FanyImeProtocol::IsNegotiationReply(reply.msg_type))
+    {
+        return;
+    }
+    // Keyed by the request the session asked for, not by reply.request_id: the
+    // TransportUnavailable control frame carries no request id.
+    pendingReplies[expectedRequestId] = reply;
+    while (pendingReplies.size() > MaxPendingReplyCount)
+    {
+        pendingReplies.erase(pendingReplies.begin());
+    }
 }
 
 static struct FanyImeNamedpipeDataToTsf *TryReadDataFromServerPipeWithDeadline(uint64_t expectedRequestId,
                                                                                bool abortTransportOnTimeout,
-                                                                               DWORD timeoutMs)
+                                                                               DWORD timeoutMs, bool *notReady)
 {
     PerfTimer replyWaitTimer;
 
@@ -1402,6 +1463,14 @@ static struct FanyImeNamedpipeDataToTsf *TryReadDataFromServerPipeWithDeadline(u
             hFromServerPipe, &namedpipeDataFromServer, sizeof(namedpipeDataFromServer), remainingMs, bytesRead);
         if (readResult == OverlappedReadResult::TimedOut)
         {
+            if (notReady)
+            {
+                // A cooperative commit poll: this slice ended with no reply,
+                // but the pipe is healthy and the total window is not over.
+                // Leave the pipe, the reply cache and the composition alone.
+                *notReady = true;
+                return nullptr;
+            }
             DebugTsfKeyLatency(L"reply-wait-timeout", expectedRequestId, replyWaitTimer.ElapsedMs(),
                                HRESULT_FROM_WIN32(ERROR_TIMEOUT));
             if (!abortTransportOnTimeout)
@@ -1464,6 +1533,13 @@ static struct FanyImeNamedpipeDataToTsf *TryReadDataFromServerPipeWithDeadline(u
     // Server may already have committed a selection, so preserving local
     // composition would split the two state machines. Treat this exactly like
     // a broken transport and schedule a tokenized reset plus local cancel.
+    if (notReady)
+    {
+        // Same as the read-timeout above: a cooperative slice boundary, not a
+        // failure. The reply cache was updated, the pipe stays up.
+        *notReady = true;
+        return nullptr;
+    }
     if (!abortTransportOnTimeout)
     {
         DebugTsfKeyLatency(L"reply-soft-miss", expectedRequestId, replyWaitTimer.ElapsedMs(), S_FALSE);

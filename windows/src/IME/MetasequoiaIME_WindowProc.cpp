@@ -400,6 +400,15 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         break;
     }
     case WM_TIMER: {
+        if (wParam == TIMER_COMMIT_REPLY_POLL)
+        {
+            // A committing key could not settle its reply in the last slice, so
+            // the poll re-armed here. WM_TIMER is lower priority than WM_PAINT,
+            // which is exactly the point: the host repaints while this key
+            // waits, instead of after it.
+            pIME->_DispatchPendingCommitReplyPolls();
+            break;
+        }
         if (wParam == TIMER_DEFERRED_FOCUS_LOSS)
         {
             KillTimer(hWnd, TIMER_DEFERRED_FOCUS_LOSS);
@@ -652,6 +661,13 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
             pIME->_FailDeferredKey(request.deferredReplayToken, DeferredKeyFailureReason::Superseded);
             break;
         }
+        // Fetch the committing reply here, where the message pump can be
+        // yielded, and leave it for the edit session below. Otherwise the
+        // session would block the host UI thread waiting for the same reply.
+        if (!pIME->_FetchCommitReplyForEditSession(WM_AsyncFinalizeCandidate, static_cast<UINT>(wParam), request))
+        {
+            break;
+        }
         PerfTimer timer;
         ITfDocumentMgr *pDocMgrFocus = nullptr;
         ITfContext *pContext = nullptr;
@@ -741,7 +757,13 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
             pIME->_FailDeferredKey(request.deferredReplayToken, DeferredKeyFailureReason::Superseded);
             break;
         }
-        FanyImeNamedpipeDataToTsf *receivedData = TryReadCommitReplyFromServerPipe(request.requestId);
+        FanyImeNamedpipeDataToTsf *receivedData = nullptr;
+        if (!pIME->_PollCommitReply(WM_AsyncCycleInputMode, static_cast<UINT>(wParam), request, &receivedData))
+        {
+            // The request was re-queued and re-posted (or already failed): the
+            // handler yields the message pump without settling.
+            break;
+        }
         // The edit handler parses the payload once and rejects malformed text
         // through the same deferred-cycle failure policy.
         if (receivedData->msg_type != Global::DataFromServerMsgType::TrilingualCycle)
@@ -804,9 +826,17 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         // Every other candidate key may commit the highlighted candidate, so
         // it gets the commit reply budget and is never resent once delivered.
         const bool navigationOnly = IsCandidateNavigationOnlyKey(code);
-        FanyImeNamedpipeDataToTsf *receivedData =
-            navigationOnly ? TryReadDataFromServerPipeWithTimeout(request.requestId, /*abortTransportOnTimeout=*/false)
-                           : TryReadCommitReplyFromServerPipe(request.requestId);
+        FanyImeNamedpipeDataToTsf *receivedData = nullptr;
+        if (navigationOnly)
+        {
+            receivedData = TryReadDataFromServerPipeWithTimeout(request.requestId, /*abortTransportOnTimeout=*/false);
+        }
+        else if (!pIME->_PollCommitReply(WM_AsyncServerCandidateKey, static_cast<UINT>(wParam), request, &receivedData))
+        {
+            // The request was re-queued and re-posted (or already failed): the
+            // handler yields the message pump without settling.
+            break;
+        }
         if (receivedData->msg_type == Global::DataFromServerMsgType::TransportUnavailable)
         {
             // A transport failure is not text and must never be committed to
@@ -891,6 +921,12 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
             !pIME->_IsCompositionEpochCurrent(request.compositionEpoch))
         {
             pIME->_FailDeferredKey(request.deferredReplayToken, DeferredKeyFailureReason::Superseded);
+            break;
+        }
+        // Fetch the committing reply here, where the message pump can be
+        // yielded; the edit session below then consumes it without blocking.
+        if (!pIME->_FetchCommitReplyForEditSession(WM_AsyncNumberCandidateCommit, static_cast<UINT>(wParam), request))
+        {
             break;
         }
         PerfTimer timer;
