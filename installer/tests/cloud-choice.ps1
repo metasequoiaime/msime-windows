@@ -35,8 +35,9 @@ try {
         & $binary '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' "/DIR=$app" "/TARGET=$target" "/PREVIOUS=$previous" "/CLOUD=$($case.Choice)" | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "$($case.Name): setup failed ($LASTEXITCODE)" }
         $config = [IO.File]::ReadAllText((Join-Path $target 'config.toml'))
-        if ($config -notmatch "(?m)^cloud_candidates = $($case.Expected)$") {
-            throw "$($case.Name): cloud choice differs from $($case.Expected)"
+        if ($config -notmatch "(?m)^cloud_candidates = $($case.Expected)\r?$") {
+            $found = [regex]::Match($config, '(?m)^cloud_candidates[^\r\n]*').Value
+            throw "$($case.Name): expected $($case.Expected), found [$found]"
         }
         if ($case.Name -eq 'fresh-default' -and $config -notmatch '云候选') {
             throw 'Fresh config lost UTF-8 text'
