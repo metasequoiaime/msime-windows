@@ -9,6 +9,7 @@
 #include "settings/neural_model.h"
 #include "settings/default_input_method.h"
 #include "settings/game_compat_name.h"
+#include "settings/settings_mouse_input.h"
 #include "settings/settings_splash.h"
 #include "settings/dictionary_manager.h"
 #include "settings/serial_task_queue.h"
@@ -78,6 +79,7 @@ RECT g_maximize_button_rect{};
 bool g_has_maximize_button_rect = false;
 bool g_maximize_button_hover = false;
 bool g_window_active = true;
+SettingsMouseInput g_mouse_input;
 bool g_window_minimized = false;
 bool g_open_about_on_ready = false;
 bool g_webview_content_started = false;
@@ -1953,115 +1955,55 @@ void InitWebView(HWND hwnd)
         ReportWebViewStartupFailure(hwnd, L"environment", create_result);
 }
 
-UINT32 MouseKeys(WPARAM w_param)
+void RunMouseCommands(HWND hwnd, const SettingsMouseCommands &commands)
 {
-    UINT32 keys = COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE;
-    if (w_param & MK_LBUTTON)
-        keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_LEFT_BUTTON;
-    if (w_param & MK_RBUTTON)
-        keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_RIGHT_BUTTON;
-    if (w_param & MK_MBUTTON)
-        keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_MIDDLE_BUTTON;
-    if (w_param & MK_SHIFT)
-        keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_SHIFT;
-    if (w_param & MK_CONTROL)
-        keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_CONTROL;
-    if (w_param & MK_XBUTTON1)
-        keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_X_BUTTON1;
-    if (w_param & MK_XBUTTON2)
-        keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_X_BUTTON2;
-    return keys;
+    if (commands.focus)
+        SetFocus(hwnd);
+    if (commands.capture)
+        SetCapture(hwnd);
+    for (const SettingsMouseEvent &event : commands.events)
+    {
+        POINT point = event.point;
+        if (event.screen_point)
+            ScreenToClient(hwnd, &point);
+        g_composition_controller->SendMouseInput(event.kind, event.keys, event.data, point);
+    }
+    if (commands.release_capture && GetCapture() == hwnd)
+        ReleaseCapture();
+    if (commands.track_leave)
+    {
+        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd, 0};
+        TrackMouseEvent(&track);
+    }
 }
 
 bool ForwardMouse(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param)
 {
     if (!g_composition_controller)
         return false;
-    COREWEBVIEW2_MOUSE_EVENT_KIND kind{};
-    UINT32 data = 0;
-    switch (message)
-    {
-    case WM_MOUSEMOVE:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE;
-        break;
-    case WM_LBUTTONDOWN:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN;
-        SetFocus(hwnd);
-        SetCapture(hwnd);
-        break;
-    case WM_LBUTTONUP:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP;
-        break;
-    case WM_LBUTTONDBLCLK:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOUBLE_CLICK;
-        SetCapture(hwnd);
-        break;
-    case WM_RBUTTONDOWN:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN;
-        SetCapture(hwnd);
-        break;
-    case WM_RBUTTONUP:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP;
-        break;
-    case WM_RBUTTONDBLCLK:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOUBLE_CLICK;
-        SetCapture(hwnd);
-        break;
-    case WM_MBUTTONDOWN:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN;
-        SetCapture(hwnd);
-        break;
-    case WM_MBUTTONUP:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP;
-        break;
-    case WM_MBUTTONDBLCLK:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOUBLE_CLICK;
-        SetCapture(hwnd);
-        break;
-    case WM_XBUTTONDOWN:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_DOWN;
-        data = GET_XBUTTON_WPARAM(w_param);
-        SetCapture(hwnd);
-        break;
-    case WM_XBUTTONUP:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_UP;
-        data = GET_XBUTTON_WPARAM(w_param);
-        break;
-    case WM_XBUTTONDBLCLK:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_DOUBLE_CLICK;
-        data = GET_XBUTTON_WPARAM(w_param);
-        SetCapture(hwnd);
-        break;
-    case WM_MOUSEWHEEL:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL;
-        data = GET_WHEEL_DELTA_WPARAM(w_param);
-        break;
-    case WM_MOUSEHWHEEL:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL;
-        data = GET_WHEEL_DELTA_WPARAM(w_param);
-        break;
-    case WM_MOUSELEAVE:
-        kind = COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE;
-        break;
-    default:
+    const SettingsMouseCommands commands = g_mouse_input.OnMessage(message, w_param, l_param);
+    if (!commands.handled)
         return false;
-    }
-    POINT point{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)};
-    if (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL)
-        ScreenToClient(hwnd, &point);
-    if (message == WM_MOUSEMOVE)
-    {
-        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd, 0};
-        TrackMouseEvent(&track);
-    }
-    g_composition_controller->SendMouseInput(
-        kind, static_cast<COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS>(MouseKeys(w_param)), data, point);
-    // Keep receiving drag events outside the window until the last pressed button is released
-    constexpr WPARAM buttons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2;
-    if ((message == WM_LBUTTONUP || message == WM_RBUTTONUP || message == WM_MBUTTONUP || message == WM_XBUTTONUP) &&
-        (w_param & buttons) == 0 && GetCapture() == hwnd)
-        ReleaseCapture();
+    RunMouseCommands(hwnd, commands);
     return true;
+}
+
+// 抓取被拿走时给页面补发抬起；窗口自己在抬起时释放抓取也会走到这里，那时已没有按着的键。
+void OnMouseCaptureLost(HWND hwnd)
+{
+    if (!g_composition_controller || !g_mouse_input.Capturing())
+        return;
+    POINT point{};
+    GetCursorPos(&point);
+    ScreenToClient(hwnd, &point);
+    RunMouseCommands(hwnd, g_mouse_input.OnCaptureLost(point));
+}
+
+// 隐藏或关闭窗口时按着的键不会再有抬起送到这里，不放掉抓取的话下一次抬起会落到隐藏的窗口上。
+void ReleaseMouseCapture(HWND hwnd)
+{
+    if (GetCapture() == hwnd)
+        ReleaseCapture();
 }
 
 bool IsMaximizeButton(HWND hwnd, POINT screen_point)
@@ -2161,6 +2103,7 @@ void HideSettings(HWND hwnd)
     }
     if (g_lingering)
     {
+        ReleaseMouseCapture(hwnd);
         ShowWindow(hwnd, SW_HIDE);
         return;
     }
@@ -2173,6 +2116,7 @@ void HideSettings(HWND hwnd)
     g_maximize_button_hover = false;
     KillTimer(hwnd, kConfigReloadTimer);
     SettingsSplash::Dismiss();
+    ReleaseMouseCapture(hwnd);
     ShowWindow(hwnd, SW_HIDE);
     SetWebViewVisible(false);
     // TrySuspend 要求 controller 已不可见；冻结页面脚本和定时器，重开时由 CancelLinger 的 Resume 恢复。
@@ -2193,6 +2137,7 @@ void CloseSettings(HWND hwnd)
     KillTimer(hwnd, kLingerTimer);
     KillTimer(hwnd, kConfigReloadTimer);
     SettingsSplash::Dismiss();
+    ReleaseMouseCapture(hwnd);
     ShowWindow(hwnd, SW_HIDE);
     if (g_worker)
         g_worker->Stop();
@@ -2273,6 +2218,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
     case WM_MOUSEHWHEEL:
         if (ForwardMouse(hwnd, message, w_param, l_param))
             return (message == WM_XBUTTONDOWN || message == WM_XBUTTONUP || message == WM_XBUTTONDBLCLK) ? TRUE : 0;
+        break;
+    case WM_CAPTURECHANGED:
+        if (reinterpret_cast<HWND>(l_param) != hwnd)
+            OnMouseCaptureLost(hwnd);
         break;
     case WM_SETCURSOR:
         if (g_composition_controller && LOWORD(l_param) == HTCLIENT)

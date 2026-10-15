@@ -6,27 +6,6 @@ target_include_directories(test_voice_control_dispatch PRIVATE ../src "${MSIME_E
 target_compile_features(test_voice_control_dispatch PRIVATE cxx_std_17)
 add_test(NAME voice_control_dispatch COMMAND test_voice_control_dispatch)
 
-# Exercise the production mouse forwarding without creating a window or capturing the desktop mouse
-set(SETTINGS_APP_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../src/settings/settings_app.cpp")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SETTINGS_APP_SOURCE}")
-file(READ "${SETTINGS_APP_SOURCE}" SETTINGS_APP_CONTENT)
-string(FIND "${SETTINGS_APP_CONTENT}" "UINT32 MouseKeys(WPARAM w_param)" MOUSE_INPUT_START)
-string(FIND "${SETTINGS_APP_CONTENT}" "bool IsMaximizeButton(HWND hwnd, POINT screen_point)" MOUSE_INPUT_END)
-if(MOUSE_INPUT_START LESS 0 OR MOUSE_INPUT_END LESS MOUSE_INPUT_START)
-    message(FATAL_ERROR "Cannot locate settings mouse input functions")
-endif()
-math(EXPR MOUSE_INPUT_LENGTH "${MOUSE_INPUT_END} - ${MOUSE_INPUT_START}")
-string(SUBSTRING "${SETTINGS_APP_CONTENT}" ${MOUSE_INPUT_START} ${MOUSE_INPUT_LENGTH} MOUSE_INPUT_SOURCE)
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/settings_mouse_input.inc" "${MOUSE_INPUT_SOURCE}")
-
-add_executable(test_settings_mouse_input portable/main.cpp src/test_settings_mouse_input.cpp)
-target_include_directories(test_settings_mouse_input PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/.."
-    "${CMAKE_CURRENT_BINARY_DIR}"
-    "${WEBVIEW2_VCPKG_ROOT}/include")
-target_compile_features(test_settings_mouse_input PRIVATE cxx_std_17)
-add_test(NAME settings_mouse_input COMMAND test_settings_mouse_input)
-
 set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark_model_path.cpp"
@@ -148,6 +127,8 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/utils/ime_paths.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/network_proxy.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/dictionary_validation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_mouse_input.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/settings_mouse_input.cpp"
     # The catalog/download/delete behaviors under test live in collocation_model.cpp, so the
     # activation-fallback and id-guard cases link the real translation unit.
     "${CMAKE_SOURCE_DIR}/src/settings/collocation_model.cpp"
@@ -165,6 +146,8 @@ target_include_directories(${TEST_EXECUTABLE_NAME}
     "${CMAKE_SOURCE_DIR}/src"
     "${MSIME_VENDOR_DIR}"
     "${MSIME_ENGINE_DIR}/utfcpp/source"
+    # settings_mouse_input.h only needs the WebView2 enum declarations.
+    "${WEBVIEW2_VCPKG_ROOT}/include"
 )
 
 # test_default_config_credentials reads the config the installer actually ships, so the check is

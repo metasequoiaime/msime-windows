@@ -1,102 +1,9 @@
-#include <Windows.h>
-#include <windowsx.h>
-#include <WebView2.h>
+#include "settings/settings_mouse_input.h"
 
 #include "tests/includes/test_framework.h"
 
 namespace
 {
-enum class Action
-{
-    Capture,
-    Send,
-    Release,
-};
-
-struct MouseInput
-{
-    COREWEBVIEW2_MOUSE_EVENT_KIND kind{};
-    COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS keys{};
-    UINT32 data{};
-    POINT point{};
-};
-
-struct State
-{
-    HWND capture{};
-    HWND capture_after_send{};
-    std::vector<Action> actions;
-    MouseInput input;
-} state;
-
-// Local API fakes keep the production function from interacting with the user's desktop
-HWND FakeSetCapture(HWND hwnd)
-{
-    const HWND previous = state.capture;
-    state.capture = hwnd;
-    state.actions.push_back(Action::Capture);
-    return previous;
-}
-
-HWND FakeGetCapture()
-{
-    return state.capture;
-}
-
-BOOL FakeReleaseCapture()
-{
-    state.capture = nullptr;
-    state.actions.push_back(Action::Release);
-    return TRUE;
-}
-
-HWND FakeSetFocus(HWND)
-{
-    return nullptr;
-}
-
-BOOL FakeScreenToClient(HWND, POINT *)
-{
-    return TRUE;
-}
-
-BOOL FakeTrackMouseEvent(TRACKMOUSEEVENT *)
-{
-    return TRUE;
-}
-
-struct Controller
-{
-    HRESULT SendMouseInput(COREWEBVIEW2_MOUSE_EVENT_KIND kind, COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS keys, UINT32 data,
-                           POINT point)
-    {
-        state.actions.push_back(Action::Send);
-        state.input = {kind, keys, data, point};
-        if (state.capture_after_send)
-            state.capture = state.capture_after_send;
-        return S_OK;
-    }
-} controller;
-
-Controller *g_composition_controller = &controller;
-
-#define SetCapture FakeSetCapture
-#define GetCapture FakeGetCapture
-#define ReleaseCapture FakeReleaseCapture
-#define SetFocus FakeSetFocus
-#define ScreenToClient FakeScreenToClient
-#define TrackMouseEvent FakeTrackMouseEvent
-#include "settings_mouse_input.inc"
-#undef TrackMouseEvent
-#undef ScreenToClient
-#undef SetFocus
-#undef ReleaseCapture
-#undef GetCapture
-#undef SetCapture
-
-const HWND window = reinterpret_cast<HWND>(1);
-const HWND other_window = reinterpret_cast<HWND>(2);
-
 struct Button
 {
     UINT down;
@@ -104,115 +11,176 @@ struct Button
     UINT double_click;
     WORD key;
     WORD x_button;
+    COREWEBVIEW2_MOUSE_EVENT_KIND up_kind;
 };
 
-const Button buttons[] = {
-    {WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK, MK_LBUTTON, 0},
-    {WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDBLCLK, MK_RBUTTON, 0},
-    {WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MBUTTONDBLCLK, MK_MBUTTON, 0},
-    {WM_XBUTTONDOWN, WM_XBUTTONUP, WM_XBUTTONDBLCLK, MK_XBUTTON1, XBUTTON1},
-    {WM_XBUTTONDOWN, WM_XBUTTONUP, WM_XBUTTONDBLCLK, MK_XBUTTON2, XBUTTON2},
+const Button kButtons[] = {
+    {WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK, MK_LBUTTON, 0, COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP},
+    {WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDBLCLK, MK_RBUTTON, 0, COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP},
+    {WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MBUTTONDBLCLK, MK_MBUTTON, 0, COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP},
+    {WM_XBUTTONDOWN, WM_XBUTTONUP, WM_XBUTTONDBLCLK, MK_XBUTTON1, XBUTTON1, COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_UP},
+    {WM_XBUTTONDOWN, WM_XBUTTONUP, WM_XBUTTONDBLCLK, MK_XBUTTON2, XBUTTON2, COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_UP},
 };
+
+WPARAM ButtonParam(WORD keys, WORD x_button)
+{
+    return MAKEWPARAM(keys, x_button);
+}
 } // namespace
 
-TEST_CASE(settings_mouse_down_and_double_click_capture_before_forwarding)
+TEST_CASE(settings_mouse_press_captures_before_forwarding)
 {
-    for (const auto &button : buttons)
+    for (const Button &button : kButtons)
     {
         for (const UINT message : {button.down, button.double_click})
         {
-            state = {};
-            REQUIRE(ForwardMouse(window, message, MAKEWPARAM(button.key, button.x_button), MAKELPARAM(10, 20)));
-            REQUIRE_EQ(state.capture, window);
-            REQUIRE_EQ(state.actions, (std::vector<Action>{Action::Capture, Action::Send}));
-            REQUIRE_EQ(state.input.data, button.x_button);
+            SettingsMouseInput input;
+            const SettingsMouseCommands commands =
+                input.OnMessage(message, ButtonParam(button.key, button.x_button), MAKELPARAM(10, 20));
+            REQUIRE(commands.handled);
+            REQUIRE(commands.capture);
+            REQUIRE(!commands.release_capture);
+            REQUIRE_EQ(commands.focus, message == WM_LBUTTONDOWN);
+            REQUIRE_EQ(commands.events.size(), size_t{1});
+            REQUIRE_EQ(commands.events[0].data, UINT32{button.x_button});
+            REQUIRE(input.Capturing());
         }
     }
 }
 
-TEST_CASE(settings_mouse_drag_keeps_capture_outside_window)
+TEST_CASE(settings_mouse_drag_outside_window_keeps_capture_and_defers_leave)
 {
-    state = {};
-    REQUIRE(ForwardMouse(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(10, 20)));
-    state.actions.clear();
-    REQUIRE(ForwardMouse(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(-20, -30)));
-    REQUIRE_EQ(state.capture, window);
-    REQUIRE_EQ(state.input.kind, COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE);
-    REQUIRE_EQ(state.input.keys, COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_LEFT_BUTTON);
-    REQUIRE_EQ(state.input.point.x, -20);
-    REQUIRE_EQ(state.input.point.y, -30);
-    REQUIRE(ForwardMouse(window, WM_MOUSELEAVE, 0, 0));
-    REQUIRE_EQ(state.capture, window);
-    REQUIRE_EQ(state.actions, (std::vector<Action>{Action::Send, Action::Send}));
-    REQUIRE(ForwardMouse(window, WM_LBUTTONUP, 0, MAKELPARAM(-20, -30)));
-    REQUIRE_EQ(state.capture, nullptr);
+    SettingsMouseInput input;
+    input.OnMessage(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(10, 20));
+
+    SettingsMouseCommands move = input.OnMessage(WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(-20, -30));
+    REQUIRE_EQ(move.events.size(), size_t{1});
+    REQUIRE_EQ(move.events[0].kind, COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE);
+    REQUIRE_EQ(move.events[0].keys, COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_LEFT_BUTTON);
+    REQUIRE_EQ(move.events[0].point.x, -20L);
+    REQUIRE_EQ(move.events[0].point.y, -30L);
+    REQUIRE(!move.track_leave);
+
+    // 拖到窗口外时的离开消息被吞掉，不能让页面以为拖动结束了。
+    SettingsMouseCommands leave = input.OnMessage(WM_MOUSELEAVE, 0, 0);
+    REQUIRE(leave.handled);
+    REQUIRE(leave.events.empty());
+
+    SettingsMouseCommands up = input.OnMessage(WM_LBUTTONUP, 0, MAKELPARAM(-20, -30));
+    REQUIRE_EQ(up.events.size(), size_t{1});
+    REQUIRE_EQ(up.events[0].kind, COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP);
+    REQUIRE(up.release_capture);
+    REQUIRE(up.track_leave);
+    REQUIRE(!input.Capturing());
+
+    // 抬起后系统补发的离开消息照常转发。
+    SettingsMouseCommands late_leave = input.OnMessage(WM_MOUSELEAVE, 0, 0);
+    REQUIRE_EQ(late_leave.events.size(), size_t{1});
+    REQUIRE_EQ(late_leave.events[0].kind, COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE);
 }
 
-TEST_CASE(settings_mouse_last_button_up_forwards_before_releasing)
+TEST_CASE(settings_mouse_hover_tracks_leave)
 {
-    for (const auto &button : buttons)
+    SettingsMouseInput input;
+    REQUIRE(input.OnMessage(WM_MOUSEMOVE, 0, MAKELPARAM(1, 2)).track_leave);
+    SettingsMouseCommands leave = input.OnMessage(WM_MOUSELEAVE, 0, 0);
+    REQUIRE_EQ(leave.events.size(), size_t{1});
+    REQUIRE_EQ(leave.events[0].kind, COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE);
+}
+
+TEST_CASE(settings_mouse_last_button_up_releases_capture)
+{
+    for (const Button &button : kButtons)
     {
-        state = {};
-        state.capture = window;
-        REQUIRE(ForwardMouse(window, button.up, MAKEWPARAM(MK_SHIFT | MK_CONTROL, button.x_button), 0));
-        REQUIRE_EQ(state.capture, nullptr);
-        REQUIRE_EQ(state.actions, (std::vector<Action>{Action::Send, Action::Release}));
-        REQUIRE_EQ(state.input.data, button.x_button);
+        SettingsMouseInput input;
+        input.OnMessage(button.down, ButtonParam(button.key, button.x_button), 0);
+        const SettingsMouseCommands up =
+            input.OnMessage(button.up, ButtonParam(MK_SHIFT | MK_CONTROL, button.x_button), 0);
+        REQUIRE_EQ(up.events.size(), size_t{1});
+        REQUIRE_EQ(up.events[0].kind, button.up_kind);
+        REQUIRE_EQ(up.events[0].data, UINT32{button.x_button});
+        REQUIRE(up.release_capture);
+        REQUIRE(!input.Capturing());
     }
 }
 
 TEST_CASE(settings_mouse_keeps_capture_while_another_button_is_held)
 {
-    for (const auto &released : buttons)
+    for (const Button &released : kButtons)
     {
-        for (const auto &held : buttons)
+        for (const Button &held : kButtons)
         {
             if (released.key == held.key)
                 continue;
-            state = {};
-            state.capture = window;
-            REQUIRE(ForwardMouse(window, released.up, MAKEWPARAM(held.key, released.x_button), 0));
-            REQUIRE_EQ(state.capture, window);
-            REQUIRE_EQ(state.actions, (std::vector<Action>{Action::Send}));
-            state.actions.clear();
-            REQUIRE(ForwardMouse(window, held.up, MAKEWPARAM(0, held.x_button), 0));
-            REQUIRE_EQ(state.capture, nullptr);
-            REQUIRE_EQ(state.actions, (std::vector<Action>{Action::Send, Action::Release}));
+            SettingsMouseInput input;
+            input.OnMessage(held.down, ButtonParam(held.key, held.x_button), 0);
+            input.OnMessage(released.down, ButtonParam(held.key | released.key, released.x_button), 0);
+            REQUIRE(!input.OnMessage(released.up, ButtonParam(held.key, released.x_button), 0).release_capture);
+            REQUIRE(input.Capturing());
+            REQUIRE(input.OnMessage(held.up, ButtonParam(0, held.x_button), 0).release_capture);
+            REQUIRE(!input.Capturing());
         }
     }
 }
 
-TEST_CASE(settings_mouse_up_does_not_release_another_windows_capture)
+TEST_CASE(settings_mouse_up_without_press_does_not_release_capture)
 {
-    for (const HWND capture : {static_cast<HWND>(nullptr), other_window})
-    {
-        state = {};
-        state.capture = capture;
-        REQUIRE(ForwardMouse(window, WM_LBUTTONUP, 0, 0));
-        REQUIRE_EQ(state.capture, capture);
-        REQUIRE_EQ(state.actions, (std::vector<Action>{Action::Send}));
-    }
+    SettingsMouseInput input;
+    const SettingsMouseCommands up = input.OnMessage(WM_LBUTTONUP, 0, 0);
+    REQUIRE(up.handled);
+    REQUIRE_EQ(up.events.size(), size_t{1});
+    REQUIRE(!up.release_capture);
 }
 
-TEST_CASE(settings_mouse_up_respects_capture_transferred_while_forwarding)
+TEST_CASE(settings_mouse_capture_lost_releases_held_buttons_in_page)
 {
-    state = {};
-    state.capture = window;
-    state.capture_after_send = other_window;
-    REQUIRE(ForwardMouse(window, WM_LBUTTONUP, 0, 0));
-    REQUIRE_EQ(state.capture, other_window);
-    REQUIRE_EQ(state.actions, (std::vector<Action>{Action::Send}));
+    SettingsMouseInput input;
+    input.OnMessage(WM_LBUTTONDOWN, MK_LBUTTON, 0);
+    input.OnMessage(WM_XBUTTONDOWN, ButtonParam(MK_LBUTTON | MK_XBUTTON2, XBUTTON2), 0);
+
+    const SettingsMouseCommands lost = input.OnCaptureLost({-5, 7});
+    REQUIRE(lost.handled);
+    REQUIRE(!lost.capture);
+    REQUIRE(!lost.release_capture);
+    REQUIRE(lost.track_leave);
+    REQUIRE_EQ(lost.events.size(), size_t{2});
+    REQUIRE_EQ(lost.events[0].kind, COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP);
+    REQUIRE_EQ(lost.events[0].keys, COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_X_BUTTON2);
+    REQUIRE_EQ(lost.events[0].point.x, -5L);
+    REQUIRE_EQ(lost.events[0].point.y, 7L);
+    REQUIRE_EQ(lost.events[1].kind, COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_UP);
+    REQUIRE_EQ(lost.events[1].keys, COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE);
+    REQUIRE_EQ(lost.events[1].data, UINT32{XBUTTON2});
+    REQUIRE(!input.Capturing());
+
+    // 真正的抬起随后才到（比如移动循环结束后），不能再释放一次别人的抓取。
+    REQUIRE(!input.OnMessage(WM_LBUTTONUP, 0, 0).release_capture);
 }
 
-TEST_CASE(settings_mouse_ignores_unhandled_messages_and_missing_controller)
+TEST_CASE(settings_mouse_capture_lost_after_release_is_noop)
 {
-    state = {};
-    REQUIRE(!ForwardMouse(window, WM_CAPTURECHANGED, 0, reinterpret_cast<LPARAM>(other_window)));
-    REQUIRE(state.actions.empty());
+    SettingsMouseInput input;
+    input.OnMessage(WM_LBUTTONDOWN, MK_LBUTTON, 0);
+    input.OnMessage(WM_LBUTTONUP, 0, 0);
+    const SettingsMouseCommands lost = input.OnCaptureLost({0, 0});
+    REQUIRE(!lost.handled);
+    REQUIRE(lost.events.empty());
+}
 
-    g_composition_controller = nullptr;
-    const bool handled = ForwardMouse(window, WM_LBUTTONDOWN, MK_LBUTTON, 0);
-    g_composition_controller = &controller;
-    REQUIRE(!handled);
-    REQUIRE(state.actions.empty());
+TEST_CASE(settings_mouse_wheel_uses_screen_point)
+{
+    SettingsMouseInput input;
+    const SettingsMouseCommands wheel =
+        input.OnMessage(WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), MAKELPARAM(300, 400));
+    REQUIRE_EQ(wheel.events.size(), size_t{1});
+    REQUIRE(wheel.events[0].screen_point);
+    REQUIRE_EQ(wheel.events[0].data, UINT32{WHEEL_DELTA});
+    REQUIRE(!wheel.capture);
+}
+
+TEST_CASE(settings_mouse_ignores_unrelated_messages)
+{
+    SettingsMouseInput input;
+    REQUIRE(!input.OnMessage(WM_CAPTURECHANGED, 0, 0).handled);
+    REQUIRE(!input.OnMessage(WM_KEYDOWN, VK_ESCAPE, 0).handled);
 }
