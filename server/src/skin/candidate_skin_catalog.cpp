@@ -14,6 +14,85 @@ namespace CandidateSkinCatalog
 {
 namespace
 {
+// 共享基底来自 msime 的固定主题；Windows 只复用 Fluent 的结构，配色在加载时补进现有槽位。
+struct SharedBase
+{
+    const char *id;
+    const char *theme;
+    const char *surface;
+    const char *text;
+    const char *accent;
+    const char *number;
+};
+
+const SharedBase *FindSharedBase(const std::string &id)
+{
+    static constexpr SharedBase bases[] = {
+        {"shuishan", "dark", "#2A2B27", "#FFFFFF", "#7FE08E", "#9FB5A3"},
+        {"light", "light", "#FFFFFF", "#1A1A1A", "#005FB8", "#6A6F76"},
+        {"paper", "light", "#F7F5F0", "#1A1E1B", "#2C7A4B", "#6E6A5E"},
+        {"night", "dark", "#16262F", "#E6F1F4", "#4FD1C5", "#86A6B0"},
+        {"ink", "dark", "#1A1A1A", "#9A9A9A", "#FFFFFF", "#9A9A9A"},
+    };
+    for (const auto &base : bases)
+    {
+        if (id == base.id)
+        {
+            return &base;
+        }
+    }
+    return nullptr;
+}
+
+void FillColor(std::string &color, const std::string &fallback)
+{
+    if (color.empty())
+    {
+        color = fallback;
+    }
+}
+
+void AdaptSharedBase(Package &package)
+{
+    const SharedBase *base = FindSharedBase(package.base);
+    if (!base && package.base != "system")
+    {
+        return;
+    }
+    // 所有使用方（含设置预览）仍按本地 CSS / D2D 的 Fluent 结构处理，不能去查不存在的共享 CSS。
+    package.base = "fluent";
+    if (!base)
+    {
+        return;
+    }
+    package.themes.erase(std::remove_if(package.themes.begin(), package.themes.end(),
+                                        [base](const std::string &theme) { return theme != base->theme; }),
+                         package.themes.end());
+    CandidateColors &colors = std::string_view(base->theme) == "light" ? package.light : package.dark;
+    FillColor(colors.surface, base->surface);
+    FillColor(colors.border, "#0000001F");
+    FillColor(colors.text, base->text);
+    FillColor(colors.number, base->number);
+    FillColor(colors.accent, base->accent);
+    FillColor(colors.selected, std::string(base->accent) + "24");
+    FillColor(colors.hover, std::string(base->text) + "0F");
+    FillColor(colors.selectedText, colors.accent);
+    FillColor(colors.selectedNumber, colors.number);
+    FillColor(colors.translation, colors.number);
+    // 菜单与工具栏默认跟随最终候选配色，各自显式设置的颜色始终优先。
+    FillColor(colors.menuBackground, colors.surface);
+    FillColor(colors.menuBorder, colors.border);
+    FillColor(colors.menuText, colors.text);
+    FillColor(colors.menuHover, colors.hover);
+    ToolbarColors &toolbar = std::string_view(base->theme) == "light" ? package.toolbarLight : package.toolbarDark;
+    FillColor(toolbar.background, colors.surface);
+    FillColor(toolbar.border, colors.border);
+    FillColor(toolbar.handle, colors.accent);
+    FillColor(toolbar.divider, colors.border);
+    FillColor(toolbar.icon, colors.text);
+    FillColor(toolbar.hover, colors.hover);
+}
+
 void SetError(std::string *error, const std::string &message)
 {
     if (error)
@@ -354,7 +433,8 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
             !ReadString(root, "version", package.version, 32, true) ||
             !ReadString(root, "author", package.author, 120, false) ||
             !ReadString(root, "description", package.description, 500, false) ||
-            !ReadString(root, "base", package.base, 32, true) || !IsBuiltIn(package.base))
+            !ReadString(root, "base", package.base, 32, true) ||
+            (!IsBuiltIn(package.base) && package.base != "system" && !FindSharedBase(package.base)))
         {
             SetError(error, "manifest 的基本信息无效");
             return std::nullopt;
@@ -670,6 +750,7 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                 return std::nullopt;
             }
         }
+        AdaptSharedBase(package);
         return package;
     }
     catch (const toml::parse_error &)

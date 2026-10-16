@@ -100,6 +100,7 @@ struct Package
     std::string version;
     std::string author;
     std::string description;
+    // 渲染用的本地基底；共享基底在 Load 中转为 Fluent，并补齐缺省配色与有效 themes。
     std::string base = "fluent";
     std::vector<std::string> layouts;
     std::vector<std::string> themes;
@@ -175,7 +176,7 @@ inline constexpr bool kDefaultPageArrows = false;
 // 默认皮肤清单缺失或没写 fit_content 时的取值：卡片保留出厂最小宽度。
 inline constexpr bool kDefaultFitContent = false;
 
-// 五个内置皮肤的 ID，按设置页的展示顺序。
+// 六个内置皮肤的 ID，按设置页的展示顺序。
 const std::vector<std::string> &BuiltInIds();
 bool IsBuiltIn(const std::string &id);
 bool IsSafeId(const std::string &id);
