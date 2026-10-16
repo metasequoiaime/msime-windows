@@ -142,6 +142,13 @@ def extract_intact_pinyin_list() -> list[str]:
     return re.findall(r'"([a-z]+)"', match.group(1))
 
 
+def is_jqxy_v_alias(syllable: str) -> bool:
+    # Mirrors quanpin::is_jqxy_v_alias: jv/jve/xvan/... only alias the u spelling.
+    # Nobody types them on purpose, so typos are corrected to the canonical
+    # syllable only; deriving keys from the alias would add noise like nvan -> jvan.
+    return len(syllable) >= 2 and syllable[0] in "jqxy" and syllable[1] == "v"
+
+
 def build_variants(
     syllables: list[str], make_variants, min_length: int
 ) -> dict[str, set[str]]:
@@ -167,7 +174,7 @@ def build_variants(
         mapping.setdefault(variant, set()).add(correct)
 
     for syllable in syllables:
-        if len(syllable) < 2:
+        if len(syllable) < 2 or is_jqxy_v_alias(syllable):
             continue
         for variant in make_variants(syllable):
             add_variant(variant, syllable)

@@ -23,6 +23,9 @@ TEST_CASE(DictionaryFullPinyinValidationRejectsAbbreviatedSyllables)
     REQUIRE_EQ(normalized, std::string("ni'hao"));
     REQUIRE(SettingsDictionary::Validation::NormalizeFullPinyin("xi'an", segments, normalized));
     REQUIRE_EQ(normalized, std::string("xi'an"));
+    // ü 别名按词库的写法入库，否则查询归一后永远查不到这一行。
+    REQUIRE(SettingsDictionary::Validation::NormalizeFullPinyin("xvan'lue", segments, normalized));
+    REQUIRE_EQ(normalized, std::string("xuan'lve"));
     REQUIRE(!SettingsDictionary::Validation::NormalizeFullPinyin("nh", segments, normalized));
     REQUIRE(!SettingsDictionary::Validation::NormalizeFullPinyin("ni'h", segments, normalized));
     REQUIRE(!SettingsDictionary::Validation::NormalizeFullPinyin("ni'", segments, normalized));

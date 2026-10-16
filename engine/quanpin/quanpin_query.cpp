@@ -1286,30 +1286,18 @@ std::vector<KeyedQueryItem> query_exact_segmentations_keyed_flat(
     return result;
 }
 
-// ü 的两种写法归一到词库存的那一种。intact_pinyin_list() 两种都认，可词库只存
-// 一种：j/q/x/y 后面写 u（ju、jue），l/n 后面写 v（lv、lve）。切出来的 jv、lue
-// 这类音节因此一行都查不到，精确键查询查空，整个词格就断在这里——wo'men'lue'de
-// 解不出任何路径，长句联想直接消失。这不是模糊音降级，lue 和 lve 本来就是同一个
-// 读音的两种拼写，归一化之后仍然是精确匹配。
-const std::string &canonical_syllable(const std::string &syllable)
-{
-    static const std::unordered_map<std::string, std::string> kSpellings = {
-        {"jv", "ju"},     {"qv", "qu"},   {"xv", "xu"},     {"yv", "yu"},   {"jve", "jue"},   {"qve", "que"},
-        {"xve", "xue"},   {"yve", "yue"}, {"lue", "lve"},   {"nue", "nve"}, {"jvan", "juan"}, {"jvn", "jun"},
-        {"qvan", "quan"}, {"qvn", "qun"}, {"xvan", "xuan"}, {"xvn", "xun"}, {"yvan", "yuan"}, {"yvn", "yun"},
-    };
-    const auto found = kSpellings.find(syllable);
-    return found == kSpellings.end() ? syllable : found->second;
-}
-
 WordLatticeLookup make_lattice_db_lookup(sqlite3 *db, std::unordered_map<std::string, sqlite3_stmt *> &statement_cache,
                                          int span_limit, metasequoia::FuzzyPinyinOptions fuzzy)
 {
     return [db, &statement_cache, span_limit, fuzzy](const Segments &span) {
+        // ü 的两种写法归一到词库存的那一种。intact_pinyin_list() 两种都认，可词库只存
+        // 一种：切出来的 jv、lue 这类音节一行都查不到，精确键查询查空，整个词格就断在
+        // 这里——wo'men'lue'de 解不出任何路径，长句联想直接消失。这不是模糊音降级，lue
+        // 和 lve 本来就是同一个读音的两种拼写，归一化之后仍然是精确匹配。
         Segments normalized;
         normalized.reserve(span.size());
         for (const auto &syllable : span)
-            normalized.push_back(canonical_syllable(syllable));
+            normalized.push_back(canonical_umlaut_spelling(syllable));
 
         // 词格只收「键与跨度完全相等」的行。query_segments_keyed_flat 是带降级的
         // 查询：精确键查不到就退到前缀区间扫描（key >= "gun'qi" AND key < …），
@@ -1320,7 +1308,7 @@ WordLatticeLookup make_lattice_db_lookup(sqlite3 *db, std::unordered_map<std::st
         for (auto &variant : fuzzy_segmentations(normalized, fuzzy, kFuzzyLatticeVariantLimit))
         {
             for (auto &syllable : variant)
-                syllable = canonical_syllable(syllable);
+                syllable = canonical_umlaut_spelling(std::move(syllable));
             keys.push_back(std::move(variant));
         }
         // 模糊变体与敲出的读音同批查（同表一条 SQL）。LIMIT 按表计，放宽到每个键一份，

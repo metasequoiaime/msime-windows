@@ -41,10 +41,14 @@ const std::unordered_set<std::string> &shuangpin_pinyin_set()
         // Preserve the historical exclusions that affect ambiguous shuangpin
         // segmentation, but accept "yo" as the complete syllable for "哟".
         result.insert("eng");
-        for (const char *pinyin :
-             {"chua", "den", "fiao", "jve", "lo", "lue", "nou", "nue", "nun", "qve", "xve", "yve", "zhei"})
+        for (const char *pinyin : {"chua", "den", "fiao", "lo", "lue", "nou", "nue", "nun", "zhei"})
         {
             result.erase(pinyin);
+        }
+        // j/q/x/y 的 v 别名（jve、xvan……）解码器从不产出：cvt_single_sp_to_pinyin 把它们的 v 读成 u。
+        for (auto it = result.begin(); it != result.end();)
+        {
+            it = quanpin::is_jqxy_v_alias(*it) ? result.erase(it) : std::next(it);
         }
         return result;
     }();

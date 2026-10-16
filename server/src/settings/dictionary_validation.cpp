@@ -130,15 +130,21 @@ bool NormalizeFullPinyin(const std::string &input, quanpin::Segments &segments, 
         return false;
     }
 
-    normalized = quanpin::join_segments(segments);
-    std::string without_delimiters = normalized;
+    std::string without_delimiters = quanpin::join_segments(segments);
     without_delimiters.erase(std::remove(without_delimiters.begin(), without_delimiters.end(), '\''),
                              without_delimiters.end());
     std::string source_without_delimiters = source;
     source_without_delimiters.erase(
         std::remove(source_without_delimiters.begin(), source_without_delimiters.end(), '\''),
         source_without_delimiters.end());
-    return without_delimiters == source_without_delimiters;
+    if (without_delimiters != source_without_delimiters)
+        return false;
+
+    // 查询会先把 xvan、lue 归一成 xuan、lve 再查库，导入的键也得落在同一种写法上，否则永远查不到。
+    for (auto &segment : segments)
+        segment = quanpin::canonical_umlaut_spelling(std::move(segment));
+    normalized = quanpin::join_segments(segments);
+    return true;
 }
 
 bool ShouldSkipImportLine(const std::string &line, bool &in_yaml_header)

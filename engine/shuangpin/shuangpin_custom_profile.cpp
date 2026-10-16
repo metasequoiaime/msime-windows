@@ -79,9 +79,6 @@ void check_round_trip(const ShuangpinProfile &profile, std::vector<std::string> 
     size_t conflicts = 0;
     for (const auto &syllable : sorted)
     {
-        // j/q/x/y spell ü as "u"; their "v" spellings are not produced by the decoder.
-        if (std::string_view("jqxy").find(syllable[0]) != std::string::npos && syllable.find('v') != std::string::npos)
-            continue;
         std::string code;
         const auto [initial, final] = split_syllable(syllable);
         if (initial.empty())

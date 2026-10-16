@@ -76,6 +76,17 @@ void run()
     require(edit_personal_dictionary(paths, std::nullopt, pinyin).success, "Pinyin add failed");
     require(has(paths, "nihao", "拟好") && has(paths, "nihc", "拟好", SchemeType::Shuangpin),
             "Personal pinyin is missing from input schemes");
+    {
+        // 新写入的拼音词按词库写法归一：nue 存成 nve，查询把 nue 归一后才查得到这一行。
+        PersonalDictionaryEntry umlaut{PersonalDictionaryKind::Pinyin, "nue'nv", "虐女", 10};
+        require(edit_personal_dictionary(paths, std::nullopt, umlaut).success, "Umlaut alias add failed");
+        const auto stored = personal_dictionary_entries(paths).entries;
+        const auto found = std::find_if(stored.begin(), stored.end(),
+                                        [](const PersonalDictionaryEntry &entry) { return entry.value == "虐女"; });
+        require(found != stored.end() && found->key == "nve'nv" && has(paths, "nuenv", "虐女"),
+                "Umlaut alias was not stored under the dictionary spelling");
+        require(edit_personal_dictionary(paths, *found, std::nullopt).success, "Umlaut alias delete failed");
+    }
     PersonalDictionaryEntry wubi{PersonalDictionaryKind::Wubi, "wq", "拟好", 12345};
     PersonalDictionaryEntry english{PersonalDictionaryKind::English, "metasequoia", "Metasequoia", 12345};
     PersonalDictionaryEntry quick{PersonalDictionaryKind::QuickPhrase, "test1", "fixture\nsecond line", 12345};

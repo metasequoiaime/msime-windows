@@ -520,9 +520,28 @@ bool is_complete_pinyin_input(const std::string &pinyin)
     return true;
 }
 
+bool is_jqxy_v_alias(const std::string &syllable)
+{
+    return syllable.size() >= 2 && syllable[1] == 'v' &&
+           (syllable[0] == 'j' || syllable[0] == 'q' || syllable[0] == 'x' || syllable[0] == 'y');
+}
+
+std::string canonical_umlaut_spelling(std::string syllable)
+{
+    if (is_jqxy_v_alias(syllable))
+    {
+        syllable[1] = 'u';
+    }
+    else if (syllable == "nue" || syllable == "lue")
+    {
+        syllable[1] = 'v';
+    }
+    return syllable;
+}
+
 std::string to_google_spelling(const std::string &segmentation)
 {
-    // quanpin_query.cpp 的 canonical_syllable 把 ü 的两种写法归到词库存的那一种
+    // canonical_umlaut_spelling 把 ü 的两种写法归到词库存的那一种
     // （l/n 后面写 v：lve、nve）。Google 的两个解码器要的正好是另一种：本地
     // googlepinyinime-rev 的音节表来自 rawdict_utf16_65105_freq.txt，里面只有
     // nue/lue 和 nv/lv，没有 nve/lve，splparser 也不做 v→ü 转写；inputtools 云输入
@@ -531,11 +550,7 @@ std::string to_google_spelling(const std::string &segmentation)
     //
     // 按音节整体替换，认不出的原样透传：手打分隔符切出来的块可能不止一个音节，
     // 那种块交给解码器自己再切。
-    static const std::unordered_map<std::string, std::string> kSpellings = {
-        {"jv", "ju"},     {"qv", "qu"},   {"xv", "xu"},     {"yv", "yu"},   {"jve", "jue"},   {"qve", "que"},
-        {"xve", "xue"},   {"yve", "yue"}, {"lve", "lue"},   {"nve", "nue"}, {"jvan", "juan"}, {"jvn", "jun"},
-        {"qvan", "quan"}, {"qvn", "qun"}, {"xvan", "xuan"}, {"xvn", "xun"}, {"yvan", "yuan"}, {"yvn", "yun"},
-    };
+    const auto &valid_pinyin = intact_pinyin_set();
 
     std::string result;
     result.reserve(segmentation.size());
@@ -544,9 +559,16 @@ std::string to_google_spelling(const std::string &segmentation)
     {
         const size_t separator = segmentation.find('\'', chunk_start);
         const size_t chunk_end = separator == std::string::npos ? segmentation.size() : separator;
-        const std::string chunk = segmentation.substr(chunk_start, chunk_end - chunk_start);
-        const auto found = kSpellings.find(chunk);
-        result += found == kSpellings.end() ? chunk : found->second;
+        std::string chunk = segmentation.substr(chunk_start, chunk_end - chunk_start);
+        if (valid_pinyin.count(chunk))
+        {
+            chunk = canonical_umlaut_spelling(std::move(chunk));
+            if (chunk == "nve" || chunk == "lve")
+            {
+                chunk[1] = 'u';
+            }
+        }
+        result += chunk;
         if (separator == std::string::npos)
         {
             break;
@@ -758,6 +780,10 @@ std::vector<GeneratedPair> build_generated_pairs()
         if (syllable.size() < 3)
         {
             continue; // same-length substitutions would violate the 3-letter floor
+        }
+        if (is_jqxy_v_alias(syllable))
+        {
+            continue; // 手误纠到 u 的标准写法即可，几乎没人打的 v 别名不再派生纠错键
         }
         // 非相邻键替换：换上的字母既不是原字母也不是它的 QWERTY 邻键。
         for (size_t i = 0; i < syllable.size(); ++i)

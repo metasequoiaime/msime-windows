@@ -40,9 +40,16 @@ std::vector<std::string> cut_one_piece_min_segments(const std::string &pinyin, b
 // ban'an / ba'nan 这类等长歧义边界上分叉。cut_one_piece_min_segments 的结果总在其中。
 std::vector<Segments> enumerate_min_segmentations(const std::string &pinyin, size_t path_limit);
 bool is_complete_pinyin_input(const std::string &pinyin);
+// j/q/x/y 后面的 v 只是 u 的别名（jv、jve、xvan、yvn……）：这几个声母没有保留鱼眼的
+// 合法音节，词库、解码器和双拼都只认 u 写法。
+bool is_jqxy_v_alias(const std::string &syllable);
+// ü 的两种写法归到词库存的那一种：j/q/x/y 系写 u（xvan→xuan），l/n 系的 nue/lue 写 v
+// （→nve/lve），其余原样返回。nu/lu 是真实音节，n/l 系只改整段等于 nue/lue 的。词库查询、
+// 词格和用户词入库共用这一条规则，别再各自维护别名表。
+std::string canonical_umlaut_spelling(std::string syllable);
 // 把切好的全拼串换成 Google 两个解码器（本地 googlepinyinime-rev 与 inputtools
 // 云输入）认的 ü 写法：nve→nue、lve→lue、jv→ju……只在送进这两个解码器前用，
-// 词库与词格查询要的是 canonical_syllable 那一侧的写法。
+// 词库与词格查询要的是 canonical_umlaut_spelling 那一侧的写法。
 std::string to_google_spelling(const std::string &segmentation);
 size_t detect_active_helpcode_length(const std::string &raw_input, const std::string &raw_input_with_cases);
 std::string strip_active_helpcodes(const std::string &raw_input, const std::string &raw_input_with_cases);

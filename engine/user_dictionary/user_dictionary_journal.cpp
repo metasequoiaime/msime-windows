@@ -19,6 +19,7 @@
 #include "../core/data_path.h"
 #include "../english/english_dictionary.h"
 #include "../local_modes/local_database.h"
+#include "../quanpin/quanpin_utils.h"
 
 namespace user_dictionary
 {
@@ -1849,6 +1850,23 @@ PersonalDictionaryEditResult edit_personal_dictionary(const RuntimePaths &paths,
         if (!checked.entry)
             return {false, checked.error};
         new_entry = std::move(checked.entry);
+        // 只归一新写入的词：查询会把 xvan、lue 先改成 xuan、lve 再查库，照原样存的行永远查不到。
+        // 被替换的旧词保留原键，旧版本存下的 lue、jve 行才删得掉。
+        if (new_entry->kind == PersonalDictionaryKind::Pinyin)
+        {
+            std::string key;
+            std::size_t start = 0;
+            while (true)
+            {
+                const auto end = new_entry->key.find('\'', start);
+                key += quanpin::canonical_umlaut_spelling(new_entry->key.substr(start, end - start));
+                if (end == std::string::npos)
+                    break;
+                key += '\'';
+                start = end + 1;
+            }
+            new_entry->key = std::move(key);
+        }
     }
     try
     {

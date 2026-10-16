@@ -68,22 +68,12 @@ std::string remove_delimiters(const std::string &segmented)
 // （查库键、pinyin_segmentation_、调频/造词键因此全部落在标准拼法上）。标准拼音约定：
 // ü 保留鱼眼的音节（n/l 系）键写 v（nv/nve/lv/lve），省略鱼眼的（j/q/x/y 系）键写 u
 // （ju/jue/qu/.../yue）。nu/lu 是真实音节（怒/路），所以 n/l 系只按段精确匹配 nue/lue，
-// 绝不改写 nv/lv/nu/lu。
+// 绝不改写 nv/lv/nu/lu。规则本身在 quanpin::canonical_umlaut_spelling。
 quanpin::Segments normalize_umlaut_aliases(quanpin::Segments segments)
 {
     for (auto &segment : segments)
     {
-        if (segment.size() == 3 && segment[1] == 'u' && segment[2] == 'e' && (segment[0] == 'n' || segment[0] == 'l'))
-        {
-            // nue/lue → nve/lve：词库正键用 v，混拼 u 是它的别名。
-            segment[1] = 'v';
-        }
-        else if (segment.size() >= 2 && segment[1] == 'v' &&
-                 (segment[0] == 'j' || segment[0] == 'q' || segment[0] == 'x' || segment[0] == 'y'))
-        {
-            // j/q/x/y 系没有保留鱼眼的合法音节，v 一律是 u 的别名。
-            segment[1] = 'u';
-        }
+        segment = quanpin::canonical_umlaut_spelling(std::move(segment));
     }
     return segments;
 }
