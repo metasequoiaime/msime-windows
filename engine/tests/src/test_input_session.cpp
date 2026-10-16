@@ -1821,6 +1821,9 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
     // - huazh/guazh/bazh：「完整音节 + zh 尾」由规则 3 回到明文。改动前这三条在 0xd/0xe/0xf
     //   上都是 hua'h/gua'h/ba'h（head "huaz" 这类被多字位读成 hua），与邻键位无关——所以
     //   0xd 这一档也能判别规则 3，是自洽明文类里唯一在无邻键掩码下有信号的样本。
+    // - xibd/tamd/zhemd：「完整音节 + 两个简拼声母」，head（xib = xi + b）本身过简拼形状门，
+    //   组合让位。不挡的话 0xe/0xf 下最短尾 d 留下 head xib，静态邻键 b->n 把它读成 xin，
+    //   组合出 xin'd 顶掉明文（旧的邻键掩码挡的就是这一类）。
     // - 到不了组合路径的整串输入（sahng/shng/keneng/nbn）四掩码与改动前逐位一致。
     {
         const unsigned transposition_product =
@@ -1847,6 +1850,13 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
             {"huazh", transposition_product, "hua'zh"},
             {"guazh", transposition_product, "gua'zh"},
             {"bazh", transposition_product, "ba'zh"},
+            {"xibd", transposition_product, "xi'b'd"},
+            {"xibd", neighbor_product, "xi'b'd"},
+            {"xibd", both | neighbor_product, "xi'b'd"},
+            {"tamd", neighbor_product, "ta'm'd"},
+            {"tamd", both | neighbor_product, "ta'm'd"},
+            {"zhemd", neighbor_product, "zhe'm'd"},
+            {"zhemd", both | neighbor_product, "zhe'm'd"},
             {"sahng", 0u, "sa'h'n'g"},
             {"sahng", transposition_product, "shang"},
             {"sahng", neighbor_product, "shang"},

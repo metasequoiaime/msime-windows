@@ -1226,7 +1226,11 @@ void test_quanpin_autocorrect_switches_and_guard()
         expect(dictionary.get_pinyin_segmentation() == "ba'zh",
                "The self-consistent plain reading must hold without the neighbour bit too (bazh -> ba'zh).");
         // shng -> sun'g（邻键 head 不组合）的断言已删：整串删除表把 shng 读成
-        // shang/sheng，组合路径根本进不去，该样例在生产不可达。
+        // shang/sheng，组合路径根本进不去，该样例在生产不可达。它守的那一类噪声换成
+        // 可达样本：完整音节 + 两个简拼声母，head 的末位声母不能被邻键凑成韵尾。
+        (void)dictionary.query("xibd", "", all_four);
+        expect(dictionary.get_pinyin_segmentation() == "xi'b'd",
+               "A neighbour head must not turn a jianpin initial into a final (xibd must not become xin'd).");
 
         const auto corrected = dictionary.query("sahng", "sa'h'n'g", both);
         expect(!corrected.empty() && corrected.front().word == "上",

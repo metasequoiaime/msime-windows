@@ -202,11 +202,13 @@ Segments autocorrect_cut(const std::string &pinyin, unsigned autocorrect_types);
 // static tables can explain ("huanzh" -> huan + zh, not huang + h via the
 // generated z->g substitution). On top of that, the fallback skips the whole
 // composition when the input already has a self-consistent plain reading -- a
-// legal jianpin tail (prefix, not intact) whose head is a complete pinyin input
-// ("xish" = xi + sh, "huanzh" = huan + zh) -- mirroring the "no correction when
-// every segment is legal" gate on the whole-string path. That guard, not the
-// ranking, is what keeps the static neighbour table from splitting an intended
-// "sh"/"zh" tail and rewriting correctly spelled input.
+// legal jianpin tail (prefix, not intact) whose head passes
+// looks_like_jianpin_spelling ("xish" = xi + sh, "xibd" = xi + b + d) --
+// applying to the head the same jianpin-shape gate the whole-string path applies
+// to the input. That guard, not the ranking, is what keeps the static neighbour
+// table from splitting an intended "sh"/"zh" tail or turning a trailing jianpin
+// initial into a final ("xibd" must not read xin + d), i.e. from rewriting
+// correctly spelled input.
 // Every returned cut contains at least one corrected edge, so a fully legal input
 // with no correction reading yields an empty vector (the caller owns the plain
 // segmentation). This is the query-time disambiguation surface of CN 101133411

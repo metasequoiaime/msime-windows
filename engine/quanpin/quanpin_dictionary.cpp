@@ -249,44 +249,44 @@ SeriesQueryResolution resolve_series_query(const std::string &raw_input, const q
             // only as an unmarked alternative. The cost tier cannot arbitrate that
             // class; the fix is the pre-scan below, not a cost knob.
             //
-            // 自洽明文读法优先：只要存在一条「合法简拼尾 + 完整合法拼音 head」的切分
-            // （tail_len 1..2），输入本身就有一个不靠猜测的明文读法，整个组合纠错让位。
-            // 这与 eligible 的「全合法切分不纠错」同哲学。它一次盖住前面两类改写：
-            // 静态邻键（xish/lvsh 一类「完整音节 + sh/zh」，最短尾把 sh/zh 拆成 s/h 后
-            // head 末位被邻键凑成合法音节）与生成式远键（huanzh/huansh 的 head huan 已是
-            // 完整音节）。别名拼写（jv/lue/nue 等）两种形态都在 intact 表里，所以这个
-            // 完整性判定不需要先做 ü 归一。
-            const unsigned head_types = autocorrect_types;
+            // 自洽明文读法优先：head 自己也要过整串那道简拼形状门。只要有一条「合法简拼尾
+            // + 形如简拼的 head」的切分（tail_len 1..2；head 是完整音节，或完整音节再带一个
+            // 声母、或一个声母再接完整音节），输入本身就有一个不靠猜测的明文读法，整个组合
+            // 纠错让位。这与 eligible 用 looks_like_jianpin_spelling 挡整串是同一判据：整串
+            // 不纠的 "shag"（sha + g），后面多接一个简拼尾也不该纠。它一次盖住几类改写：
+            // 最短尾把 sh/zh 拆成 s/h 后 head 末位被邻键凑成合法音节（xish -> xia'h、
+            // lvsh -> lve'h）；完整音节接两个简拼声母，head 末位声母被邻键凑成韵尾
+            // （xibd = xi + b + d，不能经 b->n 读成 xin'd；tamd、zhemd 同理）；生成式远键
+            // （huanzh 的 head huanz 是 huan + z）。别名拼写（jv/lue/nue 等）两种形态都在
+            // intact 表里，所以判定不需要先做 ü 归一。
+            //
+            // 代价：head 碰巧能切成合法音节的结构性手误（xinazh 的 xina = xi'na）在这里
+            // 不再纠正。这与整串路径一致——单打 xina 走的是合法输入分支，也不会被改成
+            // xian 领衔。
             const auto &prefixes = quanpin::prefix_pinyin_set();
             const auto &intact = quanpin::intact_pinyin_set();
-            const auto is_jianpin_tail = [&](const std::string &tail) {
+            std::vector<std::size_t> composable_tails;
+            for (std::size_t tail_len = 1; tail_len <= 2 && tail_len < raw_input.size(); ++tail_len)
+            {
                 // A jianpin tail is an incomplete syllable: a valid pinyin prefix
                 // that is not itself a complete syllable (e.g. "zh", "z", "h").
-                return prefixes.count(tail) != 0 && intact.count(tail) == 0;
-            };
-            bool has_self_consistent_reading = false;
-            for (std::size_t tail_len = 1; !has_self_consistent_reading && tail_len <= 2 && tail_len < raw_input.size();
-                 ++tail_len)
-            {
                 const std::string tail = raw_input.substr(raw_input.size() - tail_len);
-                if (!is_jianpin_tail(tail))
+                if (prefixes.count(tail) == 0 || intact.count(tail) != 0)
                 {
                     continue;
                 }
-                has_self_consistent_reading =
-                    quanpin::is_complete_pinyin_input(raw_input.substr(0, raw_input.size() - tail_len));
+                if (quanpin::looks_like_jianpin_spelling(raw_input.substr(0, raw_input.size() - tail_len)))
+                {
+                    composable_tails.clear();
+                    break;
+                }
+                composable_tails.push_back(tail_len);
             }
-            for (std::size_t tail_len = 1;
-                 !has_self_consistent_reading && head_types != 0 && tail_len <= 2 && tail_len < raw_input.size();
-                 ++tail_len)
+            for (const std::size_t tail_len : composable_tails)
             {
                 const std::string tail = raw_input.substr(raw_input.size() - tail_len);
-                if (!is_jianpin_tail(tail))
-                {
-                    continue;
-                }
                 const std::string head = raw_input.substr(0, raw_input.size() - tail_len);
-                const auto head_cuts = quanpin::autocorrect_cut_kbest(head, head_types, kAutocorrectCutKBest);
+                const auto head_cuts = quanpin::autocorrect_cut_kbest(head, autocorrect_types, kAutocorrectCutKBest);
                 // 静态优先由 k-best 自身保证：front 带 has_generated 等价于「没有任何
                 // 静态读法能解释 head」，此时不组合（生成式远键在 head 上净负，见上）。
                 if (head_cuts.empty() || head_cuts.front().has_generated)
