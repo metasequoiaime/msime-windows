@@ -69,7 +69,7 @@ jobs:
 
       - name: Upload the test signing public certificate
         if: ${{ inputs.test_signing }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signpath-test-certificate
           path: ${{ runner.temp }}/signpath-test.cer
@@ -293,7 +293,7 @@ jobs:
         run: ctest --test-dir ${{ matrix.build_dir }} -C Release --output-on-failure
 
       - name: Upload the TSF binary and symbols
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tsf-${{ matrix.name }}
           # Upload the output directory so download-artifact restores its contents directly into
@@ -446,7 +446,7 @@ jobs:
         run: ./scripts/ci/check-server-binaries.ps1 -BuildDir server/build-release/bin/Release
 
       - name: Upload the Server build
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: server
           path: server/build-release/bin/Release
@@ -516,7 +516,7 @@ jobs:
 
       - name: Download the test signing public certificate
         if: ${{ inputs.test_signing }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signpath-test-certificate
           path: ${{ runner.temp }}/signpath-test-certificate
@@ -539,19 +539,19 @@ jobs:
         run: ./scripts/ci/check-inno-language.ps1
 
       - name: Download the x64 TSF binary and symbols
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: tsf-x64
           path: windows/build64-release/Release
 
       - name: Download the 32-bit TSF binary and symbols
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: tsf-Win32
           path: windows/build32-release/Release
 
       - name: Download the Server build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: server
           path: server/build-release/bin/Release
@@ -640,7 +640,7 @@ jobs:
       - name: Upload the unsigned payload for SignPath
         if: ${{ steps.signing.outputs.signing_provider == 'signpath' }}
         id: signpath-payload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signpath-payload-unsigned
           path: ${{ runner.temp }}/signpath-payload-unsigned
@@ -701,7 +701,7 @@ jobs:
       - name: Upload the unsigned installer for SignPath
         if: ${{ steps.signing.outputs.signing_provider == 'signpath' }}
         id: signpath-installer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signpath-installer-unsigned
           path: ${{ runner.temp }}/signpath-installer-unsigned
@@ -757,7 +757,7 @@ jobs:
         run: ../scripts/ci/name-installer-asset.ps1
 
       - name: Upload the installer as a workflow artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.test_signing && 'installer-test-signed' || 'installer' }}
           path: |
