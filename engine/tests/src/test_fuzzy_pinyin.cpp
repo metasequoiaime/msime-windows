@@ -216,10 +216,6 @@ int main()
         type(session, "zhong");
         require(session.select(index(session, "宗")).commit == "宗" && session.snapshot().preedit.empty(),
                 "reverse selection left input behind");
-        session.set_nine_key_enabled(true);
-        type(session, "9664");
-        require(session.select(index(session, "中")).commit == "中" && session.snapshot().preedit.empty(),
-                "nine-key fuzzy consumed wrong digit count");
         options.scheme = SchemeType::Shuangpin;
         Session doublePinyin(options);
         type(doublePinyin, "zsgo");

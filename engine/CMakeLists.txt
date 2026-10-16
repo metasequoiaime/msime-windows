@@ -30,7 +30,6 @@ set(METASEQUOIA_IME_ENGINE_SOURCES
     common/helpcode_utils.cpp
     common/string_utils.cpp
     core/session.cpp
-    core/nine_key_session.cpp
     core/candidate_queries.cpp
     core/punctuation_policy.cpp
     core/runtime_paths.cpp
@@ -194,10 +193,6 @@ if(BUILD_TESTING)
     endif()
     target_link_libraries(test_japanese_romaji PRIVATE MetasequoiaIme::Engine)
     add_test(NAME japanese_romaji COMMAND test_japanese_romaji)
-
-    add_executable(test_nine_key_session tests/src/test_nine_key_session.cpp)
-    target_link_libraries(test_nine_key_session PRIVATE MetasequoiaImeEngine)
-    add_test(NAME nine_key_session COMMAND test_nine_key_session)
 
     add_executable(test_platform_api tests/src/test_platform_api.cpp tests/src/test_public_session.cpp)
     target_link_libraries(test_platform_api PRIVATE MetasequoiaIme::Engine)

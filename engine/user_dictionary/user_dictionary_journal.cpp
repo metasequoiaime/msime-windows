@@ -1477,8 +1477,7 @@ bool adjust_candidate_ranking(const std::string &main_db_path, const std::string
     }
 
     // One list mixes several entry keys: single-letter and jianpin contexts show
-    // 一/yi next to 有/you, nine-key digits mix whole single-char tables, and a
-    // re-segmentation shows 吉安 (ji'an) inside the jian list. All of them have to
+    // 一/yi next to 有/you, and a re-segmentation shows 吉安 (ji'an) inside the jian list. All of them have to
     // share one scale, because the user's 调频 is "move this above what I can see".
     //
     // The midpoint math below assumes this vector is sorted by weight, descending:

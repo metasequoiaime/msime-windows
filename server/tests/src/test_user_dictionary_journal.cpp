@@ -457,7 +457,7 @@ TEST_CASE(UserDictionaryPromoteDoesNotCrushPrefixSinglesFromSeriesQuery)
 // 回归：调频的权重基准必须取自按权重排好序的比较集，不能按显示顺序取。备选切分词
 // （xi'e 的西鄂 w=6）会坐在 xie 显示列表最前面，拿它当基准会把写（原 605147）写成
 // 6+500=506，权重反而低于些/血/谢——这就是用户机器上「置顶写之后写还是不在前排」的根因。
-// 同音节的多个表（九宫格数字上下混多个单字表）仍互相比权，不受影响。
+// 同音节的多个表仍互相比权，不受影响。
 TEST_CASE(UserDictionaryPromoteBasesWeightOnTheHeaviestCandidateNotTheTopmost)
 {
     const auto directory =

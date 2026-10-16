@@ -27,14 +27,13 @@ void execute(const std::filesystem::path &path, const std::string &sql)
     require(result == SQLITE_OK, "Cannot execute fixture SQL");
 }
 bool has(const RuntimePaths &paths, const std::string &key, const std::string &word,
-         SchemeType scheme = SchemeType::Quanpin, bool nine = false, bool english = false)
+         SchemeType scheme = SchemeType::Quanpin, bool english = false)
 {
     SessionOptions options;
     options.paths = paths;
     options.scheme = scheme;
     options.learning = false;
     Session session(options);
-    session.set_nine_key_enabled(nine);
     session.set_dedicated_english(english);
     for (char ch : key)
         session.character(ch);
@@ -75,8 +74,7 @@ void run()
                          PersonalDictionaryEntry{static_cast<PersonalDictionaryKind>(99), "a", "a"}})
         require(!edit_personal_dictionary(paths, std::nullopt, invalid).success, "Invalid entry accepted");
     require(edit_personal_dictionary(paths, std::nullopt, pinyin).success, "Pinyin add failed");
-    require(has(paths, "nihao", "拟好") && has(paths, "nihc", "拟好", SchemeType::Shuangpin) &&
-                has(paths, "64426", "拟好", SchemeType::Quanpin, true),
+    require(has(paths, "nihao", "拟好") && has(paths, "nihc", "拟好", SchemeType::Shuangpin),
             "Personal pinyin is missing from input schemes");
     PersonalDictionaryEntry wubi{PersonalDictionaryKind::Wubi, "wq", "拟好", 12345};
     PersonalDictionaryEntry english{PersonalDictionaryKind::English, "metasequoia", "Metasequoia", 12345};
@@ -84,7 +82,7 @@ void run()
     for (auto entry : {wubi, english, quick})
         require(edit_personal_dictionary(paths, std::nullopt, entry).success, "Non-pinyin add failed");
     require(has(paths, "wq", "拟好", SchemeType::Wubi), "Wubi entry is missing");
-    require(has(paths, "metasequoia", "Metasequoia", SchemeType::Quanpin, false, true), "English entry is missing");
+    require(has(paths, "metasequoia", "Metasequoia", SchemeType::Quanpin, true), "English entry is missing");
     {
         SessionOptions options;
         options.paths = paths;
@@ -115,10 +113,10 @@ void run()
     // Moving between dictionaries must commit the old tombstone and new candidate together.
     PersonalDictionaryEntry moved{PersonalDictionaryKind::English, "fixtureword", "FixtureWord", quick.weight};
     require(edit_personal_dictionary(paths, quick, moved).success &&
-                has(paths, "fixtureword", "FixtureWord", SchemeType::Quanpin, false, true),
+                has(paths, "fixtureword", "FixtureWord", SchemeType::Quanpin, true),
             "Cross-kind replacement failed");
     require(edit_personal_dictionary(paths, moved, quick).success &&
-                !has(paths, "fixtureword", "FixtureWord", SchemeType::Quanpin, false, true),
+                !has(paths, "fixtureword", "FixtureWord", SchemeType::Quanpin, true),
             "Cross-kind replacement left the previous candidate");
     auto page = personal_dictionary_entries(paths, 0, 2);
     require(page.error.empty() && page.entries.size() == 2 && page.has_more, "First page failed");
@@ -169,7 +167,7 @@ void run()
     auto upgraded = prepare_runtime_paths(resources, paths.user_data, paths.cache, "second");
     require(!has(upgraded, "nihao", "你好") && !has(upgraded, "nihao", "拟好") &&
                 has(upgraded, "wq", "拟好", SchemeType::Wubi) &&
-                has(upgraded, "metasequoia", "Metasequoia", SchemeType::Quanpin, false, true),
+                has(upgraded, "metasequoia", "Metasequoia", SchemeType::Quanpin, true),
             "Personal edits did not survive dictionary upgrade");
     require(edit_personal_dictionary(upgraded, pinyin, changed, "edit-1").success && !has(upgraded, "nihao", "你好"),
             "Retry after upgrade resurrected a subsequently removed entry");
