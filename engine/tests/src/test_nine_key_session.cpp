@@ -51,6 +51,11 @@ int run_test()
                          "INSERT INTO tbl_1_m VALUES('mi','m','米',50);"
                          "CREATE TABLE tbl_1_h(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                          "INSERT INTO tbl_1_h VALUES('hao','h','好',100);"
+                         "CREATE TABLE tbl_1_x(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_x VALUES('xuan','x','选',100);"
+                         "INSERT INTO tbl_1_x VALUES('xun','x','巡',100);"
+                         "CREATE TABLE tbl_4_w(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_4_w VALUES('wu''an''quan''yuan','waqy','无安全员',100);"
                          "CREATE TABLE tbl_2_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                          "INSERT INTO tbl_2_n VALUES('ni''hao','nh','你好',1000);",
                          nullptr, nullptr, nullptr) == SQLITE_OK,
@@ -63,6 +68,30 @@ int run_test()
     require(!session.character('6').handled, "ordinary pinyin swallowed digit");
     session.set_nine_key_enabled(true);
     require(!session.character('0').handled && !session.character('1').handled, "invalid digits accepted");
+    const struct
+    {
+        const char *digits;
+        const char *spelling;
+        const char *word;
+    } umlauts[] = {{"9826", "xuan", "选"}, {"986", "xun", "巡"}};
+    for (const auto &test : umlauts)
+    {
+        type(session, test.digits);
+        candidate(session, test.word);
+        const auto view = session.snapshot();
+        for (const auto &spelling : view.nine_key_spellings)
+            require(spelling.size() < 2 || spelling[0] != 'x' || spelling[1] != 'v',
+                    "nine-key spelling choices must not duplicate canonical u with v aliases");
+        const auto found = std::find(view.nine_key_spellings.begin(), view.nine_key_spellings.end(), test.spelling);
+        require(found != view.nine_key_spellings.end(), "missing canonical umlaut spelling");
+        require(session.choose_nine_key_spelling(found - view.nine_key_spellings.begin()).handled,
+                "choose canonical umlaut spelling");
+        require(session.select(candidate(session, test.word)).commit == test.word && session.snapshot().preedit.empty(),
+                "locking an umlaut spelling must preserve its candidates");
+    }
+    type(session, "982678269826");
+    require(session.select(candidate(session, "无安全员")).commit == "无安全员",
+            "duplicate umlaut aliases must not crowd out distinct nine-key paths");
     type(session, "64");
     candidate(session, "你");
     candidate(session, "米");

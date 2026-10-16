@@ -1294,8 +1294,9 @@ std::vector<KeyedQueryItem> query_exact_segmentations_keyed_flat(
 const std::string &canonical_syllable(const std::string &syllable)
 {
     static const std::unordered_map<std::string, std::string> kSpellings = {
-        {"jv", "ju"},   {"qv", "qu"},   {"xv", "xu"},   {"yv", "yu"},   {"jve", "jue"},
-        {"qve", "que"}, {"xve", "xue"}, {"yve", "yue"}, {"lue", "lve"}, {"nue", "nve"},
+        {"jv", "ju"},     {"qv", "qu"},   {"xv", "xu"},     {"yv", "yu"},   {"jve", "jue"},   {"qve", "que"},
+        {"xve", "xue"},   {"yve", "yue"}, {"lue", "lve"},   {"nue", "nve"}, {"jvan", "juan"}, {"jvn", "jun"},
+        {"qvan", "quan"}, {"qvn", "qun"}, {"xvan", "xuan"}, {"xvn", "xun"}, {"yvan", "yuan"}, {"yvn", "yun"},
     };
     const auto found = kSpellings.find(syllable);
     return found == kSpellings.end() ? syllable : found->second;

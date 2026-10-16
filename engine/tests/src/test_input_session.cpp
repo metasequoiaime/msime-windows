@@ -199,7 +199,21 @@ void run_umlaut_alias_session_tests(const std::filesystem::path &data_directory)
                          "INSERT INTO tbl_1_l VALUES('lv', 'l', '绿', 90);"
                          "INSERT INTO tbl_1_l VALUES('lu', 'l', '路', 80);");
         database.execute("CREATE TABLE tbl_1_j(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
-                         "INSERT INTO tbl_1_j VALUES('jue', 'j', '决', 100);");
+                         "INSERT INTO tbl_1_j VALUES('jue', 'j', '决', 100);"
+                         "INSERT INTO tbl_1_j VALUES('juan', 'j', '捐', 100);"
+                         "INSERT INTO tbl_1_j VALUES('jun', 'j', '军', 100);");
+        database.execute("CREATE TABLE tbl_1_q(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_q VALUES('quan', 'q', '全', 100);"
+                         "INSERT INTO tbl_1_q VALUES('qun', 'q', '群', 100);");
+        database.execute("CREATE TABLE tbl_1_x(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_x VALUES('xu', 'x', '需', 100);"
+                         "INSERT INTO tbl_1_x VALUES('xuan', 'x', '选', 100);"
+                         "INSERT INTO tbl_1_x VALUES('xun', 'x', '巡', 100);");
+        database.execute("CREATE TABLE tbl_1_y(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_y VALUES('yuan', 'y', '原', 100);"
+                         "INSERT INTO tbl_1_y VALUES('yun', 'y', '云', 100);");
+        database.execute("CREATE TABLE tbl_2_x(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_2_x VALUES('xu''an', 'xa', '虚案', 100);");
         database.execute("CREATE TABLE tbl_1_e(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                          "INSERT INTO tbl_1_e VALUES('e', 'e', '鹅', 50);");
         database.execute("CREATE TABLE tbl_2_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
@@ -212,6 +226,56 @@ void run_umlaut_alias_session_tests(const std::filesystem::path &data_directory)
     paths.cache = directory;
     paths.dictionaries = directory;
     const unsigned both = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor;
+
+    // jqxy + van/vn are complete syllables, regardless of the autocorrection setting
+    const struct
+    {
+        const char *alias;
+        const char *canonical;
+        const char *word;
+    } aliases[] = {{"xvan", "xuan", "选"}, {"xvn", "xun", "巡"}, {"jvan", "juan", "捐"}, {"jvn", "jun", "军"},
+                   {"qvan", "quan", "全"}, {"qvn", "qun", "群"}, {"yvan", "yuan", "原"}, {"yvn", "yun", "云"}};
+    for (const auto &test : aliases)
+    {
+        for (const auto mask : {0u, both})
+        {
+            metasequoia::InputSession session(SchemeType::Quanpin, mask, true, true, false, paths);
+            type(session, test.alias);
+            require(session.get_pinyin_segmentation_with_cases() == test.alias && session.preedit() == test.alias,
+                    "An umlaut alias must stay a single syllable with the original preedit.");
+            const auto index = candidate_index(session, test.word);
+            const auto &item = session.candidates()[index];
+            require(item.pinyin == test.canonical && item.corrected_from == test.alias &&
+                        item.source == CandidateSource::Database,
+                    "An umlaut alias must resolve to the canonical dictionary entry.");
+            require(session.select_candidate(index).commit == test.word && !session.has_composition(),
+                    "Selecting an umlaut alias must consume the whole syllable.");
+        }
+        require(quanpin::to_google_spelling(test.alias) == test.canonical,
+                "Decoder spelling must canonicalize complete umlaut aliases.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, false, paths);
+        type(session, "xv'an");
+        require(session.preedit() == "xv'an" && find_candidate_index(session, "选") == session.candidates().size(),
+                "An explicit separator must not be merged into an umlaut syllable.");
+        require(session.select_candidate(candidate_index(session, "虚案")).commit == "虚案",
+                "Explicitly separated umlaut syllables must keep their dictionary reading.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, false, paths);
+        SentenceAssociationOptions association;
+        association.word_lattice = true;
+        session.set_sentence_association(association);
+        type(session, "xvanqvn");
+        const auto index = candidate_index(session, "选群");
+        require(session.candidates()[index].source == CandidateSource::Generated,
+                "The word lattice must compose canonical entries from umlaut aliases.");
+        require(session.select_candidate(index).commit == "选群" && !session.has_composition(),
+                "A composed umlaut phrase must consume both syllables.");
+        require(quanpin::to_google_spelling("xvan'qvn") == "xuan'qun",
+                "Decoder spelling must preserve syllable separators.");
+    }
 
     // AC1 + preedit 非回归：nue 命中 nve 行并带标记，preedit 仍画原样字母。
     {

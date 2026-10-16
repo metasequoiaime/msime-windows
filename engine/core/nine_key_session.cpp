@@ -41,6 +41,11 @@ bool starts(const std::string &text, const std::string &prefix)
 {
     return text.compare(0, prefix.size(), prefix) == 0;
 }
+bool is_umlaut_alias(const std::string &syllable)
+{
+    return syllable.size() >= 2 && syllable[1] == 'v' &&
+           (syllable[0] == 'j' || syllable[0] == 'q' || syllable[0] == 'x' || syllable[0] == 'y');
+}
 struct Spelling
 {
     std::string text, digits;
@@ -52,12 +57,16 @@ const std::vector<Spelling> &spellings()
         std::unordered_set<std::string> seen;
         // Include partial final syllables, but never invent non-pinyin letter combinations.
         for (const auto &syllable : quanpin::intact_pinyin_list())
+        {
+            if (is_umlaut_alias(syllable))
+                continue;
             for (std::size_t n = 1; n <= syllable.size(); ++n)
             {
                 auto prefix = syllable.substr(0, n);
                 if (seen.insert(prefix).second)
                     result.push_back({prefix, encode(prefix)});
             }
+        }
         return result;
     }();
     return values;
@@ -118,6 +127,9 @@ void NineKeySession::refresh()
     const auto remaining = digits_.substr(locked_length());
     for (const auto &syllable : quanpin::intact_pinyin_list())
     {
+        // u and v share a key; only canonical jqxy spellings can be locked against dictionary results
+        if (is_umlaut_alias(syllable))
+            continue;
         const auto code = encode(syllable);
         if (!remaining.empty() && locked_length() + std::max(remaining.size(), code.size()) <= kDigitLimit &&
             (starts(remaining, code) || starts(code, remaining)))
