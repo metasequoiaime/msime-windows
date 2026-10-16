@@ -14,7 +14,8 @@ namespace CandidateSkinCatalog
 {
 namespace
 {
-// 共享基底来自 msime 的固定主题；Windows 只复用 Fluent 的结构，配色在加载时补进现有槽位。
+// 共享基底来自 msime 的固定主题（crates/client-core/src/theme.rs，上游调整时需同步）；
+// Windows 只复用 Fluent 的结构，配色在加载时补进现有槽位。system 跟随宿主，没有调色板。
 struct SharedBase
 {
     const char *id;
@@ -28,6 +29,7 @@ struct SharedBase
 const SharedBase *FindSharedBase(const std::string &id)
 {
     static constexpr SharedBase bases[] = {
+        {"system", nullptr, nullptr, nullptr, nullptr, nullptr},
         {"shuishan", "dark", "#2A2B27", "#FFFFFF", "#7FE08E", "#9FB5A3"},
         {"light", "light", "#FFFFFF", "#1A1A1A", "#005FB8", "#6A6F76"},
         {"paper", "light", "#F7F5F0", "#1A1E1B", "#2C7A4B", "#6E6A5E"},
@@ -52,16 +54,32 @@ void FillColor(std::string &color, const std::string &fallback)
     }
 }
 
+// 给十六进制颜色换上指定透明度；清单里的 rgba()、颜色名等无法直接拼接的写法退回基底原色。
+std::string WithAlpha(const std::string &color, const char *fallback, const char *alpha)
+{
+    const bool hex = color.size() > 1 && color.front() == '#' &&
+                     std::all_of(color.begin() + 1, color.end(), [](unsigned char ch) { return std::isxdigit(ch); });
+    if (hex && (color.size() == 7 || color.size() == 9))
+    {
+        return color.substr(0, 7) + alpha;
+    }
+    if (hex && (color.size() == 4 || color.size() == 5))
+    {
+        return std::string{'#', color[1], color[1], color[2], color[2], color[3], color[3]} + alpha;
+    }
+    return std::string(fallback) + alpha;
+}
+
 void AdaptSharedBase(Package &package)
 {
     const SharedBase *base = FindSharedBase(package.base);
-    if (!base && package.base != "system")
+    if (!base)
     {
         return;
     }
     // 所有使用方（含设置预览）仍按本地 CSS / D2D 的 Fluent 结构处理，不能去查不存在的共享 CSS。
     package.base = "fluent";
-    if (!base)
+    if (!base->theme)
     {
         return;
     }
@@ -74,8 +92,9 @@ void AdaptSharedBase(Package &package)
     FillColor(colors.text, base->text);
     FillColor(colors.number, base->number);
     FillColor(colors.accent, base->accent);
-    FillColor(colors.selected, std::string(base->accent) + "24");
-    FillColor(colors.hover, std::string(base->text) + "0F");
+    // 与上游一致，派生槽位跟随清单覆盖后的 accent / text，而不是基底原色。
+    FillColor(colors.selected, WithAlpha(colors.accent, base->accent, "24"));
+    FillColor(colors.hover, WithAlpha(colors.text, base->text, "0F"));
     FillColor(colors.selectedText, colors.accent);
     FillColor(colors.selectedNumber, colors.number);
     FillColor(colors.translation, colors.number);
@@ -434,7 +453,7 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
             !ReadString(root, "author", package.author, 120, false) ||
             !ReadString(root, "description", package.description, 500, false) ||
             !ReadString(root, "base", package.base, 32, true) ||
-            (!IsBuiltIn(package.base) && package.base != "system" && !FindSharedBase(package.base)))
+            (!IsBuiltIn(package.base) && !FindSharedBase(package.base)))
         {
             SetError(error, "manifest 的基本信息无效");
             return std::nullopt;

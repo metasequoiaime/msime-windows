@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # MSIME_SKINS_DIR points the same checks at another skin collection, e.g. the repository's skins/.
 SKINS_DIR = Path(os.environ.get("MSIME_SKINS_DIR", ROOT / "skins")).resolve()
 BUILTIN_SKINS = ("fluent", "wechat", "graphite", "willow_green", "autumn_osmanthus", "microsoft")
+# Mirrors the Server catalog: community bases shared with msime, adapted onto fluent at load time.
+SHARED_BASES = ("system", "shuishan", "light", "paper", "night", "ink")
 
 
 class ManifestTests(unittest.TestCase):
@@ -24,7 +26,7 @@ class ManifestTests(unittest.TestCase):
                 # Mirrors the Server catalog: name, version and base are required, author is not.
                 for key in ("name", "version", "base"):
                     self.assertTrue(data[key].strip(), key)
-                self.assertIn(data["base"], BUILTIN_SKINS)
+                self.assertIn(data["base"], BUILTIN_SKINS + SHARED_BASES)
                 window = data.get("candidate_window", {})
                 assets = {key: data.get(key) for key in ("toolbar_stylesheet", "preview")}
                 for table in ("decoration", "background"):

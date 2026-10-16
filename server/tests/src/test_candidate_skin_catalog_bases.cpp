@@ -163,6 +163,31 @@ icon = "#edcba9"
     REQUIRE_EQ(package->toolbarLight.hover, package->light.hover);
 }
 
+TEST_CASE(candidate_skin_shared_base_derives_selection_and_hover_from_overridden_colors)
+{
+    SkinFixture fixture;
+    fixture.Write("sample", "paper", "[candidate.light]\naccent = '#C0392B'\ntext = '#202020'\n");
+    const auto package = CandidateSkinCatalog::Load(fixture.root, "sample");
+    REQUIRE(package.has_value());
+    REQUIRE_EQ(package->light.selected, std::string("#C0392B24"));
+    REQUIRE_EQ(package->light.hover, std::string("#2020200F"));
+    REQUIRE_EQ(package->light.selectedText, std::string("#C0392B"));
+    REQUIRE_EQ(package->light.menuHover, package->light.hover);
+    REQUIRE_EQ(package->toolbarLight.hover, package->light.hover);
+
+    fixture.Write("sample", "paper", "[candidate.light]\naccent = '#C0392B80'\ntext = '#abc'\n");
+    auto normalized = CandidateSkinCatalog::Load(fixture.root, "sample");
+    REQUIRE(normalized.has_value());
+    REQUIRE_EQ(normalized->light.selected, std::string("#C0392B24"));
+    REQUIRE_EQ(normalized->light.hover, std::string("#aabbcc0F"));
+
+    fixture.Write("sample", "paper", "[candidate.light]\naccent = 'rgba(192, 57, 43, 1)'\ntext = 'black'\n");
+    normalized = CandidateSkinCatalog::Load(fixture.root, "sample");
+    REQUIRE(normalized.has_value());
+    REQUIRE_EQ(normalized->light.selected, std::string("#2C7A4B24"));
+    REQUIRE_EQ(normalized->light.hover, std::string("#1A1E1B0F"));
+}
+
 TEST_CASE(candidate_skin_shared_base_scan_rejects_unknown_base_and_keeps_legacy_defaults)
 {
     SkinFixture fixture;

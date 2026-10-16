@@ -20,7 +20,8 @@ name = "Niya Demo"                 # 必填，设置页里显示的名字，最�
 version = "0.3.0"                  # 必填，皮肤自身的版本号，最长 32 字节
 author = "Metasequoia IME contributors"  # 可选，作者，最长 120 字节
 description = "天元突破·妮娅：卡片上方右对齐的人物装饰、带星点的背景图、12dip 圆角，以及配套的悬浮工具栏配色。"  # 可选，最长 500 字节
-# 必填，继承的内置皮肤：fluent | wechat | graphite | willow_green | autumn_osmanthus | microsoft。
+# 必填，继承的内置皮肤：fluent | wechat | graphite | willow_green | autumn_osmanthus | microsoft，
+# 或与 msime 共享的基底：system | shuishan | light | paper | night | ink（按 fluent 结构绘制）。
 # 下面没写的键、以及皮肤无法描述的排版（字号、间距、内边距）都取自 base。
 base = "fluent"
 
