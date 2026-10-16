@@ -78,9 +78,10 @@ TEST_CASE(kaomoji_query_exact_key_outranks_longer_prefix)
     const auto results = metasequoia::local_modes::query_kaomoji("ku", SchemeType::Quanpin, 10,
                                                                  GetShuangpinProfile(GetConfiguredShuangpinSchema()))
                              .candidates;
+    // ku 精确命中的条目不止一条，先后由目录顺序决定；只断言更长键那条没有排到首位，且泪颜在结果里。
     REQUIRE(!results.empty());
-    REQUIRE_EQ(results[0].word, kCrying);
     REQUIRE(results[0].word != kLongerKey);
+    REQUIRE(Contains(results, kCrying));
 }
 
 TEST_CASE(kaomoji_query_single_char_pinyin_prefix)
