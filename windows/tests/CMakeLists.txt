@@ -95,3 +95,11 @@ add_executable(test_reconnect_recovery reconnect_recovery.cpp)
 target_include_directories(test_reconnect_recovery PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_features(test_reconnect_recovery PRIVATE cxx_std_17)
 add_test(NAME reconnect_recovery COMMAND test_reconnect_recovery)
+
+# Link the same inline key classifier used by normal and queued TSF paths.
+if(WIN32)
+    add_executable(test_temporary_japanese_input temporary_japanese_input.cpp)
+    target_include_directories(test_temporary_japanese_input PRIVATE ../src/Header)
+    target_compile_features(test_temporary_japanese_input PRIVATE cxx_std_17)
+    add_test(NAME temporary_japanese_input COMMAND test_temporary_japanese_input)
+endif()

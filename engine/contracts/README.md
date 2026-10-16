@@ -62,3 +62,21 @@ the `InputModeChanged` broadcast: the reply is that client's language update.
 Clients that did not negotiate the capability retain their existing language toggle.
 
 `backend/protocol.json` 定义 MSIME-Backend 的可选共通 HTTP 服务 API，详见[后端协议与兼容性](backend/README.md)。
+
+### Temporary Japanese long vowels
+
+`TemporaryJapaneseLongVowel` (bit 8) is optional. Only clients that negotiate it
+receive Worker `TemporaryJapanesePolicyChanged` (opcode 36). Its payload is one
+UTF-16 character `0` through `3`: bit 0 allows Shift+R for the underlying Chinese
+scheme (quanpin/shuangpin and `utility.r_mode` enabled); bit 1 indicates dedicated
+English candidates. Full Japanese mode retains its existing behavior.
+
+With bit 0 set and bit 1 clear, a composition beginning with uppercase `R` uses
+the Japanese minus/equal key policy: ASCII `-` extends romaji with a long vowel;
+`_`, `=` and `+` use the existing Japanese punctuation path. The visible R prefix
+is excluded from engine input. Shared classification is in
+`temporary_japanese_input.h`; both normal and deferred TSF classifiers use it.
+Policy is sent on activation before FocusSessionReady, on Worker registration,
+and when configuration or dedicated English mode changes. A TIP keeps policy
+per bound service, clears it on disconnect, and ignores replaced-pipe frames.
+Older clients and older Servers retain temporary R mode's previous key policy.

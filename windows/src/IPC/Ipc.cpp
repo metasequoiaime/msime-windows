@@ -44,6 +44,7 @@ static thread_local std::atomic<UINT> *boundLocalSessionResetToken = nullptr;
 static thread_local std::atomic<bool> *boundWorkerCommitReady = nullptr;
 static thread_local std::atomic<uint64_t> *boundAcknowledgedWorkerFocusToken = nullptr;
 static thread_local std::atomic<HANDLE> *boundWorkerPipeHandle = nullptr;
+static thread_local std::atomic<FanyImeTemporaryJapanese::Policy> *boundTemporaryJapanesePolicy = nullptr;
 static thread_local std::atomic<UINT> *boundWorkerPipeGeneration = nullptr;
 static thread_local HANDLE boundWorkerAckEvent = nullptr;
 static thread_local HANDLE boundWorkerPipePublishedEvent = nullptr;
@@ -474,6 +475,8 @@ bool WaitForWorkerPipeReady(HANDLE hPipeHandle)
 bool WaitForProtocolReady(uint64_t requestId)
 {
     negotiatedServerCapabilities = 0;
+    if (boundTemporaryJapanesePolicy)
+        boundTemporaryJapanesePolicy->store(0, std::memory_order_relaxed);
     const ULONGLONG deadline = GetTickCount64() + 250;
     while (GetTickCount64() < deadline)
     {
@@ -507,7 +510,8 @@ bool WritePipeHello(HANDLE hPipeHandle, UINT pipeRole)
             FanyImeProtocol::Hello(GetPipeClientId(), NextProtocolId(nextRequestId),
                                    FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
                                        FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
-                                       FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts);
+                                       FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
+                                       FanyImeProtocol::TemporaryJapaneseLongVowel);
         BOOL ret = WriteFile(hPipeHandle, &hello, sizeof(hello), &bytesWritten, NULL);
         // Never authorize keys from merely writing a hello. An old Server
         // without negotiation times out into the existing raw-input fallback.
@@ -634,7 +638,8 @@ void BindNamedpipeFocusState(const void *owner, bool *focusResetPending, bool *a
                              std::atomic<uint64_t> *expectedWorkerFocusToken,
                              std::atomic<bool> *localSessionResetPending, std::atomic<UINT> *localSessionResetToken,
                              std::atomic<bool> *workerCommitReady, std::atomic<uint64_t> *acknowledgedWorkerFocusToken,
-                             std::atomic<HANDLE> *workerPipeHandle, std::atomic<UINT> *workerPipeGeneration)
+                             std::atomic<HANDLE> *workerPipeHandle, std::atomic<UINT> *workerPipeGeneration,
+                             std::atomic<FanyImeTemporaryJapanese::Policy> *temporaryJapanesePolicy)
 {
     boundFocusStateOwner = owner;
     boundFocusResetPending = focusResetPending;
@@ -646,6 +651,12 @@ void BindNamedpipeFocusState(const void *owner, bool *focusResetPending, bool *a
     boundAcknowledgedWorkerFocusToken = acknowledgedWorkerFocusToken;
     boundWorkerPipeHandle = workerPipeHandle;
     boundWorkerPipeGeneration = workerPipeGeneration;
+    boundTemporaryJapanesePolicy = temporaryJapanesePolicy;
+}
+
+FanyImeTemporaryJapanese::Policy GetTemporaryJapanesePolicy()
+{
+    return boundTemporaryJapanesePolicy ? boundTemporaryJapanesePolicy->load(std::memory_order_relaxed) : 0;
 }
 
 void BindNamedpipeWakeEvents(const void *owner, HANDLE workerAckEvent, HANDLE workerPipePublishedEvent)
@@ -674,6 +685,7 @@ void UnbindNamedpipeFocusState(const void *owner)
     boundAcknowledgedWorkerFocusToken = nullptr;
     boundWorkerPipeHandle = nullptr;
     boundWorkerPipeGeneration = nullptr;
+    boundTemporaryJapanesePolicy = nullptr;
     boundWorkerAckEvent = nullptr;
     boundWorkerPipePublishedEvent = nullptr;
 }
@@ -946,6 +958,8 @@ int CloseIpc()
 int CloseNamedpipe()
 {
     negotiatedServerCapabilities = 0;
+    if (boundTemporaryJapanesePolicy)
+        boundTemporaryJapanesePolicy->store(0, std::memory_order_relaxed);
     ClosePipeHandleIfValid(hPipe);
     ClosePipeHandleIfValid(hFromServerPipe);
     ClosePipeHandleIfValid(hToTsfWorkerThreadPipe);

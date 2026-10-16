@@ -455,7 +455,9 @@ constexpr std::uint32_t AiContextUploadChanged = 34;
 // empty preedit; see FanyImeUiLessPage. Without it the host keeps drawing the page it read on the last key while
 // digits commit from the new one.
 constexpr std::uint32_t UiLessCandidatesChanged = 35;
-constexpr std::uint32_t MaxKnown = UiLessCandidatesChanged;
+// Temporary R-mode policy: one character 0..3, see temporary_japanese_input.h.
+constexpr std::uint32_t TemporaryJapanesePolicyChanged = 36;
+constexpr std::uint32_t MaxKnown = TemporaryJapanesePolicyChanged;
 // Source compatibility for the Server's historical spellings.
 constexpr std::uint32_t SwitchToEn = SwitchToEnglish;
 constexpr std::uint32_t SwitchToCn = SwitchToChinese;

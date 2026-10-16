@@ -13,6 +13,7 @@
 #include "../../../engine/contracts/windows_ipc.h"
 #include "../../../engine/contracts/direct_helpcode.h"
 #include "../../../engine/contracts/v_mode_input.h"
+#include "../../../engine/contracts/temporary_japanese_input.h"
 #include "../../../engine/contracts/trilingual_input.h"
 
 int InitIpc();
@@ -28,7 +29,9 @@ void BindNamedpipeFocusState(
     _In_opt_ std::atomic<uint64_t> *expectedWorkerFocusToken, _In_opt_ std::atomic<bool> *localSessionResetPending,
     _In_opt_ std::atomic<UINT> *localSessionResetToken, _In_opt_ std::atomic<bool> *workerCommitReady,
     _In_opt_ std::atomic<uint64_t> *acknowledgedWorkerFocusToken, _In_opt_ std::atomic<HANDLE> *workerPipeHandle,
-    _In_opt_ std::atomic<UINT> *workerPipeGeneration);
+    _In_opt_ std::atomic<UINT> *workerPipeGeneration,
+    _In_opt_ std::atomic<FanyImeTemporaryJapanese::Policy> *temporaryJapanesePolicy);
+FanyImeTemporaryJapanese::Policy GetTemporaryJapanesePolicy();
 // Wake-up events owned by the bound service, so the UI thread and the IPC worker
 // thread block instead of polling. workerAckEvent is signalled by the worker when
 // it records the expected focus token; workerPipePublishedEvent is signalled when

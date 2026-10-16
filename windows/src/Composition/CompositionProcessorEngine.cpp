@@ -272,7 +272,9 @@ BOOL CCompositionProcessorEngine::AddVirtualKey(WCHAR wch)
     }
 
     DWORD_PTR srgKeystrokeBufLen = _keystrokeBuffer.GetLength();
-    _caretPosition = min(_caretPosition, srgKeystrokeBufLen);
+    _caretPosition = FanyImeTemporaryJapanese::ClampCaret(
+        Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed), GetTemporaryJapanesePolicy(),
+        _keystrokeBuffer.Get(), static_cast<std::size_t>(srgKeystrokeBufLen), static_cast<std::size_t>(_caretPosition));
     if (wch == L'\'' && ((_caretPosition > 0 && _keystrokeBuffer.Get()[_caretPosition - 1] == L'\'') ||
                          (_caretPosition < srgKeystrokeBufLen && _keystrokeBuffer.Get()[_caretPosition] == L'\'')))
     {
@@ -353,6 +355,11 @@ BOOL CCompositionProcessorEngine::RemoveVirtualKeyBeforeCaret()
     {
         return FALSE;
     }
+    if (!FanyImeTemporaryJapanese::CanBackspace(Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed),
+                                                GetTemporaryJapanesePolicy(), _keystrokeBuffer.Get(),
+                                                static_cast<std::size_t>(_keystrokeBuffer.GetLength()),
+                                                static_cast<std::size_t>(_caretPosition)))
+        return FALSE;
     RemoveVirtualKey(_caretPosition - 1);
     return TRUE;
 }
@@ -370,7 +377,9 @@ BOOL CCompositionProcessorEngine::RemoveVirtualKeyAtCaret()
 BOOL CCompositionProcessorEngine::MoveCaret(int offset)
 {
     const LONGLONG next = static_cast<LONGLONG>(_caretPosition) + offset;
-    if (next < 0 || next > static_cast<LONGLONG>(_keystrokeBuffer.GetLength()))
+    if (!FanyImeTemporaryJapanese::CanMoveCaret(Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed),
+                                                GetTemporaryJapanesePolicy(), _keystrokeBuffer.Get(),
+                                                static_cast<std::size_t>(_keystrokeBuffer.GetLength()), next))
     {
         return FALSE;
     }

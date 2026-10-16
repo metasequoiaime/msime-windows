@@ -66,7 +66,8 @@ TEST_CASE(ipc_pipe_ready_is_a_distinct_server_reply)
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::TrilingualCycleChanged, 33u);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::AiContextUploadChanged, 34u);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::UiLessCandidatesChanged, 35u);
-    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown, 35u);
+    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::TemporaryJapanesePolicyChanged, 36u);
+    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown, 36u);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::FocusSessionReady >
             Global::DataFromServerMsgTypeToTsfWorkerThread::PagingCommaPeriodChanged);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::PipeReady >
@@ -122,13 +123,14 @@ TEST_CASE(ipc_pipe_ready_is_a_distinct_server_reply)
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::UiLessCandidatesChanged >
             Global::DataFromServerMsgTypeToTsfWorkerThread::AiContextUploadChanged);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown,
-               Global::DataFromServerMsgTypeToTsfWorkerThread::UiLessCandidatesChanged);
+               Global::DataFromServerMsgTypeToTsfWorkerThread::TemporaryJapanesePolicyChanged);
 }
 
 TEST_CASE(ipc_client_suspension_is_a_distinct_nonterminal_route_reset)
 {
     REQUIRE_EQ(FanyImePipeEventType::InputStateAction, 17u);
     REQUIRE_EQ(FanyImeProtocol::InputStateShortcuts, 1u << 7);
+    REQUIRE_EQ(FanyImeProtocol::TemporaryJapaneseLongVowel, 1u << 8);
     REQUIRE_EQ(FanyImePipeEventType::ClientActivated, 11u);
     REQUIRE_EQ(FanyImePipeEventType::ClientDeactivated, 12u);
     REQUIRE_EQ(FanyImePipeEventType::StatusSnapshot, 13u);

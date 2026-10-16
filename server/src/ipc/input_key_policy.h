@@ -6,9 +6,32 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "engine/contracts/temporary_japanese_input.h"
 
 namespace FanyImeIpc
 {
+struct JapaneseKeyRoute
+{
+    bool long_vowel;
+    bool suppress_paging;
+};
+
+inline JapaneseKeyRoute ResolveJapaneseKeyRoute(bool japanese, uint32_t key, uint32_t character, uint32_t modifiers,
+                                                bool session_available)
+{
+    const auto action = FanyImeTemporaryJapanese::ClassifyKey(key, character, modifiers, japanese, 0,
+                                                              static_cast<const char *>(nullptr), 0, false);
+    return {session_available && action == FanyImeTemporaryJapanese::KeyAction::LongVowel,
+            japanese && (key == 0xBD || key == 0xBB)};
+}
+
+inline std::size_t ResolveCompositionCaret(std::size_t caret, const std::string &display_raw,
+                                           const std::string &engine_raw, bool temporary_japanese)
+{
+    return !temporary_japanese && display_raw != engine_raw && caret == 0 && !engine_raw.empty() ? engine_raw.size()
+                                                                                                 : caret;
+}
+
 inline constexpr uint32_t kVirtualKeyShift = 0x10;
 inline constexpr uint32_t kVirtualKeyEscape = 0x1B;
 inline constexpr uint32_t kVirtualKeyBackspace = 0x08;
@@ -45,9 +68,9 @@ inline std::string EnteredPinyinText(const std::string &raw, std::string quanpin
 
 // Return -1 / +1 for the first / last Han character, or zero for an ordinary key.
 constexpr int WordToCharacterDirection(uint32_t keycode, uint32_t character, uint32_t modifiers, bool enabled,
-                                       bool minus_equal)
+                                       bool minus_equal, bool japanese_long_vowel = false)
 {
-    if (!enabled || (modifiers & kKeyModifierMask) != 0)
+    if (!enabled || japanese_long_vowel || (modifiers & kKeyModifierMask) != 0)
         return 0;
     if (minus_equal)
         return keycode == 0xBD && character == '-' ? -1 : keycode == 0xBB && character == '=' ? 1 : 0;

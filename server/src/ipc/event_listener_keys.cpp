@@ -14,6 +14,7 @@
 #include "engine/contracts/ipc_negotiation.h"
 #include "engine/contracts/mid_sentence_helpcode.h"
 #include "engine/contracts/trilingual_input.h"
+#include "engine/contracts/temporary_japanese_input.h"
 #include "defines/defines.h"
 #include "defines/globals.h"
 #include "utils/common_utils.h"
@@ -45,23 +46,34 @@ char CompositionLetter(UINT keycode, WCHAR wch)
                                                                         : static_cast<char>(keycode + ('a' - 'A'));
 }
 
-// 日语模式使用已同步给 TSF 的实际语言，和 R 模式（中文里临时切日语）无关。
+// Match TSF classification, including the negotiated temporary R-mode policy.
 bool IsJapaneseInputMode()
 {
-    return GetActiveInputMode() == "japanese";
+    const bool full = GetActiveInputMode() == "japanese";
+    const auto client = GetActivePipeClient();
+    const FanyImeTemporaryJapanese::Policy policy =
+        ClientNegotiatedTemporaryJapanese(client.client_id)
+            ? FanyImeTemporaryJapanese::FromPayload(FanyNamedPipe::TemporaryJapanesePolicyPayload()[0])
+            : FanyImeTemporaryJapanese::Policy{0};
+    const auto &raw = GlobalIme::composition.raw_input_with_cases;
+    return FanyImeTemporaryJapanese::IsMode(full, policy, raw.data(), raw.size());
 }
 
 // 日语模式下 '-' 不翻页，而是长音符（ー）的输入键。空编码时也要起头组合，
 // 候选框第一项是长音符 ー、第二项是普通连字符 '-'（见日语候选提供者）。
 bool IsJapaneseLongVowelKey(UINT keycode, WCHAR wch)
 {
-    return keycode == VK_OEM_MINUS && wch == L'-' && IsJapaneseInputMode() && g_inputSession != nullptr;
+    return FanyImeIpc::ResolveJapaneseKeyRoute(IsJapaneseInputMode(), keycode, wch, Global::ModifiersDown,
+                                               g_inputSession != nullptr)
+        .long_vowel;
 }
 
 // 日语模式下 '-' '=' 一律不当翻页键用。
 bool IsJapaneseDisabledPagingKey(UINT keycode)
 {
-    return (keycode == VK_OEM_MINUS || keycode == VK_OEM_PLUS) && IsJapaneseInputMode();
+    return FanyImeIpc::ResolveJapaneseKeyRoute(IsJapaneseInputMode(), keycode, Global::Wch, Global::ModifiersDown,
+                                               g_inputSession != nullptr)
+        .suppress_paging;
 }
 
 bool IsCommitWithHighlightedCandidatePunctuationInCandidateMode(UINT keycode, WCHAR wch)
@@ -275,10 +287,9 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
     composition_restored = false;
     std::string raw = g_inputSession->get_pinyin_sequence_with_cases();
     auto &composition = GlobalIme::composition;
-    if (composition.raw_input_with_cases != raw && composition.caret_position == 0 && !raw.empty())
-    {
-        composition.caret_position = raw.size();
-    }
+    // The R prefix makes display raw differ from engine raw even at a valid body-start caret.
+    composition.caret_position = FanyImeIpc::ResolveCompositionCaret(
+        composition.caret_position, composition.raw_input_with_cases, raw, g_r_mode_triggered && IsJapaneseInputMode());
     composition.caret_position = (std::min)(composition.caret_position, raw.size());
 
     // R2/R10：光标前缀重算总门控（与 Ctrl+Backspace / Ctrl+方向同一谓词族）。未协商、
@@ -1134,8 +1145,8 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     const bool is_japanese_long_vowel = IsJapaneseLongVowelKey(Global::Keycode, Global::Wch);
     const int word_character_direction = FanyImeIpc::WordToCharacterDirection(
         Global::Keycode, Global::Wch, Global::ModifiersDown,
-        GetConfiguredWordToCharacterEnabled() && !is_japanese_long_vowel && !is_v_mode_input_key,
-        GetConfiguredWordToCharacterKeys() == "minus_equal");
+        GetConfiguredWordToCharacterEnabled() && !is_v_mode_input_key,
+        GetConfiguredWordToCharacterKeys() == "minus_equal", is_japanese_long_vowel);
     const bool is_commit_with_highlighted_candidate_punctuation =
         word_character_direction != 0 ||
         (!is_manual_pinyin_separator && !is_microsoft_shuangpin_ing_key && !is_mid_sentence_helpcode_marker &&

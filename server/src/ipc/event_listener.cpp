@@ -1,4 +1,5 @@
 #include "event_listener.h"
+#include "engine/contracts/temporary_japanese_input.h"
 #include <Windows.h>
 #include <debugapi.h>
 #include <ioapiset.h>
@@ -420,6 +421,8 @@ void SetEnglishInputMode(bool enabled)
     }
     g_english_input_mode = enabled;
     PublishEnglishInputModeValue(enabled);
+    BroadcastToTsfWorkerThreadViaNamedpipe(FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged,
+                                           FanyNamedPipe::TemporaryJapanesePolicyPayload());
 }
 
 void RememberClientStatusSnapshot(uint64_t client_id, int packed_state)
@@ -653,6 +656,19 @@ std::wstring BuildCreateWordPipePayload(const std::string &remaining_raw_input_w
 
 namespace FanyNamedPipe
 {
+std::wstring TemporaryJapanesePolicyPayload()
+{
+    // Keep the underlying Chinese scheme available to TSF's queued language-cycle projection.
+    const auto scheme = GetConfiguredInputScheme();
+    const bool allowed =
+        GetConfiguredRModeEnabled() && (scheme == SchemeType::Quanpin || scheme == SchemeType::Shuangpin);
+    std::lock_guard lock(g_status_snapshot_mutex);
+    const auto policy = static_cast<FanyImeTemporaryJapanese::Policy>(
+        (allowed ? FanyImeTemporaryJapanese::Allowed : 0) |
+        (g_latest_english_input_mode ? FanyImeTemporaryJapanese::EnglishCandidates : 0));
+    return std::wstring(1, FanyImeTemporaryJapanese::ToPayload(policy));
+}
+
 void CancelCloudCandidateRequest()
 {
     UpdateCloudInput("");

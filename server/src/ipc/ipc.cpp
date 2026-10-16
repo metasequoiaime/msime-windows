@@ -808,7 +808,8 @@ bool NegotiateMainPipeClient(const FanyImeNamedpipeData &hello, uint64_t registr
     const auto protocol = FanyImeProtocol::Negotiate(
         hello, FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
                    FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
-                   FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts);
+                   FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
+                   FanyImeProtocol::TemporaryJapaneseLongVowel);
     std::lock_guard lock(g_pipe_clients_mutex);
     auto it = g_pipe_clients.find(hello.client_id);
     if (it == g_pipe_clients.end() || registration_id == 0 || it->second.main_registration_id != registration_id)
@@ -865,6 +866,14 @@ bool ClientNegotiatedInputStateShortcuts(uint64_t client_id)
     const auto it = g_pipe_clients.find(client_id);
     return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
            (it->second.protocol.capabilities & FanyImeProtocol::InputStateShortcuts) != 0;
+}
+
+bool ClientNegotiatedTemporaryJapanese(uint64_t client_id)
+{
+    std::lock_guard lock(g_pipe_clients_mutex);
+    const auto it = g_pipe_clients.find(client_id);
+    return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
+           (it->second.protocol.capabilities & FanyImeProtocol::TemporaryJapaneseLongVowel) != 0;
 }
 
 uint64_t RegisterToTsfPipeClient(uint64_t client_id, HANDLE pipe)
@@ -1595,6 +1604,9 @@ bool SendWorkerPackets(uint64_t client_id, uint64_t activation_epoch, bool requi
 bool SendWorkerPacket(uint64_t client_id, uint64_t activation_epoch, bool require_active, UINT msg_type,
                       const std::wstring &pipe_data)
 {
+    if (msg_type == FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged &&
+        !ClientNegotiatedTemporaryJapanese(client_id))
+        return true;
     FanyImeNamedpipeDataToTsfWorkerThread packet = {};
     packet.msg_type = msg_type;
     if (!CopyPipeText(packet.data, pipe_data))
@@ -1746,6 +1758,8 @@ void BroadcastConfiguredInputModeState(uint64_t excluded_input_mode_client_id)
     BroadcastToTsfWorkerThreadViaNamedpipe(
         Global::DataFromServerMsgTypeToTsfWorkerThread::MidSentenceHelpcodeUppercaseChanged,
         FormatMidSentenceHelpcodeUppercaseWorkerPayload());
+    BroadcastToTsfWorkerThreadViaNamedpipe(FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged,
+                                           FanyNamedPipe::TemporaryJapanesePolicyPayload());
     BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::VModeChanged,
                                            FormatVModeWorkerPayload());
     BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::PagingCommaPeriodChanged,

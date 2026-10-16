@@ -15,6 +15,7 @@
 #include <string>
 #include <fmt/xchar.h>
 #include "Ipc.h"
+#include "TemporaryJapaneseKeyPolicy.h"
 #include "FanyUtils.h"
 #include "FanyLog.h"
 #include "EditSession.h"
@@ -75,32 +76,32 @@ bool IsMidSentenceHelpcodeMarkerKey(UINT uCode, WCHAR wch, const WCHAR *buffer, 
 
 // 日语模式禁用 -/= 翻页：'-' 是长音符（ー）的输入键。空编码时也要起头组合，
 // 候选框第一项是长音符 ー、第二项是普通连字符 '-'（候选由服务端提供）。
-bool IsJapaneseLongVowelKey(UINT uCode, WCHAR wch)
+bool IsJapaneseKeyMode(const WCHAR *raw, DWORD_PTR length)
 {
-    return uCode == VK_OEM_MINUS && wch == L'-' && Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed);
+    return FanyImeTemporaryJapanese::IsMode(Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed),
+                                            GetTemporaryJapanesePolicy(), raw, static_cast<std::size_t>(length));
+}
+
+bool IsJapaneseLongVowelKey(UINT uCode, WCHAR wch, const WCHAR *raw, DWORD_PTR length)
+{
+    return ClassifyJapaneseKey(uCode, wch, 0, Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed),
+                               GetTemporaryJapanesePolicy(), raw, static_cast<std::size_t>(length), true)
+               .Function == FUNCTION_INPUT;
 }
 
 // '_' '=' '+' 在日语模式下也不翻页，但它们没有假名写法，按标点上屏处理，
 // 且只在已有编码时接管——空编码时仍然是普通标点，归应用程序。
 bool IsJapaneseMinusEqualPunctuationKey(UINT uCode, WCHAR wch, BOOL fComposing, CANDIDATE_MODE candidateMode,
-                                        DWORD_PTR keystrokeLength)
+                                        DWORD_PTR keystrokeLength, const WCHAR *raw)
 {
-    if (uCode != VK_OEM_MINUS && uCode != VK_OEM_PLUS)
-    {
-        return false;
-    }
-    if (keystrokeLength == 0 || !Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed))
-    {
-        return false;
-    }
-    if (IsJapaneseLongVowelKey(uCode, wch))
-    {
-        return false;
-    }
-    return fComposing || candidateMode != CANDIDATE_NONE;
+    return ClassifyJapaneseKey(uCode, wch, 0, Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed),
+                               GetTemporaryJapanesePolicy(), raw, static_cast<std::size_t>(keystrokeLength),
+                               fComposing || candidateMode != CANDIDATE_NONE)
+               .Function == FUNCTION_PUNCTUATION;
 }
 
-bool IsCommitWithHighlightedCandidatePunctuationInCandidateMode(UINT uCode, WCHAR wch, CANDIDATE_MODE candidateMode)
+bool IsCommitWithHighlightedCandidatePunctuationInCandidateMode(UINT uCode, WCHAR wch, CANDIDATE_MODE candidateMode,
+                                                                const WCHAR *raw, DWORD_PTR keystrokeLength)
 {
     if (candidateMode == CANDIDATE_NONE)
     {
@@ -121,7 +122,7 @@ bool IsCommitWithHighlightedCandidatePunctuationInCandidateMode(UINT uCode, WCHA
     case VK_OEM_PLUS:
         // 日语模式下这两个键不翻页，交给下面的标点判定处理；但 '-' 走长音符输入，
         // 不是标点上屏。
-        if (!Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed) || IsJapaneseLongVowelKey(uCode, wch))
+        if (!IsJapaneseKeyMode(raw, keystrokeLength) || IsJapaneseLongVowelKey(uCode, wch, raw, keystrokeLength))
         {
             return false;
         }
@@ -177,7 +178,7 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeedForFreshComposition(UINT uCode
         return TRUE;
     }
     // 日语模式下 '-' 单独按也要起头组合，弹出候选框选长音符 ー 或普通 '-'。
-    if (IsJapaneseLongVowelKey(uCode, pwch ? *pwch : 0))
+    if (IsJapaneseLongVowelKey(uCode, pwch ? *pwch : 0, nullptr, 0))
     {
         if (pKeyState)
         {
@@ -247,7 +248,7 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
         return TRUE;
     }
 
-    if (IsJapaneseLongVowelKey(uCode, pwch ? *pwch : 0))
+    if (IsJapaneseLongVowelKey(uCode, pwch ? *pwch : 0, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength()))
     {
         if (pKeyState)
         {
@@ -286,7 +287,7 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
     }
 
     if (IsJapaneseMinusEqualPunctuationKey(uCode, pwch ? *pwch : 0, fComposing, candidateMode,
-                                           _keystrokeBuffer.GetLength()))
+                                           _keystrokeBuffer.GetLength(), _keystrokeBuffer.Get()))
     {
         if (pKeyState)
         {
@@ -302,7 +303,7 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
     const bool isCommaPeriodPagingKey = uCode == VK_OEM_COMMA || uCode == VK_OEM_PERIOD;
     const bool isBracketPagingKey = uCode == VK_OEM_4 || uCode == VK_OEM_6;
     const bool isMinusEqualPagingKey = (uCode == VK_OEM_MINUS || uCode == VK_OEM_PLUS) &&
-                                       !Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed);
+                                       !IsJapaneseKeyMode(_keystrokeBuffer.Get(), _keystrokeBuffer.GetLength());
     if (candidateMode != CANDIDATE_NONE &&
         (isMinusEqualPagingKey || isCommaPeriodPagingKey || isBracketPagingKey || uCode == VK_TAB ||
          uCode == VK_PRIOR || uCode == VK_NEXT || uCode == VK_UP || uCode == VK_DOWN))
@@ -349,7 +350,8 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
         return TRUE;
     }
 
-    if (IsCommitWithHighlightedCandidatePunctuationInCandidateMode(uCode, pwch ? *pwch : 0, candidateMode))
+    if (IsCommitWithHighlightedCandidatePunctuationInCandidateMode(
+            uCode, pwch ? *pwch : 0, candidateMode, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength()))
     {
         if (pKeyState)
         {

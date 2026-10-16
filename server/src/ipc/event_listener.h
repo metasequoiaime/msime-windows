@@ -23,6 +23,7 @@ inline std::atomic<bool> g_candidate_move_msg_pending{false};
 
 namespace FanyNamedPipe
 {
+std::wstring TemporaryJapanesePolicyPayload();
 enum class CandidateUiAction
 {
     Commit,

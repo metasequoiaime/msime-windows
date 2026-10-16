@@ -3,6 +3,7 @@
 #include "../ipc_negotiation.h"
 #include "../mid_sentence_helpcode.h"
 #include "../trilingual_input.h"
+#include "../temporary_japanese_input.h"
 #include "../uiless_page.h"
 #include "../v_mode_input.h"
 #include "../voice_composition_pipe.h"
@@ -34,6 +35,23 @@ int main()
     CHECK(legacy.client_id == 7);
     CHECK(FanyImePipeEventType::InputStateAction == 17);
     CHECK(FanyImeProtocol::InputStateShortcuts == (1u << 7));
+    CHECK(FanyImeProtocol::TemporaryJapaneseLongVowel == (1u << 8));
+    const auto rCapabilities = FanyImeProtocol::Capabilities | FanyImeProtocol::TemporaryJapaneseLongVowel;
+    const auto rHello = FanyImeProtocol::Hello(7, 123, rCapabilities);
+    CHECK((FanyImeProtocol::Negotiate(rHello).capabilities & FanyImeProtocol::TemporaryJapaneseLongVowel) == 0);
+    CHECK((FanyImeProtocol::Negotiate(rHello, rCapabilities).capabilities &
+           FanyImeProtocol::TemporaryJapaneseLongVowel) != 0);
+    CHECK((FanyImeProtocol::Negotiate(FanyImeProtocol::Hello(7, 124), rCapabilities).capabilities &
+           FanyImeProtocol::TemporaryJapaneseLongVowel) == 0);
+    CHECK(FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged == 36);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == 36);
+    for (wchar_t payload = L'0'; payload <= L'3'; ++payload)
+    {
+        CHECK(FanyImeTemporaryJapanese::IsValidPayload(payload));
+        CHECK(FanyImeTemporaryJapanese::ToPayload(FanyImeTemporaryJapanese::FromPayload(payload)) == payload);
+    }
+    CHECK(!FanyImeTemporaryJapanese::IsValidPayload(L'4'));
+    CHECK(!FanyImeTemporaryJapanese::IsValidPayload(L'/'));
     CHECK(FanyImePipeEventType::HideCaretState == 16);
     CHECK(FanyImePipeEventType::HideCaretState != FanyImePipeEventType::HideCandidateWnd);
     CHECK(!FanyImePipeEventType::IsRouteDeactivation(FanyImePipeEventType::HideCaretState));
@@ -219,7 +237,7 @@ int main()
     CHECK(FanyImeWorkerReplyType::TrilingualCycleChanged == 33);
     CHECK(FanyImeWorkerReplyType::AiContextUploadChanged == 34);
     CHECK(FanyImeWorkerReplyType::UiLessCandidatesChanged == 35);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::UiLessCandidatesChanged);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged);
     {
         const auto full = FanyImeUiLessPage::Parse(FanyImeUiLessPage::Format(L"ni hao", L"你好,拟好", 1, 42));
         CHECK(full.preedit == L"ni hao" && full.page == L"你好,拟好" && full.selection == 1 && full.generation == 42);

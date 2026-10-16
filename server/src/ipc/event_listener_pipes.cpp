@@ -193,6 +193,9 @@ void SendInputModeState(const PipeClientActivation &activation)
     SendToTsfWorkerThreadClientViaNamedpipe(activation.client_id, activation.epoch,
                                             Global::DataFromServerMsgTypeToTsfWorkerThread::InputModeChanged,
                                             GetActiveInputMode() == "japanese" ? L"1" : L"0");
+    SendToTsfWorkerThreadClientViaNamedpipe(activation.client_id, activation.epoch,
+                                            FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged,
+                                            FanyNamedPipe::TemporaryJapanesePolicyPayload());
     SendTrilingualCycleState(activation.client_id, activation.epoch);
 }
 
@@ -485,8 +488,8 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
                 ActivatePipeClient(clientId, mainRegistrationId, true, pipeData.request_id, true);
             // client_id 0 means the reverse pipes never reported ready inside the
             // 100ms budget, so the whole packet is about to be discarded.
-            SendFocusSessionReady(activation);
             SendInputModeState(activation);
+            SendFocusSessionReady(activation);
             if (activation.changed)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
@@ -541,11 +544,12 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             // and therefore never re-activates. Fence the worker stream before
             // enqueueing the corresponding task. Repeated markers for one
             // epoch are intentional and harmless.
-            SendFocusSessionReady(activation);
-            if (pipeData.event_type == FanyImePipeEventType::FocusRestored)
+            // Publish key-classification policy before opening the client's key gate.
+            if (activation.changed || pipeData.event_type == FanyImePipeEventType::FocusRestored)
             {
                 SendInputModeState(activation);
             }
+            SendFocusSessionReady(activation);
             if (activation.changed)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
@@ -868,6 +872,9 @@ void RegisteredPipeMonitorThread(HANDLE clientPipe, UINT pipeRole, uint64_t hand
             SendToTsfWorkerThreadClientViaNamedpipe(hello.client_id,
                                                     Global::DataFromServerMsgTypeToTsfWorkerThread::InputModeChanged,
                                                     GetActiveInputMode() == "japanese" ? L"1" : L"0");
+            SendToTsfWorkerThreadClientViaNamedpipe(hello.client_id,
+                                                    FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged,
+                                                    FanyNamedPipe::TemporaryJapanesePolicyPayload());
             SendTrilingualCycleState(hello.client_id);
             SendToTsfWorkerThreadClientViaNamedpipe(hello.client_id,
                                                     Global::DataFromServerMsgTypeToTsfWorkerThread::CapsLockChanged,

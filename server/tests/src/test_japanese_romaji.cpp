@@ -6,6 +6,7 @@
 #include "engine/providers/japanese_candidate_provider.h"
 #include "engine/schemes/japanese_romaji_scheme.h"
 #include "src/session/engine_input_session.h"
+#include "ipc/input_key_policy.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -330,4 +331,39 @@ TEST_CASE(JapaneseSentenceDecoderReadsGeneratedMozcModelWhenAvailable)
     for (const auto &candidate : candidates)
         found = found || candidate.text == "日本語";
     REQUIRE(found);
+}
+
+TEST_CASE(TemporaryJapaneseLongVowelsPreserveChineseSession)
+{
+    EngineInputSession chinese(SchemeType::Quanpin);
+    chinese.handle_key('N', 0, L'n');
+    chinese.handle_key('I', 0, L'i');
+    EngineInputSession temporary(SchemeType::JapaneseRomaji);
+    std::string display_raw = "R";
+    for (const char ch : std::string("ko-hi-"))
+    {
+        const auto key = VirtualKeyForRomajiChar(ch);
+        const bool mode = FanyImeTemporaryJapanese::IsMode(false, FanyImeTemporaryJapanese::Allowed, display_raw.data(),
+                                                           display_raw.size());
+        const auto route = FanyImeIpc::ResolveJapaneseKeyRoute(mode, key, static_cast<WCHAR>(ch), 0, true);
+        if (ch == '-')
+        {
+            REQUIRE(route.long_vowel && route.suppress_paging);
+            REQUIRE_EQ(FanyImeIpc::WordToCharacterDirection(key, ch, 0, true, true, route.long_vowel), 0);
+            REQUIRE(FanyImeIpc::ShouldSendCompositionReply(false, false, false, route.long_vowel));
+        }
+        temporary.handle_key(key, 0, static_cast<WCHAR>(ch));
+        display_raw += ch;
+    }
+    REQUIRE_EQ(temporary.get_pinyin_sequence_with_cases(), std::string("ko-hi-"));
+    REQUIRE_EQ(chinese.get_pinyin_sequence_with_cases(), std::string("ni"));
+    REQUIRE_EQ(japanese::ConvertRomaji(temporary.get_pinyin_sequence_with_cases()).hiragana, std::string("こーひー"));
+    JapaneseCandidateProvider provider;
+    QueryRequest request;
+    request.scheme = SchemeType::JapaneseRomaji;
+    request.raw_input = "ko-hi-";
+    request.raw_input_with_cases = "ko-hi-";
+    request.valid = true;
+    const auto candidates = provider.query(request);
+    REQUIRE(ContainsWord(candidates, "コーヒー"));
 }

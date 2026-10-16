@@ -910,6 +910,8 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     bool _deferredKeyProjectionValid;
     bool _deferredProjectedImeOpen;
     bool _deferredProjectedJapaneseMode;
+    std::atomic<FanyImeTemporaryJapanese::Policy> _temporaryJapanesePolicy{0};
+    FanyImeTemporaryJapanese::Policy _deferredProjectedTemporaryJapanesePolicy = 0;
     bool _deferredProjectedPunctuationOpen;
     bool _deferredProjectedDoubleSingleByteOpen;
     size_t _deferredProjectedInputLength;

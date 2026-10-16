@@ -262,6 +262,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
         }
         // Close the first-key window immediately on the reader thread.  The UI
         // message may be delayed, fail to post, or race a replacement handle.
+        pIME->_temporaryJapanesePolicy.store(0, std::memory_order_relaxed);
         pIME->_workerCommitReady.store(false, std::memory_order_release);
         pIME->_acknowledgedWorkerFocusToken.store(0, std::memory_order_release);
         pIME->_ResetVoiceCompositionAssemble();
@@ -442,6 +443,10 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             validFrame = hasTerminator && (buf.data[0] == L'0' || buf.data[0] == L'1' || buf.data[0] == L'2') &&
                          buf.data[1] == L'\0';
         }
+        if (validFrame && buf.msg_type == FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged)
+        {
+            validFrame = FanyImeTemporaryJapanese::IsValidPolicyFrame(buf.data, sizeof(buf.data) / sizeof(buf.data[0]));
+        }
         if (validFrame && buf.msg_type == Global::DataToTsfWorkerThreadMsgType::DirectHelpcodeChanged)
         {
             validFrame = FanyImeDirectHelpcode::IsValidPayload(buf.data[0]) && buf.data[1] == L'\0';
@@ -509,6 +514,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::StatisticsEnabledChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::AiContextUploadChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::PunctuationLockChanged ||
+                buf.msg_type == FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::VModeChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::PipeReady ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::FocusSessionReady ||
@@ -651,6 +657,13 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::VModeChanged)
         {
             Global::VModeTrigger.store(FanyImeVModeInput::TriggerFromPayload(buf.data[0]), std::memory_order_relaxed);
+        }
+        else if (buf.msg_type == FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged)
+        {
+            if (pIME->_workerPipeGeneration.load(std::memory_order_acquire) != workerGeneration)
+                continue;
+            pIME->_temporaryJapanesePolicy.store(FanyImeTemporaryJapanese::FromPayload(buf.data[0]),
+                                                 std::memory_order_relaxed);
         }
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InputModeChanged)
         {

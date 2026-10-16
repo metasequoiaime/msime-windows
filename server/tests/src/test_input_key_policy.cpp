@@ -523,3 +523,33 @@ TEST_CASE(wubi_top_word_commit_follows_its_switch_and_guards_its_preconditions)
     REQUIRE(!ShouldCommitCompleteWubiCodeOnNextKey(false, false, false, true, true, false));
     REQUIRE(!ShouldCommitCompleteWubiCodeOnNextKey(false, false, true, true, true, true));
 }
+
+TEST_CASE(temporary_japanese_key_route_excludes_paging_and_word_conversion)
+{
+    using namespace FanyImeIpc;
+    using namespace FanyImeTemporaryJapanese;
+    for (bool paging : {false, true})
+        for (bool word_conversion : {false, true})
+        {
+            const bool mode = IsMode(false, Allowed, "Rko-hi-", 7);
+            const auto key = ResolveJapaneseKeyRoute(mode, 0xBD, '-', 0, true);
+            REQUIRE(key.long_vowel);
+            REQUIRE(key.suppress_paging);
+            REQUIRE(!(paging && !key.suppress_paging));
+            REQUIRE_EQ(WordToCharacterDirection(0xBD, '-', 0, word_conversion, true, key.long_vowel), 0);
+            REQUIRE(ShouldSendCompositionReply(false, false, false, key.long_vowel));
+        }
+    const auto plain = ResolveJapaneseKeyRoute(false, 0xBD, '-', 0, true);
+    REQUIRE(!plain.long_vowel && !plain.suppress_paging);
+    REQUIRE_EQ(WordToCharacterDirection(0xBD, '-', 0, true, true, plain.long_vowel), -1);
+    const auto equals = ResolveJapaneseKeyRoute(true, 0xBB, '=', 0, true);
+    REQUIRE(!equals.long_vowel && equals.suppress_paging);
+    REQUIRE(!ResolveJapaneseKeyRoute(true, 0xBD, '-', 2, true).long_vowel);
+    REQUIRE(!ResolveJapaneseKeyRoute(true, 0xBD, '-', 4, true).long_vowel);
+    REQUIRE(!ResolveJapaneseKeyRoute(true, 0xBD, '-', 0, false).long_vowel);
+    REQUIRE(!ResolveJapaneseKeyRoute(true, 0x22, 0, 0, true).suppress_paging);
+    REQUIRE_EQ(ResolveCompositionCaret(0, "Rko", "ko", true), std::size_t(0));
+    REQUIRE_EQ(ResolveCompositionCaret(0, "Rko", "ko", false), std::size_t(2));
+    REQUIRE_EQ(ResolveCompositionCaret(1, "Rko", "ko", true), std::size_t(1));
+    REQUIRE_EQ(ResolveCompositionCaret(0, "R", "", true), std::size_t(0));
+}

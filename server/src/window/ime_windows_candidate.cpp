@@ -557,9 +557,13 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const int previous_font_size = GetConfiguredCandidateFontSize();
             const int previous_preedit_font_size = GetConfiguredCandidateWindowPreeditFontSize();
             const std::string previous_cand_text_color = GetConfiguredCandidateTextColor();
+            const auto previous_temporary_japanese_policy = FanyNamedPipe::TemporaryJapanesePolicyPayload();
             const VoiceInputConfig previous_voice_input = GetConfiguredVoiceInput();
             if (ReloadImeConfigIfChanged())
             {
+                if (previous_temporary_japanese_policy != FanyNamedPipe::TemporaryJapanesePolicyPayload())
+                    BroadcastToTsfWorkerThreadViaNamedpipe(FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged,
+                                                           FanyNamedPipe::TemporaryJapanesePolicyPayload());
                 FanyNamedPipe::EnqueueApplyCandidatePageSizeTask();
                 if (previous_input_scheme != GetConfiguredActiveInputScheme())
                     ApplyConfiguredInputScheme();
