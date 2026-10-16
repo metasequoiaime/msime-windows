@@ -1794,7 +1794,7 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
         {
             for (const unsigned mask : {neighbor_product, both | neighbor_product})
             {
-                QuanpinDictionary dictionary((directory / "msime.db").string());
+                QuanpinDictionary dictionary(metasequoia::path_to_utf8(directory / "msime.db"));
                 (void)dictionary.query(test.input, "", mask);
                 require(dictionary.get_pinyin_segmentation() == test.plain_segmentation,
                         (std::string("A self-consistent plain reading must survive the tail path (") + test.input +
@@ -1866,7 +1866,7 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
         };
         for (const SegmentationCase &test : cases)
         {
-            QuanpinDictionary dictionary((directory / "msime.db").string());
+            QuanpinDictionary dictionary(metasequoia::path_to_utf8(directory / "msime.db"));
             (void)dictionary.query(test.input, "", test.mask);
             require(dictionary.get_pinyin_segmentation() == test.segmentation,
                     (std::string("Segmentation regression for ") + test.input + ": expected " + test.segmentation +
