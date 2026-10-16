@@ -178,6 +178,17 @@ void SendFocusSessionReady(const PipeClientActivation &activation)
                                             std::to_wstring(activation.focus_token));
 }
 
+void SendTemporaryJapanesePolicy(const PipeClientActivation &activation)
+{
+    if (activation.client_id == 0 || activation.epoch == 0)
+    {
+        return;
+    }
+    SendToTsfWorkerThreadClientViaNamedpipe(activation.client_id, activation.epoch,
+                                            FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged,
+                                            FanyNamedPipe::TemporaryJapanesePolicyPayload());
+}
+
 void SendInputModeState(const PipeClientActivation &activation)
 {
     if (activation.client_id == 0 || activation.epoch == 0)
@@ -193,9 +204,7 @@ void SendInputModeState(const PipeClientActivation &activation)
     SendToTsfWorkerThreadClientViaNamedpipe(activation.client_id, activation.epoch,
                                             Global::DataFromServerMsgTypeToTsfWorkerThread::InputModeChanged,
                                             GetActiveInputMode() == "japanese" ? L"1" : L"0");
-    SendToTsfWorkerThreadClientViaNamedpipe(activation.client_id, activation.epoch,
-                                            FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged,
-                                            FanyNamedPipe::TemporaryJapanesePolicyPayload());
+    SendTemporaryJapanesePolicy(activation);
     SendTrilingualCycleState(activation.client_id, activation.epoch);
 }
 
@@ -545,9 +554,14 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             // enqueueing the corresponding task. Repeated markers for one
             // epoch are intentional and harmless.
             // Publish key-classification policy before opening the client's key gate.
-            if (activation.changed || pipeData.event_type == FanyImePipeEventType::FocusRestored)
+            // Only FocusRestored re-sends the whole mode state (and its language-bar refresh).
+            if (pipeData.event_type == FanyImePipeEventType::FocusRestored)
             {
                 SendInputModeState(activation);
+            }
+            else if (activation.changed)
+            {
+                SendTemporaryJapanesePolicy(activation);
             }
             SendFocusSessionReady(activation);
             if (activation.changed)

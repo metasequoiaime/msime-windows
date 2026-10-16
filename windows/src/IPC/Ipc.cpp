@@ -475,8 +475,9 @@ bool WaitForWorkerPipeReady(HANDLE hPipeHandle)
 bool WaitForProtocolReady(uint64_t requestId)
 {
     negotiatedServerCapabilities = 0;
-    if (boundTemporaryJapanesePolicy)
-        boundTemporaryJapanesePolicy->store(0, std::memory_order_relaxed);
+    // Do not clear the temporary R-mode policy here: the worker pipe registers
+    // before Main and may already hold this connection's policy. CloseNamedpipe
+    // and the worker's disconnect path clear it for a replaced Server.
     const ULONGLONG deadline = GetTickCount64() + 250;
     while (GetTickCount64() < deadline)
     {

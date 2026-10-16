@@ -46,17 +46,16 @@ char CompositionLetter(UINT keycode, WCHAR wch)
                                                                         : static_cast<char>(keycode + ('a' - 'A'));
 }
 
+// Temporary R-mode policy of the client whose key is being handled. HandleImeKey
+// resolves it once per key; the predicates below run several times per key.
+FanyImeTemporaryJapanese::Policy g_key_temporary_japanese_policy = 0;
+
 // Match TSF classification, including the negotiated temporary R-mode policy.
 bool IsJapaneseInputMode()
 {
-    const bool full = GetActiveInputMode() == "japanese";
-    const auto client = GetActivePipeClient();
-    const FanyImeTemporaryJapanese::Policy policy =
-        ClientNegotiatedTemporaryJapanese(client.client_id)
-            ? FanyImeTemporaryJapanese::FromPayload(FanyNamedPipe::TemporaryJapanesePolicyPayload()[0])
-            : FanyImeTemporaryJapanese::Policy{0};
     const auto &raw = GlobalIme::composition.raw_input_with_cases;
-    return FanyImeTemporaryJapanese::IsMode(full, policy, raw.data(), raw.size());
+    return FanyImeTemporaryJapanese::IsMode(GetActiveInputMode() == "japanese", g_key_temporary_japanese_policy,
+                                            raw.data(), raw.size());
 }
 
 // 日语模式下 '-' 不翻页，而是长音符（ー）的输入键。空编码时也要起头组合，
@@ -957,6 +956,9 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     // TSF classifies VK_NUMPAD0..9 as candidate digit keys. Keep the IPC
     // contract symmetric before any selection/composition predicates run.
     Global::Keycode = FanyImeIpc::NormalizeNumpadDigitKey(Global::Keycode);
+    g_key_temporary_japanese_policy = ClientNegotiatedTemporaryJapanese(client_id)
+                                          ? FanyNamedPipe::TemporaryJapanesePolicy()
+                                          : FanyImeTemporaryJapanese::Policy{0};
 
     const bool sensitive_field = (Global::ModifiersDown & FanyImePipeFlags::SensitiveField) != 0;
     Global::ModifiersDown &= ~FanyImePipeFlags::SensitiveField;

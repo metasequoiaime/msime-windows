@@ -656,17 +656,21 @@ std::wstring BuildCreateWordPipePayload(const std::string &remaining_raw_input_w
 
 namespace FanyNamedPipe
 {
-std::wstring TemporaryJapanesePolicyPayload()
+FanyImeTemporaryJapanese::Policy TemporaryJapanesePolicy()
 {
     // Keep the underlying Chinese scheme available to TSF's queued language-cycle projection.
     const auto scheme = GetConfiguredInputScheme();
     const bool allowed =
         GetConfiguredRModeEnabled() && (scheme == SchemeType::Quanpin || scheme == SchemeType::Shuangpin);
     std::lock_guard lock(g_status_snapshot_mutex);
-    const auto policy = static_cast<FanyImeTemporaryJapanese::Policy>(
+    return static_cast<FanyImeTemporaryJapanese::Policy>(
         (allowed ? FanyImeTemporaryJapanese::Allowed : 0) |
         (g_latest_english_input_mode ? FanyImeTemporaryJapanese::EnglishCandidates : 0));
-    return std::wstring(1, FanyImeTemporaryJapanese::ToPayload(policy));
+}
+
+std::wstring TemporaryJapanesePolicyPayload()
+{
+    return std::wstring(1, FanyImeTemporaryJapanese::ToPayload(TemporaryJapanesePolicy()));
 }
 
 void CancelCloudCandidateRequest()
