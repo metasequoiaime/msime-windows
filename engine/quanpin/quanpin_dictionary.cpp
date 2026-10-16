@@ -217,27 +217,79 @@ SeriesQueryResolution resolve_series_query(const std::string &raw_input, const q
             // spelled "huazh" (hua + zh). Shortest tail first, so the correction
             // explains as much of the input as possible.
             //
-            // Neighbor corrections are excluded from the head: they carry the widest
-            // false-positive surface (largest table), and this path already relaxes
-            // the "whole input is a legal cut" constraint by trusting a speculative
-            // jianpin boundary. Stacking the two turns deletion-shaped input into
-            // noise (e.g. "shng" -> "sun" + "g" -> 笋干). Structural typos
-            // (transposition / deletion / insertion) are confident enough to compose.
-            const unsigned head_types = autocorrect_types & ~quanpin::kAutocorrectNeighbor;
+            // The head runs with the full mask, so the static neighbour table
+            // composes just like the structural typos ("shabgz" -> shang + z, from
+            // the b->n neighbour) and the composed readings are ranked by edit cost
+            // then dictionary frequency. The neighbour bit used to be masked off
+            // here because this path already relaxes the "whole input is a legal
+            // cut" constraint by trusting a speculative jianpin boundary, and
+            // stacking the widest false-positive surface on top was said to turn
+            // deletion-shaped input into noise ("shng" -> "sun" + "g"). That sample
+            // is unreachable in production: the deletion table explains "shng" as
+            // shang/sheng, so the whole-input k-best is non-empty and this branch is
+            // never entered for it.
+            //
+            // The neighbour bit is not just the static table, though: it also
+            // carries the generated far-substitution space (see quanpin_utils.h),
+            // and those reads must NOT compose. A correctly spelled head would be
+            // rewritten for no reason: "huanzh" (huan + zh) reads huang + h under
+            // 0xe/0xf because the generated z->g substitution turns the head "huanz"
+            // into huang. The composed reading takes over the segmentation and the
+            // plain one is only reachable as an unmarked alternative afterwards, so
+            // the cost tier cannot arbitrate against it. Accept only a pure-static
+            // top cut below; k-best static priority makes a generated front exactly
+            // "no static reading explains the head", so moving on to a longer tail
+            // (or no composition at all) keeps the plain segmentation for inputs the
+            // static tables already handle.
+            //
+            // The static neighbour table keeps a false-positive surface of its own,
+            // though: the shortest-tail rule can split an intended two-letter tail, so
+            // a typed "xish" (xi + sh) composes as xia + h through the s->a neighbour
+            // and the composed cut owns the segmentation -- the plain reading survives
+            // only as an unmarked alternative. The cost tier cannot arbitrate that
+            // class; the fix is the pre-scan below, not a cost knob.
+            //
+            // 自洽明文读法优先：只要存在一条「合法简拼尾 + 完整合法拼音 head」的切分
+            // （tail_len 1..2），输入本身就有一个不靠猜测的明文读法，整个组合纠错让位。
+            // 这与 eligible 的「全合法切分不纠错」同哲学。它一次盖住前面两类改写：
+            // 静态邻键（xish/lvsh 一类「完整音节 + sh/zh」，最短尾把 sh/zh 拆成 s/h 后
+            // head 末位被邻键凑成合法音节）与生成式远键（huanzh/huansh 的 head huan 已是
+            // 完整音节）。别名拼写（jv/lue/nue 等）两种形态都在 intact 表里，所以这个
+            // 完整性判定不需要先做 ü 归一。
+            const unsigned head_types = autocorrect_types;
             const auto &prefixes = quanpin::prefix_pinyin_set();
             const auto &intact = quanpin::intact_pinyin_set();
-            for (std::size_t tail_len = 1; head_types != 0 && tail_len <= 2 && tail_len < raw_input.size(); ++tail_len)
-            {
-                const std::string tail = raw_input.substr(raw_input.size() - tail_len);
+            const auto is_jianpin_tail = [&](const std::string &tail) {
                 // A jianpin tail is an incomplete syllable: a valid pinyin prefix
                 // that is not itself a complete syllable (e.g. "zh", "z", "h").
-                if (prefixes.count(tail) == 0 || intact.count(tail) != 0)
+                return prefixes.count(tail) != 0 && intact.count(tail) == 0;
+            };
+            bool has_self_consistent_reading = false;
+            for (std::size_t tail_len = 1; !has_self_consistent_reading && tail_len <= 2 && tail_len < raw_input.size();
+                 ++tail_len)
+            {
+                const std::string tail = raw_input.substr(raw_input.size() - tail_len);
+                if (!is_jianpin_tail(tail))
+                {
+                    continue;
+                }
+                has_self_consistent_reading =
+                    quanpin::is_complete_pinyin_input(raw_input.substr(0, raw_input.size() - tail_len));
+            }
+            for (std::size_t tail_len = 1;
+                 !has_self_consistent_reading && head_types != 0 && tail_len <= 2 && tail_len < raw_input.size();
+                 ++tail_len)
+            {
+                const std::string tail = raw_input.substr(raw_input.size() - tail_len);
+                if (!is_jianpin_tail(tail))
                 {
                     continue;
                 }
                 const std::string head = raw_input.substr(0, raw_input.size() - tail_len);
                 const auto head_cuts = quanpin::autocorrect_cut_kbest(head, head_types, kAutocorrectCutKBest);
-                if (head_cuts.empty())
+                // 静态优先由 k-best 自身保证：front 带 has_generated 等价于「没有任何
+                // 静态读法能解释 head」，此时不组合（生成式远键在 head 上净负，见上）。
+                if (head_cuts.empty() || head_cuts.front().has_generated)
                 {
                     continue;
                 }

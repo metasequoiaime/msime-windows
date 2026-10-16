@@ -193,8 +193,20 @@ Segments autocorrect_cut(const std::string &pinyin, unsigned autocorrect_types);
 // neighbour bit, so it does add user-visible recall (far substitutions under
 // 0xe/0xf). That recall is the intended gain, pinned end-to-end by
 // engine/tests/src/test_input_session.cpp ("shatg" -> shang).
-// The head+jianpin-tail fallback in quanpin_dictionary.cpp additionally masks the
-// neighbour bit off, which suppresses generated substitutions on that path only.
+// The head+jianpin-tail fallback in quanpin_dictionary.cpp runs the head with the
+// full mask too, so a neighbour-shaped typo in the head composes with a jianpin
+// tail ("shabgz" -> shang + z) and is ranked by edit cost exactly like the
+// structural typos. It does not compose the generated reads, though: a top cut
+// marked has_generated is rejected (this ranking guarantee makes that exactly "no
+// static cut explains the head"), so a generated read never rewrites a head the
+// static tables can explain ("huanzh" -> huan + zh, not huang + h via the
+// generated z->g substitution). On top of that, the fallback skips the whole
+// composition when the input already has a self-consistent plain reading -- a
+// legal jianpin tail (prefix, not intact) whose head is a complete pinyin input
+// ("xish" = xi + sh, "huanzh" = huan + zh) -- mirroring the "no correction when
+// every segment is legal" gate on the whole-string path. That guard, not the
+// ranking, is what keeps the static neighbour table from splitting an intended
+// "sh"/"zh" tail and rewriting correctly spelled input.
 // Every returned cut contains at least one corrected edge, so a fully legal input
 // with no correction reading yields an empty vector (the caller owns the plain
 // segmentation). This is the query-time disambiguation surface of CN 101133411

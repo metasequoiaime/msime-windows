@@ -1156,6 +1156,78 @@ void test_quanpin_autocorrect_switches_and_guard()
                    non_pure_shng.front().corrected_from == "shng",
                "A non-pure-jianpin typo must still be corrected (shng -> 上).");
 
+        // head+简拼尾组合路径：整串 k-best 无解（尾巴是不完整音节）时纠正 head、把尾巴
+        // 交给简拼查询。同样放在既有失败之前——本函数后段那条既有失败抛出后断言不再执行。
+        (void)dictionary.query("hauzh", "", both);
+        expect(dictionary.get_pinyin_segmentation() == "hua'zh",
+               "A correctable head plus a jianpin tail must compose: hauzh -> hua'zh.");
+        (void)dictionary.query("hauz", "", both);
+        expect(dictionary.get_pinyin_segmentation() == "hua'z",
+               "The jianpin tail may be a single initial: hauz -> hua'z.");
+        (void)dictionary.query("hauzh", "", none);
+        expect(dictionary.get_pinyin_segmentation() != "hua'zh",
+               "With autocorrection off, hauzh must not resolve through a corrected key.");
+        // head 与整串同掩码：邻键 head 与结构性手误同等组合。按产品可达掩码成对断言——
+        // 邻键关（0xd = 换位+漏字+多字）时 head "shabg" 无读法，不组合；邻键开（0xe/0xf）时
+        // b→n 邻键替换给出 shang，接简拼尾 z 读作 shang'z。
+        (void)dictionary.query("shabgz", "", all_four & ~neighbor_only);
+        expect(dictionary.get_pinyin_segmentation() != "shang'z",
+               "Without the neighbor bit a neighbor-headed input must not compose.");
+        (void)dictionary.query("shabgz", "", all_four & ~transposition_only);
+        expect(dictionary.get_pinyin_segmentation() == "shang'z",
+               "A neighbor head must compose with a jianpin tail (shabgz -> shang'z).");
+        (void)dictionary.query("shabgz", "", all_four);
+        expect(dictionary.get_pinyin_segmentation() == "shang'z",
+               "A neighbor head must compose with a jianpin tail (shabgz -> shang'z).");
+        // 生成式远键读法在 head 上必须被拒：huanzh 的正确拼写是 huan + zh，但生成式
+        // z→g 会把 head "huanz" 读成 huang；k-best 静态优先 ⇒ front 带 has_generated
+        // 等价于「无静态读法解释 head」，直接跳过，明文切分不动。不拒则组合出的
+        // huang'h 会顶掉明文（代价档仲裁不了「未纠正读法」，见 quanpin_dictionary.cpp）。
+        (void)dictionary.query("huanzh", "", all_four);
+        expect(dictionary.get_pinyin_segmentation() == "huan'zh",
+               "A generated far-key head must not rewrite a correctly spelled input (huanzh -> huan'zh).");
+        (void)dictionary.query("huansh", "", all_four);
+        expect(dictionary.get_pinyin_segmentation() == "huan'sh",
+               "A generated far-key head must not rewrite a correctly spelled input (huansh -> huan'sh).");
+        (void)dictionary.query("huanzg", "", all_four);
+        expect(dictionary.get_pinyin_segmentation() == "huan'z'g",
+               "A generated far-key head must not rewrite a correctly spelled input (huanzg -> huan'z'g).");
+        // 自洽明文读法优先（规则 3）：head 是完整合法音节、尾是合法简拼尾时跳过组合纠错。
+        // 改动前（仅规则 1+2）这些输入在 0xe/0xf 上会被最短尾拆开再经静态邻键改写：
+        // xish→xia'h、dish→dia'h、gush→gua'h、jish→jia'h、qush→que'h、zhush→zhua'h、
+        // chush→chua'h、lvsh→lve'h、jvsh→jve'h。0x3（裸 T|N）两态一致，可达掩码才有判别力。
+        struct PlainCase
+        {
+            const char *input;
+            const char *segmentation;
+        };
+        for (const PlainCase &test :
+             {PlainCase{"xish", "xi'sh"}, PlainCase{"dish", "di'sh"}, PlainCase{"gush", "gu'sh"},
+              PlainCase{"jish", "ji'sh"}, PlainCase{"qush", "qu'sh"}, PlainCase{"zhush", "zhu'sh"},
+              PlainCase{"chush", "chu'sh"}, PlainCase{"lvsh", "lv'sh"}, PlainCase{"jvsh", "ju'sh"}})
+        {
+            (void)dictionary.query(test.input, "", all_four);
+            expect(dictionary.get_pinyin_segmentation() == test.segmentation,
+                   (std::string("A self-consistent plain reading must survive the tail path: ") + test.input).c_str());
+        }
+        // huazh（完整音节 hua + 尾 zh）同样走自洽明文：改动前 0xd/0xe/0xf 上都是 hua'h
+        // （多字位让 head "huaz" 读作 hua；这条与邻键位无关，0xd 也中），规则 3 后回到
+        // hua'zh。0xd 的三条同族断言给这条规则一个不依赖邻键位的判别面。
+        (void)dictionary.query("huazh", "", all_four);
+        expect(dictionary.get_pinyin_segmentation() == "hua'zh",
+               "A correctly spelled head plus a jianpin tail keeps its plain segmentation (huazh -> hua'zh).");
+        (void)dictionary.query("huazh", "", all_four & ~neighbor_only);
+        expect(dictionary.get_pinyin_segmentation() == "hua'zh",
+               "The self-consistent plain reading must hold without the neighbour bit too (huazh -> hua'zh).");
+        (void)dictionary.query("guazh", "", all_four & ~neighbor_only);
+        expect(dictionary.get_pinyin_segmentation() == "gua'zh",
+               "The self-consistent plain reading must hold without the neighbour bit too (guazh -> gua'zh).");
+        (void)dictionary.query("bazh", "", all_four & ~neighbor_only);
+        expect(dictionary.get_pinyin_segmentation() == "ba'zh",
+               "The self-consistent plain reading must hold without the neighbour bit too (bazh -> ba'zh).");
+        // shng -> sun'g（邻键 head 不组合）的断言已删：整串删除表把 shng 读成
+        // shang/sheng，组合路径根本进不去，该样例在生产不可达。
+
         const auto corrected = dictionary.query("sahng", "sa'h'n'g", both);
         expect(!corrected.empty() && corrected.front().word == "上",
                "Both switches on must put the corrected candidate first.");
@@ -1219,30 +1291,6 @@ void test_quanpin_autocorrect_switches_and_guard()
         (void)dictionary.query("zheg", "", both);
         expect(dictionary.get_pinyin_segmentation() != "zu'ge",
                "A jianpin-shaped input must not resolve through a corrected key.");
-
-        // Correction composes with a trailing jianpin tail: the k-best search
-        // fails on the whole input (the tail is an incomplete syllable), so the
-        // head is corrected and the tail carried through to the jianpin query.
-        (void)dictionary.query("hauzh", "", both);
-        expect(dictionary.get_pinyin_segmentation() == "hua'zh",
-               "A correctable head plus a jianpin tail must compose: hauzh -> hua'zh.");
-        (void)dictionary.query("hauz", "", both);
-        expect(dictionary.get_pinyin_segmentation() == "hua'z",
-               "The jianpin tail may be a single initial: hauz -> hua'z.");
-        // A correctly spelled head with the same jianpin tail is untouched.
-        (void)dictionary.query("huazh", "", both);
-        expect(dictionary.get_pinyin_segmentation() == "hua'zh",
-               "A correctly spelled jianpin input keeps its plain segmentation.");
-        // With autocorrection off, the mistyped head must not compose either.
-        (void)dictionary.query("hauzh", "", none);
-        expect(dictionary.get_pinyin_segmentation() != "hua'zh",
-               "With autocorrection off, hauzh must not resolve through a corrected key.");
-        // Neighbor corrections are excluded from the composition head: without
-        // that guard a deletion-shaped input becomes noise via a low-confidence
-        // neighbor head plus a speculative jianpin tail (shng -> sun'g).
-        (void)dictionary.query("shng", "sh'n'g", both);
-        expect(dictionary.get_pinyin_segmentation() != "sun'g",
-               "A neighbor head must not compose with a jianpin tail (shng must not become sun'g).");
     }
     std::error_code cleanup_ec;
     fs::remove(db_path, cleanup_ec);

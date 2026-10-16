@@ -6,6 +6,7 @@
 #include "../../contracts/dictionary/format.h"
 #include "../../quanpin/quanpin_query.h"
 #include "../../quanpin/quanpin_utils.h"
+#include "../../quanpin/quanpin_dictionary.h"
 #include "../../schemes/quanpin_scheme.h"
 #include "../../shuangpin/shuangpin_profile.h"
 
@@ -1614,9 +1615,43 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
                          "INSERT INTO tbl_1_s VALUES('shang', 's', '上', 900);");
         database.execute("CREATE TABLE tbl_1_c(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                          "INSERT INTO tbl_1_c VALUES('chang', 'c', '长', 900);"
-                         "INSERT INTO tbl_1_c VALUES('cang', 'c', '仓', 5000);");
+                         "INSERT INTO tbl_1_c VALUES('cang', 'c', '仓', 5000);"
+                         "INSERT INTO tbl_1_c VALUES('chu', 'c', '出', 900);"
+                         "INSERT INTO tbl_1_c VALUES('chua', 'c', '欻', 900);");
         database.execute("CREATE TABLE tbl_2_s(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                          "INSERT INTO tbl_2_s VALUES('shang''zh', 'sz', '上周', 900);");
+        // huanzh/huansh/huanzg 的明文读法都是 huan + 简拼尾，生成式远键读法（head
+        // huanz/huans 经 z→g / s→g 成 huang）各放一个单字：明文给 欢，被拒的组合读法
+        // 若出现会带来 黄。
+        database.execute("CREATE TABLE tbl_1_h(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_h VALUES('huan', 'h', '欢', 900);"
+                         "INSERT INTO tbl_1_h VALUES('huang', 'h', '黄', 900);");
+        // 自洽明文负例的判别夹具：「明文 head 音节」与「被拒的邻键 head 音节」各一个字。
+        // 规则 3 生效时只有前者在场；若组合纠错发生，后者（xia/dia/...）会顶替它。
+        // jv/lve 系按词库正键写法登记（jv 归一为 ju、jve 归一为 jue）。
+        database.execute("CREATE TABLE tbl_1_x(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_x VALUES('xi', 'x', '西', 900);"
+                         "INSERT INTO tbl_1_x VALUES('xia', 'x', '下', 900);");
+        database.execute("CREATE TABLE tbl_1_d(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_d VALUES('di', 'd', '低', 900);"
+                         "INSERT INTO tbl_1_d VALUES('dia', 'd', '嗲', 900);");
+        database.execute("CREATE TABLE tbl_1_g(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_g VALUES('gu', 'g', '古', 900);"
+                         "INSERT INTO tbl_1_g VALUES('gua', 'g', '挂', 900);");
+        database.execute("CREATE TABLE tbl_1_j(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_j VALUES('ji', 'j', '机', 900);"
+                         "INSERT INTO tbl_1_j VALUES('jia', 'j', '家', 900);"
+                         "INSERT INTO tbl_1_j VALUES('ju', 'j', '句', 900);"
+                         "INSERT INTO tbl_1_j VALUES('jue', 'j', '决', 900);");
+        database.execute("CREATE TABLE tbl_1_q(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_q VALUES('qu', 'q', '去', 900);"
+                         "INSERT INTO tbl_1_q VALUES('que', 'q', '却', 900);");
+        database.execute("CREATE TABLE tbl_1_z(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_z VALUES('zhu', 'z', '主', 900);"
+                         "INSERT INTO tbl_1_z VALUES('zhua', 'z', '抓', 900);");
+        database.execute("CREATE TABLE tbl_1_l(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_l VALUES('lv', 'l', '绿', 900);"
+                         "INSERT INTO tbl_1_l VALUES('lve', 'l', '略', 900);");
         database.execute("CREATE TABLE tbl_3_s(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
                          "INSERT INTO tbl_3_s VALUES('sha''tang''zh', 'stz', '沙汤扎', 900);");
     }
@@ -1672,6 +1707,172 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
                 "The head-composition path must still correct shatng to sha+tang.");
         require(find_candidate_index(session, "上周") == session.candidates().size(),
                 "Static priority must hold on the head path: the generated shang+zh reading must not surface.");
+    }
+
+    // head+简拼尾组合路径与整串同掩码：邻键 head 照常组合。shabg 的读法是 b→n
+    // 邻键替换（静态表 13），接上简拼尾 z 得 shang'z，命中上周。改动前 head 掩码
+    // 剥掉邻键位、shabg 无解，这条读法整个不存在（只剩 'sha' 前缀扫出的上）。
+    // 掩码按产品可达值给（engine.cpp 会把漏字/多字位与两个旧开关捆绑）：两个开关
+    // 都开的 0xf 组合，只开换位开关的 0xd 不组合。
+    {
+        const unsigned transposition_only_product =
+            quanpin::kAutocorrectTransposition | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+        metasequoia::InputSession session(SchemeType::Quanpin, both | transposition_only_product, true, true, true,
+                                          paths);
+        type(session, "shabgz");
+        const auto composed = find_candidate_index(session, "上周");
+        require(composed == 0 && session.candidates()[composed].pinyin == "shang'z" &&
+                    session.candidates()[composed].corrected_from == "shabgz",
+                (std::string("A neighbor head must compose with a jianpin tail: shabgz -> shang'z, preedit ") +
+                 session.get_pinyin_segmentation_with_cases())
+                    .c_str());
+
+        // 邻键位关掉则 head 无读法，组合不发生：只剩 'sha' 前缀扫出的上，不带纠错标记。
+        metasequoia::InputSession without_neighbor(SchemeType::Quanpin, transposition_only_product, true, true, true,
+                                                   paths);
+        type(without_neighbor, "shabgz");
+        require(std::none_of(without_neighbor.candidates().begin(), without_neighbor.candidates().end(),
+                             [](const WordItem &item) { return !item.corrected_from.empty(); }),
+                "Without the neighbor bit the neighbor-headed input must not compose.");
+    }
+
+    // 生成式远键读法不上 head：huanzh/huansh/huanzg 的正确拼写都是「完整音节 huan +
+    // 简拼尾」，但邻居位里的生成式空间带 z→g / s→g 远键替换，经最短尾切分（tail "h"、
+    // 或 huanzg 的 "g"）会把 head "huanz"/"huans" 读成 huang，组合出 huang'h 并顶掉明文
+    // 切分（代价档仲裁不了「未纠正读法」）。组合路径只接受纯静态 top cut——k-best 静态
+    // 优先 ⇒ front 带 has_generated 等价于「无静态读法解释 head」——故探到生成读法即跳过。
+    // 两个产品可达的全开掩码 0xe（只开邻键开关）/0xf（两个开关都开）都保持明文：欢是
+    // 明文读法的候选且无纠错标记，黄只可能来自被拒的组合读法，一个都不许带纠错标记。
+    {
+        const unsigned neighbor_product =
+            quanpin::kAutocorrectNeighbor | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+        for (const std::string spelled : {"huanzh", "huansh", "huanzg"})
+        {
+            for (const unsigned mask : {neighbor_product, both | neighbor_product})
+            {
+                metasequoia::InputSession session(SchemeType::Quanpin, mask, true, true, true, paths);
+                type(session, spelled);
+                const auto plain = find_candidate_index(session, "欢");
+                require(plain < session.candidates().size() && session.candidates()[plain].corrected_from.empty() &&
+                            session.candidates()[plain].pinyin.rfind("huan", 0) == 0,
+                        (std::string("A correctly spelled head with a jianpin tail must stay plain (") + spelled +
+                         "), preedit " + session.get_pinyin_segmentation_with_cases())
+                            .c_str());
+                require(find_candidate_index(session, "黄") == session.candidates().size(),
+                        (std::string("A generated far-key head reading must not rewrite a correctly spelled input (") +
+                         spelled + ").")
+                            .c_str());
+                require(std::none_of(session.candidates().begin(), session.candidates().end(),
+                                     [&](const WordItem &item) { return item.corrected_from == spelled; }),
+                        (std::string("No candidate may carry a correction for a correctly spelled ") + spelled + ".")
+                            .c_str());
+            }
+        }
+    }
+
+    // 自洽明文读法优先（规则 3）：head 是完整合法音节、尾是合法简拼尾时，输入本身有
+    // 明文读法，组合纠错整个让位。判别用词库层切分——两态实测（改动前 = 临时还原规则 3
+    // 重建）：0xe/0xf 下「完整音节 + sh/zh」被最短尾拆成 s/h、z/h 再经静态邻键凑成合法
+    // 音节（xish→xia'h、jvsh→jve'h 等），规则 3 后回到明文；0x0/0xd 两态逐位一致。会话
+    // 层再确认明文候选在场、被拒的邻键候选不在场（fixture 各放了一个字）。
+    {
+        const unsigned neighbor_product =
+            quanpin::kAutocorrectNeighbor | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+        struct SelfConsistentCase
+        {
+            const char *input;
+            const char *plain_segmentation;
+            const char *plain_word;
+            const char *rewritten_word;
+        };
+        for (const SelfConsistentCase &test :
+             {SelfConsistentCase{"xish", "xi'sh", "西", "下"}, SelfConsistentCase{"dish", "di'sh", "低", "嗲"},
+              SelfConsistentCase{"gush", "gu'sh", "古", "挂"}, SelfConsistentCase{"jish", "ji'sh", "机", "家"},
+              SelfConsistentCase{"qush", "qu'sh", "去", "却"}, SelfConsistentCase{"zhush", "zhu'sh", "主", "抓"},
+              SelfConsistentCase{"chush", "chu'sh", "出", "欻"}, SelfConsistentCase{"lvsh", "lv'sh", "绿", "略"},
+              SelfConsistentCase{"jvsh", "ju'sh", "句", "决"}})
+        {
+            for (const unsigned mask : {neighbor_product, both | neighbor_product})
+            {
+                QuanpinDictionary dictionary((directory / "msime.db").string());
+                (void)dictionary.query(test.input, "", mask);
+                require(dictionary.get_pinyin_segmentation() == test.plain_segmentation,
+                        (std::string("A self-consistent plain reading must survive the tail path (") + test.input +
+                         " -> " + dictionary.get_pinyin_segmentation() + ").")
+                            .c_str());
+                metasequoia::InputSession session(SchemeType::Quanpin, mask, true, true, true, paths);
+                type(session, test.input);
+                const auto plain = find_candidate_index(session, test.plain_word);
+                require(plain < session.candidates().size() && session.candidates()[plain].corrected_from.empty(),
+                        (std::string("The plain head must stay an unmarked candidate (") + test.input + ").").c_str());
+                require(find_candidate_index(session, test.rewritten_word) == session.candidates().size(),
+                        (std::string("A rewritten neighbour head must not surface (") + test.input + ").").c_str());
+            }
+        }
+    }
+
+    // 不变项、正例护栏与回归集（掩码取产品可达的 0x0/0xd/0xe/0xf；0xd = 换位+漏字+多字，
+    // 0xe = 邻键+漏字+多字）：
+    // - shabgz：0xd（无邻键位，head shabg 无读法）不组合，0xe/0xf（含邻键位）组合出 shang'z ——
+    //   本任务的正面目标，必须仍成立（防规则 3 误杀）。
+    // - hauzh/hauz：结构性手误的组合不受规则 1/2/3 影响，0xd/0xf 仍是 hua'zh/hua'z；0xe
+    //   （只开邻键开关、没有换位读法）下 head "hau" 走邻键 u→i 读成 hai，组合出 hai'zh/hai'z ——
+    //   规则 1 在 0xe 上的新增面（0xd 无邻键位、0xf 换位读法更便宜，都不走这条）。
+    // - huazh/guazh/bazh：「完整音节 + zh 尾」由规则 3 回到明文。改动前这三条在 0xd/0xe/0xf
+    //   上都是 hua'h/gua'h/ba'h（head "huaz" 这类被多字位读成 hua），与邻键位无关——所以
+    //   0xd 这一档也能判别规则 3，是自洽明文类里唯一在无邻键掩码下有信号的样本。
+    // - 到不了组合路径的整串输入（sahng/shng/keneng/nbn）四掩码与改动前逐位一致。
+    {
+        const unsigned transposition_product =
+            quanpin::kAutocorrectTransposition | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+        const unsigned neighbor_product =
+            quanpin::kAutocorrectNeighbor | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+        struct SegmentationCase
+        {
+            const char *input;
+            unsigned mask;
+            const char *segmentation;
+        };
+        const SegmentationCase cases[] = {
+            {"shabgz", transposition_product, "sha'b'g'z"},
+            {"shabgz", neighbor_product, "shang'z"},
+            {"shabgz", both | neighbor_product, "shang'z"},
+            {"hauzh", neighbor_product, "hai'zh"},
+            {"hauz", neighbor_product, "hai'z"},
+            {"hauzh", both | neighbor_product, "hua'zh"},
+            {"hauz", both | neighbor_product, "hua'z"},
+            {"hauzh", transposition_product, "hua'zh"},
+            {"hauz", transposition_product, "hua'z"},
+            {"huazh", both | neighbor_product, "hua'zh"},
+            {"huazh", transposition_product, "hua'zh"},
+            {"guazh", transposition_product, "gua'zh"},
+            {"bazh", transposition_product, "ba'zh"},
+            {"sahng", 0u, "sa'h'n'g"},
+            {"sahng", transposition_product, "shang"},
+            {"sahng", neighbor_product, "shang"},
+            {"sahng", both | neighbor_product, "shang"},
+            {"shng", 0u, "sh'n'g"},
+            {"shng", transposition_product, "shang"},
+            {"shng", neighbor_product, "shang"},
+            {"shng", both | neighbor_product, "shang"},
+            {"keneng", 0u, "ke'neng"},
+            {"keneng", transposition_product, "ke'neng"},
+            {"keneng", neighbor_product, "ke'neng"},
+            {"keneng", both | neighbor_product, "ke'neng"},
+            {"nbn", 0u, "n'b'n"},
+            {"nbn", transposition_product, "n'b'n"},
+            {"nbn", neighbor_product, "nan"},
+            {"nbn", both | neighbor_product, "nan"},
+        };
+        for (const SegmentationCase &test : cases)
+        {
+            QuanpinDictionary dictionary((directory / "msime.db").string());
+            (void)dictionary.query(test.input, "", test.mask);
+            require(dictionary.get_pinyin_segmentation() == test.segmentation,
+                    (std::string("Segmentation regression for ") + test.input + ": expected " + test.segmentation +
+                     ", got " + dictionary.get_pinyin_segmentation())
+                        .c_str());
+        }
     }
 
     // 守卫与合法输入：尾位插入（shangv 类）受简拼尾守卫——纠错不触发由
