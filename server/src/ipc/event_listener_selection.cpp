@@ -332,6 +332,12 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             UpdateEnglishInput("");
             UpdateMixedInput({});
             g_inputSession->reset_state();
+            if (g_english_reconversion_previous_mode)
+            {
+                const bool previous = *g_english_reconversion_previous_mode;
+                g_english_reconversion_previous_mode.reset();
+                SetEnglishInputMode(previous);
+            }
             if (g_r_mode_original_session)
             {
                 g_inputSession = g_r_mode_original_session;

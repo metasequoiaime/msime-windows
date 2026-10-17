@@ -69,10 +69,7 @@ local_modes::LocalQueryResult CandidateQueries::local(LocalInputMode mode, const
             return result;
         }
         result.candidates.emplace_back("", raw, 0, CandidateSource::Generated);
-        std::string prefix = raw;
-        std::transform(prefix.begin(), prefix.end(), prefix.begin(),
-                       [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
-        auto completions = english_dictionary().query_prefix(prefix, 1000);
+        auto completions = english_dictionary().query_candidates(raw, 1000);
         completions.erase(std::remove_if(completions.begin(), completions.end(),
                                          [&](const WordItem &candidate) {
                                              if (candidate.word.size() != raw.size())
@@ -143,7 +140,8 @@ std::vector<WordItem> CandidateQueries::mixed(std::vector<WordItem> candidates, 
         prefix.begin(), prefix.end(), [](unsigned char character) { return character >= 'a' && character <= 'z'; });
     if (english_options.mixed_candidates && prefix.size() >= english_options.minimum_prefix && lower_ascii_prefix)
     {
-        english_candidates = collect_unique(english_dictionary().query_mixed_prefix(prefix));
+        english_candidates = collect_unique(
+            english_dictionary().query_candidates(prefix, EnglishDictionary::kMixedCandidateLimit, true));
     }
 
     std::vector<WordItem> emoji_candidates;

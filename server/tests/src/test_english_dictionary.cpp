@@ -285,3 +285,86 @@ TEST_CASE(EnglishDictionaryUpsertsGlossForCloudFallback)
     REQUIRE(EnglishDictionary::upsert_gloss(test::Utf8(database.path()), false, "metasequoia", "水杉"));
     REQUIRE_EQ(dictionary.query_chinese_gloss("metasequoia"), std::string("水杉"));
 }
+
+TEST_CASE(english_spelling_fallback_keeps_exact_prefixes_and_recovers_single_edits)
+{
+    TemporaryEnglishDatabase database;
+    EnglishDictionary dictionary(test::Utf8(database.path()));
+    database.execute("INSERT INTO english_words VALUES('working','working',400);"
+                     "INSERT INTO english_words VALUES('worked','worked',300);"
+                     "INSERT INTO english_words VALUES('receive','receive',200);");
+    for (const auto &typo : {"wroking", "workign", "workng", "workking", "workimg", "recieve"})
+    {
+        const auto words = dictionary.query_candidates(typo, 3, true);
+        REQUIRE(!words.empty());
+        REQUIRE_EQ(words.front().word, std::string(typo) == "recieve" ? "receive" : "working");
+        REQUIRE_EQ(words.front().corrected_from, typo);
+    }
+    const auto exact = dictionary.query_candidates("work", 3, true);
+    REQUIRE(!exact.empty());
+    REQUIRE(exact.front().corrected_from.empty());
+    REQUIRE(dictionary.query_candidates("wr", 3).empty());
+    REQUIRE(dictionary.query_candidates("w0rking", 3).empty());
+    REQUIRE(dictionary.query_candidates(std::string(25, 'q'), 3).empty());
+    REQUIRE(dictionary.query_candidates("wroking", 0).empty());
+    REQUIRE(dictionary.query_candidates("zzzzzzzz", 3).empty());
+    REQUIRE(dictionary.query_candidates("wroking", 1).size() == 1);
+    const auto capitalized = dictionary.query_candidates("Wroking", 1);
+    REQUIRE(!capitalized.empty());
+    REQUIRE_EQ(capitalized.front().word, "Working");
+    REQUIRE(dictionary.query_candidates("WROKING", 3).empty());
+    REQUIRE(dictionary.query_candidates("wRoKing", 3).empty());
+    REQUIRE(dictionary.query_candidates("unicornxzy", 3).empty());
+    database.execute("INSERT INTO english_words VALUES('unicornxyz','unicornxyz',500);");
+    const auto refreshed = dictionary.query_candidates("unicornxzy", 1);
+    REQUIRE(!refreshed.empty());
+    REQUIRE_EQ(refreshed.front().word, "unicornxyz");
+    // Raw Enter may have learned the typo. Explicit reconversion still offers
+    // alternatives, but never silently overwrites or deletes that literal.
+    database.execute("INSERT INTO english_words VALUES('wroking','wroking',9000);");
+    const auto learned = dictionary.query_candidates("wroking", 3);
+    REQUIRE_EQ(learned.front().word, "wroking");
+    const auto manual = dictionary.query_candidates("wroking", 32, false, true);
+    REQUIRE_EQ(manual.front().word, "wroking");
+    REQUIRE(manual.front().source == CandidateSource::Generated);
+    REQUIRE(std::any_of(manual.begin(), manual.end(),
+                        [](const auto &item) { return item.word == "working" && item.corrected_from == "wroking"; }));
+}
+
+TEST_CASE(english_spelling_wide_prefix_keeps_global_ranking_and_refreshes_after_writes)
+{
+    TemporaryEnglishDatabase database;
+    EnglishDictionary dictionary(test::Utf8(database.path()));
+    // A wide prefix with winners near its far end rules out an arbitrary scan
+    // cutoff. Its non-power-of-two row count also exercises the compact tree.
+    database.execute("WITH RECURSIVE numbers(n) AS (VALUES(0) UNION ALL SELECT n+1 FROM numbers WHERE n<16383) "
+                     "INSERT INTO english_words(word,display,weight) "
+                     "SELECT 'ca'||char(97+n/17576)||char(97+n/676%26)||char(97+n/26%26)||char(97+n%26),"
+                     "'ca'||char(97+n/17576)||char(97+n/676%26)||char(97+n/26%26)||char(97+n%26),0 FROM numbers;");
+    database.execute("INSERT INTO english_words VALUES"
+                     "('ca','CA',1),('ca','Ca',1),('ca','ca',1),"
+                     "('cab','cab',1000),('cazzzx','cazzzx',1000),"
+                     "('cazzzz','cazzzz',1000),('cazzzya','cazzzya',1000);");
+    // Whole corrected keys beat completions, including multiple stored displays.
+    const auto exact = dictionary.query_candidates("cqa", 3);
+    REQUIRE_EQ(exact.size(), size_t{3});
+    REQUIRE_EQ(exact[0].word, "CA");
+    REQUIRE_EQ(exact[1].word, "Ca");
+    REQUIRE_EQ(exact[2].word, "ca");
+    database.execute("DELETE FROM english_words WHERE word='ca';");
+    const auto completions = dictionary.query_candidates("cqa", 3);
+    REQUIRE_EQ(completions.size(), size_t{3});
+    REQUIRE_EQ(completions[0].word, "cab");
+    REQUIRE_EQ(completions[1].word, "cazzzx");
+    REQUIRE_EQ(completions[2].word, "cazzzz");
+    // External writes must rebuild both the rows and their ranking tree.
+    database.execute("UPDATE english_words SET weight=2000 WHERE word='cazzzya';"
+                     "INSERT INTO english_words VALUES('cazzzyb','cazzzyb',3000);");
+    const auto refreshed = dictionary.query_candidates("cqa", 3);
+    REQUIRE_EQ(refreshed.size(), size_t{3});
+    REQUIRE_EQ(refreshed[0].word, "cazzzyb");
+    REQUIRE_EQ(refreshed[1].word, "cazzzya");
+    REQUIRE_EQ(refreshed[2].word, "cab");
+    for (const auto &item : refreshed)
+        REQUIRE_EQ(item.corrected_from, "cqa");
+}

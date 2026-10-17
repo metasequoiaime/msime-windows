@@ -132,6 +132,7 @@ bool ClientNegotiatedCaretStateIndicator(uint64_t client_id);
 // Only clients that advertised the dedicated cycle reply can receive it.
 bool ClientNegotiatedTrilingualCycle(uint64_t client_id);
 bool ClientNegotiatedInputStateShortcuts(uint64_t client_id);
+bool ClientNegotiatedEnglishReconversion(uint64_t client_id);
 bool ClientNegotiatedTemporaryJapanese(uint64_t client_id);
 uint64_t RegisterToTsfWorkerThreadPipeClient(uint64_t client_id, HANDLE pipe);
 uint64_t BeginPipeClientHandler(HANDLE pipe);

@@ -14,6 +14,8 @@
 #include "MetasequoiaIMEBaseStructure.h"
 #include <debugapi.h>
 #include <cwctype>
+#include <wrl/client.h>
+#include "../../../engine/contracts/english_reconversion.h"
 #include <string>
 #include <InputScope.h>
 #include "Ipc.h"
@@ -493,6 +495,16 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
             {
                 pKeyState->Category = CATEGORY_COMPOSING;
                 pKeyState->Function = FUNCTION_TOGGLE_CHARACTER_SET;
+            }
+            return TRUE;
+        }
+        if (!_serverUnavailableFallbackActive && SupportsEnglishReconversion() && *pCodeOut == 'E' &&
+            shortcutModifiers == 6 && !freshCompositionState && !_IsComposing())
+        {
+            if (pKeyState)
+            {
+                pKeyState->Category = CATEGORY_COMPOSING;
+                pKeyState->Function = FUNCTION_RECONVERT_ENGLISH;
             }
             return TRUE;
         }
@@ -1299,7 +1311,7 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
     Global::firefox_like_cnt = 0;
 
     /* Send key event to server process */
-    if (*pIsEaten && !isNoOpForwardDelete)
+    if (*pIsEaten && !isNoOpForwardDelete && KeystrokeState.Function != FUNCTION_RECONVERT_ENGLISH)
     {
         // 检查是否应该跳过发送此键到服务器，由于长度限制。
         // 当达到限制时，我们只阻止字符输入键（FUNCTION_INPUT）。
@@ -1800,4 +1812,69 @@ void CMetasequoiaIME::_UninitKeyEventSink()
     pKeystrokeMgr->UnadviseKeyEventSink(_tfClientId);
 
     pKeystrokeMgr->Release();
+}
+
+// Re-open only a bounded user-selected ASCII word or the word immediately before
+// the caret. This is explicit local reconversion, never a background context read.
+HRESULT CMetasequoiaIME::_HandleEnglishReconversion(TfEditCookie ec, ITfContext *context)
+{
+    using Microsoft::WRL::ComPtr;
+    if (_IsComposing() || !SupportsEnglishReconversion() || Global::IsUiLessMode() || !_pCompositionProcessorEngine ||
+        SelectionHasSensitiveInputScope(context, ec))
+        return S_OK;
+    TF_SELECTION selection{};
+    ULONG fetched = 0;
+    if (context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched) != S_OK || fetched != 1 ||
+        !selection.range)
+        return S_OK;
+    ComPtr<ITfRange> range;
+    range.Attach(selection.range);
+    BOOL empty = FALSE;
+    if (FAILED(range->IsEmpty(ec, &empty)))
+        return S_OK;
+    WCHAR text[65]{};
+    ULONG count = 0;
+    LONG shifted = 0;
+    if (empty && FAILED(range->ShiftStart(ec, -64, &shifted, nullptr)))
+        return S_OK;
+    if (FAILED(range->GetText(ec, 0, text, 65, &count)) || count > 64)
+        return S_OK;
+    const auto span = FanyImeEnglishReconversion::WordRange(std::wstring_view(text, count), !empty);
+    if (!span)
+        return S_OK;
+    const LONG tail = -static_cast<LONG>(count - span->second);
+    const LONG head = static_cast<LONG>(span->first);
+    if (FAILED(range->ShiftEnd(ec, tail, &shifted, nullptr)) || shifted != tail ||
+        FAILED(range->ShiftStart(ec, head, &shifted, nullptr)) || shifted != head)
+        return S_OK;
+    const std::wstring word(text + span->first, span->second - span->first);
+    ComPtr<ITfContextComposition> compositions;
+    if (FAILED(context->QueryInterface(IID_PPV_ARGS(compositions.GetAddressOf()))))
+        return S_OK;
+    ComPtr<ITfComposition> composition;
+    if (FAILED(compositions->StartComposition(ec, range.Get(), this, composition.GetAddressOf())) || !composition)
+        return S_OK;
+    _SetComposition(composition.Detach()); // The text service owns the returned reference.
+    _SaveCompositionContext(context);
+    _englishReconversionOriginal = word;
+    ComPtr<ITfRange> caret;
+    if (FAILED(range->Clone(caret.GetAddressOf())) || FAILED(caret->Collapse(ec, TF_ANCHOR_END)))
+        return _HandleCancel(ec, context);
+    selection.range = caret.Get();
+    selection.style.ase = TF_AE_NONE;
+    selection.style.fInterimChar = FALSE;
+    if (FAILED(context->SetSelection(ec, 1, &selection)))
+        return _HandleCancel(ec, context);
+    _pCompositionProcessorEngine->PurgeVirtualKey();
+    for (const auto ch : word)
+        _pCompositionProcessorEngine->AddVirtualKey(ch);
+    WriteDataToSharedMemory(0, 0, 0, nullptr, static_cast<int>(word.size()), word, 0b110000);
+    uint64_t request = FANY_IME_NO_REQUEST_ID;
+    if (SendKeyEventToUIProcess(&request,
+                                static_cast<unsigned>(FanyImeInputStateShortcuts::Action::ReconvertEnglish)) !=
+        KeyEventSendResult::Sent)
+        return _HandleCancel(ec, context);
+    // No synchronous candidate wait in the host UI thread. The existing worker
+    // result fencing owns the list; the original text remains until selection.
+    return _HandleCompositionInputWorker(_pCompositionProcessorEngine, ec, context, FANY_IME_NO_REQUEST_ID);
 }

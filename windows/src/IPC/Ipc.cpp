@@ -507,12 +507,12 @@ bool WritePipeHello(HANDLE hPipeHandle, UINT pipeRole)
     DWORD bytesWritten = 0;
     if (pipeRole == FanyImePipeRole::Main)
     {
-        const auto hello =
-            FanyImeProtocol::Hello(GetPipeClientId(), NextProtocolId(nextRequestId),
-                                   FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
-                                       FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
-                                       FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
-                                       FanyImeProtocol::TemporaryJapaneseLongVowel);
+        const auto hello = FanyImeProtocol::Hello(
+            GetPipeClientId(), NextProtocolId(nextRequestId),
+            FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
+                FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
+                FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
+                FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::EnglishReconversion);
         BOOL ret = WriteFile(hPipeHandle, &hello, sizeof(hello), &bytesWritten, NULL);
         // Never authorize keys from merely writing a hello. An old Server
         // without negotiation times out into the existing raw-input fallback.
@@ -996,6 +996,12 @@ bool SupportsTrilingualCycle()
 {
     return hPipe && hPipe != INVALID_HANDLE_VALUE &&
            (negotiatedServerCapabilities & FanyImeProtocol::TrilingualCycle) != 0;
+}
+
+bool SupportsEnglishReconversion()
+{
+    return hPipe && hPipe != INVALID_HANDLE_VALUE &&
+           (negotiatedServerCapabilities & FanyImeProtocol::EnglishReconversion) != 0;
 }
 
 bool SupportsInputStateShortcuts()

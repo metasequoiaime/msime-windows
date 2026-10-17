@@ -136,6 +136,39 @@ int run_test()
     }
     set_data_directory(english_mode_directory);
 
+    {
+        const auto directory = root / "english-spelling-fallback";
+        prepare_main_database(directory, true);
+        Database database(directory / "english.db");
+        database.execute("CREATE TABLE english_words(word TEXT COLLATE BINARY NOT NULL,display TEXT NOT NULL,"
+                         "weight INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(word,display)) WITHOUT ROWID;");
+        database.execute("INSERT INTO english_words VALUES('working','working',400),('worked','worked',300);");
+        set_data_directory(directory);
+        for (int mode = 0; mode < 3; ++mode)
+        {
+            metasequoia::InputSession session(SchemeType::Quanpin);
+            metasequoia::EnglishInputOptions options;
+            options.mixed_candidates = true;
+            options.minimum_prefix = 2;
+            require(session.set_english_input_options(options), "Spelling test options were rejected.");
+            if (mode == 1)
+                session.set_dedicated_english_mode(true);
+            if (mode == 2)
+                require(session.handle_character('Y', true).handled, "Temporary English mode did not start.");
+            type(session, "wroking");
+            const auto &candidates = session.candidates();
+            const auto found = std::find_if(candidates.begin(), candidates.end(), [](const WordItem &item) {
+                return item.source == CandidateSource::EnglishDictionary && item.word == "working";
+            });
+            require(found != candidates.end() && found->corrected_from == "wroking",
+                    "An English input path lost the corrected candidate.");
+            const auto selected = session.select_candidate(static_cast<size_t>(found - candidates.begin()));
+            require(selected.handled && selected.commit == "working" && !session.has_composition(),
+                    "Selecting a spelling correction did not replace the complete misspelled input.");
+        }
+        set_data_directory(english_mode_directory);
+    }
+
     metasequoia::EnglishInputOptions mixed_options;
     mixed_options.mixed_candidates = true;
     mixed_options.minimum_prefix = 2;

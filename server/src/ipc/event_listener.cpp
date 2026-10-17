@@ -54,6 +54,7 @@ bool g_r_mode_triggered = false;
 std::shared_ptr<IInputSession> g_r_mode_original_session;
 std::shared_ptr<IInputSession> g_language_cycle_parked_session;
 bool g_english_input_mode = false;
+std::optional<bool> g_english_reconversion_previous_mode;
 } // namespace event_listener_detail
 
 namespace
@@ -503,7 +504,8 @@ void UpdateEnglishInput(const std::string &input, uint64_t client_id, uint64_t a
     std::lock_guard lock(g_async_request_mutex);
     const size_t mixed_min_prefix =
         dedicated_mode ? size_t{1} : static_cast<size_t>(GetConfiguredEnglishMixedInputMinChars());
-    EnglishIme::OnInputChanged(input, dedicated_mode, mixed_min_prefix);
+    EnglishIme::OnInputChanged(input, dedicated_mode, mixed_min_prefix,
+                               g_english_reconversion_previous_mode.has_value());
     ++g_english_generation;
     g_english_request_origin = input.empty()
                                    ? AsyncRequestOrigin{}
@@ -794,6 +796,12 @@ void PushUiLessCandidatesToOwner()
 
 void ClearState()
 {
+    if (g_english_reconversion_previous_mode)
+    {
+        const bool previous = *g_english_reconversion_previous_mode;
+        g_english_reconversion_previous_mode.reset();
+        SetEnglishInputMode(previous);
+    }
     const auto r_mode_original_session = g_r_mode_original_session;
     ClearSpecialModeTriggers();
     ClearCandidateUiOwner();

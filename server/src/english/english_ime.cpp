@@ -27,6 +27,7 @@ std::string g_latest_input;
 std::vector<EnglishIme::TranslationQuery> g_latest_translation_queries;
 bool g_use_local_translation_dictionary = true;
 bool g_dedicated_mode = false;
+bool g_reconvert = false;
 size_t g_mixed_min_prefix = kDefaultMixedMinPrefix;
 std::string g_db_path;
 EnglishIme::ApplyCallback g_apply_callback;
@@ -82,6 +83,7 @@ void WorkerLoop()
         const auto translation_queries = g_latest_translation_queries;
         const bool use_local_translation_dictionary = g_use_local_translation_dictionary;
         const bool dedicated_mode = g_dedicated_mode;
+        const bool reconvert = g_reconvert;
         const size_t mixed_min_prefix = g_mixed_min_prefix;
         lock.unlock();
 
@@ -124,8 +126,9 @@ void WorkerLoop()
             continue;
         }
 
-        auto candidates = dedicated_mode ? dictionary.query_prefix(prefix, kDedicatedCandidateLimit)
-                                         : dictionary.query_mixed_prefix(prefix);
+        auto candidates = dedicated_mode
+                              ? dictionary.query_candidates(input, kDedicatedCandidateLimit, false, reconvert)
+                              : dictionary.query_candidates(input, EnglishDictionary::kMixedCandidateLimit, true);
         if (!g_running || g_generation.load() != observed_generation)
         {
             continue;
@@ -175,12 +178,13 @@ bool IsRunning()
     return g_running;
 }
 
-void OnInputChanged(const std::string &input, bool dedicated_mode, size_t mixed_min_prefix)
+void OnInputChanged(const std::string &input, bool dedicated_mode, size_t mixed_min_prefix, bool reconvert)
 {
     {
         std::lock_guard lock(g_mutex);
         g_latest_input = input;
         g_dedicated_mode = dedicated_mode;
+        g_reconvert = dedicated_mode && reconvert;
         g_mixed_min_prefix = mixed_min_prefix == 0 ? kDefaultMixedMinPrefix : mixed_min_prefix;
         g_generation.fetch_add(1);
     }

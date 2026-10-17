@@ -972,8 +972,31 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     // MainPipeClientThread only enqueues this from a negotiated client with a known action.
     if (namedpipeData.event_type == FanyImePipeEventType::InputStateAction)
     {
-        SetEnglishInputMode(!g_english_input_mode);
+        if (namedpipeData.keycode == static_cast<unsigned>(FanyImeInputStateShortcuts::Action::ReconvertEnglish))
+        {
+            const std::string raw =
+                wstring_to_string(std::wstring(namedpipeData.pinyin_string, namedpipeData.pinyin_length));
+            if (raw.size() < 3 || raw.size() > 24 || sensitive_field ||
+                !std::all_of(raw.begin(), raw.end(),
+                             [](unsigned char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'); }))
+                return;
+            const bool previous_mode = g_english_input_mode;
+            ClearState();
+            g_english_reconversion_previous_mode = previous_mode;
+            SetEnglishInputMode(true);
+            g_inputSession->set_pinyin_sequence(raw);
+            g_inputSession->set_pinyin_sequence_with_cases(raw);
+            g_inputSession->recompute_candidates();
+            GlobalIme::composition.raw_input_with_cases = raw;
+            GlobalIme::composition.caret_position = raw.size();
+            PrepareCandidateList(client_id, activation_epoch);
+            UpdateEnglishInput(raw, client_id, activation_epoch, true);
+            RequestShowCandidateWindow();
+            return;
+        }
+        const bool next_mode = !g_english_input_mode;
         ClearState();
+        SetEnglishInputMode(next_mode);
         return;
     }
 

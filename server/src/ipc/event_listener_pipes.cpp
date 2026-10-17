@@ -537,10 +537,17 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             continue;
         }
 
-        if (pipeData.event_type == FanyImePipeEventType::InputStateAction &&
-            (!ClientNegotiatedInputStateShortcuts(clientId) ||
-             pipeData.keycode != static_cast<unsigned>(FanyImeInputStateShortcuts::Action::EnglishCandidates)))
-            continue;
+        if (pipeData.event_type == FanyImePipeEventType::InputStateAction)
+        {
+            const bool english_toggle =
+                ClientNegotiatedInputStateShortcuts(clientId) &&
+                pipeData.keycode == static_cast<unsigned>(FanyImeInputStateShortcuts::Action::EnglishCandidates);
+            const bool reconvert =
+                ClientNegotiatedEnglishReconversion(clientId) &&
+                pipeData.keycode == static_cast<unsigned>(FanyImeInputStateShortcuts::Action::ReconvertEnglish);
+            if (!english_toggle && !reconvert)
+                continue;
+        }
 
         PipeClientActivation activation = GetActivePipeClient();
         if (IsImplicitActivationEvent(pipeData.event_type))

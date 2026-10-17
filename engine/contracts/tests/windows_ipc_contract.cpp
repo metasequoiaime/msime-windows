@@ -1,5 +1,6 @@
 #include "../date_time_input.h"
 #include "../direct_helpcode.h"
+#include "../english_reconversion.h"
 #include "../ipc_negotiation.h"
 #include "../mid_sentence_helpcode.h"
 #include "../trilingual_input.h"
@@ -25,6 +26,16 @@
 
 int main()
 {
+    const auto word = FanyImeEnglishReconversion::WordRange(std::wstring_view(L"I am wroking"), false);
+    CHECK(word && word->first == 5 && word->second == 12);
+    CHECK(!FanyImeEnglishReconversion::WordRange(std::wstring_view(L"two words"), true));
+    const auto reconversion =
+        FanyImeProtocol::Hello(1, 2, FanyImeProtocol::Capabilities | FanyImeProtocol::EnglishReconversion);
+    CHECK((FanyImeProtocol::Negotiate(reconversion).capabilities & FanyImeProtocol::EnglishReconversion) == 0);
+    CHECK(
+        (FanyImeProtocol::Negotiate(reconversion, FanyImeProtocol::Capabilities | FanyImeProtocol::EnglishReconversion)
+             .capabilities &
+         FanyImeProtocol::EnglishReconversion) != 0);
     // Wire bytes, not just matching C++ declarations: existing v1 DLLs write
     // these offsets on both x86 and x64. Changes must not move UTF-16 data.
     std::array<unsigned char, 304> bytes{};

@@ -10,7 +10,8 @@ enum class Action : unsigned
 {
     EnglishCandidates = 1,
     FullWidth = 2,
-    Punctuation = 3
+    Punctuation = 3,
+    ReconvertEnglish = 4
 };
 struct Definition
 {
@@ -33,8 +34,10 @@ struct Rule
 {
     std::string_view binding, label;
 };
-inline constexpr Rule Reserved[] = {
-    {"Ctrl+Shift+KeyF", "简繁切换"}, {"Ctrl+F9", "语音输入"}, {"Ctrl+Shift+F9", "语音输入"}};
+inline constexpr Rule Reserved[] = {{"Ctrl+Alt+KeyE", "英文单词重选"},
+                                    {"Ctrl+Shift+KeyF", "简繁切换"},
+                                    {"Ctrl+F9", "语音输入"},
+                                    {"Ctrl+Shift+F9", "语音输入"}};
 inline constexpr Rule Warnings[] = {{"Ctrl+KeyA", "全选"},
                                     {"Ctrl+KeyC", "复制"},
                                     {"Ctrl+KeyV", "粘贴"},

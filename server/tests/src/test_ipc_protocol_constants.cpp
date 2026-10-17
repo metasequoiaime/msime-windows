@@ -4,8 +4,36 @@
 #include "ipc/ipc.h"
 #include "ipc/input_key_policy.h"
 #include "engine/contracts/ipc_negotiation.h"
+#include "engine/contracts/english_reconversion.h"
 #include "statistics/stats_pipe.h"
 #include "tests/includes/test_framework.h"
+
+TEST_CASE(english_reconversion_extracts_only_the_explicit_word_without_consuming_spaces)
+{
+    using FanyImeEnglishReconversion::WordRange;
+    const auto selected = WordRange(std::wstring_view(L"wroking"), true);
+    REQUIRE(selected.has_value());
+    REQUIRE_EQ(selected->first, size_t{0});
+    REQUIRE_EQ(selected->second, size_t{7});
+    const auto previous = WordRange(std::wstring_view(L"I am wroking"), false);
+    REQUIRE(previous.has_value());
+    REQUIRE_EQ(previous->first, size_t{5});
+    REQUIRE_EQ(previous->second, size_t{12});
+    REQUIRE(!WordRange(std::wstring_view(L"I am wroking "), false));
+    REQUIRE(!WordRange(std::wstring_view(L"I am wroking"), true));
+    REQUIRE(!WordRange(std::wstring_view(L"wroking\n"), false));
+    REQUIRE(!WordRange(std::wstring_view(L"ab"), false));
+    REQUIRE(!WordRange(std::wstring_view(L"wroking    "), false));
+    REQUIRE(!WordRange(std::wstring_view(L"w0rking"), true));
+    REQUIRE(!WordRange(std::wstring_view(L"中文"), true));
+    REQUIRE(!WordRange(std::wstring_view(L"abcdefghijklmnopqrstuvwxyz"), true));
+    const auto hello =
+        FanyImeProtocol::Hello(1, 2, FanyImeProtocol::Capabilities | FanyImeProtocol::EnglishReconversion);
+    REQUIRE((FanyImeProtocol::Negotiate(hello).capabilities & FanyImeProtocol::EnglishReconversion) == 0);
+    REQUIRE((FanyImeProtocol::Negotiate(hello, FanyImeProtocol::Capabilities | FanyImeProtocol::EnglishReconversion)
+                 .capabilities &
+             FanyImeProtocol::EnglishReconversion) != 0);
+}
 
 TEST_CASE(ipc_reverse_pipes_buffer_multiple_complete_frames)
 {

@@ -163,7 +163,9 @@ VisualPtr BuildToolsPage(PageContext &context)
         auto &details = *section.details;
         details.Add(DetailsDescription(
             L"全拼 / 双拼输入中文时，把下面这些内容直接混进候选，不用切换到对应的快捷模式。五笔不混输。"));
-        details.Add(DetailsRow(context, L"中英混输", L"在候选项中补充英文单词", zhEn));
+        details.Add(DetailsRow(context, L"中英混输", L"在候选项中补充英文单词；无前缀匹配时尝试一次拼写纠错", zhEn));
+        details.Add(DetailsDescription(L"英文单词已上屏时，选中该词或把光标紧贴词尾，按 Ctrl+Alt+E 重新选择英文候选。"
+                                       L"按 Esc 保留原词。只在中文状态、普通文本框内生效。"));
         auto triggerRow = MakeRow(L"英文触发字符数", L"预编辑字母达到该长度后才出现英文候选项", trigger, true);
         triggerRow->SetMargin({0.0f, 2.0f, 0.0f, 2.0f});
         auto triggerBlock = std::make_shared<Dimmable>(triggerRow);

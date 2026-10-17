@@ -90,6 +90,7 @@ enum KEYSTROKE_FUNCTION
 
     // Server-authoritative composition text and language destination.
     FUNCTION_CYCLE_INPUT_MODE,
+    FUNCTION_RECONVERT_ENGLISH,
     FUNCTION_TOGGLE_ENGLISH_CANDIDATES
 };
 

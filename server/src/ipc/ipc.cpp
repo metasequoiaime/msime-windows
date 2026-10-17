@@ -809,7 +809,7 @@ bool NegotiateMainPipeClient(const FanyImeNamedpipeData &hello, uint64_t registr
         hello, FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
                    FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
                    FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
-                   FanyImeProtocol::TemporaryJapaneseLongVowel);
+                   FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::EnglishReconversion);
     std::lock_guard lock(g_pipe_clients_mutex);
     auto it = g_pipe_clients.find(hello.client_id);
     if (it == g_pipe_clients.end() || registration_id == 0 || it->second.main_registration_id != registration_id)
@@ -858,6 +858,14 @@ bool ClientNegotiatedTrilingualCycle(uint64_t client_id)
     const auto it = g_pipe_clients.find(client_id);
     return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
            (it->second.protocol.capabilities & FanyImeProtocol::TrilingualCycle) != 0;
+}
+
+bool ClientNegotiatedEnglishReconversion(uint64_t client_id)
+{
+    std::lock_guard lock(g_pipe_clients_mutex);
+    const auto it = g_pipe_clients.find(client_id);
+    return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
+           (it->second.protocol.capabilities & FanyImeProtocol::EnglishReconversion) != 0;
 }
 
 bool ClientNegotiatedInputStateShortcuts(uint64_t client_id)

@@ -36,7 +36,8 @@ void Stop();
 // While running, every non-empty dedicated-mode input is answered through the
 // apply callback, even when the dictionary has no match.
 bool IsRunning();
-void OnInputChanged(const std::string &input, bool dedicated_mode = false, size_t mixed_min_prefix = 2);
+void OnInputChanged(const std::string &input, bool dedicated_mode = false, size_t mixed_min_prefix = 2,
+                    bool reconvert = false);
 void Clear();
 bool IsCurrent(const std::string &input, uint64_t generation, bool dedicated_mode = false);
 // Non-English target languages have no local dictionary and must go directly

@@ -1245,6 +1245,7 @@ BOOL CMetasequoiaIME::_IsComposing()
 
 void CMetasequoiaIME::_SetComposition(_In_ ITfComposition *pComposition)
 {
+    _englishReconversionOriginal.clear();
     QueueTsfHostWindowDiagnostic(pComposition ? L"composition-start" : L"composition-clear",
                                  fmt::format(L"epoch={}", _compositionEpoch.load(std::memory_order_acquire)));
     _pComposition = pComposition;

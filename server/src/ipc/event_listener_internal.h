@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 
 // event_listener*.cpp 之间共享的内部声明：拆分前同在 event_listener.cpp 里、现在跨文件使用的状态、类型与函数。
 // 只给 server/src/ipc/event_listener*.cpp 包含，其他地方不要引用。
@@ -50,6 +51,7 @@ extern std::shared_ptr<IInputSession> g_r_mode_original_session;
 // config drops it, since a scheme or profile change makes it stale.
 extern std::shared_ptr<IInputSession> g_language_cycle_parked_session;
 extern bool g_english_input_mode;
+extern std::optional<bool> g_english_reconversion_previous_mode;
 // Glosses are a cache keyed by TranslationIdentity, not the current page's
 // results: the next keystroke's page mostly repeats the same words, and
 // rebuilding it without their glosses first shrank every row, then grew it back

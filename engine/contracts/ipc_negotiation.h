@@ -31,6 +31,9 @@ constexpr std::uint32_t CaretStateIndicator = 1u << 5;
 constexpr std::uint32_t TrilingualCycle = 1u << 6;
 constexpr std::uint32_t InputStateShortcuts = 1u << 7;
 constexpr std::uint32_t TemporaryJapaneseLongVowel = 1u << 8;
+// Optional local-only selection/previous-word reconversion action. The word is
+// carried in the existing bounded pinyin payload; old peers never receive it.
+constexpr std::uint32_t EnglishReconversion = 1u << 9;
 constexpr std::uint32_t Capabilities = RequestIds | FocusEpochs | FramedVoice;
 constexpr std::uint32_t RequiredCapabilities = RequestIds | FocusEpochs;
 

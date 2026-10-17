@@ -1167,10 +1167,8 @@ void InputSession::update_dedicated_english_candidates()
         return;
     }
 
-    std::string prefix = dedicated_english_preedit_;
-    std::transform(prefix.begin(), prefix.end(), prefix.begin(),
-                   [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
-    dedicated_english_candidates_ = candidate_queries_.english_dictionary().query_prefix(prefix, 1000);
+    dedicated_english_candidates_ =
+        candidate_queries_.english_dictionary().query_candidates(dedicated_english_preedit_, 1000);
     apply_candidate_positions(dedicated_english_candidates_);
     if (dedicated_english_candidates_.empty())
     {

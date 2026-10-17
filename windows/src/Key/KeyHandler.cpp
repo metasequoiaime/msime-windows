@@ -140,6 +140,7 @@ VOID CMetasequoiaIME::_DeleteCandidateList(BOOL isForce, _In_opt_ ITfContext *pC
 
 HRESULT CMetasequoiaIME::_HandleComplete(TfEditCookie ec, _In_ ITfContext *pContext)
 {
+    _englishReconversionOriginal.clear();
     g_toggleImeFallbackBuffer.clear();
     // The composition ends here, so the creating-word prefix must not survive
     // into the next one: a leftover word would be prepended to its preedit.
@@ -156,6 +157,7 @@ HRESULT CMetasequoiaIME::_HandleComplete(TfEditCookie ec, _In_ ITfContext *pCont
 HRESULT CMetasequoiaIME::_HandleCompleteCommitFirst(TfEditCookie ec, _In_ ITfContext *pContext,
                                                     bool requireSuccessfulEnd)
 {
+    _englishReconversionOriginal.clear();
     g_toggleImeFallbackBuffer.clear();
     // Same terminal cleanup as _HandleComplete: the accumulated word belongs to
     // the composition being finished, never to the next one.
@@ -178,6 +180,16 @@ HRESULT CMetasequoiaIME::_HandleCompleteCommitFirst(TfEditCookie ec, _In_ ITfCon
 
 HRESULT CMetasequoiaIME::_HandleCancel(TfEditCookie ec, _In_ ITfContext *pContext)
 {
+    if (!_englishReconversionOriginal.empty() && _pComposition)
+    {
+        const std::wstring original = _englishReconversionOriginal;
+        CStringRange value;
+        value.Set(original.c_str(), original.size());
+        const HRESULT result = _SetCompositionTextAndSelection(ec, pContext, &value);
+        if (result != S_OK)
+            return result;
+        return _HandleCompleteCommitFirst(ec, pContext);
+    }
     g_toggleImeFallbackBuffer.clear();
     GlobalIme::word_for_creating_word = L"";
     GlobalIme::pending_create_word_preedit.clear();
@@ -229,6 +241,7 @@ HRESULT CMetasequoiaIME::_HandleEscapeCancel(TfEditCookie ec, _In_ ITfContext *p
 // commit the stale word and spelling at the new caret.
 void CMetasequoiaIME::_ClearCreatingWordState()
 {
+    _englishReconversionOriginal.clear();
     g_toggleImeFallbackBuffer.clear();
     GlobalIme::word_for_creating_word.clear();
     GlobalIme::pending_create_word_preedit.clear();

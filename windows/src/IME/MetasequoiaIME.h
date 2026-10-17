@@ -290,6 +290,8 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     HRESULT _HandleInsertText(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
     HRESULT _HandleCycleInputMode(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &payload);
     HRESULT _HandleCommitCandidateAndContinue(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &payload);
+    std::wstring _englishReconversionOriginal;
+    HRESULT _HandleEnglishReconversion(TfEditCookie ec, _In_ ITfContext *pContext);
     HRESULT _HandleUpdateVoiceComposition(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
     HRESULT _HandleCommitVoiceComposition(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
     HRESULT _HandleCancelVoiceComposition(TfEditCookie ec, _In_ ITfContext *pContext);

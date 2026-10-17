@@ -54,6 +54,7 @@ bool SupportsCompositionRestore();
 bool SupportsCaretStateIndicator();
 bool SupportsTrilingualCycle();
 bool SupportsInputStateShortcuts();
+bool SupportsEnglishReconversion();
 bool FlushNamedpipeFocusSessionReset();
 bool FlushNamedpipeImeDeactivation(uint64_t focusToken = 0);
 
