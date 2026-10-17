@@ -64,11 +64,11 @@ my-skin/
 | `base` | 继承的内置皮肤，如 `fluent`；未写的键沿用 base。`canvas` 是只给 v2 皮肤用的全贴图基底（透明面板，外观来自九宫格面板图与挂件），不能单独选用，见 [schema 说明](../examples/skin-examples/schema/README.md) |
 | `[supports]` | `layouts`（`horizontal` / `vertical`）、`themes`（`dark` / `light`） |
 | `[candidate_window]` | `min_width_dip`、`corner_radius_dip`（0–32）、`border_width_dip`（0–4）、`item_corner_radius_dip`（高亮圆角，0–16）、`shadow`（`none` / `soft` / `strong`）、`font_family`（排在用户字体前面）、`page_arrows`（翻页箭头：横排在候选右侧，竖排在最后一行下方、与序号左对齐；不写时沿用 base 的[默认皮肤设置](#默认皮肤设置default)，出厂关闭）、`fit_content`（卡片严格按文字宽度收紧，`min_width_dip` 与装饰图宽度仍然生效；不写时沿用 base 的默认皮肤设置，出厂关闭） |
-| `[candidate_window.decoration]` | 卡片上方的装饰图：`image`、`top_inset_dip`、`width_dip`、`align`（`left` / `center` / `right`） |
+| `[candidate_window.decoration]` | 卡片上方的装饰图：`image`、`top_inset_dip`、`width_dip`、`align`（`left` / `center` / `right`）；`candidate_overlay` 开启后可在装饰图上叠加候选词（`candidate_overlay_font_size_dip`、`candidate_overlay_color`、`candidate_overlay_align_h/v`、`candidate_overlay_offset_x/y_dip`、`candidate_overlay_strip_badge`、`candidate_overlay_max_width_dip`、`candidate_overlay_min_font_size_dip`、`candidate_overlay_index`） |
 | `[candidate_window.background]` | 卡片背景图：`image`、`fit`（`cover` / `contain` / `stretch`）、`opacity`（0–1） |
 | `[candidate.dark]` / `[candidate.light]` | 候选配色：`accent`、`selected`、`hover`、`surface`、`border`、`text`、`number`、`translation`、`show_selected_bar`；细分配色 `candidate_text`、`preedit_text`、`preedit_caret`、`selected_text`、`selected_number`、`selected_translation`、`translation_pos`、`translation_separator`、`selected_translation_pos`、`selected_translation_separator`、`selected_bar`、`preedit_background`、`preedit_divider` |
 | `[candidate.dark.menu]` / `[candidate.light.menu]` | 候选窗右键菜单：`background`、`border`、`text`、`hover` |
-| `[toolbar]` / `[toolbar.dark]` / `[toolbar.light]` | 悬浮工具栏：`corner_radius_dip`，以及 `background`、`border`、`handle`、`divider`、`icon`、`hover` |
+| `[toolbar]` / `[toolbar.dark]` / `[toolbar.light]` | 悬浮工具栏：`corner_radius_dip`，以及 `background`、`border`、`handle`、`divider`、`icon`、`hover`；`mode`（`bar` / `image`）+ `image` + `image_width_dip`/`image_height_dip` 开启自由图片模式，`[toolbar.buttons.<key>]` 逐按钮设 `x_dip`/`y_dip`/`size_dip`/`visible` 与 `image`/`[images]` 状态图 |
 | `[license]` | `code`、`assets`、`source`：代码与素材的授权信息 |
 
 所有颜色键（`[candidate.*]` 里除 `show_selected_bar` 外的键、`[candidate.*.menu]` 与 `[toolbar.*]` 的全部键）都支持十六进制 `#RGB`、`#RGBA`、`#RRGGBB`、`#RRGGBBAA`，以及 `rgb(r, g, b)`、`rgba(r, g, b, a)` 和 `transparent`。十六进制必须带 `#`（清单格式的约定，与 CSS 写法一致；渲染器对不带 `#` 的写法有容错，但不要依赖它），不透明度在末尾（`#RRGGBBAA`，不是 `#AARRGGBB`），例如 `rgba(224, 138, 168, 0.28)` 与 `#e08aa847` 等价。图片路径相对于皮肤目录，且不能指向目录之外。完整的带注释示例见 [`niya-demo/skin.toml`](niya-demo/skin.toml)。

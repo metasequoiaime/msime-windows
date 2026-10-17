@@ -228,6 +228,30 @@ class WrapPanel : public Panel
     std::vector<RowItem> rowItems_;
 };
 
+// 绝对定位容器：子元素按 AddChildAt 给定的 (x, y)（DIP，相对面板内边距左上角）摆放，不参与流式排列。
+// 适合「一张背景图 + 若干叠在上面的元素」。命中沿用 Panel::FindVisualAt（子元素逆序，后加的更靠上）。
+class OverlayPanel : public Panel
+{
+  public:
+    void AddChildAt(std::shared_ptr<Visual> child, float x, float y);
+    // 更新已添加子元素（按添加顺序）的绝对坐标。
+    void SetPosition(size_t index, float x, float y);
+
+    SizeF Measure(const SizeF &availableSize) override;
+    void Arrange(const RectF &finalRect) override;
+    void Render(DeviceResources &deviceResources) override;
+
+  private:
+    struct Position
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+    };
+
+    std::vector<Position> positions_;
+    std::vector<SizeF> measuredChildren_;
+};
+
 class ScrollViewer : public Visual
 {
   public:

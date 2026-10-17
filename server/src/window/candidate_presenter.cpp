@@ -389,6 +389,9 @@ struct CandidatePresenter::Impl
     std::unique_ptr<msimeui::Window> window;
     std::shared_ptr<msimeui::StackPanel> root;
     std::shared_ptr<msimeui::Image> decoration;
+    // 装饰图 + 叠加其上的候选词（candidate_overlay 开启时）。
+    std::shared_ptr<msimeui::OverlayPanel> decorationOverlay;
+    std::shared_ptr<msimeui::TextBlock> decorationCandidate;
     std::shared_ptr<msimeui::Card> card;
     // 卡片与 v2 挂件层放在同一格里：挂件层测量为 0，格子仍由卡片决定，挂件按 anchor 画到卡片外沿。
     // 网格按子元素顺序绘制：下层挂件、卡片、上层挂件。
@@ -461,8 +464,12 @@ void CandidatePresenter::RebuildScene()
     lastSkinFingerprint_.clear();
     impl_->root = std::make_shared<msimeui::StackPanel>(0.0f);
     impl_->decoration = std::make_shared<msimeui::Image>(L"");
-    impl_->decoration->SetHorizontalAlignment(msimeui::HorizontalAlignment::Trailing);
     impl_->decoration->SetStretch(msimeui::ImageStretch::Uniform);
+    impl_->decorationCandidate = std::make_shared<msimeui::TextBlock>(L"", 16.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
+    impl_->decorationOverlay = std::make_shared<msimeui::OverlayPanel>();
+    impl_->decorationOverlay->SetHorizontalAlignment(msimeui::HorizontalAlignment::Trailing);
+    impl_->decorationOverlay->AddChildAt(impl_->decoration, 0.0f, 0.0f);
+    impl_->decorationOverlay->AddChildAt(impl_->decorationCandidate, 0.0f, 0.0f);
     impl_->preedit = std::make_shared<msimeui::TextBlock>(L"", 14.0f, D2D1::ColorF(0xF5F5F5));
     impl_->preedit->SetTextLayoutPadding({0.0f, 1.0f, 0.0f, 1.0f});
     impl_->preedit->SetHorizontalAlignment(msimeui::HorizontalAlignment::Leading);
@@ -524,7 +531,7 @@ void CandidatePresenter::RebuildScene()
     impl_->cardColumn = std::make_shared<msimeui::StackPanel>(0.0f);
     impl_->cardColumn->SetHorizontalAlignment(msimeui::HorizontalAlignment::Leading);
     impl_->cardColumn->SetHorizontalContentAlignment(msimeui::HorizontalAlignment::Stretch);
-    impl_->cardColumn->AddChild(impl_->decoration);
+    impl_->cardColumn->AddChild(impl_->decorationOverlay);
     impl_->cardColumn->AddChild(impl_->overlayGrid);
     impl_->frame = std::make_shared<msimeui::Container>();
     impl_->frame->SetPadding({kShadowPadLeft, kShadowPadTop, kShadowPadRight, kShadowPadBottom});
@@ -1117,19 +1124,50 @@ void CandidatePresenter::ApplySkin()
             (std::max)({cardMinWidthDip_, static_cast<float>(package->minWidthDip), decorationWidthDip_});
     }
     // 卡片上方留给阴影的 kShadowPadTop 与装饰盒重叠，装饰盒高过它时不再额外留白。
+    // 装饰图上叠加候选词的参数（FillItemsFromUi 里按当前页取词）。
+    decorationCandidateOverlay_ = false;
+    decorationCandidateFontSizeDip_ = 16.0f;
+    decorationCandidateColor_.clear();
+    decorationCandidateAlignH_ = "center";
+    decorationCandidateAlignV_ = "center";
+    decorationCandidateOffsetXDip_ = 0.0f;
+    decorationCandidateOffsetYDip_ = 0.0f;
+    decorationCandidateStripBadge_ = true;
+    decorationCandidateMaxWidthDip_ = 0.0f;
+    decorationCandidateMinFontSizeDip_ = 8.0f;
+    decorationCandidateIndex_ = 1;
+    if (package)
+    {
+        decorationCandidateOverlay_ = package->decorationCandidateOverlay.value_or(false);
+        decorationCandidateFontSizeDip_ = static_cast<float>(package->decorationCandidateFontSizeDip);
+        decorationCandidateColor_ = package->decorationCandidateColor;
+        decorationCandidateAlignH_ = package->decorationCandidateAlignH;
+        decorationCandidateAlignV_ = package->decorationCandidateAlignV;
+        decorationCandidateOffsetXDip_ = static_cast<float>(package->decorationCandidateOffsetXDip);
+        decorationCandidateOffsetYDip_ = static_cast<float>(package->decorationCandidateOffsetYDip);
+        decorationCandidateStripBadge_ = package->decorationCandidateStripBadge;
+        decorationCandidateMaxWidthDip_ = static_cast<float>(package->decorationCandidateMaxWidthDip);
+        decorationCandidateMinFontSizeDip_ = static_cast<float>(package->decorationCandidateMinFontSizeDip);
+        decorationCandidateIndex_ = package->decorationCandidateIndex;
+    }
     float framePadTop = kShadowPadTop;
     if (decorationPath.empty() || decorationTopDip_ <= 0.0f)
     {
+        impl_->decorationOverlay->SetHeight(0.0f);
+        impl_->decorationOverlay->ClearWidth();
         impl_->decoration->SetHeight(0.0f);
         impl_->decoration->ClearWidth();
         impl_->decoration->SetSource(L"");
+        impl_->decorationCandidate->SetText(L"");
     }
     else
     {
         impl_->decoration->SetSource(decorationPath);
         impl_->decoration->SetHeight(decorationTopDip_);
         impl_->decoration->SetWidth(decorationWidthDip_);
-        impl_->decoration->SetHorizontalAlignment(DecorationAlignment(package->decorationAlign));
+        impl_->decorationOverlay->SetWidth(decorationWidthDip_);
+        impl_->decorationOverlay->SetHeight(decorationTopDip_);
+        impl_->decorationOverlay->SetHorizontalAlignment(DecorationAlignment(package->decorationAlign));
         framePadTop = (std::max)(0.0f, kShadowPadTop - decorationTopDip_);
     }
     // v2 挂件挂在卡片外沿，窗口要按 outer_insets_dip 往四边多留出空白，否则立绘被窗口边界裁掉。
@@ -1251,7 +1289,74 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
     {
         impl_->pager->SetEnabled(page->has_previous_page, page->has_next_page);
     }
+    std::wstring decorationWord;
+    if (decorationCandidateOverlay_)
+    {
+        const size_t index = decorationCandidateIndex_ <= 0
+                                 ? static_cast<size_t>((std::max)(0, page->selected_index_in_page))
+                                 : static_cast<size_t>(decorationCandidateIndex_ - 1);
+        if (index < page->page_views.size())
+        {
+            const auto &view = page->page_views[index];
+            decorationWord = string_to_wstring(decorationCandidateStripBadge_ ? view.text : view.text + view.badge);
+        }
+    }
+    UpdateDecorationCandidateText(decorationWord);
     return page->generation;
+}
+
+void CandidatePresenter::UpdateDecorationCandidateText(const std::wstring &word)
+{
+    if (!impl_ || !impl_->decorationCandidate || !impl_->decorationOverlay)
+    {
+        return;
+    }
+    if (!decorationCandidateOverlay_ || word.empty() || decorationTopDip_ <= 0.0f || decorationWidthDip_ <= 0.0f)
+    {
+        impl_->decorationCandidate->SetText(L"");
+        return;
+    }
+    impl_->decorationCandidate->SetText(word);
+    impl_->decorationCandidate->SetColor(
+        decorationCandidateColor_.empty()
+            ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f)
+            : ParseCssColor(decorationCandidateColor_, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f)));
+    impl_->decorationCandidate->ClearWidth();
+    impl_->decorationCandidate->ClearHeight();
+    // 字号：max_width>0 时按宽度比例往下缩，下限 min_font_size。
+    float fontSize = decorationCandidateFontSizeDip_;
+    impl_->decorationCandidate->SetFontSize(fontSize);
+    if (decorationCandidateMaxWidthDip_ > 0.0f && decorationCandidateMinFontSizeDip_ < fontSize)
+    {
+        const float maxWidth = (std::min)(decorationCandidateMaxWidthDip_, decorationWidthDip_);
+        const msimeui::SizeF natural = impl_->decorationCandidate->MeasureInLayout({10000.0f, fontSize * 2.0f});
+        if (natural.width > maxWidth && natural.width > 0.0f)
+        {
+            fontSize = (std::max)(decorationCandidateMinFontSizeDip_, fontSize * maxWidth / natural.width);
+            impl_->decorationCandidate->SetFontSize(fontSize);
+        }
+    }
+    const msimeui::SizeF measured = impl_->decorationCandidate->MeasureInLayout({10000.0f, fontSize * 2.0f});
+    // 位置：align_h + align_v + offset，相对装饰盒（decorationWidthDip_ × decorationTopDip_）。
+    float x = decorationCandidateOffsetXDip_;
+    if (decorationCandidateAlignH_ == "center")
+    {
+        x += (decorationWidthDip_ - measured.width) * 0.5f;
+    }
+    else if (decorationCandidateAlignH_ == "right")
+    {
+        x += decorationWidthDip_ - measured.width;
+    }
+    float y = decorationCandidateOffsetYDip_;
+    if (decorationCandidateAlignV_ == "center")
+    {
+        y += (decorationTopDip_ - measured.height) * 0.5f;
+    }
+    else if (decorationCandidateAlignV_ == "bottom")
+    {
+        y += decorationTopDip_ - measured.height;
+    }
+    impl_->decorationOverlay->SetPosition(1, x, y);
 }
 
 void CandidatePresenter::CommitItem(size_t pageIndex)

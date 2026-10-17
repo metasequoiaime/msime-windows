@@ -26,6 +26,7 @@
 #include <dwrite.h>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <windowsx.h>
@@ -119,6 +120,17 @@ class ToolbarIconButton : public msimeui::Visual
         InvalidateVisual();
     }
 
+    // image 模式：给一张图（空则回退矢量 glyph）。图上不画 hover 圆角底。
+    void SetImage(std::wstring path)
+    {
+        image_ = path.empty() ? nullptr : std::make_shared<msimeui::Image>(std::move(path));
+        if (image_)
+        {
+            image_->SetStretch(msimeui::ImageStretch::Uniform);
+        }
+        InvalidateVisual();
+    }
+
     SizeF Measure(const SizeF &availableSize) override
     {
         (void)availableSize;
@@ -128,10 +140,19 @@ class ToolbarIconButton : public msimeui::Visual
     void Arrange(const msimeui::RectF &finalRect) override
     {
         bounds_ = finalRect;
+        if (image_)
+        {
+            image_->Arrange(finalRect);
+        }
     }
 
     void Render(msimeui::DeviceResources &deviceResources) override
     {
+        if (image_)
+        {
+            image_->Render(deviceResources);
+            return;
+        }
         ID2D1RenderTarget *target = deviceResources.GetRenderTarget();
         if (!target)
         {
@@ -247,6 +268,7 @@ class ToolbarIconButton : public msimeui::Visual
     D2D1_COLOR_F hoverFill_ = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f);
     float hoverRadius_ = 6.0f;
     ClickHandler onClick_;
+    std::shared_ptr<msimeui::Image> image_;
 };
 
 class ToolbarDragHandle : public msimeui::Visual
@@ -351,7 +373,7 @@ struct FloatingToolbarPresenter::Impl
 {
     msimeui::DeviceResources resources;
     std::unique_ptr<msimeui::Window> window;
-    std::shared_ptr<msimeui::StackPanel> root;
+    std::shared_ptr<msimeui::Panel> root;
     std::shared_ptr<msimeui::Card> card;
     std::shared_ptr<msimeui::Container> frame;
     std::shared_ptr<msimeui::Visual> dragLimit;
@@ -373,6 +395,13 @@ struct FloatingToolbarPresenter::Impl
     int englishInputMode = 0;
     int capsLock = 0;
     int japaneseInputMode = 0;
+    // image 模式：整张图当背景、图标按各自坐标摆，不画底色/描边/圆角/阴影/把手/分隔线。
+    bool imageMode = false;
+    std::wstring toolbarPackageRoot;
+    std::wstring toolbarImagePath;
+    float toolbarImageWidthDip = 0.0f;
+    float toolbarImageHeightDip = 0.0f;
+    CandidateSkinCatalog::ToolbarButtons toolbarButtons;
 };
 
 FloatingToolbarPresenter::FloatingToolbarPresenter() = default;
@@ -423,6 +452,158 @@ void FloatingToolbarPresenter::RebuildScene()
     const float padRight = 4.0f * s;
     const float radius = impl_->radius * s;
     const float iconRadius = impl_->iconRadius * s;
+
+    if (impl_->imageMode)
+    {
+        const float imageWidth = impl_->toolbarImageWidthDip * s;
+        const float imageHeight = impl_->toolbarImageHeightDip * s;
+
+        auto root = std::make_shared<msimeui::OverlayPanel>();
+        root->SetWidth(imageWidth);
+        root->SetHeight(imageHeight);
+        auto background = std::make_shared<msimeui::Image>(impl_->toolbarImagePath);
+        background->SetStretch(msimeui::ImageStretch::Fill);
+        root->AddChildAt(background, 0.0f, 0.0f);
+
+        const auto &buttons = impl_->toolbarButtons.items;
+        const std::wstring &packageRoot = impl_->toolbarPackageRoot;
+        auto addButton = [&](const std::string &key, const std::string &state, wchar_t glyph,
+                             const std::wstring &family, const std::wstring &text, bool underline,
+                             ToolbarIconButton::ClickHandler click) {
+            const auto found = buttons.find(key);
+            if (found == buttons.end() || (found->second.visible && !*found->second.visible))
+            {
+                return;
+            }
+            const CandidateSkinCatalog::ToolbarButton &cfg = found->second;
+            if (!cfg.xDip || !cfg.yDip)
+            {
+                return;
+            }
+            const float buttonSize = (cfg.sizeDip ? static_cast<float>(*cfg.sizeDip) : 26.0f) * s;
+            auto button = std::make_shared<ToolbarIconButton>(glyph, family, text, buttonSize);
+            button->SetUnderline(underline);
+            button->SetColors(impl_->glyph, impl_->hover, iconRadius);
+            button->SetOnClick(std::move(click));
+            std::wstring imagePath;
+            if (!state.empty())
+            {
+                const auto stateIt = cfg.images.states.find(state);
+                if (stateIt != cfg.images.states.end())
+                {
+                    imagePath = packageRoot + string_to_wstring(stateIt->second);
+                }
+            }
+            else if (!cfg.images.image.empty())
+            {
+                imagePath = packageRoot + string_to_wstring(cfg.images.image);
+            }
+            button->SetImage(imagePath);
+            root->AddChildAt(button, static_cast<float>(*cfg.xDip) * s, static_cast<float>(*cfg.yDip) * s);
+        };
+        auto addGlyphButton = [&](const std::string &key, const std::string &state, const ToolbarIcon &icon,
+                                  ToolbarIconButton::ClickHandler click) {
+            const msimeui::IconGlyph resolved = msimeui::ResolveIconGlyph(icon.codepoint);
+            if (resolved.family)
+            {
+                addButton(key, state, resolved.codepoint, resolved.family, L"", false, std::move(click));
+            }
+            else
+            {
+                addButton(key, state, 0, L"", icon.fallbackText, false, std::move(click));
+            }
+        };
+
+        if (impl_->capsLock == 1)
+        {
+            addButton("status", "caps", 0, L"", L"A", false, [this]() {
+                if (impl_->englishInputMode == 1)
+                {
+                    FanyNamedPipe::EnqueueExitEnglishInputModeTask();
+                }
+                else
+                {
+                    FanyNamedPipe::EnqueueToolbarLanguageToggleTask(impl_->cnEn == 1);
+                }
+            });
+        }
+        else if (impl_->cnEn != 1)
+        {
+            addGlyphButton("status", "en", kIconEn, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(false); });
+        }
+        else if (impl_->englishInputMode == 1)
+        {
+            addButton("status", "en-candidate", 0, L"", L"En", true,
+                      []() { FanyNamedPipe::EnqueueExitEnglishInputModeTask(); });
+        }
+        else if (impl_->japaneseInputMode == 1)
+        {
+            addGlyphButton("status", "ja", kIconJa, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(true); });
+        }
+        else
+        {
+            addGlyphButton("status", "cn", kIconCn, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(true); });
+        }
+
+        const FloatingToolbarItemsConfig &config = GetConfiguredFloatingToolbarItems();
+        if (config.fullwidth)
+        {
+            if (impl_->doubleSingleByte == 1)
+            {
+                addGlyphButton("fullwidth", "full", kIconFullWidth,
+                               []() { SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToHalfwidth); });
+            }
+            else
+            {
+                addGlyphButton("fullwidth", "half", kIconHalfWidth,
+                               []() { SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToFullwidth); });
+            }
+        }
+        if (config.punctuation)
+        {
+            if (impl_->punctuation == 1)
+            {
+                addGlyphButton("punctuation", "cn", kIconPuncCn,
+                               []() { SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToPuncEn); });
+            }
+            else
+            {
+                addGlyphButton("punctuation", "en", kIconPuncEn,
+                               []() { SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToPuncCn); });
+            }
+        }
+        if (config.character_set)
+        {
+            const bool traditional = GetConfiguredCharacterSet() == "traditional";
+            addGlyphButton("character_set", traditional ? "traditional" : "simplified",
+                           traditional ? kIconTraditional : kIconSimplified, []() {
+                               const std::string next =
+                                   GetConfiguredCharacterSet() == "traditional" ? "simplified" : "traditional";
+                               SetConfiguredCharacterSet(next);
+                           });
+        }
+        if (config.emoji)
+        {
+            addGlyphButton("emoji", "", kIconEmoji, []() { OpenEmojiPanelApplication(); });
+        }
+        if (config.screen_keyboard)
+        {
+            addGlyphButton("screen_keyboard", "", kIconKeyboard, []() { OpenKeyboardPanelApplication(); });
+        }
+        if (config.settings)
+        {
+            addGlyphButton("settings", "", kIconSettings, []() { OpenSettingsApplication(); });
+        }
+
+        impl_->card.reset();
+        impl_->dragLimit.reset();
+        impl_->frame.reset();
+        impl_->root = root;
+        auto scene = std::make_unique<msimeui::Scene>();
+        scene->SetRoot(impl_->root);
+        impl_->window->SetScene(std::move(scene));
+        return;
+    }
 
     auto row = std::make_shared<msimeui::HorizontalStackPanel>(gap);
     row->SetVerticalContentAlignment(msimeui::VerticalAlignment::Center);
@@ -602,6 +783,22 @@ void FloatingToolbarPresenter::ApplyTheme()
     {
         ApplyFloatingToolbarSkinOverrides(skin, *package, light);
     }
+    impl_->imageMode = false;
+    impl_->toolbarPackageRoot.clear();
+    impl_->toolbarImagePath.clear();
+    impl_->toolbarImageWidthDip = 0.0f;
+    impl_->toolbarImageHeightDip = 0.0f;
+    impl_->toolbarButtons = {};
+    if (package && package->toolbarMode == "image" && !package->toolbarImage.empty())
+    {
+        impl_->imageMode = true;
+        const std::wstring skinsRoot = CommonUtils::get_ime_data_path_w() + L"\\skins";
+        impl_->toolbarPackageRoot = skinsRoot + L"\\" + string_to_wstring(package->id) + L"\\";
+        impl_->toolbarImagePath = impl_->toolbarPackageRoot + string_to_wstring(package->toolbarImage);
+        impl_->toolbarImageWidthDip = static_cast<float>(package->toolbarImageWidthDip);
+        impl_->toolbarImageHeightDip = static_cast<float>(package->toolbarImageHeightDip);
+        impl_->toolbarButtons = package->toolbarButtons;
+    }
     impl_->fill = skin.fill;
     impl_->border = skin.border;
     impl_->glyph = skin.glyph;
@@ -627,7 +824,7 @@ void FloatingToolbarPresenter::RelayoutHost(FLOAT scaleOverride, const RECT *sug
         return;
     }
     impl_->root->InvalidateMeasure();
-    const SizeF measured = impl_->root->MeasureInLayout({2000.0f, 240.0f});
+    const SizeF measured = impl_->root->MeasureInLayout({2000.0f, impl_->imageMode ? 2000.0f : 240.0f});
     impl_->root->InvalidateArrange();
     impl_->root->ArrangeInLayout({0.0f, 0.0f, measured.width, measured.height});
     ::FTB_CONTENT_WIDTH_DIP = measured.width;
@@ -666,7 +863,12 @@ void FloatingToolbarPresenter::RelayoutHost(FLOAT scaleOverride, const RECT *sug
     ::FTB_HOST_INSETS_VALID = true;
     ClipWindowToVisibleScreens(hwnd_, ScreenArea::WorkArea);
     impl_->resources.EnsureForComposition(hwnd_);
-    if (impl_->card && impl_->dragLimit)
+    if (impl_->imageMode)
+    {
+        // 整张图都可拖。
+        impl_->captionRect = {0.0f, 0.0f, measured.width, measured.height};
+    }
+    else if (impl_->card && impl_->dragLimit)
     {
         const RectF card = impl_->card->GetBounds();
         const RectF limit = impl_->dragLimit->GetBounds();
@@ -689,6 +891,11 @@ bool FloatingToolbarPresenter::HitCaptionDrag(POINT clientPoint) const
 RECT FloatingToolbarPresenter::ShadowInsetsPx(int hostWidthPx, int hostHeightPx, FLOAT scale) const
 {
     if (!impl_ || scale <= 0.0f)
+    {
+        return {};
+    }
+    // image 模式没有描边/阴影，不预留透明边距。
+    if (impl_->imageMode)
     {
         return {};
     }

@@ -425,6 +425,65 @@ bool ReadToolbarColors(const toml::node *node, ToolbarColors &out)
            ReadCssColor(*table, "handle", out.handle) && ReadCssColor(*table, "divider", out.divider) &&
            ReadCssColor(*table, "icon", out.icon) && ReadCssColor(*table, "hover", out.hover);
 }
+
+// [toolbar.buttons]：按钮键 → 参数。键名见 ToolbarButtons 注释；未知键忽略（旧皮肤兼容）。
+// 读 visible / size_dip / x_dip / y_dip，以及 images 表（状态 → 图）或单图 image。
+bool ReadToolbarButtons(const toml::node *node, ToolbarButtons &out, std::string *error)
+{
+    if (!node)
+    {
+        return true;
+    }
+    const auto *table = node->as_table();
+    if (!table)
+    {
+        return false;
+    }
+    for (const auto &[key, value] : *table)
+    {
+        const std::string buttonKey(key.str());
+        const auto *button = value.as_table();
+        if (!button || !ReadOptionalBool(*button, "visible", out.items[buttonKey].visible) ||
+            !ReadOptionalBounded(*button, "size_dip", 200.0, out.items[buttonKey].sizeDip) ||
+            !ReadOptionalBounded(*button, "x_dip", 2000.0, out.items[buttonKey].xDip) ||
+            !ReadOptionalBounded(*button, "y_dip", 2000.0, out.items[buttonKey].yDip))
+        {
+            SetError(error, "toolbar.buttons." + buttonKey + " 参数无效");
+            return false;
+        }
+        if (const toml::node *imagesNode = button->get("images"))
+        {
+            const auto *images = imagesNode->as_table();
+            if (!images)
+            {
+                SetError(error, "toolbar.buttons." + buttonKey + ".images 必须是表");
+                return false;
+            }
+            for (const auto &[state, path] : *images)
+            {
+                const std::string stateKey(state.str());
+                const auto *pathValue = path.as_string();
+                if (!pathValue || !IsSafeRelativeResource(pathValue->get()))
+                {
+                    SetError(error, "toolbar.buttons." + buttonKey + ".images." + stateKey + " 无效");
+                    return false;
+                }
+                out.items[buttonKey].images.states[stateKey] = pathValue->get();
+            }
+        }
+        else if (const toml::node *imageNode = button->get("image"))
+        {
+            const auto *imageValue = imageNode->as_string();
+            if (!imageValue || !IsSafeRelativeResource(imageValue->get()))
+            {
+                SetError(error, "toolbar.buttons." + buttonKey + ".image 无效");
+                return false;
+            }
+            out.items[buttonKey].images.image = imageValue->get();
+        }
+    }
+    return true;
+}
 } // namespace
 
 const std::vector<std::string> &BuiltInIds()
@@ -583,6 +642,82 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
             {
                 SetError(error, "candidate_window.decoration 尺寸无效");
                 return std::nullopt;
+            }
+            // 装饰图上叠加候选词（可选）：candidate_overlay 开启后按 candidate_overlay_* 一组定位/排版。
+            if (!ReadOptionalBool(*decoration, "candidate_overlay", package.decorationCandidateOverlay))
+            {
+                SetError(error, "candidate_window.decoration.candidate_overlay 必须是 true 或 false");
+                return std::nullopt;
+            }
+            if (decoration->contains("candidate_overlay_font_size_dip"))
+            {
+                const double size = BoundedNumber(*decoration, "candidate_overlay_font_size_dip", 200.0);
+                if (size < 0.0)
+                {
+                    SetError(error, "candidate_window.decoration.candidate_overlay_font_size_dip 超出范围");
+                    return std::nullopt;
+                }
+                package.decorationCandidateFontSizeDip = size;
+            }
+            if (!ReadCssColor(*decoration, "candidate_overlay_color", package.decorationCandidateColor))
+            {
+                SetError(error, "candidate_window.decoration.candidate_overlay_color 无效");
+                return std::nullopt;
+            }
+            if (!ReadEnum(*decoration, "candidate_overlay_align_h", {"left", "center", "right"},
+                          package.decorationCandidateAlignH) ||
+                !ReadEnum(*decoration, "candidate_overlay_align_v", {"top", "center", "bottom"},
+                          package.decorationCandidateAlignV))
+            {
+                SetError(error, "candidate_window.decoration.candidate_overlay_align 无效");
+                return std::nullopt;
+            }
+            if (!ReadSignedNumber(*decoration, "candidate_overlay_offset_x_dip", 2000.0,
+                                  package.decorationCandidateOffsetXDip) ||
+                !ReadSignedNumber(*decoration, "candidate_overlay_offset_y_dip", 2000.0,
+                                  package.decorationCandidateOffsetYDip))
+            {
+                SetError(error, "candidate_window.decoration.candidate_overlay_offset 无效");
+                return std::nullopt;
+            }
+            {
+                std::optional<bool> stripBadge;
+                if (!ReadOptionalBool(*decoration, "candidate_overlay_strip_badge", stripBadge))
+                {
+                    SetError(error, "candidate_window.decoration.candidate_overlay_strip_badge 必须是 true 或 false");
+                    return std::nullopt;
+                }
+                package.decorationCandidateStripBadge = stripBadge.value_or(true);
+            }
+            if (decoration->contains("candidate_overlay_max_width_dip"))
+            {
+                const double width = BoundedNumber(*decoration, "candidate_overlay_max_width_dip", 2000.0);
+                if (width < 0.0)
+                {
+                    SetError(error, "candidate_window.decoration.candidate_overlay_max_width_dip 超出范围");
+                    return std::nullopt;
+                }
+                package.decorationCandidateMaxWidthDip = width;
+            }
+            if (decoration->contains("candidate_overlay_min_font_size_dip"))
+            {
+                const double size = BoundedNumber(*decoration, "candidate_overlay_min_font_size_dip", 200.0);
+                if (size < 0.0)
+                {
+                    SetError(error, "candidate_window.decoration.candidate_overlay_min_font_size_dip 超出范围");
+                    return std::nullopt;
+                }
+                package.decorationCandidateMinFontSizeDip = size;
+            }
+            if (decoration->contains("candidate_overlay_index"))
+            {
+                const double index = BoundedNumber(*decoration, "candidate_overlay_index", 1000.0);
+                if (index < 0.0)
+                {
+                    SetError(error, "candidate_window.decoration.candidate_overlay_index 无效");
+                    return std::nullopt;
+                }
+                package.decorationCandidateIndex = static_cast<int>(index);
             }
         }
         if (window->contains("corner_radius_dip"))
@@ -825,6 +960,48 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                 }
                 package.toolbarCornerRadiusDip = radius;
             }
+            if (!ReadEnum(*toolbar, "mode", {"bar", "image"}, package.toolbarMode))
+            {
+                SetError(error, "toolbar.mode 只能是 bar 或 image");
+                return std::nullopt;
+            }
+            if (!ReadResource(*toolbar, "image", package.toolbarImage))
+            {
+                SetError(error, "toolbar.image 无效");
+                return std::nullopt;
+            }
+            if (toolbar->contains("image_width_dip"))
+            {
+                const double width = BoundedNumber(*toolbar, "image_width_dip", 2000.0);
+                if (width < 0.0)
+                {
+                    SetError(error, "toolbar.image_width_dip 超出范围");
+                    return std::nullopt;
+                }
+                package.toolbarImageWidthDip = width;
+            }
+            if (toolbar->contains("image_height_dip"))
+            {
+                const double height = BoundedNumber(*toolbar, "image_height_dip", 2000.0);
+                if (height < 0.0)
+                {
+                    SetError(error, "toolbar.image_height_dip 超出范围");
+                    return std::nullopt;
+                }
+                package.toolbarImageHeightDip = height;
+            }
+            if (!ReadToolbarButtons(toolbar->get("buttons"), package.toolbarButtons, error))
+            {
+                return std::nullopt;
+            }
+            // image 模式必须同时给图片和两个尺寸（渲染端不读图片自然尺寸）。
+            if (package.toolbarMode == "image" &&
+                (package.toolbarImage.empty() || package.toolbarImageWidthDip <= 0.0 ||
+                 package.toolbarImageHeightDip <= 0.0))
+            {
+                SetError(error, "toolbar.mode=image 必须同时给 image、image_width_dip 与 image_height_dip");
+                return std::nullopt;
+            }
         }
         std::error_code ec;
         if (!package.decorationImage.empty() &&
@@ -852,6 +1029,29 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
             {
                 SetError(error, "找不到 candidate_window.decorations.image 文件");
                 return std::nullopt;
+            }
+        }
+        if (!package.toolbarImage.empty() &&
+            !std::filesystem::is_regular_file(directory / std::filesystem::u8path(package.toolbarImage), ec))
+        {
+            SetError(error, "找不到 toolbar.image 文件");
+            return std::nullopt;
+        }
+        for (const auto &[buttonKey, button] : package.toolbarButtons.items)
+        {
+            if (!button.images.image.empty() &&
+                !std::filesystem::is_regular_file(directory / std::filesystem::u8path(button.images.image), ec))
+            {
+                SetError(error, "找不到 toolbar.buttons." + buttonKey + ".image 文件");
+                return std::nullopt;
+            }
+            for (const auto &[state, path] : button.images.states)
+            {
+                if (!std::filesystem::is_regular_file(directory / std::filesystem::u8path(path), ec))
+                {
+                    SetError(error, "找不到 toolbar.buttons." + buttonKey + ".images." + state + " 文件");
+                    return std::nullopt;
+                }
             }
         }
         AdaptSharedBase(package);
