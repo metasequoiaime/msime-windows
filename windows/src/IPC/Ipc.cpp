@@ -1388,10 +1388,23 @@ static bool HasCommitReplyToRead(uint64_t expectedRequestId)
     return !PeekNamedPipe(hFromServerPipe, nullptr, 0, nullptr, &bytesAvailable, nullptr) || bytesAvailable != 0;
 }
 
-CommitReplyWaitStatus TryReadCommitReplyFromServerPipe(uint64_t expectedRequestId,
+CommitReplyWaitStatus TryReadCommitReplyFromServerPipe(uint64_t expectedRequestId, DWORD blockingWaitMs,
                                                        _Out_ struct FanyImeNamedpipeDataToTsf **reply)
 {
     *reply = nullptr;
+
+    if (blockingWaitMs != 0)
+    {
+        // Nothing can re-run this session, so it waits the bounded single shot.
+        // Without a notReady out-parameter the read path always yields a frame:
+        // the reply, or TransportUnavailable for a timeout or a real failure.
+        struct FanyImeNamedpipeDataToTsf *fetched = TryReadDataFromServerPipeWithDeadline(
+            expectedRequestId, /*abortTransportOnTimeout=*/true, blockingWaitMs, nullptr);
+        *reply = fetched;
+        return fetched->msg_type == Global::DataFromServerMsgType::TransportUnavailable
+                   ? CommitReplyWaitStatus::Transport
+                   : CommitReplyWaitStatus::Ready;
+    }
 
     // Same nonblocking probe a slice uses: only read when there is something to
     // consume, or a state only the read path can report (a request id that can

@@ -10,11 +10,14 @@
 #include "Key/DeferredKeyFailurePolicy.h"
 #include "../../engine/contracts/windows_ipc.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <mutex>
 #include <string>
+#include <vector>
 
 // --- the slice of the Win32 / project surface the extracted paths are written against --------
 
@@ -93,7 +96,10 @@ bool readYieldsFrame = false;
 ULONGLONG clockMs = 10000;
 bool timerAvailable = true;
 bool postAvailable = true;
+bool timerKilled = false;
 UINT nextToken = 100;
+// What the message window does with a request the poll timer re-dispatches.
+std::function<void(UINT message, UINT token)> onSendMessage;
 
 bool HasCommitReplyToRead(uint64_t)
 {
@@ -134,6 +140,21 @@ BOOL PostMessage(HWND, UINT, WPARAM, LONG)
     return postAvailable ? 1 : 0;
 }
 
+LONG SendMessage(HWND, UINT message, WPARAM token, LONG)
+{
+    if (onSendMessage)
+    {
+        onSendMessage(message, static_cast<UINT>(token));
+    }
+    return 0;
+}
+
+BOOL KillTimer(HWND, UINT_PTR)
+{
+    timerKilled = true;
+    return 1;
+}
+
 UINT NextWindowMessageToken()
 {
     return nextToken++;
@@ -158,7 +179,9 @@ void resetDoubles()
     clockMs = 10000;
     timerAvailable = true;
     postAvailable = true;
+    timerKilled = false;
     nextToken = 100;
+    onSendMessage = nullptr;
 }
 
 class CMetasequoiaIME
@@ -167,8 +190,11 @@ class CMetasequoiaIME
     HWND _msgWndHandle = 1;
     std::mutex _pendingCommitCandidateMutex;
     std::map<UINT, AsyncKeyRequest> _pendingAsyncKeyMessages;
+    UINT _sessionCommitReplyMessage = 0;
 
     bool _RequeueAsyncKeyRequest(UINT token, UINT message, AsyncKeyRequest request);
+    DWORD _SessionCommitReplyWaitMs() const;
+    void _DispatchPendingCommitReplyPolls();
     void _HandOffUnreadyCommitReply(uint64_t requestId, uint64_t deferredReplayToken, UINT message,
                                     ULONGLONG commitReplyDeadlineTick, UINT code, WCHAR wch,
                                     KEYSTROKE_FUNCTION keystrokeFunction, const std::wstring &prefetchedText,
@@ -226,7 +252,7 @@ int checkReplyReadContract()
     // the read path: this used to be a 300ms blocking read whose timeout came back as
     // TransportUnavailable, which reset the session and dropped the key.
     replyAvailable = false;
-    CommitReplyWaitStatus status = TryReadCommitReplyFromServerPipe(8818, &reply);
+    CommitReplyWaitStatus status = TryReadCommitReplyFromServerPipe(8818, /*blockingWaitMs=*/0, &reply);
     CHECK(status == CommitReplyWaitStatus::NotReady);
     CHECK(reply == nullptr);
     CHECK(readCalls == 0);
@@ -235,7 +261,7 @@ int checkReplyReadContract()
     // request's frames were consumed): still NotReady, and it asked for a zero-length wait.
     replyAvailable = true;
     readYieldsFrame = false;
-    status = TryReadCommitReplyFromServerPipe(8818, &reply);
+    status = TryReadCommitReplyFromServerPipe(8818, /*blockingWaitMs=*/0, &reply);
     CHECK(status == CommitReplyWaitStatus::NotReady);
     CHECK(reply == nullptr);
     CHECK(readCalls == 1);
@@ -247,7 +273,7 @@ int checkReplyReadContract()
     replyAvailable = true;
     readYieldsFrame = true;
     frame.msg_type = FanyImeReplyType::TransportUnavailable;
-    status = TryReadCommitReplyFromServerPipe(8818, &reply);
+    status = TryReadCommitReplyFromServerPipe(8818, /*blockingWaitMs=*/0, &reply);
     CHECK(status == CommitReplyWaitStatus::Transport);
     CHECK(reply == &frame);
 
@@ -256,10 +282,75 @@ int checkReplyReadContract()
     replyAvailable = true;
     readYieldsFrame = true;
     frame.msg_type = FanyImeReplyType::Normal;
-    status = TryReadCommitReplyFromServerPipe(8818, &reply);
+    status = TryReadCommitReplyFromServerPipe(8818, /*blockingWaitMs=*/0, &reply);
     CHECK(status == CommitReplyWaitStatus::Ready);
     CHECK(reply == &frame);
 
+    // A session nothing can re-run keeps the bounded single-shot wait: it reads even when the
+    // probe sees nothing yet, and a timeout comes back as the transport frame, never NotReady.
+    resetDoubles();
+    replyAvailable = false;
+    readYieldsFrame = true;
+    frame.msg_type = FanyImeReplyType::TransportUnavailable;
+    status = TryReadCommitReplyFromServerPipe(8818, FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS, &reply);
+    CHECK(status == CommitReplyWaitStatus::Transport);
+    CHECK(reply == &frame);
+    CHECK(readCalls == 1);
+    CHECK(lastReadTimeoutMs == FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS);
+
+    return 0;
+}
+
+// Which sessions may read without waiting: only one whose request a poll owns and can be handed
+// back through a live message window.
+int checkSessionWaitContract()
+{
+    resetDoubles();
+    CMetasequoiaIME service;
+    service._sessionCommitReplyMessage = WM_AsyncFinalizeCandidate;
+    CHECK(service._SessionCommitReplyWaitMs() == 0);
+
+    // A key that reached its session without the message window has nothing to hand back to.
+    service._sessionCommitReplyMessage = 0;
+    CHECK(service._SessionCommitReplyWaitMs() == FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS);
+
+    service._sessionCommitReplyMessage = WM_AsyncFinalizeCandidate;
+    service._msgWndHandle = 0;
+    CHECK(service._SessionCommitReplyWaitMs() == FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS);
+    return 0;
+}
+
+// The poll timer pass must keep running while any request still waits, including one an edit
+// session handed back under a fresh token during the very dispatch that pass made.
+int checkDispatchContract()
+{
+    resetDoubles();
+    CMetasequoiaIME service;
+    AsyncKeyRequest waiting;
+    waiting.message = WM_AsyncFinalizeCandidate;
+    waiting.requestId = 8818;
+    waiting.commitReplyDeadlineTick = clockMs + 700;
+    service._pendingAsyncKeyMessages[300] = waiting;
+
+    // The handler takes its request off the table and its session hands it back.
+    onSendMessage = [&](UINT, UINT token) {
+        AsyncKeyRequest request = service._pendingAsyncKeyMessages[token];
+        service._pendingAsyncKeyMessages.erase(token);
+        service._HandOffUnreadyCommitReply(request.requestId, 77, request.message, request.commitReplyDeadlineTick,
+                                           0x20, L' ', FUNCTION_FINALIZE_CANDIDATELIST, L"", 5, 6);
+    };
+    nextToken = 400;
+    service._DispatchPendingCommitReplyPolls();
+    CHECK(service._pendingAsyncKeyMessages.size() == 1);
+    CHECK(service._pendingAsyncKeyMessages.count(300) == 0);
+    CHECK(!timerKilled);
+    CHECK(service.unansweredRequestIds.empty());
+
+    // Once the handler settles the request, the timer stops.
+    onSendMessage = [&](UINT, UINT token) { service._pendingAsyncKeyMessages.erase(token); };
+    service._DispatchPendingCommitReplyPolls();
+    CHECK(service._pendingAsyncKeyMessages.empty());
+    CHECK(timerKilled);
     return 0;
 }
 
@@ -359,6 +450,21 @@ int checkHandOffContract()
                                        5, 12);
     CHECK(foreign._pendingAsyncKeyMessages.empty());
     CHECK(foreign.unansweredRequestIds.size() == 1);
+
+    // A hand-off takes a fresh slot, so it is bounded like a freshly posted key: a full table
+    // drops the key as unanswered instead of growing past its bound.
+    resetDoubles();
+    CMetasequoiaIME full;
+    for (UINT token = 1; token <= kMaxPendingAsyncKeys; ++token)
+    {
+        full._pendingAsyncKeyMessages[token].requestId = token;
+    }
+    nextToken = 1000;
+    full._HandOffUnreadyCommitReply(9600, 84, WM_AsyncFinalizeCandidate, windowEnd, /*code=*/0x20, /*wch=*/L' ',
+                                    FUNCTION_FINALIZE_CANDIDATELIST, L"", 5, 13);
+    CHECK(full._pendingAsyncKeyMessages.size() == kMaxPendingAsyncKeys);
+    CHECK(full.unansweredRequestIds.size() == 1);
+    CHECK(full.unansweredRequestIds.front() == 9600);
 
     return 0;
 }
@@ -464,7 +570,15 @@ int main()
     {
         return failed;
     }
+    if (const int failed = checkSessionWaitContract())
+    {
+        return failed;
+    }
     if (const int failed = checkHandOffContract())
+    {
+        return failed;
+    }
+    if (const int failed = checkDispatchContract())
     {
         return failed;
     }

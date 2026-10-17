@@ -72,12 +72,13 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
         if (!hasPrefetchedServerCandidate)
         {
             struct FanyImeNamedpipeDataToTsf *receivedData = nullptr;
-            const CommitReplyWaitStatus replyStatus = TryReadCommitReplyFromServerPipe(requestId, &receivedData);
+            const CommitReplyWaitStatus replyStatus =
+                TryReadCommitReplyFromServerPipe(requestId, _SessionCommitReplyWaitMs(), &receivedData);
             if (replyStatus == CommitReplyWaitStatus::NotReady)
             {
                 // The transport is healthy and the reply is simply not here yet.
-                // Apply nothing and let the message handler hand this request
-                // back to the cooperative poll; the Server may still be
+                // Apply nothing; the edit session's completion hook hands this
+                // request back to the cooperative poll. The Server may still be
                 // answering it, so tearing the session down would drop a key it
                 // is about to commit.
                 return FANY_S_COMMIT_REPLY_NOT_READY;

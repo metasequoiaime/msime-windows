@@ -411,8 +411,16 @@ HRESULT CKeyStateCandidate::HandleKeyFinalizeCandidatelistAndInput(KeyHandlerEdi
     if (finalizeHr == FANY_S_COMMIT_REPLY_NOT_READY)
     {
         // The commit applied nothing: do not type the pending character into a
-        // composition the finalize half has not resolved yet. The handler owns
-        // the request from here and re-runs this session once the reply is in.
+        // composition the finalize half has not resolved yet. The session's
+        // completion hook hands the request back to the poll, which re-runs
+        // this session once the reply is in.
+        return finalizeHr;
+    }
+    if (finalizeHr == FANY_E_COMMIT_REPLY_AMBIGUOUS || finalizeHr == HRESULT_FROM_WIN32(ERROR_BROKEN_PIPE))
+    {
+        // The reply was a transport failure: the key is dropped with a full
+        // reset, so the character must not be typed either. Reporting S_OK here
+        // would mark the key applied and leave TSF and the Server out of sync.
         return finalizeHr;
     }
     return _pTextService->_HandleCompositionInput(dto.ec, dto.pContext, dto.wch, dto.requestId);

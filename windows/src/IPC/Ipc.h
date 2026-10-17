@@ -163,8 +163,16 @@ CommitReplyWaitStatus TryReadCommitReplySlice(uint64_t expectedRequestId, ULONGL
 // _PollCommitReply from its own completion hook, which is what owns the total
 // window above. A timeout is deliberately not a transport failure here: the
 // request was delivered and the Server may still be answering it.
-CommitReplyWaitStatus TryReadCommitReplyFromServerPipe(uint64_t expectedRequestId,
+// blockingWaitMs is 0 for every session the poll owns. A session with no poll
+// request to hand back to (a key that reached its session without the message
+// window) cannot yield, so it passes FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS and
+// keeps the pre-existing bounded single-shot wait, whose timeout is a transport
+// failure: never NotReady, because nothing would ever re-run it.
+CommitReplyWaitStatus TryReadCommitReplyFromServerPipe(uint64_t expectedRequestId, DWORD blockingWaitMs,
                                                        _Out_ struct FanyImeNamedpipeDataToTsf **reply);
+// Bound of that single-shot wait. It must stay small enough that a miss cannot
+// visibly freeze the host.
+constexpr DWORD FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS = 300;
 // Edit-session result for a commit whose reply had not arrived yet. Nothing was
 // applied and the session itself put its request back into the cooperative poll,
 // so the deferred key behind it stays alive and is never sent a second time.

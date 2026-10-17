@@ -1495,13 +1495,14 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
         if (Global::CommitWithHighlightedCandPunc.count(wch) > 0)
         {
             struct FanyImeNamedpipeDataToTsf *receivedData = nullptr;
-            const CommitReplyWaitStatus replyStatus = TryReadCommitReplyFromServerPipe(requestId, &receivedData);
+            const CommitReplyWaitStatus replyStatus =
+                TryReadCommitReplyFromServerPipe(requestId, _SessionCommitReplyWaitMs(), &receivedData);
             if (replyStatus == CommitReplyWaitStatus::NotReady)
             {
-                // Healthy transport, reply not here yet: apply nothing and let
-                // the message handler requeue this request into the cooperative
-                // poll. A destructive timeout here would drop a commit the
-                // Server may still be answering.
+                // Healthy transport, reply not here yet: apply nothing; the edit
+                // session's completion hook hands this request back to the
+                // cooperative poll. A destructive timeout here would drop a
+                // commit the Server may still be answering.
                 return FANY_S_COMMIT_REPLY_NOT_READY;
             }
 

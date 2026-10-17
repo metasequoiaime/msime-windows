@@ -107,7 +107,10 @@
 session 直接消费；session 自己那次读（`TryReadCommitReplyFromServerPipe`）只剩「缓存被清掉」
 的竞态，它不阻塞、也不再把超时当传输失败——读不到就返回 `FANY_S_COMMIT_REPLY_NOT_READY`，
 并由 **session 自己在完成钩子里**把请求交回 `_PollCommitReply`（窗口仍是同一个 1500 ms，
-`_HandOffUnreadyCommitReply`）。交回必须发生在 session 侧：`RequestEditSession` 用的是
+`_HandOffUnreadyCommitReply`）。没有轮询可交回的 session（消息窗口不可用、按键直接走同步
+`_InvokeKeyHandler` 的路径）不能让出，仍保留 `FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS`（300 ms）的
+单次有界等待，超时按传输失败处理；由 `_SessionCommitReplyWaitMs` 按 session 记录的轮询消息判定。
+交回必须发生在 session 侧：`RequestEditSession` 用的是
 `TF_ES_ASYNCDONTCARE`，TSF 可能把 session 排到之后执行，那时消息处理函数早已返回、根本看不到
 这个结果，只有 session 自己的钩子在两种情形下都会跑。新增会上屏的异步路径必须接入同一套轮询，
 不要在 session 里阻塞等回复，不要把「结果要靠调用方从 `_InvokeKeyHandler` 的返回值里读」

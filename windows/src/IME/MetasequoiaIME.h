@@ -465,6 +465,21 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
                                     ULONGLONG commitReplyDeadlineTick, UINT code, WCHAR wch,
                                     KEYSTROKE_FUNCTION keystrokeFunction, const std::wstring &prefetchedText,
                                     uint64_t focusToken, uint64_t compositionEpoch);
+    // The committing sessions record, for the length of their key handler, which
+    // poll message owns the request they apply (0 when none does), so the reply
+    // read inside the handler knows whether a not-ready reply can be handed back.
+    // Returns the previous value for the caller to restore.
+    UINT _ExchangeSessionCommitReplyMessage(UINT commitReplyMessage)
+    {
+        const UINT previous = _sessionCommitReplyMessage;
+        _sessionCommitReplyMessage = commitReplyMessage;
+        return previous;
+    }
+    // How long the running session's own commit-reply read may block: 0 when its
+    // request can be handed back to _PollCommitReply, otherwise the bounded
+    // single-shot wait (FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS) a session with
+    // nothing to hand back to has always had.
+    DWORD _SessionCommitReplyWaitMs() const;
 
     // comless helpers
     static HRESULT CMetasequoiaIME::CreateInstance(REFCLSID rclsid, REFIID riid, _Outptr_result_maybenull_ LPVOID *ppv,
@@ -510,6 +525,9 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
         // slice resumes the same window instead of restarting it.
         ULONGLONG commitReplyDeadlineTick = 0;
     };
+    // Bound on _pendingAsyncKeyMessages. Every path that takes a fresh slot,
+    // posting a key or a session handing its request back, checks it.
+    static constexpr size_t kMaxPendingAsyncKeys = 64;
     bool _PostAsyncKeyRequest(UINT message, UINT code, WCHAR wch, uint64_t requestId, std::wstring prefetchedText = {},
                               uint64_t expectedFocusToken = 0, uint64_t expectedCompositionEpoch = 0,
                               uint64_t deferredReplayToken = 0,
@@ -902,6 +920,8 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     std::map<UINT, WorkerCandidateCommit> _pendingServerCommitMessages;
     std::map<UINT, WorkerCompartmentSwitch> _pendingWorkerSwitchMessages;
     std::map<UINT, AsyncKeyRequest> _pendingAsyncKeyMessages;
+    // See _ExchangeSessionCommitReplyMessage. UI thread only, like the sessions.
+    UINT _sessionCommitReplyMessage = 0;
     std::atomic<bool> _workerCommitReady;
     std::atomic<uint64_t> _expectedWorkerFocusToken;
     std::atomic<uint64_t> _acknowledgedWorkerFocusToken;

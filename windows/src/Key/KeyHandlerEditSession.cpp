@@ -36,7 +36,7 @@ STDAPI CKeyHandlerEditSession::DoEditSession(TfEditCookie ec)
         bool transportBroken = false;
         bool projectionInvalidated = false;
         // The committing reply had not arrived: the session applied nothing and
-        // the message handler keeps the request (and this token) waiting.
+        // hands the request (and this token) back to the poll below.
         bool commitReplyNotReady = false;
         ~DeferredReplayCompletion()
         {
@@ -105,7 +105,9 @@ STDAPI CKeyHandlerEditSession::DoEditSession(TfEditCookie ec)
     {
         KeyHandlerEditSessionDTO keyHandlerEditSessioDTO(ec, _pContext, _uCode, _wch, _KeyState.Function, _requestId,
                                                          _prefetchedText);
+        const UINT outerCommitReplyMessage = _pTextService->_ExchangeSessionCommitReplyMessage(_commitReplyMessage);
         hResult = pKeyStateCategory->KeyStateHandler(_KeyState.Function, keyHandlerEditSessioDTO);
+        _pTextService->_ExchangeSessionCommitReplyMessage(outerCommitReplyMessage);
         deferredReplayCompletion.applied = hResult == S_OK;
         deferredReplayCompletion.deliveryAmbiguous = hResult == FANY_E_COMMIT_REPLY_AMBIGUOUS;
         deferredReplayCompletion.transportBroken = hResult == HRESULT_FROM_WIN32(ERROR_BROKEN_PIPE);

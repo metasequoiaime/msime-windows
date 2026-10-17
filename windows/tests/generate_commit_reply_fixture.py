@@ -2,8 +2,8 @@
 
 The TSF service, its message window and the reply pipe cannot be instantiated without a host,
 so the paths that decide what an *unready* committing reply costs are extracted verbatim
-instead of copied into the test: the three-state reply read, the hand-off that keeps a request
-alive, and both session completion hooks. Only the pipe probe, the message window and the
+instead of copied into the test: the three-state reply read, the session's wait bound, the
+hand-off that keeps a request alive, the poll timer pass, and both session completion hooks. Only the pipe probe, the message window and the
 clock remain test doubles. Regenerate whenever one of the extracted functions changes, so a
 removed step cannot hide behind a copy here.
 
@@ -23,8 +23,10 @@ TOKENS = re.compile(
 )
 
 # SAL annotations travel in the production signatures; the fixture has no sal.h.
+# Longest spellings first: alternation takes the first match, so `In` ahead of
+# `Inout` would leave `out_` behind.
 SAL = re.compile(
-    r"\b_(?:In|Out|Inout|In_z_|Out_z_|Outptr_result_maybenull_|Out_opt_|In_opt_)_?[ \t]*"
+    r"\b_(?:Outptr_result_maybenull_|Inout_opt_|Inout|In_opt_|In_z_|In|Out_opt_|Out_z_|Out)_?[ \t]*"
 )
 
 
@@ -80,7 +82,15 @@ def generate(
         + "\n"
     )
     types += (
+        find_declaration(ipc_h, "constexpr DWORD FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS")
+        + "\n"
+    )
+    types += (
         find_declaration(ipc_h, "constexpr HRESULT FANY_S_COMMIT_REPLY_NOT_READY")
+        + "\n"
+    )
+    types += (
+        find_declaration(ime_h, "static constexpr size_t kMaxPendingAsyncKeys")
         + "\n"
     )
     types += (
@@ -104,6 +114,12 @@ def generate(
     handoff_signature, handoff_body = find_body(
         async_cpp, "void CMetasequoiaIME::_HandOffUnreadyCommitReply("
     )
+    wait_signature, wait_body = find_body(
+        async_cpp, "DWORD CMetasequoiaIME::_SessionCommitReplyWaitMs()"
+    )
+    dispatch_signature, dispatch_body = find_body(
+        async_cpp, "void CMetasequoiaIME::_DispatchPendingCommitReplyPolls()"
+    )
     read_signature, read_body = find_body(
         ipc_cpp, "CommitReplyWaitStatus TryReadCommitReplyFromServerPipe("
     )
@@ -118,6 +134,8 @@ def generate(
     source += f"{poll_signature}\n{poll_body}\n"
     source += f"{requeue_signature}\n{requeue_body}\n"
     source += f"{handoff_signature}\n{handoff_body}\n"
+    source += f"{wait_signature}\n{wait_body}\n"
+    source += f"{dispatch_signature}\n{dispatch_body}\n"
     source += f"{read_signature}\n{read_body}\n"
     source += f"{completion_signature}\n{completion_body};\n"
     source += f"{replay_signature}\n{replay_body};\n"

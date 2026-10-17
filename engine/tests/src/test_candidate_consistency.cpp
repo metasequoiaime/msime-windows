@@ -233,10 +233,10 @@ void run_candidate_consistency_tests(const std::filesystem::path &data_directory
         require_same_snapshot(cold, snapshot_of(first), typed + " with warm caches");
 
         // ③ 中间插过别的输入再回来：跨按键复用的缓存不得把上一个输入的行带进来。
+        //    这里不清缓存，否则上一个输入留下的缓存行在比较前就被抹掉，这一项就什么都测不到。
         first.reset_state();
         type(first, "mama");
         first.reset_state();
-        first.reset_cache();
         type(first, typed);
         require_same_snapshot(cold, snapshot_of(first), typed + " after an unrelated input");
 
