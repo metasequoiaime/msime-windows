@@ -9,6 +9,7 @@ add_executable(${TEST_EXECUTABLE_NAME}
     src/test_fonts.cpp
     src/test_image.cpp
     src/test_layout.cpp
+    src/test_overlay_panel.cpp
     src/test_font_fallback.cpp
     src/test_menu_flyout_item.cpp
     src/test_pager_arrows.cpp

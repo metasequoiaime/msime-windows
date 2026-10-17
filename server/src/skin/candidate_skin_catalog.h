@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -61,6 +62,39 @@ struct ToolbarColors
     std::string divider;
     std::string icon;
     std::string hover;
+};
+
+// 悬浮工具栏单个按钮的图标。单状态按钮用 image；有状态的按钮用 states（状态名 → 相对皮肤目录的路径）。
+// 状态名与 D2D 端的状态判断一一对应：
+//   status（语言）       : cn / en / caps / ja / en-candidate
+//   fullwidth            : full / half
+//   punctuation          : cn / en
+//   character_set        : simplified / traditional
+//   emoji / screen_keyboard / settings : 无状态（单图 image，或省略→矢量回退）
+struct ToolbarButtonImages
+{
+    std::string image;
+    std::map<std::string, std::string> states;
+};
+
+// 悬浮工具栏单个按钮的参数。全部可选：不写就沿用出厂值 / 用户设置。
+struct ToolbarButton
+{
+    // 皮肤是否显示这个按钮。与用户在设置页的开关是「与」的关系：皮肤只能藏、不能强行显示用户关掉的项。
+    std::optional<bool> visible;
+    // 图标框尺寸（DIP）；不写沿用出厂。
+    std::optional<double> sizeDip;
+    // image 模式（把工具栏画成一张图 + 自由摆放的图标）下，图标左上角相对图片左上角的绝对坐标（DIP）。
+    // 两个都给齐才按绝对坐标摆；缺一个（或整项没配）退回默认一行（从左到右、竖直居中）。
+    std::optional<double> xDip;
+    std::optional<double> yDip;
+    ToolbarButtonImages images;
+};
+
+struct ToolbarButtons
+{
+    // 按钮键 → 参数。键名：status / fullwidth / punctuation / character_set / emoji / screen_keyboard / settings。
+    std::map<std::string, ToolbarButton> items;
 };
 
 struct BorderImage
@@ -146,6 +180,18 @@ struct Package
     // 卡片上方的装饰图；为空表示皮肤没有装饰。
     std::string decorationImage;
     std::string decorationAlign = "right"; // left / center / right，相对卡片
+    // 装饰图上叠加候选词（Sogou 风格）：把第 candidate_index 个候选词画在装饰图上。
+    std::optional<bool> decorationCandidateOverlay;
+    double decorationCandidateFontSizeDip = 16.0;
+    std::string decorationCandidateColor;             // 空 = 默认白色
+    std::string decorationCandidateAlignH = "center"; // left / center / right，相对装饰图
+    std::string decorationCandidateAlignV = "center"; // top / center / bottom，相对装饰图
+    double decorationCandidateOffsetXDip = 0.0;
+    double decorationCandidateOffsetYDip = 0.0;
+    bool decorationCandidateStripBadge = true;      // 过滤模型名等后缀，只显示词本身
+    double decorationCandidateMaxWidthDip = 0.0;    // 候选词最大宽度；<=0 用装饰图宽度
+    double decorationCandidateMinFontSizeDip = 8.0; // 自动缩字号的下限
+    int decorationCandidateIndex = 1; // 显示第几个候选词：0=跟随选中，1=第一个，2=第二个……
     // 候选框里的翻页箭头；未设置时沿用 base 默认皮肤的设置（见 ResolvePageArrows）。
     std::optional<bool> pageArrows;
     // 卡片严格按候选文字所需的宽度收紧，不再垫出厂最小宽度、也不在同一输入里只增不减；
@@ -153,10 +199,22 @@ struct Package
     std::optional<bool> fitContent;
     CandidateColors dark;
     CandidateColors light;
-    // 覆盖基础皮肤的悬浮工具栏外框圆角；未设置时沿用基础皮肤。
+    // 覆盖基础皮肤的悬浮工具栏外框圆角；未设置时沿用基础皮肤。image 模式忽略。
     std::optional<double> toolbarCornerRadiusDip;
     ToolbarColors toolbarDark;
     ToolbarColors toolbarLight;
+    // 悬浮工具栏画法：
+    //   "bar"（缺省）= 现有的矩形条：底色 + 描边 + 圆角 + 矢量图标排成一行。
+    //   "image"      = 自由图片模式：整张 toolbarImage 当背景，图标按各自 x_dip/y_dip 摆上去，
+    //                  不画底色/描边/圆角/阴影/把手/分隔线，整张图都可拖。
+    // 只认这两个值（写别的判皮肤非法）；"image" 还要同时给 toolbarImage 与两个尺寸，否则皮肤非法。
+    std::string toolbarMode = "bar";
+    // 工具栏背景图（相对皮肤目录）；image 模式用。
+    std::string toolbarImage;
+    double toolbarImageWidthDip = 0.0;
+    double toolbarImageHeightDip = 0.0;
+    // 逐按钮参数（显隐、尺寸、绝对坐标、逐状态换图）。
+    ToolbarButtons toolbarButtons;
     // v2 专有特性：九宫格贴图边框
     std::optional<BorderImage> borderImage;
     // v2 专有特性：面板内容/文字安全内边距，从面板外缘量起；某一边小于九宫格边框宽度时按边框宽度算。

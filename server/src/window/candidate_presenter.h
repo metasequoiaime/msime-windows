@@ -52,6 +52,8 @@ class CandidatePresenter
     // 只在候选窗显示时排；隐藏、换皮肤、窗口销毁时停。
     void ScheduleAnimationFrame();
     void StopAnimationFrames();
+    // 按当前装饰图与候选页刷新叠加的候选词（字号自适应 + 对齐定位）。
+    void UpdateDecorationCandidateText(const std::wstring &word);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
@@ -66,6 +68,18 @@ class CandidatePresenter
     std::uint64_t hoverNotedGeneration_ = 0;
     float decorationTopDip_ = 0.0f;
     float decorationWidthDip_ = 0.0f;
+    // 装饰图上叠加候选词的参数（ApplySkin 读一次，FillItemsFromUi 用）。
+    bool decorationCandidateOverlay_ = false;
+    float decorationCandidateFontSizeDip_ = 16.0f;
+    std::string decorationCandidateColor_;
+    std::string decorationCandidateAlignH_ = "center";
+    std::string decorationCandidateAlignV_ = "center";
+    float decorationCandidateOffsetXDip_ = 0.0f;
+    float decorationCandidateOffsetYDip_ = 0.0f;
+    bool decorationCandidateStripBadge_ = true;
+    float decorationCandidateMaxWidthDip_ = 0.0f;
+    float decorationCandidateMinFontSizeDip_ = 8.0f;
+    int decorationCandidateIndex_ = 1;
     // 卡片最小宽度：默认 160，外部皮肤的 min_width_dip 与装饰图宽度可以把它撑大，
     // 装饰图因此始终落在卡片宽度之内。
     float cardMinWidthDip_ = 160.0f;

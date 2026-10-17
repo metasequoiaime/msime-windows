@@ -33,6 +33,15 @@
 - `image`：图片路径
 - `top_inset_dip` / `width_dip`：装饰框的高和宽，框贴在卡片上方，不与卡片重叠；图片在框内等比缩放
 - `align`：`left` | `center` | `right`，相对卡片
+- `candidate_overlay`：可选，`true` 时把候选词叠加到装饰图上（如从搜狗导入的「候选词画在装饰图上」），缺省 `false`
+- `candidate_overlay_font_size_dip`：叠加候选词的字号，`0`–`200`，缺省 `16`
+- `candidate_overlay_color`：叠加候选词的颜色，缺省白色
+- `candidate_overlay_align_h`：`left` | `center` | `right`，缺省 `center`；`candidate_overlay_align_v`：`top` | `center` | `bottom`，缺省 `center`
+- `candidate_overlay_offset_x_dip` / `candidate_overlay_offset_y_dip`：相对对齐位置的偏移，`-2000`–`2000`，缺省 `0`
+- `candidate_overlay_strip_badge`：`true` 时去掉模型名等后缀、只显示词本身，缺省 `true`
+- `candidate_overlay_max_width_dip`：叠加候选词的最大宽度；`>0` 时按宽度自动缩字号，缺省 `0`（用装饰框宽）
+- `candidate_overlay_min_font_size_dip`：自动缩字号的下限，缺省 `8`
+- `candidate_overlay_index`：显示第几个候选词，`0`=跟随选中、`1`=第一个、`2`=第二个…… 缺省 `1`
 
 ### `[candidate_window.background]`（可选）
 
@@ -151,6 +160,26 @@ translation_separator = "#529cca73"
 
 - `corner_radius_dip`：`0`–`32`
 - `[toolbar.dark]` / `[toolbar.light]`：`background`、`border`、`handle`（左侧拖动条）、`divider`、`icon`、`hover`
+- `mode`：`bar`（缺省，矩形条）| `image`（自由图片模式）。`image` 时整张 `image` 当背景、图标按各自 `x_dip`/`y_dip` 摆上去，不画底色/描边/圆角/阴影/把手/分隔线，整张图都可拖；此时必须同时给 `image`、`image_width_dip`、`image_height_dip`
+- `image`：图片模式下的背景图
+- `image_width_dip` / `image_height_dip`：图片显示尺寸（DIP，`0`–`2000`）
+- `[toolbar.buttons.<key>]`：逐按钮参数，`key` 见下表；每项都可省略
+  - `visible`：`true` | `false`，皮肤只能藏、不能强行显示用户在设置页关掉的项
+  - `size_dip`：图标尺寸（DIP）
+  - `x_dip` / `y_dip`：图片模式下图标**左上角**相对图片左上角的坐标（DIP），两个都给齐才按坐标摆
+  - `image`：无状态按钮的单图；`[images]`：状态名 → 图（有状态按钮），状态名见下表
+
+| 按钮 `key` | 作用 | `[images]` 状态名 |
+|---|---|---|
+| `status` | 中/英/日/大写/英文候选输入切换 | `cn` / `en` / `caps` / `ja` / `en-candidate` |
+| `fullwidth` | 全/半角切换 | `full` / `half` |
+| `punctuation` | 中/英标点切换 | `cn` / `en` |
+| `character_set` | 简/繁切换 | `simplified` / `traditional` |
+| `emoji` | 表情面板 | 无状态（单图 `image`，省略则回退矢量图标） |
+| `screen_keyboard` | 屏幕键盘 | 同上 |
+| `settings` | 设置 | 同上 |
+
+某个状态没有对应图时回退到内置矢量图标。
 
 ## 颜色格式
 
