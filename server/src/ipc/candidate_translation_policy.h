@@ -156,6 +156,21 @@ inline std::string FormatTranslationGlossForDisplay(std::string_view gloss, bool
     return displayed;
 }
 
+// Ctrl+1..9: the numbered counterpart of Ctrl+Enter (which commits the highlighted one).
+// Shape only -- whether the chord is enabled is the caller's business. Alt, the Windows keys,
+// Shift and a bare digit keep their host meaning.
+constexpr bool IsTranslationDigitKey(uint32_t keycode, uint32_t modifiers_down)
+{
+    return keycode >= static_cast<uint32_t>('1') && keycode <= static_cast<uint32_t>('9') &&
+           (modifiers_down & kKeyModifierMask) == kModifierControl;
+}
+
+// One-based candidate position the Ctrl+digit chord names, 0 when it is not that chord.
+constexpr uint32_t TranslationDigitPosition(uint32_t keycode, uint32_t modifiers_down)
+{
+    return IsTranslationDigitKey(keycode, modifiers_down) ? keycode - static_cast<uint32_t>('0') : 0;
+}
+
 // english.db stores one gloss string per entry with the senses already joined:
 // en->zh uses the fullwidth '；' ("苹果；家伙"), zh->en the ASCII "; " ("string; trail").
 // Every sense is returned, with its part-of-speech label removed.

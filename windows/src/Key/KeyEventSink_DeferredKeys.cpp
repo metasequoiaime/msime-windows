@@ -443,14 +443,16 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
         return true;
     }
 
-    // 同上：译文上屏也要在这条 Ctrl/Alt 拦截之前分类，否则这颗键会被交还给应用。
+    // 同上：译文上屏（Ctrl+Enter 高亮那条、Ctrl+数字指定序号那条）也要在这条 Ctrl/Alt 拦截之前
+    // 分类，否则这颗键会被交还给应用。
     const bool projectedCandidateActive =
         _deferredKeyProjectionValid ? _deferredProjectedCandidateActive : (_candidateMode == CANDIDATE_ORIGINAL);
     const bool projectedInputActive = _deferredKeyProjectionValid
                                           ? _deferredProjectedInputLength > 0
                                           : _pCompositionProcessorEngine->GetVirtualKeyLength() > 0;
     if (projectedImeOpen && !_IsKeyboardDisabled() &&
-        ((projectedCandidateActive && IsTranslationCommitShortcut(*classifiedCode, capturedModifiers)) ||
+        ((projectedCandidateActive && (IsTranslationCommitShortcut(*classifiedCode, capturedModifiers) ||
+                                       IsTranslationDigitShortcut(*classifiedCode, capturedModifiers))) ||
          (!_serverUnavailableFallbackActive && projectedInputActive &&
           IsPinyinCommitShortcut(*classifiedCode, capturedModifiers))))
     {

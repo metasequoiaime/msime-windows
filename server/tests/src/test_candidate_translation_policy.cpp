@@ -15,6 +15,30 @@ TEST_CASE(ctrl_enter_alone_commits_the_secondary_candidate)
     REQUIRE(!IsTranslationCommitKey('J', FanyImeIpc::kModifierControl));
 }
 
+TEST_CASE(ctrl_digit_alone_commits_the_numbered_translation)
+{
+    using FanyImeIpc::IsTranslationDigitKey;
+    using FanyImeIpc::TranslationDigitPosition;
+    for (uint32_t digit = '1'; digit <= '9'; ++digit)
+    {
+        REQUIRE(IsTranslationDigitKey(digit, FanyImeIpc::kModifierControl));
+        // The UI-less flag lives outside the modifier mask and must not disarm the shortcut.
+        REQUIRE(IsTranslationDigitKey(digit, FanyImeIpc::kModifierControl | FanyImeIpc::kModifierUiLess));
+        // Ctrl+1 names the first candidate, so the position is one-based.
+        REQUIRE_EQ(TranslationDigitPosition(digit, FanyImeIpc::kModifierControl), digit - '0');
+    }
+
+    // A bare digit still selects the candidate itself, and the other modifiers stay the host's.
+    REQUIRE(!IsTranslationDigitKey('1', 0));
+    REQUIRE(!IsTranslationDigitKey('1', FanyImeIpc::kModifierControl | FanyImeIpc::kModifierShift));
+    REQUIRE(!IsTranslationDigitKey('1', FanyImeIpc::kModifierControl | FanyImeIpc::kModifierAlt));
+    // 0 is not a candidate position.
+    REQUIRE(!IsTranslationDigitKey('0', FanyImeIpc::kModifierControl));
+    // A non-digit chord is not a position either.
+    REQUIRE(!IsTranslationDigitKey(0x0D, FanyImeIpc::kModifierControl));
+    REQUIRE_EQ(TranslationDigitPosition('3', 0), static_cast<uint32_t>(0));
+}
+
 TEST_CASE(translation_gloss_splits_on_both_semicolon_widths)
 {
     using FanyImeIpc::SplitTranslationGloss;

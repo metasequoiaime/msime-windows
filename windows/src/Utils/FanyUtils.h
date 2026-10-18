@@ -49,4 +49,9 @@ struct LanguageBarVisibility
 };
 // Read language_bar.enabled / show_ime_mode / show_double_single_byte / show_punctuation.
 LanguageBarVisibility ReadConfiguredLanguageBarVisibility();
+
+// Whether the candidate glosses are on (general.candidate_translations). The two translation
+// chords, Ctrl+Enter and Ctrl+1..9, hang off it and are otherwise always on: with the glosses
+// turned off there is nothing to commit, so the chords must not be taken from the host either.
+bool ReadConfiguredCandidateTranslationsEnabled();
 } // namespace FanyUtils

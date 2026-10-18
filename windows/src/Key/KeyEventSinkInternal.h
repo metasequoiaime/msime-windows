@@ -16,7 +16,9 @@ namespace key_event_sink_detail
 KEYSTROKE_FUNCTION SegmentEditFunction(UINT code, UINT modifiers);
 UINT CaptureIpcModifiers();
 bool IsEnglishInputModeToggle(UINT code, UINT modifiers);
+// Ctrl+Enter / Ctrl+1..9 on a candidate: the chords plus the gloss switch they hang off.
 bool IsTranslationCommitShortcut(UINT code, UINT modifiers);
+bool IsTranslationDigitShortcut(UINT code, UINT modifiers);
 bool IsPinyinCommitShortcut(UINT code, UINT modifiers);
 bool IsCharacterSetInputModeToggle(UINT code, UINT modifiers);
 bool IsTrilingualCycleEnabled();

@@ -657,9 +657,11 @@ void RebuildDateTimeCandidatePage()
     RefreshCandidatePageUi(true);
 }
 
-// Ctrl+Enter：上屏高亮候选右边的那条译文（副候选）。只有一条译义就直接上屏；有多条时把
-// 候选框整个换成这几条译义，空格/数字键照常选一条上屏（见 ProcessSelectionKey 的译文分支）。
-void HandleTranslationCommitKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
+// Ctrl+Enter：上屏高亮候选右边的那条译文（副候选）。Ctrl+数字：上屏指定序号候选的那条译文
+// （forced_index_in_page，0 起）。只有一条译义就直接上屏；有多条时把候选框整个换成这几条
+// 译义，空格/数字键照常选一条上屏（见 ProcessSelectionKey 的译文分支）。
+void HandleTranslationCommitKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id,
+                                int forced_index_in_page)
 {
     // 拿不到译文时回 NavigationIgnored：这颗键已经被 TSF 吃掉了，必须给一条回复，
     // 而且这条回复既不上屏也不给 wch 补标点。
@@ -673,11 +675,13 @@ void HandleTranslationCommitKey(uint64_t client_id, uint64_t activation_epoch, u
     }
 
     // 和数字/空格选词一样，先等画面追上已发布的那一页，否则取到的是用户没看见的那条译文。
-    WaitForCandidateRenderSync(VK_RETURN);
+    WaitForCandidateRenderSync(Global::Keycode);
     EnsureCandidatePageReady();
 
     auto &ui = Global::candidate_ui;
-    const size_t index = static_cast<size_t>((std::max)(0, ui.selected_index_in_page));
+    const int highlighted_position = (std::max)(0, ui.selected_index_in_page);
+    const int page_position = forced_index_in_page >= 0 ? forced_index_in_page : highlighted_position;
+    const size_t index = static_cast<size_t>(page_position);
     if (index >= ui.page_glosses.size())
     {
         SendCurrentDataToClient(client_id, activation_epoch, request_id);
@@ -1020,7 +1024,17 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
 
     if (FanyImeIpc::IsTranslationCommitKey(Global::Keycode, Global::ModifiersDown))
     {
-        HandleTranslationCommitKey(client_id, activation_epoch, request_id);
+        HandleTranslationCommitKey(client_id, activation_epoch, request_id, -1);
+        return;
+    }
+    // Ctrl+数字：上屏指定序号候选的译文（Ctrl+Enter 上屏当前高亮那条），两条 chord 落到同一个
+    // 处理 branch。译文总开关（general.candidate_translations）关掉时 TSF 直接不吃它们，这里仍进
+    // 同一个 branch 回 NavigationIgnored——不要改成先判总开关再放行，那样会落到下面的普通选词分支，
+    // Ctrl+1 直接上屏第一个候选。
+    if (FanyImeIpc::IsTranslationDigitKey(Global::Keycode, Global::ModifiersDown))
+    {
+        const uint32_t digit_position = FanyImeIpc::TranslationDigitPosition(Global::Keycode, Global::ModifiersDown);
+        HandleTranslationCommitKey(client_id, activation_epoch, request_id, static_cast<int>(digit_position) - 1);
         return;
     }
     // 译文页、日期页只认选词和翻页/移动高亮。其它任何键都先把候选框换回原来那一屏，然后照常处理，

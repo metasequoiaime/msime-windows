@@ -276,10 +276,23 @@ static bool CanQueueHotkeyBehindBarrier(REFGUID hotkeyGuid)
 // Ctrl+Enter, without Shift/Alt/Windows: commit the translation shown to the right of the
 // highlighted candidate. The Server decides what that is (one translation commits directly,
 // several open a second candidate list), so this only has to reach it as a candidate key.
+// Both translation chords are always on; only the glosses' own switch can turn them off. With
+// the glosses off there is nothing to commit, and eating the chord would take Ctrl+Enter away
+// from a chat box's "send" -- or Ctrl+1 from a tab switch -- for nothing in exchange.
 bool IsTranslationCommitShortcut(UINT code, UINT modifiers)
 {
     return code == VK_RETURN && (modifiers & 0b00000111u) == 0b00000010u && (GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 &&
-           (GetAsyncKeyState(VK_RWIN) & 0x8000) == 0;
+           (GetAsyncKeyState(VK_RWIN) & 0x8000) == 0 && FanyUtils::ReadConfiguredCandidateTranslationsEnabled();
+}
+
+// Ctrl+1..9 commits the translation of the candidate at that page position; Ctrl+Enter is the
+// highlighted counterpart. Numpad digits count too. Shift+digit is deliberately not a chord: in
+// most hosts it is the shifted symbol on the key (Shift+1 types '!'), so it stays the host's.
+bool IsTranslationDigitShortcut(UINT code, UINT modifiers)
+{
+    const bool digit = (code >= L'1' && code <= L'9') || (code >= VK_NUMPAD1 && code <= VK_NUMPAD9);
+    return digit && (modifiers & 0b00000111u) == 0b00000010u && (GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 &&
+           (GetAsyncKeyState(VK_RWIN) & 0x8000) == 0 && FanyUtils::ReadConfiguredCandidateTranslationsEnabled();
 }
 
 bool IsPinyinCommitShortcut(UINT code, UINT modifiers)
@@ -508,10 +521,12 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
             return TRUE;
         }
 
-        // Ctrl+Enter commits a candidate translation. Shift+Enter commits the
-        // Server's converted spelling, including compositions without candidates.
+        // Ctrl+Enter commits the translation shown next to the highlighted candidate, Ctrl+1..9
+        // the translation of the candidate at that position. Shift+Enter commits the Server's
+        // converted spelling, including compositions without candidates.
         if (!freshCompositionState &&
-            ((_candidateMode != CANDIDATE_NONE && IsTranslationCommitShortcut(*pCodeOut, shortcutModifiers)) ||
+            ((_candidateMode != CANDIDATE_NONE && (IsTranslationCommitShortcut(*pCodeOut, shortcutModifiers) ||
+                                                   IsTranslationDigitShortcut(*pCodeOut, shortcutModifiers))) ||
              (!_serverUnavailableFallbackActive && pCompositionProcessorEngine->GetVirtualKeyLength() > 0 &&
               IsPinyinCommitShortcut(*pCodeOut, shortcutModifiers))))
         {
