@@ -20,6 +20,10 @@
 
 #define MyAppName      "Metasequoia IME 水杉输入法"
 #define MyAppVersion   "0.0.1"
+; VersionInfoVersion 是 PE 的 VERSIONINFO，只接受数字和点号；dev 构建的 MyAppVersion 带
+; -dev.<日期>.<hash> 后缀（Prepare-PackageFiles.ps1 会把数字部分同步写进这个 define），
+; 文件名与 AppVersion 用完整串，这里只用数字段。
+#define MyVersionInfo  "0.0.1"
 #define MyAppPublisher "Metasequoia"
 #define MyAppExeName   "MetasequoiaImeServer.exe"
 #define MySettingsExeName "MetasequoiaImeSettings.exe"
@@ -36,7 +40,11 @@
 #define MySourceRoot   "."
 ; TSF DLL 装在系统目录下：CS2 等开启 Trusted Mode 的游戏只放行「位于系统目录且有代码签名」的
 ; 第三方 in-proc DLL，装在 Program Files 的 DLL 连加载都会被拒，输入法在游戏里根本切不出来。
-; 本安装器是 32 位进程，[Code] 里访问 64 位那份要先过 ApplyPathRedirRulesForCurrentProcess。
+; 本安装器在 x64/ARM64 上以 64 位模式运行（ArchitecturesInstallIn64BitMode），
+; Pascal Script 里访问 {sys} 就是真正的 System32，没有 WOW64 重定向可绕。
+; 不要在这里用 ApplyPathRedirRulesForCurrentProcess：那是 Inno Setup 7 的 support
+; function，windows-2025 runner 的 6.7.1 没有它，ISCC 直接报 Unknown identifier
+; （#434 的告诫，见 installer/README.md）。
 #define MyTsfRoot64    "{sys}\IME\MetasequoiaIME"
 #define MyTsfRoot32    "{syswow64}\IME\MetasequoiaIME"
 #ifdef LightPackage
@@ -69,7 +77,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={commonpf64}\metasequoiaime\MetasequoiaIME.ico
-VersionInfoVersion={#MyAppVersion}
+VersionInfoVersion={#MyVersionInfo}
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
@@ -718,10 +726,10 @@ begin
       '现有数据将从这里迁移：' + NewLine + Space + ResolvePreviousDataDir;
 end;
 
-{ 本进程能直接访问的 TSF 根目录。32 位安装器里不经改写的 System32 会被 WOW64 落到 SysWOW64。}
+// 本进程能直接访问的 TSF 根目录。64 位模式下 sys 常量不经重定向，直接就是 System32。
 function TsfRoot64: String;
 begin
-  Result := ApplyPathRedirRulesForCurrentProcess(True, ExpandConstant('{#MyTsfRoot64}'));
+  Result := ExpandConstant('{#MyTsfRoot64}');
 end;
 
 function TsfRoot32: String;

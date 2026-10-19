@@ -1,8 +1,9 @@
 # Metasequoia IME Installer
 
-本目录的脚本从 Windows 合仓目录收集产物、签名、用 Inno Setup 打成安装包。它服务两条流程：
+本目录的脚本从 Windows 合仓目录收集产物、签名、用 Inno Setup 打成安装包。它服务三条流程：
 
 - **正式发布**：由 `MSIME-Windows` 的 release workflow 驱动，用真实证书签名包内全部 EXE/DLL 和最终安装包；产物是挂在 Release 上的 `MetasequoiaIME_Setup_v<版本>.exe`，并携带与 Release 二进制匹配的 PDB 符号文件。见下面「CI 契约」
+- **开发构建**：由 `dev-build.yml` workflow 驱动，runner 上现场生成自签名证书并签名，产物随 artifact 分发。见下面「Dev build」
 - **本地测试**：手工跑，用本机自签名证书，用来在自己机器上验证安装流程。本文其余部分讲的是这条
 
 版本号不是固定的，由 `Prepare-PackageFiles.ps1` 的 `-TargetVersion` 决定，默认 `0.0.1`；正式发布时 CI 传入真实版本。
@@ -10,6 +11,15 @@
 本仓库 **不包含** 正式代码签名证书、私钥、指纹，也不包含编译好的 EXE/DLL、词库或安装包。
 
 签名脚本会在你自己的机器上生成并复用一张自签名测试证书。
+
+## Dev build
+
+`dev-build.yml` workflow 给没有本地工具链的贡献者出可安装的包。触发见 [CONTRIBUTING.md](../CONTRIBUTING.md#没有本地工具链时dev-build-workflow)。签名证书由 `sign-dev-build.ps1` 在 runner 上现场生成，subject 固定为 `CN=Metasequoia IME Dev Build Code Signing`，私钥只在 runner 内存里存在一次构建；公钥 `.cer` 随 artifact 分发，用户用 `import-dev-trust.ps1` 导入本机受信任存储（按 subject 清旧导新，重复构建不会膨胀存储）。
+
+- `sign-dev-build.ps1` 复用同一次运行早先创建的证书，所以包内二进制和安装包总在同一签名下；`DEV_CERT_PATH` 指出 `.cer` 的导出位置
+- `import-dev-trust.ps1` 也随 artifact 分发，用户解压后在管理员 PowerShell 里直接跑
+- 版本号带 `-dev.<日期>.<commit>`，由 `scripts/dev-build-version.py` 从 `version.txt` 派生；设置页的更新检查会剥掉 `-dev` 后缀做数字比较，dev 包不会提示升级
+- 不要把这两个脚本接进 release 路径：正式发布的签名在 `scripts/ci/sign-binaries.ps1` 或 SignPath，两套互不相干
 
 ## CI 契约
 
@@ -71,7 +81,7 @@ Windows CI 运行 `installer/tests/cloud-choice.ps1`，用 Inno Setup 跑八个�
 安装包不携带 VC 运行库，它是系统级共享组件。缺了它 Server 起不来，而这个故障出现在安装结束之后，用户看不到任何解释。所以 `msime_setup.iss` 的 `InitializeSetup` 在安装开始前先查一遍，缺了就当场说清楚，并给出下载地址。界面全部由 `msimeui` 以 Direct2D 绘制，不再依赖 WebView2 Runtime；旧版本留下的 WebView2 用户数据（`ProgramData\metasequoiaime\webview2`、`webview2-settings`，以及 `%LOCALAPPDATA%\metasequoiaime` 下的同名回退目录）由安装器在升级和卸载时清掉。
 
 - **Visual C++ 2015–2022 可再发行组件包（x64）**：读 `Software\Microsoft\VisualStudio\14.0\VC\Runtimes\x64` 的 `Installed` / `Major` / `Minor`，`HKLM32` 和 `HKLM64` 两个视图都查。要求 **14.40 以上**（常量 `VCRuntimeMinMinor`）：`server_exe\` 里的 exe 用 MSVC 14.40+（VS 2022 17.10 起）编译并导入 `msvcp140.dll`，这一版起 `std::mutex` 的构造函数是 constexpr，配上更旧的 `msvcp140.dll` 会在第一次加锁时访问冲突、无声闪退——设置页「点了没反应」就是这个现象。装了 2019 / 早期 2022 运行库的机器同样有 `Installed=1`，所以必须比版本号。构建工具链升级到要求更高 redist 时同步调高这个常量。32 位 TSF DLL 用静态 CRT（`windows/CMakeLists.txt` 的 `CMAKE_MSVC_RUNTIME_LIBRARY`），所以不检查 x86 redist
-- **不要改成查 `System32` 里的 DLL。** Setup.exe 是 32 位进程，Pascal Script 的 `FileExists` 会被 WOW64 重定向到 `SysWOW64`，查到的是 x86 运行库；只装了 x64 redist 的机器会被误判成缺少 x64 运行库。绕开重定向的办法不可移植：`EnableFsRedirection` 在 Inno Setup 7 里已被移除，而它的替代品在 CI 用的 6.x 里还不存在
+- **不要改成查 `System32` 里的 DLL，也不要在 Pascal Script 里用 `ApplyPathRedirRulesForCurrentProcess`。** 那是 Inno Setup 7 的 support function，CI 的 6.7.1 没有它，ISCC 会报 `Unknown identifier`（#925 引入后第一次在 hosted runner 上编安装包就炸了，#55e1127a 改回直接展开 `{sys}`）。Setup 在 x64/ARM64 上是 64 位进程，`{sys}` 本来就不经重定向；需要 32 位视图时用 `{syswow64}`
 - 缺组件或版本过旧时弹一次对话框，区分「没装」和「已装 x.y 但过旧」，列出直接下载链接（`https://aka.ms/vc14/vc_redist.x64.exe`）和说明页：选「是」直接下载安装包并结束安装，选「否」继续装。**不阻断安装**——用户可能马上就要去补组件，也可能只是在准备环境。静默安装（CI、批量部署）用 `SuppressibleMsgBox` 默认「否」直接继续，缺什么已经写进安装日志（`/LOG=`）
 
 ## 依赖
