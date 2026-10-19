@@ -3146,6 +3146,36 @@ int run_test()
 #endif
 
 #ifndef METASEQUOIA_SKIP_FREQUENCY_TESTS
+    for (const unsigned autocorrect : {0u, quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor})
+    {
+        const auto directory = data_directory / ("frequency-ng-" + std::to_string(autocorrect));
+        std::filesystem::create_directories(directory);
+        {
+            Database database(directory / "msime.db");
+            database.execute("CREATE TABLE tbl_1_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                             "INSERT INTO tbl_1_n VALUES('ng','n','嗯',0);"
+                             "CREATE TABLE tbl_2_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                             "INSERT INTO tbl_2_n VALUES('neng''gou','ng','能够',501639);"
+                             "INSERT INTO tbl_2_n VALUES('na''ge','ng','那个',501011);");
+        }
+        const metasequoia::RuntimePaths paths{directory, directory, directory, directory};
+        metasequoia::InputSession session(SchemeType::Quanpin, autocorrect, true, true, false, paths);
+        type(session, "ng");
+        const auto &prefix = session.candidates()[candidate_index(session, "嗯")];
+        require(prefix.pinyin == "n" && prefix.canonical_pinyin == "ng",
+                "The ng fixture must expose the nasal reading as a prefix candidate.");
+        const auto pinned = session.pin_candidate(candidate_index(session, "那个"));
+        require(pinned.handled && !pinned.commit && !pinned.diagnostic && session.candidates().front().word == "那个",
+                "A prefix candidate whose reading matches the full input displaced the manually pinned word.");
+        session.handle_command(metasequoia::Command::Cancel);
+        type(session, "ng");
+        require(session.candidates().front().word == "那个", "Retyping ng lost the manually pinned order.");
+        metasequoia::InputSession reopened(SchemeType::Quanpin, autocorrect, true, true, false, paths);
+        type(reopened, "ng");
+        require(reopened.candidates().front().word == "那个",
+                "Reopening the session lost the manually pinned ng word.");
+    }
+
     struct FrequencyCase
     {
         metasequoia::FrequencyAdjustmentMode mode;

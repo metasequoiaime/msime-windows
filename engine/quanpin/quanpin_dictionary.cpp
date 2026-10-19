@@ -334,13 +334,13 @@ std::string candidate_letters(const WordItem &item)
     return fold_autocorrect_letters(item.canonical_pinyin.empty() ? item.pinyin : item.canonical_pinyin);
 }
 
-// 字面整词：词库行、读音字母与敲的字母逐个相同（任一种切分都算）。
+// 字面整词：词库行、读音字母与敲的字母逐个相同，且匹配码覆盖完整输入（任一种切分都算）
 std::vector<WordItem>::iterator find_literal_whole_word(std::vector<WordItem> &candidates, const std::string &raw_input)
 {
     const std::string typed = fold_autocorrect_letters(raw_input);
     return std::find_if(candidates.begin(), candidates.end(), [&](const WordItem &item) {
         return (item.source == CandidateSource::Database || item.source == CandidateSource::UserDatabase) &&
-               candidate_letters(item) == typed;
+               candidate_letters(item) == typed && fold_autocorrect_letters(item.pinyin) == typed;
     });
 }
 
