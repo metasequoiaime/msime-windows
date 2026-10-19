@@ -5,7 +5,8 @@ release-please owns version.txt. The VERSIONINFO block in windows/src/IME/Metase
 same number in two shapes, a comma-separated quad and a dotted string, so it cannot be driven by
 release-please's generic updater. The release workflow runs this before configuring CMake.
 
-The fourth field of the quad stays 0; only MAJOR.MINOR.PATCH are release-managed.
+The fourth field of the quad stays 0 for releases; a dev build passes an explicit
+--version MAJOR.MINOR.PATCH.YYMMDD to stamp its date there.
 
     python scripts/apply_version.py                    # stamp from version.txt
     python scripts/apply_version.py --check            # exit 1 if the resource is out of date
@@ -23,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = REPO_ROOT / "version.txt"
 RESOURCE_FILE = REPO_ROOT / "windows" / "src" / "IME" / "MetasequoiaIME.rc"
 
-SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$")
 
 # Each pattern captures the part before the version and the part after it, so only the digits move.
 SUBSTITUTIONS = (
@@ -34,7 +35,7 @@ SUBSTITUTIONS = (
 )
 
 
-def read_version(explicit_version: str | None = None) -> tuple[str, str, str]:
+def read_version(explicit_version: str | None = None) -> tuple[str, str, str, str]:
     if explicit_version is None:
         if not VERSION_FILE.is_file():
             raise SystemExit(f"error: {VERSION_FILE} is missing")
@@ -45,13 +46,17 @@ def read_version(explicit_version: str | None = None) -> tuple[str, str, str]:
         source = "--version"
     match = SEMVER.match(raw)
     if not match:
-        raise SystemExit(f"error: {source} must hold MAJOR.MINOR.PATCH, got {raw!r}")
-    return match.groups()
+        raise SystemExit(
+            f"error: {source} must hold MAJOR.MINOR.PATCH[.BUILD], got {raw!r}"
+        )
+    # The optional fourth field carries a dev build's YYMMDD stamp; releases leave it at 0.
+    major, minor, patch, build_field = match.groups()
+    return major, minor, patch, build_field or "0"
 
 
-def render(version: tuple[str, str, str]) -> tuple[str, str]:
-    major, minor, patch = version
-    return f"{major},{minor},{patch},0", f"{major}.{minor}.{patch}.0"
+def render(version: tuple[str, str, str, str]) -> tuple[str, str]:
+    major, minor, patch, build_field = version
+    return f"{major},{minor},{patch},{build_field}", f"{major}.{minor}.{patch}.{build_field}"
 
 
 def apply(text: str, quad: str, dotted: str) -> tuple[str, int]:
