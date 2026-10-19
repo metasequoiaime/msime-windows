@@ -1,5 +1,7 @@
 #include "settings/native/native_page_help_widgets.h"
 
+#include "msime_version.h"
+
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
 
@@ -20,8 +22,8 @@ constexpr char kDownloadMirrorPrefix[] = "https://dl.msime.app/gh/";
 constexpr char kWebsiteUrl[] = "https://msime.app/";
 constexpr char kLicenseUrl[] = "https://github.com/metasequoiaime/MSIME-Windows/blob/main/LICENSE";
 constexpr char kPrivacyUrl[] = "https://github.com/metasequoiaime/MSIME-Windows/blob/main/PRIVACY.md";
-// The version the page shows (partials/about-settings.html).
-constexpr wchar_t kShownVersion[] = L"v0.0.6";
+// The version the page shows (partials/about-settings.html), sourced from version.txt.
+constexpr char kShownVersion[] = "v" MSIME_PRODUCT_VERSION;
 
 struct Version
 {
@@ -339,7 +341,7 @@ void CheckForUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
         state->statusBox->SetVisible(!message.empty());
     };
     Version current;
-    if (!ParseVersion(Narrow(kShownVersion), current))
+    if (!ParseVersion(kShownVersion, current))
     {
         setStatus(L"无法识别当前版本", TextRole::Danger);
         return;
@@ -423,7 +425,7 @@ VisualPtr BuildAboutPage(PageContext &context)
     {
         auto left = std::make_shared<Column>(0.0f);
         left->Add(MakeLabel(L"当前版本", DocStyle(13.0f, DWRITE_FONT_WEIGHT_MEDIUM), TextRole::Primary));
-        auto version = MakeLabel(kShownVersion, DocStyle(12.0f), TextRole::Muted);
+        auto version = MakeLabel(Widen(kShownVersion), DocStyle(12.0f), TextRole::Muted);
         version->SetMargin({0.0f, 5.0f, 0.0f, 0.0f});
         left->Add(version);
         state->status = MakeLabel(L"", DocStyle(11.0f), TextRole::Muted);

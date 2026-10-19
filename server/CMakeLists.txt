@@ -34,6 +34,18 @@ set(MSIME_VENDOR_DIR "${MSIME_REPO_ROOT}/vendor")
 # 外观仍按出厂清单画。清单是唯一的来源，这里只把它们原样嵌成字符串；改了清单会触发重新配置。
 set(MSIME_FACTORY_SKIN_IDS fluent wechat wechat_scroll graphite willow_green autumn_osmanthus microsoft canvas)
 set(MSIME_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
+set(MSIME_VERSION_FILE "${MSIME_REPO_ROOT}/version.txt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${MSIME_VERSION_FILE}")
+file(STRINGS "${MSIME_VERSION_FILE}" MSIME_PRODUCT_VERSION LIMIT_COUNT 1)
+string(STRIP "${MSIME_PRODUCT_VERSION}" MSIME_PRODUCT_VERSION)
+if(NOT MSIME_PRODUCT_VERSION MATCHES "^[0-9]+(\\.[0-9]+)*$")
+    message(FATAL_ERROR "Invalid product version in ${MSIME_VERSION_FILE}: '${MSIME_PRODUCT_VERSION}'")
+endif()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/msime_version.h.in"
+    "${MSIME_GENERATED_DIR}/msime_version.h"
+    @ONLY
+)
 set(_msime_factory_skins "")
 foreach(_skin_id IN LISTS MSIME_FACTORY_SKIN_IDS)
     set(_skin_manifest "${MSIME_REPO_ROOT}/skins/default/${_skin_id}/skin.toml")

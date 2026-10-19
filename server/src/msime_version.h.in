@@ -1,0 +1,4 @@
+#pragma once
+
+// Generated from the repository's version.txt at configure time.
+#define MSIME_PRODUCT_VERSION "@MSIME_PRODUCT_VERSION@"
