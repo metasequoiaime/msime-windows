@@ -2,6 +2,8 @@
 [CmdletBinding()]
 param(
     [string]$ManifestTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\mt.exe',
+    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [string]$ProductVersion = '',
     # ALL_BUILD also builds MetasequoiaImeServerTests and test_webview_contract, which the packaging
     # step deletes again. The server target already depends on the watchdog, the three panels,
     # Settings, DictionaryReplay and the OpenCC dictionaries, so it produces exactly the packaged
@@ -17,8 +19,9 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $buildDirectory = Join-Path $projectRoot 'build-release'
 Push-Location $projectRoot
 try {
-    if ($Reconfigure -or -not (Test-Path -LiteralPath (Join-Path $buildDirectory 'CMakeCache.txt'))) {
-        cmake --preset=vcpkg-release
+    if ($Reconfigure -or $ProductVersion -or -not (Test-Path -LiteralPath (Join-Path $buildDirectory 'CMakeCache.txt'))) {
+        $cmakeArgs = @('--preset=vcpkg-release', "-DMSIME_PRODUCT_VERSION_OVERRIDE=$ProductVersion")
+        cmake @cmakeArgs
         if ($LASTEXITCODE -ne 0) { throw "Server configure failed ($LASTEXITCODE)" }
     }
     cmake --build $buildDirectory --config Release --target $Target --parallel

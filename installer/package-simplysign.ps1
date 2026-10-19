@@ -246,7 +246,7 @@ try {
     try { & $tsfCompile -Reconfigure:$Reconfigure } finally { Pop-Location }
 
     Push-Location (Join-Path $repoRoot 'server')
-    try { & $serverCompile -Reconfigure:$Reconfigure } finally { Pop-Location }
+    try { & $serverCompile -Reconfigure:$Reconfigure -ProductVersion $Version } finally { Pop-Location }
 
     # 完整包的数据输入和 Invoke-LocalTest.ps1 一样准备：词库从本仓同级的 msime-dictionary 构建，
     # 不下载 Release；源数据提交和构建脚本都没变、工作区干净时直接跳过。不跑这一步，

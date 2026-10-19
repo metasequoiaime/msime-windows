@@ -234,9 +234,11 @@ jobs:
 
       - name: Stamp the version resource
         shell: pwsh
+        env:
+          TARGET_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          python scripts/apply_version.py
-          python scripts/apply_version.py --check
+          python scripts/apply_version.py --version $env:TARGET_VERSION
+          python scripts/apply_version.py --version $env:TARGET_VERSION --check
 
       # Before anything installs into or caches from VCPKG_ROOT: a mismatch found after the cache save would already have stored the wrong root's archives under the -complete key.
       - name: Verify the selected vcpkg root
@@ -392,6 +394,7 @@ jobs:
           cmake -S server -B server/build-release -A x64
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DMSIME_PRODUCT_VERSION_OVERRIDE=${{ needs.prepare.outputs.version }}
 
       # Ninja Multi-Config because sccache plugs in through CMAKE_<LANG>_COMPILER_LAUNCHER, which the Visual Studio generator ignores; it keeps the --config Release / bin/Release layout the later steps read.
       - name: Configure hosted build
@@ -401,7 +404,8 @@ jobs:
           $cmakeArgs = @(
             '-S', 'server', '-B', 'server/build-release', '-G', 'Ninja Multi-Config',
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
-            '-DVCPKG_TARGET_TRIPLET=x64-windows'
+            '-DVCPKG_TARGET_TRIPLET=x64-windows',
+            '-DMSIME_PRODUCT_VERSION_OVERRIDE=${{ needs.prepare.outputs.version }}'
           )
           $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
           cmake @cmakeArgs
