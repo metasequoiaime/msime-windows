@@ -311,10 +311,10 @@ HRESULT CTfTextLayoutSink::_GetTextExt(_Out_ RECT *lpRect, _Out_ POINT *lpAnchor
         lpRect->bottom = Global::INVALID_Y;
         *lpAnchor = {0, Global::INVALID_Y};
     }
-    else if (isClipped && lpRect && (lpRect->right <= lpRect->left || lpRect->bottom <= lpRect->top))
+    else if (isClipped && lpRect && !IsUsableCaretExtent(lpRect->left, lpRect->top, lpRect->right, lpRect->bottom))
     {
-        // Office often reports isClipped=TRUE with a still-usable rect; only reject
-        // degenerate clipped extents that would anchor the candidate off-screen.
+        // Clipping can leave a usable zero-width caret; only reject extents
+        // without a valid position and height
         lpRect->left = 0;
         lpRect->bottom = Global::INVALID_Y;
         *lpAnchor = {0, Global::INVALID_Y};
