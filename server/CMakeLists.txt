@@ -43,7 +43,10 @@ else()
     file(STRINGS "${MSIME_VERSION_FILE}" MSIME_PRODUCT_VERSION LIMIT_COUNT 1)
 endif()
 string(STRIP "${MSIME_PRODUCT_VERSION}" MSIME_PRODUCT_VERSION)
-if(NOT MSIME_PRODUCT_VERSION MATCHES "^[0-9]+(\\.[0-9]+)*$")
+# 版本主体必须是数字段；允许一个可选的连字符后缀（semver 预发布段），dev-build 用它携带
+# 日期与 commit（0.7.1-dev.20261019.<hash>），设置窗口关于页原样显示。关于页的 ParseVersion
+# 会剥掉后缀做更新检查的数字比较，所以后缀不影响版本判定。
+if(NOT MSIME_PRODUCT_VERSION MATCHES "^[0-9]+(\\.[0-9]+)*(-[0-9A-Za-z.-]+)?$")
     message(FATAL_ERROR "Invalid product version in ${MSIME_VERSION_FILE}: '${MSIME_PRODUCT_VERSION}'")
 endif()
 configure_file(

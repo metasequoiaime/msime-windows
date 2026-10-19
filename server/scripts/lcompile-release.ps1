@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$ManifestTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\mt.exe',
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$')]
     [string]$ProductVersion = '',
     # ALL_BUILD also builds MetasequoiaImeServerTests and test_webview_contract, which the packaging
     # step deletes again. The server target already depends on the watchdog, the three panels,
