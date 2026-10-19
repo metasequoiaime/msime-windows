@@ -15,6 +15,27 @@
 
 Boost 按 `-DBoost_ROOT=...` → 环境变量 `BOOST_ROOT` → `%USERPROFILE%\scoop\apps\boost\current` 的顺序解析。preset 里的 vcpkg 路径取自 `$env{VCPKG_ROOT}`，不需要改文件。
 
+### 没有本地工具链时：dev-build workflow
+
+只想验证一个小改动、不想为它装一整套工具链的话，让 CI 编。`Dev build` workflow 平时不跑主分支（develop 和 main 有自己的 CI 和发布流），三种触发方式：
+
+```powershell
+# 特性分支一推就自动编，不需要任何手动操作
+git push -u origin fix/xxx
+
+# 或者手动触发，可选单个组件快速迭代
+gh workflow run dev-build.yml --ref <你的分支> -f component=all
+
+# 等 run 结束拿产物；agent 也可以在这里等
+gh run list --workflow=dev-build.yml --branch <你的分支> --limit 1 --json databaseId,status
+gh run watch <runId> --exit-status
+gh run download <runId> -n dev-installer
+```
+
+开向 develop 的 PR 也会自动跑一次，评审者和 fork 贡献者都能从 PR 的检查页拿到安装包。安装只有两步：管理员 PowerShell 里运行解压出来的 `import-dev-trust.ps1`（导入本次构建的签名证书并清掉上一张），然后双击安装包。版本号带 `-dev.<日期>.<commit>`，一眼可辨，设置页的更新检查不会提示它升级。每次新构建的证书都不同，重装前重跑一次导入脚本即可；产物保留 7 天。
+
+几个边界：`workflow_dispatch` 需要仓库写权限；fork PR 的构建用 `pull_request` 触发（只读 token，无 secrets），首个 run 要维护者点一次批准；`component=tip` 或 `server` 只编译单个组件出裸二进制；这个 workflow 不出 release、不碰更新清单，合并门槛仍然由 PR 上的 CI 把守。
+
 ## 取代码
 
 ```powershell
