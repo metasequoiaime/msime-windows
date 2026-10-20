@@ -3,6 +3,7 @@
 #include "config/ime_config.h"
 
 #include <cwctype>
+#include <string_view>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -114,6 +115,40 @@ HINTERNET OpenWinHttpSession(const wchar_t *user_agent)
         return WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     return WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS,
                        0);
+}
+
+bool IsLoopbackEndpoint(std::string_view endpoint)
+{
+    const size_t scheme = endpoint.find("://");
+    if (scheme == std::string_view::npos)
+        return false;
+    std::string_view rest = endpoint.substr(scheme + 3);
+    const size_t path = rest.find_first_of("/?#");
+    if (path != std::string_view::npos)
+        rest = rest.substr(0, path);
+    const size_t at = rest.rfind('@');
+    if (at != std::string_view::npos)
+        rest = rest.substr(at + 1);
+
+    std::string host;
+    if (!rest.empty() && rest.front() == '[')
+    {
+        const size_t close = rest.find(']');
+        if (close == std::string_view::npos)
+            return false;
+        host = std::string(rest.substr(1, close - 1));
+    }
+    else
+    {
+        const size_t colon = rest.find(':');
+        host = std::string(rest.substr(0, colon == std::string_view::npos ? rest.size() : colon));
+    }
+    for (char &ch : host)
+    {
+        if (ch >= 'A' && ch <= 'Z')
+            ch = static_cast<char>(ch - 'A' + 'a');
+    }
+    return host == "localhost" || host == "127.0.0.1" || host == "::1";
 }
 
 void ApplyToCurl(CURL *curl)

@@ -14,7 +14,8 @@ inline nlohmann::json BuildChatProbeRequestBody(const std::string &provider, con
         {"model", model}, {"stream", false}, {"messages", {{{"role", "user"}, {"content", "Reply OK"}}}}};
     // A one-token probe can reject reasoning models before they return a response.
     const bool openai_reasoning = ChatCompletions::IsOpenAiReasoningRequest(provider, model);
-    ChatCompletions::SetTokenLimit(body, provider, openai_reasoning ? 32 : 1);
+    ChatCompletions::SetTokenLimit(body, ChatCompletions::UsesOpenAiOutputField(provider, endpoint),
+                                   openai_reasoning ? 32 : 1);
     // Vendor fields follow the endpoint, not the label: the DeepSeek slot can hold any
     // OpenAI-compatible service, and thinking.type makes services that do not accept it
     // (MiniMax among them) reject the request instead of answering it.
