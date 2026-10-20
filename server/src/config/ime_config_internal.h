@@ -198,6 +198,7 @@ extern bool g_assoc_sentence_neural_desktop;
 extern bool g_assoc_sentence_neural_keyboard;
 extern bool g_assoc_sentence_show_next_on_duplicate;
 extern bool g_assoc_sentence_source_badge;
+extern std::string g_assoc_sentence_source_badge_style;
 extern bool g_assoc_sentence_collocation_enabled;
 extern std::string g_assoc_sentence_collocation_model;
 extern double g_assoc_sentence_collocation_weight;

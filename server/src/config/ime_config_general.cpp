@@ -364,6 +364,26 @@ bool SetConfiguredAssocSentenceSourceBadge(bool enabled)
     return true;
 }
 
+std::string GetConfiguredAssocSentenceSourceBadgeStyle()
+{
+    return g_assoc_sentence_source_badge ? g_assoc_sentence_source_badge_style : "hidden";
+}
+
+bool SetConfiguredAssocSentenceSourceBadgeStyle(const std::string &style)
+{
+    if (style != "full" && style != "short" && style != "hidden")
+        return false;
+    const bool show = style != "hidden";
+    const std::string badge_style = show ? style : g_assoc_sentence_source_badge_style;
+    // Keep the legacy visibility preference and the style in one atomic config write.
+    if (!WriteConfiguredValues({{"association", "sentence_source_badge", show ? "true" : "false"},
+                                {"association", "sentence_source_badge_style", EscapeTomlBasicString(badge_style)}}))
+        return false;
+    g_assoc_sentence_source_badge = show;
+    g_assoc_sentence_source_badge_style = badge_style;
+    return true;
+}
+
 bool GetConfiguredRadicalModeEnabled()
 {
     return g_radical_mode_enabled;

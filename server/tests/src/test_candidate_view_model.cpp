@@ -203,3 +203,36 @@ TEST_CASE(ai_suggestion_badge_switches_between_robot_and_whale)
     ApplyFixedPositionBadge(both, true, "paperclip");
     REQUIRE_EQ(both.badge, std::string(" \xF0\x9F\x90\xB3 \xF0\x9F\x93\x8E"));
 }
+
+TEST_CASE(sentence_source_badge_formats_each_existing_source)
+{
+    const std::vector<std::pair<std::string, std::string>> sources = {
+        {"Unigram", "ug"}, {"Trigram", "tg"}, {"神经D", "nd"}, {"神经K", "nk"},
+        {"万象", "wx"},    {"八股", "bg"},    {"墨奇", "mq"}};
+    for (const auto &[label, abbreviation] : sources)
+    {
+        REQUIRE_EQ(SentenceSourceBadge(label, "full"), " 〔" + label + "〕");
+        REQUIRE_EQ(SentenceSourceBadge(label, "short"), " （" + abbreviation + "）");
+        REQUIRE(SentenceSourceBadge(label, "hidden").empty());
+    }
+    REQUIRE_EQ(SentenceSourceBadge("unknown", "short"), std::string(" 〔unknown〕"));
+    REQUIRE_EQ(SentenceSourceBadge("Unigram", "invalid"), SentenceSourceBadge("Unigram", "full"));
+    REQUIRE(SentenceSourceBadge("", "full").empty());
+    REQUIRE(SentenceSourceBadge("", "short").empty());
+}
+
+TEST_CASE(sentence_source_badge_changes_only_presentation_and_refresh_signature)
+{
+    CandidateViewItem item;
+    item.text = "你好";
+    item.annotation = " AB";
+    item.badge = SentenceSourceBadge("Unigram", "full");
+    const auto full_signature = CandidatePageSignature({item});
+    item.badge = SentenceSourceBadge("Unigram", "short");
+    REQUIRE_EQ(CandidateViewHtml(item), std::string("你好 AB （ug）"));
+    REQUIRE(full_signature != CandidatePageSignature({item}));
+    item.badge = SentenceSourceBadge("Unigram", "hidden");
+    REQUIRE_EQ(CandidateViewHtml(item), std::string("你好 AB"));
+    REQUIRE_EQ(item.text, std::string("你好"));
+    REQUIRE_EQ(item.annotation, std::string(" AB"));
+}

@@ -191,6 +191,60 @@ TEST_CASE(config_round_trips_under_non_ascii_profile_path)
     fs::remove_all(unique_root, ec);
 }
 
+TEST_CASE(sentence_source_badge_style_preserves_legacy_visibility_and_round_trips)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"sentence-source-badge";
+    const fs::path data_dir = unique_root / L"metasequoiaime";
+    const fs::path config_path = data_dir / L"config.toml";
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    SeedTemplate(data_dir);
+
+    {
+        ScopedConfigLocation location(unique_root);
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadgeStyle(), std::string("hidden"));
+        for (const bool show : {true, false})
+        {
+            WriteText(config_path,
+                      std::string("[association]\nsentence_source_badge = ") + (show ? "true\n" : "false\n"));
+            InitImeConfig();
+            REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadge(), show);
+            REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadgeStyle(), std::string(show ? "full" : "hidden"));
+        }
+
+        for (const std::string style : {"full", "short", "hidden", "short"})
+        {
+            REQUIRE(SetConfiguredAssocSentenceSourceBadgeStyle(style));
+            InitImeConfig();
+            REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadgeStyle(), style);
+            REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadge(), style != "hidden");
+        }
+        REQUIRE(SetConfiguredAssocSentenceSourceBadge(false));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadgeStyle(), std::string("hidden"));
+        REQUIRE(SetConfiguredAssocSentenceSourceBadge(true));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadgeStyle(), std::string("short"));
+
+        const std::string before = ReadText(config_path);
+        REQUIRE(!SetConfiguredAssocSentenceSourceBadgeStyle("invalid"));
+        REQUIRE_EQ(ReadText(config_path), before);
+        REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadgeStyle(), std::string("short"));
+
+        for (const std::string value : {"\"invalid\"", "true", "1"})
+        {
+            WriteText(config_path,
+                      "[association]\nsentence_source_badge = true\nsentence_source_badge_style = " + value + "\n");
+            InitImeConfig();
+            REQUIRE_EQ(GetConfiguredAssocSentenceSourceBadgeStyle(), std::string("full"));
+        }
+    }
+
+    fs::remove_all(unique_root, ec);
+}
+
 TEST_CASE(candidate_translation_show_pos_defaults_and_round_trips)
 {
     namespace fs = std::filesystem;

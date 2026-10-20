@@ -1998,10 +1998,10 @@ VisualPtr BuildInputPage(PageContext &context)
              FrequencyRow(SubBlock(L"去重后补充次选",
                                    L"本地处理，某个模型的首选与已有候选重复时，显示该模型排名最高的下一条不同结果"),
                           Toggle(context, "association.sentence_show_next_on_duplicate")),
-             FrequencyRow(SubBlock(L"显示整句来源标签",
-                                   L"本地处理，在整句候选后显示〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕"
-                                   L"〔八股〕〔墨奇〕等来源标签"),
-                          Toggle(context, "association.sentence_source_badge")),
+             FrequencyRow(SubBlock(L"候选来源标签显示方式",
+                                   L"本地处理，完整标签如〔Unigram〕，缩写如（ug）、（tg）、（nd）、（nk）"),
+                          BindDropdown(context, "association.sentence_source_badge_style",
+                                       Options({{"full", L"完整"}, {"short", L"缩写"}, {"hidden", L"隐藏"}}))),
              Padded(collocationBlock, {0.0f, 10.0f, 0.0f, 10.0f}),
              FrequencyRow(
                  SubBlock(L"octagram 语法整句",

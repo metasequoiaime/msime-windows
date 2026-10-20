@@ -534,6 +534,8 @@ bool GetConfiguredAssocSentenceShowNextOnDuplicate();
 bool SetConfiguredAssocSentenceShowNextOnDuplicate(bool enabled);
 bool GetConfiguredAssocSentenceSourceBadge();
 bool SetConfiguredAssocSentenceSourceBadge(bool enabled);
+std::string GetConfiguredAssocSentenceSourceBadgeStyle();
+bool SetConfiguredAssocSentenceSourceBadgeStyle(const std::string &style);
 // octagram 语法模型（八股文，[association] 段）：两个机制开关进设置页，模型 id 默认留空
 // = 未选择任何模型（设置页单选激活后写入），权重与六参数是配置文件里的高级调参项，不进设置页。
 bool GetConfiguredAssocSentenceCollocationEnabled();

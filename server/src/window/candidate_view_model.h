@@ -84,6 +84,25 @@ inline std::string AiSuggestionBadge(const std::string &style)
     return std::string(" ") + (glyph ? glyph : AiSuggestionBadgeGlyph("robot"));
 }
 
+inline std::string SentenceSourceBadge(const std::string &label, const std::string &style)
+{
+    if (label.empty() || style == "hidden")
+        return {};
+    if (style == "short")
+    {
+        static constexpr struct
+        {
+            const char *label;
+            const char *abbreviation;
+        } sources[] = {{"Unigram", "ug"}, {"Trigram", "tg"}, {"神经D", "nd"}, {"神经K", "nk"},
+                       {"万象", "wx"},    {"八股", "bg"},    {"墨奇", "mq"}};
+        for (const auto &source : sources)
+            if (label == source.label)
+                return std::string(" （") + source.abbreviation + "）";
+    }
+    return " 〔" + label + "〕";
+}
+
 // 词性与分隔符各包一层 span，皮肤用 .cand-pos / .cand-sep 单独配色；没配时继承 .cand-translation。
 inline std::string CandidateTranslationHtml(const std::string &translation)
 {

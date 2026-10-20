@@ -165,6 +165,7 @@ double g_assoc_sentence_collocation_weak_penalty = -100.0;
 double g_assoc_sentence_collocation_rear_penalty = -18.0;
 // 候选窗整句候选后的来源标签（〔Trigram〕〔神经K〕等），默认不显示。
 bool g_assoc_sentence_source_badge = false;
+std::string g_assoc_sentence_source_badge_style = "full";
 bool g_emoji_mixed_input_enabled = false;
 bool g_kaomoji_mixed_input_enabled = false;
 bool g_symbol_mixed_input_enabled = false;
@@ -638,6 +639,9 @@ bool LoadImeConfig()
         g_assoc_sentence_collocation_rear_penalty =
             tbl["association"]["sentence_collocation_rear_penalty"].value_or(-18.0);
         g_assoc_sentence_source_badge = tbl["association"]["sentence_source_badge"].value_or(false);
+        g_assoc_sentence_source_badge_style =
+            tbl["association"]["sentence_source_badge_style"].value_or(std::string("full")) == "short" ? "short"
+                                                                                                       : "full";
         g_emoji_mixed_input_enabled = tbl["general"]["emoji_mixed_input"].value_or(false);
         g_kaomoji_mixed_input_enabled = tbl["general"]["kaomoji_mixed_input"].value_or(false);
         g_symbol_mixed_input_enabled = tbl["general"]["symbol_mixed_input"].value_or(false);

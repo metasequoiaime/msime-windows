@@ -284,6 +284,7 @@ std::string BuildCurrentCandidatePage()
     // AI 联想候选的来源徽标随配置切换（🤖 / 🐳），同样每次组页解析一次。
     const std::string ai_badge = AiSuggestionBadge(GetConfiguredCandidateAiBadgeStyle());
     const bool show_sentence_source_badge = GetConfiguredAssocSentenceSourceBadge();
+    const std::string sentence_source_badge_style = GetConfiguredAssocSentenceSourceBadgeStyle();
     const bool show_autocorrect_marker = GetConfiguredQuanpinAutocorrectMarker();
     const bool show_translation_pos = GetConfiguredCandidateTranslationShowPos();
     const bool single_translation_sense = GetConfiguredCandidateTranslationSingleSense();
@@ -292,7 +293,8 @@ std::string BuildCurrentCandidatePage()
     // 不会被走到。
     const std::string collocation_badge =
         show_sentence_source_badge
-            ? " 〔" + std::string(collocation::BadgeForModel(GetConfiguredAssocSentenceCollocationModel())) + "〕"
+            ? SentenceSourceBadge(std::string(collocation::BadgeForModel(GetConfiguredAssocSentenceCollocationModel())),
+                                  sentence_source_badge_style)
             : std::string();
 
     const int start = ui.current_page_start();
@@ -354,13 +356,13 @@ std::string BuildCurrentCandidatePage()
         else if (show_sentence_source_badge)
         {
             if (item.source == CandidateSource::Generated && item.sentence_association)
-                view.badge = " 〔Trigram〕";
+                view.badge = SentenceSourceBadge("Trigram", sentence_source_badge_style);
             else if (item.source == CandidateSource::Fallback && item.sentence_association)
-                view.badge = " 〔Unigram〕";
+                view.badge = SentenceSourceBadge("Unigram", sentence_source_badge_style);
             else if (item.source == CandidateSource::NeuralDesktop)
-                view.badge = " 〔神经D〕";
+                view.badge = SentenceSourceBadge("神经D", sentence_source_badge_style);
             else if (item.source == CandidateSource::NeuralKeyboard)
-                view.badge = " 〔神经K〕";
+                view.badge = SentenceSourceBadge("神经K", sentence_source_badge_style);
             else if (item.source == CandidateSource::Collocation)
                 view.badge = collocation_badge;
         }

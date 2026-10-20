@@ -95,6 +95,8 @@ sentence_neural_keyboard = true
 sentence_show_next_on_duplicate = false
 # 在候选窗的整句候选后显示来源标签（〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕〔八股〕〔墨奇〕）
 sentence_source_badge = false
+# 来源标签样式："full" 完整（默认）、"short" 缩写；显示/隐藏仍由 sentence_source_badge 控制
+sentence_source_badge_style = "full"
 # octagram 语法模型（八股文，.gram 格式）：字级搭配强度表，与词表零耦合。总开关，一并接入
 # 激活模型的全部能力：解码期逐边叠加搭配分一次，并把解码最优路径作为整句来源行显示。模型包
 # 从设置页内置目录按需下载（万象 LTS 约 390MB、八股文词级约 197/39MB、白霜约 7MB），布局
