@@ -298,8 +298,8 @@ void CandidatePresenter::ApplySkin()
     if (result.rebuilt)
     {
         // 旧场景的展开面板随场景一起丢掉，界面与工作线程都回到收起状态。
-        SetExpanded(false);
         RebuildScene();
+        SetExpanded(false);
         lastSkinFingerprint_ = skinKey;
     }
     const CandSkinTokens &tokens = result.tokens;
@@ -441,7 +441,11 @@ void CandidatePresenter::CommitExpandedItem(size_t gridIndex)
 void CandidatePresenter::SetExpanded(bool expanded)
 {
     expanded_ = expanded;
-    Global::candidate_expand_panel_open.store(expanded, std::memory_order_release);
+    Global::candidate_expand_state.store(
+        !impl_ || !impl_->expandBody || !::is_global_wnd_cand_shown
+            ? FanyImeIpc::CandidateExpandState::Unavailable
+            : (expanded ? FanyImeIpc::CandidateExpandState::Expanded : FanyImeIpc::CandidateExpandState::Collapsed),
+        std::memory_order_release);
     if (!expanded)
     {
         expandedWords_.clear();
@@ -503,7 +507,7 @@ void CandidatePresenter::ScrollExpanded(short delta)
     {
         return;
     }
-    // 首行与网格一起滚，一格滚一行；高精度滚轮按比例滚。滚到顶或底就停住，展开与收起只认按钮。
+    // 首行与网格一起滚，一格滚一行；高精度滚轮按比例滚。滚到顶或底就停住。
     const float offset = impl_->expandScroller->GetScrollOffset();
     impl_->expandScroller->SetScrollOffset(offset - static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA) *
                                                         expandRowStepDip_);
@@ -933,6 +937,7 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
         SetCandidateHostCloaked(true);
         ::is_global_wnd_cand_shown = true;
         Global::SetCandidateWindowRenderedVisible(true);
+        FanyImeIpc::PublishCandidateExpandAvailability(Global::candidate_expand_state, false, expanded_);
         CAND_DIAG_LOGF(L"candidate-d2d show deferred: no usable caret anchor ({},{})", caret.x, caret.y);
         return;
     }
@@ -1059,6 +1064,8 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     PlaceAndShow(caret, widthDip, heightDip, cardLeftDip, cardTopDip, scale);
     ::is_global_wnd_cand_shown = true;
     Global::SetCandidateWindowRenderedVisible(true);
+    FanyImeIpc::PublishCandidateExpandAvailability(Global::candidate_expand_state, impl_->expandBody != nullptr,
+                                                   expanded_);
     // 后续候选不够填满一屏时，不用等滚动就再要一批。
     RequestMoreExpandedIfNearEnd();
     // PlaceAndShow presented while the host was still being placed; it is placed and shown only now.
@@ -1343,7 +1350,9 @@ bool CandidatePresenter::HandleMessage(UINT message, WPARAM wParam, LPARAM lPara
         Present();
         return true;
     case WM_TOGGLE_CANDIDATE_EXPAND:
-        ToggleExpanded();
+        if (wParam == 0 || (wParam == 1 && Global::candidate_expand_state.load(std::memory_order_acquire) ==
+                                               FanyImeIpc::CandidateExpandState::Requested))
+            ToggleExpanded();
         return true;
     case WM_MOUSEWHEEL: {
         if (impl_->expandBody && expanded_)

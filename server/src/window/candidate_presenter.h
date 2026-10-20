@@ -96,7 +96,7 @@ class CandidatePresenter
     float stickyCardWidthDip_ = 0.0f;
     float stickyCardHeightDip_ = 0.0f;
     int wheelDeltaAccumulator_ = 0;
-    // 卷轴展开面板的界面状态。展开与收起只认展开按钮，继续输入时保持；候选窗关闭时收起。
+    // Expanded by the button or Down; the button collapses it. Hide resets the state.
     bool expanded_ = false;
     // 网格里显示的后续候选，取自最近一次画出来的候选页；expandedStart_ 是第一个的绝对下标。
     int expandedStart_ = 0;

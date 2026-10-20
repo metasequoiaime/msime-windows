@@ -485,7 +485,8 @@ void PublishBuiltCandidatePage(const std::wstring &candidate_string)
     snapshot->has_previous_page = ui.has_prev_page();
     snapshot->has_next_page =
         ui.has_next_page() || (ui.is_current_page_full() && FanyNamedPipe::CanExpandCandidatesKeepingPagePosition());
-    if (Global::candidate_expand_panel_open.load(std::memory_order_acquire) && !IsUiLessMode())
+    if (Global::candidate_expand_state.load(std::memory_order_acquire) == FanyImeIpc::CandidateExpandState::Expanded &&
+        !IsUiLessMode())
     {
         // 展开面板只显示文字，徽标、辅助码与译文仍只在首行（当前页）上。
         const size_t start = static_cast<size_t>(ui.current_page_start() + ui.current_page_count());

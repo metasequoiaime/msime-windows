@@ -21,6 +21,7 @@ add_executable(portable_tests
     "${SERVER_ROOT}/tests/src/test_input_key_policy.cpp"
     "${SERVER_ROOT}/tests/src/test_candidate_view_model.cpp"
     "${SERVER_ROOT}/tests/src/test_candidate_text_policy.cpp"
+    "${SERVER_ROOT}/tests/src/test_candidate_ui_action_policy.cpp"
 )
 
 target_include_directories(portable_tests PRIVATE "${SERVER_ROOT}" "${SERVER_ROOT}/src" "${SERVER_ROOT}/..")

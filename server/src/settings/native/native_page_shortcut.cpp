@@ -1103,7 +1103,7 @@ VisualPtr BuildShortcutPage(PageContext &context)
              BindCheck(context, L"[ / ]", "general.paging_brackets"),
              BindCheck(context, L"Shift+Tab / Tab", "general.paging_tab"),
              BindCheck(context, L"PageUp / PageDown", "general.paging_page_up_down"),
-             BindCheck(context, L"上 / 下（移动候选项）", "general.candidate_arrow_navigation"),
+             BindCheck(context, L"上 / 下（移动候选项，↓可展开卷轴候选）", "general.candidate_arrow_navigation"),
              BindCheck(context, L"左 / 右（横排时移动候选项）", "general.candidate_horizontal_arrow_navigation"),
              BindCheck(context, L"鼠标滚轮", "general.paging_mouse_wheel")}));
         page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);

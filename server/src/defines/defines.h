@@ -39,7 +39,7 @@ inline const UINT UPDATE_FTB_INPUT_MODE = WM_USER + 125;
 inline const UINT WM_COMMIT_CANDIDATE_AT = WM_USER + 126;
 // 卷轴展开面板打开或滚到底部，请求再展开一批候选。
 inline const UINT WM_EXPAND_CANDIDATES = WM_USER + 127;
-// 候选窗自己投递给自己：切换卷轴展开面板。放到消息队列里做，免得在鼠标分发途中改场景。
+// Queue the panel toggle outside mouse dispatch. wParam=1 only opens a pending keyboard request.
 inline const UINT WM_TOGGLE_CANDIDATE_EXPAND = WM_USER + 128;
 
 // wParam of WM_PAGE_CANDIDATE / WM_PAGE_CANDIDATE_ARROW; lParam carries how many pages to move.

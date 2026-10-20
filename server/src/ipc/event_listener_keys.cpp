@@ -1823,13 +1823,21 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         else if (GetConfiguredCandidateArrowNavigationEnabled() &&
                  (Global::Keycode == VK_UP || Global::Keycode == VK_DOWN))
         {
-            if (Global::Keycode == VK_UP)
+            bool expand = FanyImeIpc::RequestCandidateExpandOnDown(Global::Keycode, Global::ModifiersDown,
+                                                                   IsUiLessMode(), Global::candidate_expand_state);
+            if (expand && !PostMessageW(hwnd_cand, WM_TOGGLE_CANDIDATE_EXPAND, 1, 0))
             {
-                move_selection(-1, Global::DataFromServerMsgType::MoveSelectionPrevious);
+                auto expected = FanyImeIpc::CandidateExpandState::Requested;
+                Global::candidate_expand_state.compare_exchange_strong(
+                    expected, FanyImeIpc::CandidateExpandState::Collapsed, std::memory_order_acq_rel);
+                expand = false;
             }
-            else
+            if (!expand)
             {
-                move_selection(1, Global::DataFromServerMsgType::MoveSelectionNext);
+                if (Global::Keycode == VK_UP)
+                    move_selection(-1, Global::DataFromServerMsgType::MoveSelectionPrevious);
+                else
+                    move_selection(1, Global::DataFromServerMsgType::MoveSelectionNext);
             }
         }
 
