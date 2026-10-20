@@ -1890,8 +1890,12 @@ void QuanpinDictionary::reset_cache()
 quanpin::WordLatticeLookup QuanpinDictionary::lattice_lookup(int limit, bool with_fuzzy)
 {
     const auto fuzzy = with_fuzzy ? fuzzy_pinyin_ : metasequoia::FuzzyPinyinOptions{};
-    return [this, lookup = quanpin::make_lattice_db_lookup(db_, statement_cache_, limit, fuzzy), limit,
-            fuzzy](const quanpin::Segments &span) {
+    if (!char_reading_totals_)
+    {
+        char_reading_totals_ = quanpin::load_char_reading_totals(db_);
+    }
+    return [this, lookup = quanpin::make_lattice_db_lookup(db_, statement_cache_, limit, fuzzy, char_reading_totals_),
+            limit, fuzzy](const quanpin::Segments &span) {
         // 超过上限整体清掉，免得一次长时间输入把内存撑大（同双拼的 direct_span_cache_）。
         constexpr std::size_t kLatticeSpanCacheLimit = 8192;
         std::string key = quanpin::join_segments(span);

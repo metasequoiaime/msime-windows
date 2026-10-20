@@ -30,6 +30,8 @@ xianzaijiuqu	现在就去	plain
 ganxienidebangzhu	感谢你的帮助	plain
 anzhaoguiding	按照规定	plain
 tiananmenguangchang	天安门广场	plain
+taizhuanqianle	太赚钱了	plain	大 也读 tai，但只占它全部权重的 0.14%；语言模型偏爱「大赚」，靠 P(读音|字) 压回去
+womendouquguochengdu	我们都去过成都	plain	都 读 du 是生僻读音，「去过程都」靠同一条读音惩罚压回去
 zaijinuta	再激怒他	plain	贪心切分在 jin 上卡死的合法输入；再/在 两可，只盯切分不回退
 fangan	方案	word
 danganguan	档案馆	word

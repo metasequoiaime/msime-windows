@@ -5,6 +5,7 @@
 
 #include <sqlite3.h>
 
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -85,13 +86,23 @@ std::vector<KeyedQueryItem> query_exact_segmentations_keyed_flat(
     const std::vector<Segments> &segmentations, sqlite3 *db,
     std::unordered_map<std::string, sqlite3_stmt *> &statement_cache, int limit = 128);
 
+// 多音单字在各读音下的权重和（单字 → Σweight），只收词库里挂在两个以上读音下的字。
+// 词格用它算 P(读音|字)，见 make_lattice_db_lookup。
+using CharReadingTotals = std::unordered_map<std::string, std::int64_t>;
+// 扫一遍全部单音节表（五万行量级）。词库被学习写入时不必重载：调频改动的权重相对
+// 出厂权重的量级可以忽略，这里只要分出「大」读 da 还是读 tai 这种数量级上的差别。
+std::shared_ptr<const CharReadingTotals> load_char_reading_totals(sqlite3 *db);
+
 // 词格的跨度查询：只返回键与跨度完全相等的行，没有前缀区间与简拼降级——整句
 // 联想出来的每个词，读音都必须精确对上用户敲的那段拼音。因此也不需要 QuerySource：
 // 区分全拼/双拼的只有简拼那几级。
 // 开着模糊音时同时收跨度的模糊变体：行的 key 是词库里的真实读音，每个与敲出读音不同的音节
 // 在 penalty 上记一份 kFuzzyLatticePenaltyLog。整句的 canonical_pinyin 因此落在真实读音上，
 // 选中后造词不会把错音写进词库。
+// 给了 char_totals 时，单字行按这个字少见的读音在 penalty 上扣分（见 quanpin_query.cpp 的
+// rare_char_reading_penalty）。
 WordLatticeLookup make_lattice_db_lookup(sqlite3 *db, std::unordered_map<std::string, sqlite3_stmt *> &statement_cache,
-                                         int span_limit, metasequoia::FuzzyPinyinOptions fuzzy = {});
+                                         int span_limit, metasequoia::FuzzyPinyinOptions fuzzy = {},
+                                         std::shared_ptr<const CharReadingTotals> char_totals = nullptr);
 
 } // namespace quanpin

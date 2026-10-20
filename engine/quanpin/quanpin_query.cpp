@@ -1286,10 +1286,96 @@ std::vector<KeyedQueryItem> query_exact_segmentations_keyed_flat(
     return result;
 }
 
-WordLatticeLookup make_lattice_db_lookup(sqlite3 *db, std::unordered_map<std::string, sqlite3_stmt *> &statement_cache,
-                                         int span_limit, metasequoia::FuzzyPinyinOptions fuzzy)
+std::shared_ptr<const CharReadingTotals> load_char_reading_totals(sqlite3 *db)
 {
-    return [db, &statement_cache, span_limit, fuzzy](const Segments &span) {
+    auto totals = std::make_shared<CharReadingTotals>();
+    if (db == nullptr)
+        return totals;
+
+    std::vector<std::string> tables;
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(
+            db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'tbl\\_1\\_%' ESCAPE '\\'", -1,
+            &statement, nullptr) != SQLITE_OK)
+        return totals;
+    while (sqlite3_step(statement) == SQLITE_ROW)
+    {
+        const auto *name = reinterpret_cast<const char *>(sqlite3_column_text(statement, 0));
+        if (name != nullptr)
+            tables.emplace_back(name);
+    }
+    sqlite3_finalize(statement);
+
+    // 先按字累计权重和读音数，再只留多音字：单读音的字占比恒为 1，存着只占内存。
+    std::unordered_map<std::string, std::pair<std::int64_t, int>> sums;
+    for (const auto &table : tables)
+    {
+        const std::string sql = "SELECT value, weight FROM " + table;
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
+            continue;
+        while (sqlite3_step(statement) == SQLITE_ROW)
+        {
+            const auto *value = reinterpret_cast<const char *>(sqlite3_column_text(statement, 0));
+            if (value == nullptr)
+                continue;
+            auto &[sum, readings] = sums[value];
+            sum += (std::max)(sqlite3_column_int64(statement, 1), sqlite3_int64{0});
+            ++readings;
+        }
+        sqlite3_finalize(statement);
+    }
+    for (const auto &[value, sum] : sums)
+    {
+        if (sum.second > 1)
+            totals->emplace(value, sum.first);
+    }
+    return totals;
+}
+
+namespace
+{
+
+// P(读音|字) 的免罚线与扣分上限（log10）。
+//
+// 已有的 reading_prior 看的是 P(字|拼音)：这一行占该拼音全部行的权重比。它分得出权重为 0 的
+// 「卷」读 gun，却分不出「大」读 tai——大 的 tai 行有 4719，占 tai 的 0.47%，只扣 0.33，翻不过
+// 语言模型对「大赚」的偏好（差 1.6 左右），tai'zhuan'qian'le 于是出「大赚钱了」。同一行换个
+// 角度看，大 的 da 行有 327 万，读 tai 的只占 0.14%：这才是「这个字几乎不这么读」。语言模型
+// 只认汉字，这一维只能由读音补上（噪声信道里的 P(拼音|字)）。
+//
+// 免罚线定在 10%：长 chang 42%、重 chong 20%、行 hang 15% 这类常见的第二读音一分不扣，
+// 觉 jiao、还 huan（8%~9%）只扣零点零几，着 zhao/zhuo、地 di（3%~4%）扣 0.4~0.5。真正的
+// 生僻读音——大 tai/dai、会 kuai、都 du、给 ji——都在 0.1%~0.3%，扣 1.5~2。了 liao（0.47%）
+// 扣 1.3，「受不了」「去不了」仍靠语言模型的上下文赢下 料/聊。5% 那一档还差一点翻不过
+// 「大赚钱了」，20% 在评测句上与 10% 结果相同，取保守的一边。上限只管权重为 0 的读音，那些
+// reading_prior 已经扣过一大截。
+//
+// 只罚单字：多音字的少见读音落在词里（会计、成都、大夫）时整词就是读音的证据。没有同音
+// 竞争的字（得 只有它一个读 dei）各条路径扣得一样多，排序不受影响。
+constexpr double kRareCharReadingShare = 0.1;
+constexpr double kRareCharReadingFloor = 2.5;
+
+double rare_char_reading_penalty(const LatticeLexeme &lexeme, const CharReadingTotals *totals)
+{
+    if (totals == nullptr)
+        return 0.0;
+    const auto found = totals->find(lexeme.value);
+    if (found == totals->end() || found->second <= 0)
+        return 0.0;
+    const double weight = lexeme.weight > 0 ? static_cast<double>(lexeme.weight) : 0.0;
+    const double share = (weight + 1.0) / (static_cast<double>(found->second) + 1.0);
+    if (share >= kRareCharReadingShare)
+        return 0.0;
+    return (std::min)(-std::log10(share / kRareCharReadingShare), kRareCharReadingFloor);
+}
+
+} // namespace
+
+WordLatticeLookup make_lattice_db_lookup(sqlite3 *db, std::unordered_map<std::string, sqlite3_stmt *> &statement_cache,
+                                         int span_limit, metasequoia::FuzzyPinyinOptions fuzzy,
+                                         std::shared_ptr<const CharReadingTotals> char_totals)
+{
+    return [db, &statement_cache, span_limit, fuzzy, char_totals = std::move(char_totals)](const Segments &span) {
         // ü 的两种写法归一到词库存的那一种。intact_pinyin_list() 两种都认，可词库只存
         // 一种：切出来的 jv、lue 这类音节一行都查不到，精确键查询查空，整个词格就断在
         // 这里——wo'men'lue'de 解不出任何路径，长句联想直接消失。这不是模糊音降级，lue
@@ -1320,6 +1406,8 @@ WordLatticeLookup make_lattice_db_lookup(sqlite3 *db, std::unordered_map<std::st
         for (const auto &row : rows)
         {
             LatticeLexeme lexeme{row.key, row.value, row.weight};
+            if (span.size() == 1)
+                lexeme.penalty += rare_char_reading_penalty(lexeme, char_totals.get());
             if (keys.size() > 1)
             {
                 // 每个与敲出读音不同的音节扣一份分：一个词里错两个音，比只错一个更不可能。

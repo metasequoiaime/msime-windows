@@ -204,6 +204,9 @@ class QuanpinDictionary
     CircularBuffer<std::string, std::optional<quanpin::LatticePath>> lattice_best_path_cache_;
     // 见 lattice_lookup。
     std::unordered_map<std::string, std::vector<quanpin::LatticeLexeme>> lattice_span_cache_;
+    // 多音单字各读音的权重和，词格第一次查跨度时载入，此后不随 reset_cache 重载。
+    // 见 quanpin::load_char_reading_totals。
+    std::shared_ptr<const quanpin::CharReadingTotals> char_reading_totals_;
     sqlite3 *db_ = nullptr;
     sqlite3_int64 data_version_ = -1;
     metasequoia::RuntimePaths paths_;
