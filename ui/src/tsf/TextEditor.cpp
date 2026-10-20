@@ -10,6 +10,7 @@
 #include <windows.h>
 #include "TextEditor.h"
 #include "../DebugLog.h"
+#include "msimeui/Compat.h"
 
 extern ITfThreadMgr *g_pThreadMgr;
 extern TfClientId g_TfClientId;
@@ -353,7 +354,8 @@ BOOL CTextEditor::MoveSelectionUpDown(BOOL bUp)
     {
         pt.y = rc.top - ((rc.bottom - rc.top) / 2);
         // rc is scrolled; the first line is the one above which nothing is left.
-        const FLOAT scrollPixels = _layout.GetVerticalScroll() * static_cast<FLOAT>(GetDpiForWindow(_hwnd)) / 96.0f;
+        const FLOAT scrollPixels =
+            _layout.GetVerticalScroll() * static_cast<FLOAT>(msimeui::compat::GetWindowDpi(_hwnd)) / 96.0f;
         if (pt.y + static_cast<LONG>(scrollPixels) < 0)
             return FALSE;
     }
@@ -619,7 +621,7 @@ void CTextEditor::UpdateLayout()
         return;
     }
 
-    const FLOAT dpi = static_cast<FLOAT>(GetDpiForWindow(_hwnd));
+    const FLOAT dpi = static_cast<FLOAT>(msimeui::compat::GetWindowDpi(_hwnd));
     const LONG width = max(_rcHost.right - _rcHost.left, 1L);
     const LONG height = max(_rcHost.bottom - _rcHost.top, 1L);
     const auto layout = [&](LONG gutter) {

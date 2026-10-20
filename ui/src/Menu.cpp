@@ -184,6 +184,10 @@ void MenuFlyoutItem::Render(DeviceResources &deviceResources)
     {
         if (!leadingSvg_.empty())
         {
+#ifndef MSIME_WIN7_LITE
+            // The SVG menu icon needs ID2D1DeviceContext5 (Windows 10 1703+,
+            // d2d1_3.h empty under a Windows 7 target); there the icon is
+            // simply not drawn and the menu shows its text only.
             const float iconY = bounds_.y + (bounds_.height - iconSize) * 0.5f;
             const RectF iconRect = {bounds_.x + pad, iconY, iconSize, iconSize};
             char hex[8];
@@ -229,6 +233,7 @@ void MenuFlyoutItem::Render(DeviceResources &deviceResources)
                     }
                 }
             }
+#endif // !MSIME_WIN7_LITE
         }
         if (textLayout_)
         {

@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.25)
 
 project(msimeui VERSION 0.1.0 LANGUAGES CXX)
 
+# Windows 7 SP1 support: drops the Windows 8+/10+ composition backends and the
+# Windows Runtime link dependencies. Windows 10/11 builds keep the default OFF.
+option(MSIME_WIN7 "Target Windows 7 SP1 with the reduced feature set" OFF)
+
 include(CTest)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -28,6 +32,7 @@ add_library(msimeui STATIC
     src/Button.cpp
     src/CandidateList.cpp
     src/ComboBox.cpp
+    src/Compat.cpp
     src/ControlsInternal.cpp
     src/DebugLog.cpp
     src/DeviceResources.cpp
@@ -58,6 +63,7 @@ add_library(msimeui STATIC
     include/msimeui/Animation.h
     include/msimeui/Application.h
     include/msimeui/Brush.h
+    include/msimeui/Compat.h
     src/ControlsInternal.h
     src/DebugLog.h
     include/msimeui/Controls.h
@@ -85,24 +91,45 @@ target_include_directories(msimeui
         ${CMAKE_CURRENT_SOURCE_DIR}/src/tsf
 )
 
-target_link_libraries(msimeui PUBLIC
-    d2d1.lib
-    dxguid.lib
-    d3d11.lib
-    dcomp.lib
-    dxgi.lib
-    dwrite.lib
-    dwmapi.lib
-    imm32.lib
-    ole32.lib
-    oleaut32.lib
-    uuid.lib
-    windowscodecs.lib
-    shlwapi.lib
-    # DeviceResources backdrop composition (Windows.UI.Composition through the WRL ABI).
-    runtimeobject.lib
-    CoreMessaging.lib
-)
+if(MSIME_WIN7)
+    # Windows 7 has neither DirectComposition (Windows 8) nor the Windows
+    # Runtime (Windows 10); DeviceResources compiles its composition backends
+    # out under MSIME_WIN7_LITE and rendering goes through the HWND target.
+    target_link_libraries(msimeui PUBLIC
+        d2d1.lib
+        dxguid.lib
+        d3d11.lib
+        dxgi.lib
+        dwrite.lib
+        dwmapi.lib
+        imm32.lib
+        ole32.lib
+        oleaut32.lib
+        uuid.lib
+        windowscodecs.lib
+        shlwapi.lib
+    )
+    target_compile_definitions(msimeui PUBLIC MSIME_WIN7_LITE)
+else()
+    target_link_libraries(msimeui PUBLIC
+        d2d1.lib
+        dxguid.lib
+        d3d11.lib
+        dcomp.lib
+        dxgi.lib
+        dwrite.lib
+        dwmapi.lib
+        imm32.lib
+        ole32.lib
+        oleaut32.lib
+        uuid.lib
+        windowscodecs.lib
+        shlwapi.lib
+        # DeviceResources backdrop composition (Windows.UI.Composition through the WRL ABI).
+        runtimeobject.lib
+        CoreMessaging.lib
+    )
+endif()
 
 add_executable(msimeui-demo WIN32
     demos/msimeui-demo/DemoScene.cpp

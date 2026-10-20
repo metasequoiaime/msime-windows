@@ -1,5 +1,7 @@
 #include "msimeui/Application.h"
 
+#include "msimeui/Compat.h"
+
 #include <objbase.h>
 #include <windows.h>
 
@@ -7,7 +9,7 @@ namespace msimeui
 {
 bool Application::Initialize()
 {
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    compat::SetProcessDpiAwarenessPerMonitorV2();
     return SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
 }
 

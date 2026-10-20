@@ -1,5 +1,6 @@
 #include "msimeui/DeviceResources.h"
 
+#include "msimeui/Compat.h"
 #include "msimeui/Fonts.h"
 
 #include <algorithm>
@@ -12,8 +13,10 @@
 #include <shlwapi.h>
 #include <windows.h>
 
+#ifndef MSIME_WIN7_LITE
 #include <DispatcherQueue.h>
 #include <d2d1effects.h>
+#include <dcomp.h>
 #include <dwmapi.h>
 #include <roapi.h>
 #include <windows.graphics.effects.h>
@@ -23,9 +26,11 @@
 #include <windows.ui.composition.interop.h>
 #include <wrl/implements.h>
 #include <wrl/wrappers/corewrappers.h>
+#endif
 
 namespace msimeui
 {
+#ifndef MSIME_WIN7_LITE
 namespace abi_comp = ABI::Windows::UI::Composition;
 
 struct DeviceResources::SurfaceComposition
@@ -42,9 +47,17 @@ struct DeviceResources::SurfaceComposition
     Microsoft::WRL::ComPtr<abi_comp::ICompositionGraphicsDevice> graphicsDevice;
     Microsoft::WRL::ComPtr<abi_comp::ICompositionDrawingSurfaceInterop> surface;
 };
+#else
+// No Windows Runtime in the Windows 7 build; the member stays empty so the
+// unique_ptr destructor keeps a complete type.
+struct DeviceResources::SurfaceComposition
+{
+};
+#endif
 
 namespace
 {
+#ifndef MSIME_WIN7_LITE
 // DWMWA_USE_HOSTBACKDROPBRUSH; older SDKs do not name it.
 constexpr DWORD kDwmUseHostBackdropBrush = 17;
 
@@ -68,12 +81,14 @@ bool EnsureThreadDispatcherQueue()
     available = SUCCEEDED(hr) || hr == RPC_E_WRONG_THREAD || hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
     return available;
 }
+#endif // !MSIME_WIN7_LITE
 
 bool IsDeviceLost(HRESULT hr)
 {
     return hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET;
 }
 
+#ifndef MSIME_WIN7_LITE
 namespace abi_fx = ABI::Windows::Graphics::Effects;
 using PropertyValuePtr = Microsoft::WRL::ComPtr<ABI::Windows::Foundation::IPropertyValue>;
 using EffectSourcePtr = Microsoft::WRL::ComPtr<abi_fx::IGraphicsEffectSource>;
@@ -136,6 +151,7 @@ class CompositionEffect final
     std::vector<PropertyValuePtr> properties_;
     std::vector<EffectSourcePtr> sources_;
 };
+#endif // !MSIME_WIN7_LITE
 
 UINT AlignSwapExtent(UINT value)
 {
@@ -217,7 +233,9 @@ DeviceResources::~DeviceResources()
 {
     // WinRT visuals before the Direct3D device they draw with.
     drawContext_.Reset();
+#ifndef MSIME_WIN7_LITE
     surface_.reset();
+#endif
 }
 
 void DeviceResources::PrewarmComposition()
@@ -472,7 +490,7 @@ FLOAT DeviceResources::DpiForHwnd() const
     {
         return 96.0f;
     }
-    const UINT dpi = GetDpiForWindow(hwnd_);
+    const UINT dpi = compat::GetWindowDpi(hwnd_);
     return dpi > 0 ? static_cast<FLOAT>(dpi) : 96.0f;
 }
 
@@ -638,6 +656,7 @@ bool DeviceResources::UsesBackdropComposition() const
     return backdropComposition_;
 }
 
+#ifndef MSIME_WIN7_LITE
 bool DeviceResources::EnsureSurfaceComposition(UINT width, UINT height)
 {
     namespace abi_dx = ABI::Windows::Graphics::DirectX;
@@ -758,7 +777,9 @@ bool DeviceResources::EnsureSurfaceComposition(UINT width, UINT height)
     deviceContext_->SetDpi(dpi, dpi);
     return true;
 }
+#endif // !MSIME_WIN7_LITE
 
+#ifndef MSIME_WIN7_LITE
 bool DeviceResources::GrowDrawingSurface(UINT width, UINT height)
 {
     if (!surface_ || (pixelWidth_ >= width && pixelHeight_ >= height))
@@ -770,9 +791,11 @@ bool DeviceResources::GrowDrawingSurface(UINT width, UINT height)
     return SUCCEEDED(surface_->surface->Resize({static_cast<LONG>(pixelWidth_), static_cast<LONG>(pixelHeight_)})) &&
            SUCCEEDED(surface_->content->put_Size({static_cast<FLOAT>(pixelWidth_), static_cast<FLOAT>(pixelHeight_)}));
 }
+#endif // !MSIME_WIN7_LITE
 
 void DeviceResources::SetBackdropMaterial(const BackdropMaterial &material)
 {
+#ifndef MSIME_WIN7_LITE
     if (backdropMaterial_ == material)
     {
         return;
@@ -782,8 +805,10 @@ void DeviceResources::SetBackdropMaterial(const BackdropMaterial &material)
     {
         DiscardTarget();
     }
+#endif
 }
 
+#ifndef MSIME_WIN7_LITE
 bool DeviceResources::ApplyBackdropMaterial()
 {
     using Microsoft::WRL::ComPtr;
@@ -859,9 +884,11 @@ bool DeviceResources::ApplyBackdropMaterial()
            SUCCEEDED(effectBrush->SetSourceParameter(HStringReference(L"Backdrop").Get(), source.Get())) &&
            SUCCEEDED(effectBrush.As(&brush)) && SUCCEEDED(surface_->backdropSprite->put_Brush(brush.Get()));
 }
+#endif // !MSIME_WIN7_LITE
 
 void DeviceResources::SetBackdrop(const RectF &rectDips, float radiusDips)
 {
+#ifndef MSIME_WIN7_LITE
     if (!surface_)
     {
         return;
@@ -883,6 +910,7 @@ void DeviceResources::SetBackdrop(const RectF &rectDips, float radiusDips)
     surface_->backdrop->put_Size({right - left, bottom - top});
     surface_->backdropShape->put_Size({right - left, bottom - top});
     surface_->backdropShape->put_CornerRadius({radius, radius});
+#endif // !MSIME_WIN7_LITE
 }
 
 bool DeviceResources::BeginDraw()
@@ -898,6 +926,7 @@ bool DeviceResources::BeginDraw()
         return true;
     }
 
+#ifndef MSIME_WIN7_LITE
     // The whole surface is redrawn every frame, like a swap chain buffer.
     const RECT update = {0, 0, static_cast<LONG>(pixelWidth_), static_cast<LONG>(pixelHeight_)};
     POINT offset = {};
@@ -926,6 +955,11 @@ bool DeviceResources::BeginDraw()
     context->SetTransform(D2D1::Matrix3x2F::Translation(originX, originY));
     drawContext_ = context;
     return true;
+#else
+    // Unreachable in the Windows 7 build: without backdrop composition there is
+    // no drawing surface, and the branch above already handled the target.
+    return false;
+#endif
 }
 
 HRESULT DeviceResources::EndDraw()
@@ -935,15 +969,26 @@ HRESULT DeviceResources::EndDraw()
         ID2D1RenderTarget *target = GetRenderTarget();
         return target ? target->EndDraw() : S_OK;
     }
+#ifndef MSIME_WIN7_LITE
     drawContext_->SetTransform(D2D1::Matrix3x2F::Identity());
     drawContext_->PopAxisAlignedClip();
     drawContext_.Reset();
     const HRESULT hr = surface_ ? surface_->surface->EndDraw() : S_OK;
     return IsDeviceLost(hr) ? D2DERR_RECREATE_TARGET : hr;
+#else
+    return S_OK;
+#endif
 }
 
 bool DeviceResources::EnsureForComposition(HWND hwnd)
 {
+#ifdef MSIME_WIN7_LITE
+    // Windows 7 has neither DirectComposition nor the Windows Runtime; there is
+    // no composition target to build. Fall back to the plain HWND render target,
+    // which also resets composition_ so the frame draws through BeginDraw's
+    // target branch and Present() becomes a no-op.
+    return EnsureForWindow(hwnd);
+#else
     hwnd_ = hwnd;
     if (!EnsureFactories() || !d2dFactory1_ || !hwnd)
     {
@@ -1032,6 +1077,7 @@ bool DeviceResources::EnsureForComposition(HWND hwnd)
         return false;
     }
     return BindCompositionSurface();
+#endif
 }
 
 void DeviceResources::Resize(UINT width, UINT height)
@@ -1045,6 +1091,7 @@ void DeviceResources::Resize(UINT width, UINT height)
         pixelHeight_ = height;
         return;
     }
+#ifndef MSIME_WIN7_LITE
     if (composition_ && surface_)
     {
         GrowDrawingSurface(AlignSwapExtent(width), AlignSwapExtent(height));
@@ -1067,11 +1114,13 @@ void DeviceResources::Resize(UINT width, UINT height)
             BindCompositionSurface();
         }
     }
+#endif // !MSIME_WIN7_LITE
 }
 
 void DeviceResources::DiscardTarget()
 {
     drawContext_.Reset();
+#ifndef MSIME_WIN7_LITE
     if (surface_)
     {
         // WinRT visuals go before the Direct3D device they draw with.
@@ -1079,6 +1128,7 @@ void DeviceResources::DiscardTarget()
         BOOL useHostBackdrop = FALSE;
         DwmSetWindowAttribute(hwnd_, kDwmUseHostBackdropBrush, &useHostBackdrop, sizeof(useHostBackdrop));
     }
+#endif
     if (deviceContext_)
     {
         deviceContext_->SetTarget(nullptr);
@@ -1088,9 +1138,11 @@ void DeviceResources::DiscardTarget()
     deviceContext_.Reset();
     d2dDevice_.Reset();
     swapChain_.Reset();
+#ifndef MSIME_WIN7_LITE
     dcompVisual_.Reset();
     dcompTarget_.Reset();
     dcompDevice_.Reset();
+#endif
     dxgiDevice_.Reset();
     d3dDevice_.Reset();
     brushCache_.clear();
@@ -1111,10 +1163,12 @@ HRESULT DeviceResources::Present()
         return S_OK;
     }
     const HRESULT hr = swapChain_->Present(0, 0);
+#ifndef MSIME_WIN7_LITE
     if (dcompDevice_)
     {
         dcompDevice_->Commit();
     }
+#endif
     return hr;
 }
 
@@ -1298,6 +1352,15 @@ ID2D1Bitmap *DeviceResources::GetBitmapFromFile(const std::wstring &filePath, D2
 
 ID2D1Bitmap *DeviceResources::GetSvgBitmap(const std::string &markup, const SizeF &sizeDips)
 {
+    // SVG rasterization needs ID2D1DeviceContext5 (Windows 10 1703+, d2d1_3.h
+    // is empty under a Windows 7 target). The skin loader treats a null return
+    // as "not available" and skips the image, so the Win7 build just renders
+    // skins without SVG artwork.
+#ifdef MSIME_WIN7_LITE
+    (void)markup;
+    (void)sizeDips;
+    return nullptr;
+#else
     ID2D1RenderTarget *target = GetRenderTarget();
     if (!target || markup.empty() || sizeDips.width <= 0.0f || sizeDips.height <= 0.0f)
     {
@@ -1386,5 +1449,6 @@ ID2D1Bitmap *DeviceResources::GetSvgBitmap(const std::string &markup, const Size
     }
     svgCache_.push_back(std::move(entry));
     return svgCache_.back().bitmap.Get();
+#endif // !MSIME_WIN7_LITE
 }
 } // namespace msimeui

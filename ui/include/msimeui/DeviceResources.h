@@ -3,7 +3,11 @@
 #include <d2d1.h>
 #include <d2d1_1.h>
 #include <d3d11.h>
+#ifndef MSIME_WIN7_LITE
+// dcomp.h is empty below NTDDI_WIN8; the Win7 target compiles the DirectComposition
+// backend out entirely, so the header and the member pointers below go with it.
 #include <dcomp.h>
+#endif
 #include <dxgi1_2.h>
 #include <dwrite.h>
 #include <wincodec.h>
@@ -251,9 +255,11 @@ class DeviceResources
     Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> deviceContext_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> dxgiBitmap_;
+#ifndef MSIME_WIN7_LITE
     Microsoft::WRL::ComPtr<IDCompositionDevice> dcompDevice_;
     Microsoft::WRL::ComPtr<IDCompositionTarget> dcompTarget_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> dcompVisual_;
+#endif
     std::unordered_map<uint64_t, BrushCacheEntry> brushCache_;
     uint64_t frame_ = 0;
     std::vector<TextFormatCacheEntry> textFormatCache_;

@@ -2,6 +2,7 @@
 
 #include "msimeui/Animation.h"
 #include "msimeui/Application.h"
+#include "msimeui/Compat.h"
 #include "msimeui/Theme.h"
 #include "DebugLog.h"
 
@@ -81,7 +82,7 @@ bool Window::Create()
                             width_, height_, nullptr, nullptr, instance_, this);
     if (hwnd_)
     {
-        if (roundedCorners_)
+        if (roundedCorners_ && compat::IsWindows10OrGreater())
         {
             const DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
             DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
@@ -331,7 +332,7 @@ float Window::GetDpi() const
     {
         return dpiOverride_;
     }
-    return hwnd_ ? static_cast<float>(GetDpiForWindow(hwnd_)) : 96.0f;
+    return hwnd_ ? static_cast<float>(compat::GetWindowDpi(hwnd_)) : 96.0f;
 }
 
 PointF Window::ClientPixelsToDips(const POINT &point) const
