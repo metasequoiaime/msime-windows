@@ -4,6 +4,13 @@
 
 #include <vector>
 
+// RRF_SUBKEY_WOW6464KEY and the 6-argument RegGetValueW arrived with Windows 8
+// and are hidden behind WINVER >= 0x0602; the value is a public ABI constant,
+// so the Win7 target reproduces it here. RegGetValueW itself is Vista+.
+#ifndef RRF_SUBKEY_WOW6464KEY
+#define RRF_SUBKEY_WOW6464KEY 0x00002000
+#endif
+
 namespace game_compat_name
 {
 namespace

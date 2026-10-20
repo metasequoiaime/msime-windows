@@ -5,7 +5,15 @@
 
 #include "voice_input_service.h"
 #include "config/ime_config.h"
+#ifdef MSIME_WIN7_LITE
+// Win7 target: the Doubao streaming client statically imports WinHTTP's
+// WinHttpWebSocket* (Windows 8.1+) and is compiled out. The provider hooks
+// below degrade to explicit "unsupported" errors instead, and the streaming
+// session bookkeeping collapses: no DoubaoAsrClient is ever constructed, so
+// use_doubao / voice_session capture points compile out with it.
+#else
 #include "doubao_asr_client.h"
+#endif
 #include "log/candidate_diag_log.h"
 #include "voice_providers.h"
 #include "voice_batch_protocol.h"
@@ -44,7 +52,12 @@ constexpr long kPolishThinkingTimeoutMs = 30000L;
 metasequoia::voice::AudioCapture g_capture;
 std::mutex g_mutex;
 std::vector<float> g_samples;
+#ifdef MSIME_WIN7_LITE
+// LITE build: no Doubao streaming client exists, so the pointer and every
+// guarded use of it compile out. Batch recognition is always the provider.
+#else
 std::unique_ptr<DoubaoAsrClient> g_doubao_asr;
+#endif
 std::atomic<std::size_t> g_recorded_frames{0};
 std::atomic<std::uint64_t> g_voice_session{0};
 std::atomic<std::uint64_t> g_dismissed_overlay_session{0};
@@ -734,8 +747,13 @@ void SendTextViaCtrlV(const std::wstring &text)
 
 bool ShouldStreamInlinePreedit(const VoiceInputConfig &config)
 {
+#ifdef MSIME_WIN7_LITE
+    (void)config;
+    return false;
+#else
     return config.stream_inline_preedit && VoiceInput::IsDoubaoAsrProvider(config.asr_provider) &&
            config.commit_mode == "tsf";
+#endif
 }
 
 bool SendVoiceComposition(UINT msg_type, const std::wstring &text)
@@ -864,11 +882,15 @@ void AudioCallback(const float *samples, std::size_t frames)
     const float normalized = (std::min)(1.0f, speech_level * 14.0f);
     g_overlay.set_input_level(std::pow(normalized, 0.55f));
     g_recorded_frames += frames;
+#ifdef MSIME_WIN7_LITE
+    (void)samples;
+#else
     if (g_doubao_asr)
     {
         g_doubao_asr->PushFloatSamples(samples, frames);
         return;
     }
+#endif
     std::lock_guard<std::mutex> lock(g_mutex);
     g_samples.insert(g_samples.end(), samples, samples + frames);
 }
@@ -881,11 +903,13 @@ void AbortPendingStart(const char *reason)
     ++g_voice_session;
     g_stream_inline_this_session.store(false);
     g_last_inline_preedit.clear();
+#ifndef MSIME_WIN7_LITE
     if (g_doubao_asr)
     {
         g_doubao_asr->Cancel();
         g_doubao_asr.reset();
     }
+#endif
 }
 
 // 配置类错误仍要告知用户，但绝不能在控制线程上模态等待——弹窗挂着的期间，
@@ -909,19 +933,40 @@ bool StartRecording()
     const VoiceInputConfig config = GetConfiguredVoiceInput();
     if (!config.enabled)
         return false;
+#ifdef MSIME_WIN7_LITE
+    // LITE build: Doubao streaming is compiled out. A config pointing at the
+    // doubao provider gets an explicit "unsupported" instead of silently
+    // falling back to batch recognition with a WebSocket-shaped endpoint.
+    if (VoiceInput::IsDoubaoAsrProvider(config.asr_provider))
+    {
+        ShowVoiceNotice(L"本版本不支持豆包流式语音识别，请在设置中改用其他 ASR 提供商。", MB_ICONINFORMATION);
+        return false;
+    }
+#else
     const bool use_doubao = VoiceInput::IsDoubaoAsrProvider(config.asr_provider);
+#endif
     const std::string asr_token = VoiceInput::ResolveAsrToken(config);
     if (asr_token.empty())
     {
         ShowVoiceNotice(L"请先在设置的“语音输入”分区填写当前 ASR 提供商的 API Token。", MB_ICONINFORMATION);
         return false;
     }
+#ifdef MSIME_WIN7_LITE
+    // LITE build: no streaming client consumes the token; the emptiness check
+    // above still runs so a misconfigured provider fails with the same notice.
+    (void)asr_token;
+#endif
     g_starting = true;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_samples.clear();
     }
     g_recorded_frames = 0;
+#ifdef MSIME_WIN7_LITE
+    // LITE build: the session counter still has to advance so a stale cancel
+    // from an earlier session cannot commit text, but no lambda captures it.
+    ++g_voice_session;
+#else
     std::uint64_t voice_session = 0;
     {
         std::lock_guard<std::mutex> send_lock(g_send_mutex);
@@ -930,6 +975,7 @@ bool StartRecording()
         g_last_inline_preedit.clear();
         g_stream_inline_this_session.store(use_doubao && ShouldStreamInlinePreedit(config));
     }
+#endif
     g_overlay.set_show_transcript(!g_stream_inline_this_session.load());
     g_overlay.set_compact_status(WaveOverlay::CompactStatus::None);
     // 录音中就把取消/确认按钮亮出来。长按 RAlt 时松手事件可能因为切换输入法、
@@ -937,6 +983,7 @@ bool StartRecording()
     // 没有按钮就等于没有任何办法把它关掉。
     g_overlay.set_actions_visible(true);
     g_overlay.set_transcript(L"");
+#ifndef MSIME_WIN7_LITE
     if (use_doubao)
     {
         g_doubao_asr = std::make_unique<DoubaoAsrClient>(
@@ -964,6 +1011,7 @@ bool StartRecording()
             return false;
         }
     }
+#endif
     if (g_abort_start.exchange(false))
     {
         AbortPendingStart("aborted before capture");
@@ -1015,9 +1063,15 @@ void StopRecording()
     RestoreSystemAudioIfMuted();
     if (config.end_sound)
         g_cue_player.play_end();
+#ifdef MSIME_WIN7_LITE
+    // LITE build: always batch recognition through the REST endpoint.
+    constexpr bool batch_recognition = true;
+    const bool stream_inline = g_stream_inline_this_session.load();
+#else
     auto doubao_asr = std::move(g_doubao_asr);
     const bool batch_recognition = !doubao_asr;
     const bool stream_inline = g_stream_inline_this_session.load();
+#endif
     const std::uint64_t voice_session = g_voice_session.load();
     if (!stream_inline)
     {
@@ -1051,11 +1105,13 @@ void StopRecording()
         g_overlay.hide();
         g_overlay.set_actions_visible(false);
         g_overlay.set_transcript(L"");
+#ifndef MSIME_WIN7_LITE
         if (doubao_asr)
         {
             g_network_tasks.emplace_back(
                 std::async(std::launch::async, [client = std::move(doubao_asr)]() mutable { client->Cancel(); }));
         }
+#endif
         return;
     }
     g_network_tasks.erase(std::remove_if(g_network_tasks.begin(), g_network_tasks.end(),
@@ -1064,15 +1120,20 @@ void StopRecording()
                                          }),
                           g_network_tasks.end());
     g_network_tasks.emplace_back(
-        std::async(std::launch::async, [samples = std::move(samples), client = std::move(doubao_asr), config,
-                                        batch_recognition, stream_inline, voice_session]() mutable {
+        std::async(std::launch::async, [samples = std::move(samples),
+#ifndef MSIME_WIN7_LITE
+                                        client = std::move(doubao_asr),
+#endif
+                                        config, batch_recognition, stream_inline, voice_session]() mutable {
             RecognitionResult recognition;
+#ifndef MSIME_WIN7_LITE
             if (client)
             {
                 recognition.text = client->Finish();
                 recognition.error = client->LastError();
             }
             else
+#endif
                 recognition = Recognize(samples, config);
             if (!batch_recognition && !stream_inline && g_voice_session == voice_session)
             {
@@ -1184,14 +1245,18 @@ void DiscardRecording(const VoiceInputConfig &config)
     RestoreSystemAudioIfMuted();
     if (config.end_sound)
         g_cue_player.play_end();
+#ifndef MSIME_WIN7_LITE
     auto doubao_asr = std::move(g_doubao_asr);
+#endif
     std::lock_guard<std::mutex> lock(g_mutex);
     g_samples.clear();
+#ifndef MSIME_WIN7_LITE
     if (doubao_asr)
     {
         g_network_tasks.emplace_back(
             std::async(std::launch::async, [client = std::move(doubao_asr)]() mutable { client->Cancel(); }));
     }
+#endif
 }
 } // namespace
 

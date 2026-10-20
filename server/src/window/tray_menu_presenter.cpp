@@ -11,6 +11,7 @@
 #include "window/ime_windows.h"
 #include "window/tray_menu_placement.h"
 
+#include "msimeui/Compat.h"
 #include "msimeui/Controls.h"
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Layout.h"
@@ -21,6 +22,7 @@
 #include <cmath>
 #include <d2d1.h>
 #include <dwmapi.h>
+#include "utils/dwm_attributes.h"
 #include <string>
 #include <vector>
 
@@ -169,9 +171,11 @@ bool TrayMenuPresenter::IsOpenToUser() const
     {
         return false;
     }
-    DWORD cloaked = 0;
-    DwmGetWindowAttribute(hwnd_, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
-    return cloaked == 0;
+    bool cloaked = false;
+    // IsWindowCloaked fails on Windows 7; the menu then counts as open — the
+    // normal display path, so the menu can never get stuck "closed".
+    msimeui::compat::IsWindowCloaked(hwnd_, &cloaked);
+    return !cloaked;
 }
 
 bool TrayMenuPresenter::Bind(HWND hwnd)

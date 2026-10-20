@@ -24,6 +24,14 @@ endif()
 
 include(CTest)
 
+# Win7 SP1 target: keep the single-exe layout but compile with the reduced
+# feature set. The definitions are attached further down, after every
+# add_subdirectory, so engine/vendor/ui keep their own version footprints and
+# only the targets in this directory compile against 0x0601. MSIME_WIN7_LITE is
+# also the static tripwire: any Win8+ API that still compiles under it is a
+# leak the review must resolve.
+option(MSIME_WIN7 "Target Windows 7 SP1 with the reduced feature set" OFF)
+
 # The engine is a first-party component of this repository, vendored in-tree at engine/ next to
 # server/, ui/ and windows/. The remaining third-party sources are still submodules under vendor/.
 set(MSIME_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
@@ -145,6 +153,20 @@ add_definitions(
     /DUNICODE=1
     /DFANY_DEBUG=1
 )
+
+# Win7 SP1 compile definitions. add_definitions() writes directory-scope
+# COMPILE_DEFINITIONS, which every add_subdirectory() called *after* this point
+# inherits: engine/ and vendor/ above stay untouched, while ../ui (added at the
+# bottom of this file) and tests/ compile against 0x0601 too -- which is what
+# the Win7 build wants, any stray Win10-only API then fails to compile there as
+# well. ui's msimeui adds its own MSIME_WIN7_LITE from its CMakeLists; this
+# directory only contributes the version macros.
+if(MSIME_WIN7)
+    add_definitions(
+        /D_WIN32_WINNT=0x0601
+        /DWINVER=0x0601
+    )
+endif()
 
 # HandwritingPanel still uses the legacy <experimental/coroutine>; on newer
 # MSVC STL the deprecation is a hard error, so silence it explicitly.
@@ -343,8 +365,6 @@ set(SRC_FILES
     "./src/voice-input/voice_input_service.h"
     "./src/voice-input/system_audio_muter.cpp"
     "./src/voice-input/system_audio_muter.h"
-    "./src/voice-input/doubao_asr_client.cpp"
-    "./src/voice-input/doubao_asr_client.h"
     "./src/voice-input/voice_batch_protocol.cpp"
     "./src/voice-input/voice_providers.cpp"
     "./src/voice-input/voice_providers.h"
@@ -356,6 +376,18 @@ set(SRC_FILES
     "./src/voice-input/voice_input_overlay_utils.cpp"
     "./src/main.cpp"
 )
+
+# The Doubao streaming client statically imports WinHTTP's WinHttpWebSocket*
+# (Windows 8.1+). Under the Win7 target those imports would make the server
+# fail to load, so the translation unit is dropped and voice_input_service.cpp
+# compiles its provider stub instead (MSIME_WIN7_LITE). Kept outside SRC_FILES
+# so the list above stays byte-identical between the two configurations.
+if(NOT MSIME_WIN7)
+    list(APPEND SRC_FILES
+        "./src/voice-input/doubao_asr_client.cpp"
+        "./src/voice-input/doubao_asr_client.h"
+    )
+endif()
 
 add_executable(${MY_EXECUTABLE_NAME} WIN32
     ${SRC_FILES}
@@ -378,7 +410,7 @@ add_dependencies(${PROJECT_NAME} Dictionaries)
 target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
-target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 bcrypt)
+target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 ole32 bcrypt)
 
 # The helper executables below already build at /W4. The server itself -- the process that owns
 # every network call and the skin loader -- was still at the default /W3.
@@ -428,7 +460,9 @@ add_executable(${EMOJI_EXECUTABLE_NAME} WIN32
 )
 add_dependencies(${MY_EXECUTABLE_NAME} ${WATCHDOG_EXECUTABLE_NAME})
 target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX=1)
-target_link_libraries(${PROJECT_NAME} PRIVATE msimeui d3d11 dxgi dcomp)
+# dcomp comes in through msimeui's PUBLIC link, which drops it under the Win7
+# target; do not force it back here.
+target_link_libraries(${PROJECT_NAME} PRIVATE msimeui d3d11 dxgi)
 target_link_libraries(${EMOJI_EXECUTABLE_NAME} PRIVATE msimeui unofficial::sqlite3::sqlite3 shell32 advapi32 ole32)
 target_compile_definitions(${EMOJI_EXECUTABLE_NAME} PRIVATE
     NOMINMAX=1
@@ -466,28 +500,32 @@ endif()
 add_dependencies(${PROJECT_NAME} ${KEYBOARD_EXECUTABLE_NAME})
 
 set(HANDWRITING_EXECUTABLE_NAME "MetasequoiaImeHandwritingPanel")
-add_executable(${HANDWRITING_EXECUTABLE_NAME} WIN32
-    "./src/handwriting-panel/HandwritingPanel.cpp"
-    "./src/handwriting-panel/HandwritingPanel.h"
-    "./src/handwriting-panel/main.cpp"
-    "./src/handwriting-panel/handwriting_panel.rc"
-    "./src/handwriting-panel/resource.h"
-    "./src/utils/ime_paths.cpp"
-    "./src/utils/surface_theme_config.cpp"
-    "./src/utils/surface_theme_config.h"
-)
-target_link_libraries(${HANDWRITING_EXECUTABLE_NAME} PRIVATE msimeui windowsapp.lib shell32 advapi32 ole32)
-target_compile_definitions(${HANDWRITING_EXECUTABLE_NAME} PRIVATE
-    NOMINMAX=1
-    WIN32_LEAN_AND_MEAN=1
-)
-if(MSVC)
-    target_compile_options(${HANDWRITING_EXECUTABLE_NAME} PRIVATE /W4 /permissive-)
+# C++/WinRT + Windows.UI.Input.Inking are Windows 10 only; the Win7 build
+# ships without the handwriting panel.
+if(NOT MSIME_WIN7)
+    add_executable(${HANDWRITING_EXECUTABLE_NAME} WIN32
+        "./src/handwriting-panel/HandwritingPanel.cpp"
+        "./src/handwriting-panel/HandwritingPanel.h"
+        "./src/handwriting-panel/main.cpp"
+        "./src/handwriting-panel/handwriting_panel.rc"
+        "./src/handwriting-panel/resource.h"
+        "./src/utils/ime_paths.cpp"
+        "./src/utils/surface_theme_config.cpp"
+        "./src/utils/surface_theme_config.h"
+    )
+    target_link_libraries(${HANDWRITING_EXECUTABLE_NAME} PRIVATE msimeui windowsapp.lib shell32 advapi32 ole32)
+    target_compile_definitions(${HANDWRITING_EXECUTABLE_NAME} PRIVATE
+        NOMINMAX=1
+        WIN32_LEAN_AND_MEAN=1
+    )
+    if(MSVC)
+        target_compile_options(${HANDWRITING_EXECUTABLE_NAME} PRIVATE /W4 /permissive-)
+    endif()
+    add_dependencies(${PROJECT_NAME} ${HANDWRITING_EXECUTABLE_NAME})
 endif()
-add_dependencies(${PROJECT_NAME} ${HANDWRITING_EXECUTABLE_NAME})
 
 set(SETTINGS_EXECUTABLE_NAME "MetasequoiaImeSettings")
-add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
+set(SETTINGS_SOURCES
     "./src/settings/settings_app.cpp"
     "./src/ai/chat_request_params.h"
     "./src/settings/api_credential_test.cpp"
@@ -595,8 +633,6 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/cloud/tencent_tmt.h"
     "./src/cloud/translation_gloss.cpp"
     "./src/cloud/translation_gloss.h"
-    "./src/voice-input/doubao_asr_client.cpp"
-    "./src/voice-input/doubao_asr_client.h"
     "./src/voice-input/voice_providers.cpp"
     "./src/voice-input/voice_providers.h"
     "./src/clipboard/clipboard_history.cpp"
@@ -610,6 +646,20 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/utils/network_proxy.h"
     "./src/resource/resource.rc"
 )
+
+# Same reason as the server target above: the WebSocket import chain must stay
+# out of the Win7 settings executable.
+if(NOT MSIME_WIN7)
+    list(APPEND SETTINGS_SOURCES
+        "./src/voice-input/doubao_asr_client.cpp"
+        "./src/voice-input/doubao_asr_client.h"
+    )
+endif()
+
+add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
+    ${SETTINGS_SOURCES}
+)
+
 target_include_directories(${SETTINGS_EXECUTABLE_NAME}
     PRIVATE
     "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/include"
@@ -629,7 +679,6 @@ target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     bcrypt
     winhttp
     dwmapi
-    dcomp
     d2d1
     dwrite
     shell32

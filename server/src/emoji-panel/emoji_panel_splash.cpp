@@ -1,11 +1,15 @@
 #include "emoji_panel_splash.h"
 
+#include "msimeui/Compat.h"
+
 #include <d2d1.h>
 #include <d2d1helper.h>
 #include <dwrite.h>
 #include <dwmapi.h>
 #include <windowsx.h>
 #include <wrl/client.h>
+
+#include "utils/dwm_attributes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -59,13 +63,13 @@ void ReleaseAll()
 
 void ApplyNativeChrome(HWND hwnd)
 {
-    DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    DWORD corner = DWMWCP_ROUND;
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
 
     const BOOL dark = g_light ? FALSE : TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
 
-    DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_NONE;
+    DWORD backdrop = DWMSBT_NONE;
     DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
 
     MARGINS margins{};
@@ -252,7 +256,7 @@ bool HitCloseButton(int x, int y)
     {
         return false;
     }
-    const float scale = static_cast<float>(GetDpiForWindow(g_hwnd)) / 96.0f;
+    const float scale = static_cast<float>(msimeui::compat::GetWindowDpi(g_hwnd)) / 96.0f;
     const float x_dip = static_cast<float>(x) / scale;
     const float y_dip = static_cast<float>(y) / scale;
     const D2D1_SIZE_F size = g_rt->GetSize();

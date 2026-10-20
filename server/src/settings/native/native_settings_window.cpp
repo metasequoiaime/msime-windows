@@ -10,6 +10,7 @@
 #include "utils/common_utils.h"
 
 #include "msimeui/Animation.h"
+#include "msimeui/Compat.h"
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Layout.h"
 #include "msimeui/Scene.h"
@@ -1220,8 +1221,9 @@ bool IsCaptionButton(WPARAM hit)
 
 int TopFrameThickness(HWND hwnd)
 {
-    const UINT dpi = GetDpiForWindow(hwnd);
-    return GetSystemMetricsForDpi(SM_CYFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    const UINT dpi = msimeui::compat::GetWindowDpi(hwnd);
+    return msimeui::compat::GetSystemMetricsForDpi(SM_CYFRAME, dpi) +
+           msimeui::compat::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
 }
 } // namespace
 
@@ -1246,7 +1248,7 @@ class SettingsWindowImpl : public HostServices
         // Opaque, so text can use ClearType.
         window_->SetCompositionRendering(true, true);
         window_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
-        SetLayoutScale(static_cast<float>(GetDpiForWindow(hwnd_)) / 96.0f);
+        SetLayoutScale(static_cast<float>(msimeui::compat::GetWindowDpi(hwnd_)) / 96.0f);
         window_->SetBackgroundColor(CurrentPalette().chromeBg);
         window_->StartCaretTimer();
         window_->GetDeviceResources().SetAnimationsEnabled(SystemAnimationsEnabled());

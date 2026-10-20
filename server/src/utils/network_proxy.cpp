@@ -6,6 +6,16 @@
 
 #pragma comment(lib, "winhttp.lib")
 
+// mingw-w64's winhttp.h predates both of these; the Windows 8.1+ SDK where
+// they belong has the same values. Defined here so the Win7 fallback below
+// compiles against either SDK.
+#ifndef WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
+#define WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY 4
+#endif
+#ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
+#define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
+#endif
+
 namespace NetworkProxy
 {
 namespace
@@ -104,22 +114,68 @@ std::string PickHttpsProxyFromWindowsList(const std::wstring &proxy_list)
 HINTERNET OpenWinHttpSession(const wchar_t *user_agent)
 {
     const NetworkProxyConfig config = GetConfiguredNetworkProxy();
+    HINTERNET session = nullptr;
     const std::string custom = CustomServer(config);
     if (!custom.empty())
     {
         const std::wstring server = Widen(custom);
-        return WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, server.c_str(), L"<local>", 0);
+        session = WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, server.c_str(), L"<local>", 0);
     }
-    if (config.mode == "none")
-        return WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    return WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS,
-                       0);
+    else if (config.mode == "none")
+    {
+        session =
+            WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    }
+#ifdef MSIME_WIN7_LITE
+    else
+    {
+        // WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY only exists on Windows 8.1+;
+        // WinHttpOpen rejects it on Windows 7. Fall back to the user's static
+        // IE proxy and otherwise connect directly — the same resolution
+        // ApplyToCurl uses for libcurl on this platform.
+        const std::string server = SystemStaticProxy();
+        if (!server.empty())
+        {
+            const std::wstring wide = Widen("http://" + server);
+            session = WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, wide.c_str(), L"<local>", 0);
+        }
+        else
+        {
+            session = WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+                                  WINHTTP_NO_PROXY_BYPASS, 0);
+        }
+    }
+#else
+    else
+    {
+        session = WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+                              WINHTTP_NO_PROXY_BYPASS, 0);
+    }
+#endif
+#ifdef MSIME_WIN7_LITE
+    // Windows 7 negotiates TLS 1.0 by default; the pinned 1.2 (with
+    // KB3140245 installed) is what every endpoint behind this session speaks.
+    // Applied for proxy and direct sessions alike: the option belongs to the
+    // session handle, and this is the one place every WinHTTP session is born.
+    if (session)
+    {
+        DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+        WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
+    }
+#endif
+    return session;
 }
 
 void ApplyToCurl(CURL *curl)
 {
     if (curl == nullptr)
         return;
+#ifdef MSIME_WIN7_LITE
+    // Windows 7's schannel negotiates TLS 1.0 by default; pin the floor at 1.2
+    // (KB3140245 required). Applied here because every curl easy handle in the
+    // server passes through this function right after curl_easy_init.
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+#endif
     const NetworkProxyConfig config = GetConfiguredNetworkProxy();
     std::string server = CustomServer(config);
     if (server.empty() && config.mode == "none")

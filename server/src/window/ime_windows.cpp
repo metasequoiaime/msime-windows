@@ -13,6 +13,8 @@
 #include <string>
 #include <fmt/xchar.h>
 #include "utils/window_utils.h"
+#include "msimeui/Compat.h"
+#include "utils/dwm_attributes.h"
 #include <dwmapi.h>
 #include "ipc/event_listener.h"
 #include "window_hook.h"
@@ -51,31 +53,46 @@ bool IsSystemLightDarkToggle(UINT message, LPARAM lParam)
 // The small-window hosts start shown but DWM-cloaked, and every hide of the
 // candidate window is a cloak as well: each presenter uncloaks its host when it
 // actually has something to show.
+//
+// Windows 7 has no DWM cloaking. compat::SetWindowCloaked reports the failure,
+// and the host falls back to ShowWindow: the host window then carries the
+// visibility itself, so callers must pair every cloak request with the matching
+// show/hide. The "paint before reveal" anti-flash optimization is abandoned on
+// that platform by design.
 void SetHostWindowCloaked(HWND hwnd, bool cloaked)
 {
     if (!hwnd)
     {
         return;
     }
-    BOOL value = cloaked ? TRUE : FALSE;
-    const HRESULT hr = DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &value, sizeof(value));
+    if (!msimeui::compat::SetWindowCloaked(hwnd, cloaked))
+    {
+        // No cloak support (Windows 7, or DWM off): keep IsWindowVisible in
+        // step with the logical state so the rest of the pipeline cannot tell
+        // the difference. SW_SHOWNA preserves the no-activation semantics the
+        // cloak path has.
+        ShowWindow(hwnd, cloaked ? SW_HIDE : SW_SHOWNA);
+    }
     if (hwnd == ::global_hwnd)
     {
-        CAND_DIAG_LOGF(L"candidate-frame cloak requested={} hr={:#x} actual={} tick={}", cloaked,
-                       static_cast<unsigned>(hr), IsHostWindowCloaked(hwnd), GetTickCount64());
+        CAND_DIAG_LOGF(L"candidate-frame cloak requested={} actual={} tick={}", cloaked, IsHostWindowCloaked(hwnd),
+                       GetTickCount64());
     }
 }
 
 // A cloaked host is still "visible" to IsWindowVisible and still reports its
-// rect to window enumeration, so the trace has to distinguish the two.
+// rect to window enumeration, so the trace has to distinguish the two. When
+// the attribute is unavailable (Windows 7) the host reports "uncloaked", which
+// routes every caller down the normal display path — a Win7 window must never
+// be judged cloaked and then never shown.
 bool IsHostWindowCloaked(HWND hwnd)
 {
-    DWORD cloaked = 0;
-    if (!hwnd || FAILED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))))
+    bool cloaked = false;
+    if (!msimeui::compat::IsWindowCloaked(hwnd, &cloaked))
     {
         return false;
     }
-    return cloaked != 0;
+    return cloaked;
 }
 } // namespace ime_windows_detail
 
@@ -132,6 +149,8 @@ std::wstring DescribeHostWindowState(HWND hwnd)
     GetClientRect(hwnd, &client_rect);
 
     DWORD cloaked = 0;
+    // Pure diagnostics: on Windows 7 the attribute call fails and the trace
+    // simply reports "no", which matches how the host actually behaves there.
     DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
 
     COLORREF color_key = 0;

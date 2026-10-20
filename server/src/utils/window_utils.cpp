@@ -3,15 +3,13 @@
 #include "defines/globals.h"
 #include "ipc/ipc.h"
 #include "global/globals.h"
+#include <msimeui/Compat.h>
 #include <algorithm>
 #include <cmath>
 #include <utility>
 #include <winuser.h>
 #include <dwmapi.h>
-#include <shellscalingapi.h>
 #include <shellapi.h>
-
-#pragma comment(lib, "Shcore.lib")
 
 namespace
 {
@@ -69,13 +67,12 @@ FLOAT ScaleFromMonitor(HMONITOR hMonitor)
         return GetForegroundWindowScale();
     }
 
-    UINT dpiX = USER_DEFAULT_SCREEN_DPI;
-    UINT dpiY = USER_DEFAULT_SCREEN_DPI;
-    if (FAILED(GetDpiForMonitor(hMonitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) || dpiX == 0)
+    UINT dpi = 0;
+    if (FAILED(msimeui::compat::GetMonitorDpi(hMonitor, &dpi)))
     {
         return GetForegroundWindowScale();
     }
-    return static_cast<FLOAT>(dpiX) / static_cast<FLOAT>(USER_DEFAULT_SCREEN_DPI);
+    return static_cast<FLOAT>(dpi) / static_cast<FLOAT>(USER_DEFAULT_SCREEN_DPI);
 }
 } // namespace
 
@@ -275,11 +272,13 @@ FLOAT GetWindowScale(HWND hwnd)
 {
     // GetDpiForWindow returns 0 for an invalid HWND. A 0 scale silently collapses
     // every host window to 0x0, which hides the floating toolbar, so fall back
-    // to the system DPI instead.
-    UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 0;
+    // to the system DPI instead. The compat helper keeps the same contract on
+    // every OS: no hwnd resolves through the system DPI, and it never returns 0,
+    // so the fallbacks below stay reachable and correct on Windows 7 too.
+    UINT dpi = hwnd ? msimeui::compat::GetWindowDpi(hwnd) : 0;
     if (dpi == 0)
     {
-        dpi = GetDpiForSystem();
+        dpi = msimeui::compat::GetSystemDpi();
     }
     if (dpi == 0)
     {
@@ -308,12 +307,17 @@ ResolvedCandidateScale ResolveCandidateScaleForCaret(POINT caret)
     // SM_REMOTESESSION is only set inside a real remote session; console and
     // local logons never see it, so the local path is byte-for-byte unchanged.
     // GetDpiForWindow returns 0 for an invalid/absent foreground HWND, which
-    // drops to the monitor path instead of trusting a bogus 0 scale.
+    // drops to the monitor path instead of trusting a bogus 0 scale. The
+    // compat helper never returns 0 (it resolves through the system DPI), so
+    // the "no foreground" case is gated on the HWND itself to keep the same
+    // behavior: with a real foreground window its DPI wins, without one the
+    // monitor path runs as before.
     if (GetSystemMetrics(SM_REMOTESESSION))
     {
-        const UINT dpi = GetDpiForWindow(GetForegroundWindow());
-        if (dpi != 0)
+        const HWND foreground = GetForegroundWindow();
+        if (foreground != nullptr)
         {
+            const UINT dpi = msimeui::compat::GetWindowDpi(foreground);
             return {static_cast<FLOAT>(dpi) / static_cast<FLOAT>(USER_DEFAULT_SCREEN_DPI),
                     CandidateScaleSource::RdpForeground};
         }

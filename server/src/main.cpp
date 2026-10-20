@@ -26,6 +26,7 @@
 #include "utils/hanzi_pinyin.h"
 #include "utils/single_instance.h"
 #include "session/session_factory.h"
+#include <msimeui/Compat.h>
 #include "statistics/stats_pipe.h"
 #include "voice-input/voice_input_service.h"
 
@@ -104,7 +105,9 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     if (!pipe_probe)
         StartWatchdogIfNeeded(lpCmdLine);
 
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    // PMv2 on Windows 10+; the compat helper degrades to Per-Monitor v1
+    // (8.1) / system aware (7 SP1) where the v2 context does not exist.
+    msimeui::compat::SetProcessDpiAwarenessPerMonitorV2();
 
     const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(comResult))

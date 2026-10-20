@@ -5,6 +5,7 @@
 #include "msimeui/Scene.h"
 #include "msimeui/Theme.h"
 #include "msimeui/Window.h"
+#include "utils/dwm_attributes.h"
 #include "utils/single_instance.h"
 #include "utils/surface_theme_config.h"
 
@@ -23,7 +24,10 @@ void ApplyHostChrome(HWND hwnd, bool lightTheme)
     {
         return;
     }
-    DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    // DWORD instead of the SDK's DWM_WINDOW_CORNER_PREFERENCE typedef: the
+    // compat header (utils/dwm_attributes.h) declares the values as an
+    // anonymous enum so the Win7 target compiles without the Win10 SDK block.
+    DWORD corner = DWMWCP_ROUND;
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
     const BOOL dark = lightTheme ? FALSE : TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));

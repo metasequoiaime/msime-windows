@@ -2,10 +2,19 @@
 
 #include "msime_version.h"
 
+#include "utils/network_proxy.h"
+
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
 
 #include <winhttp.h>
+
+// mingw-w64's winhttp.h predates this; the Windows 8.1+ SDK where it belongs
+// has the same value. Defined here so the Win7 TLS pin compiles against
+// either SDK.
+#ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
+#define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
+#endif
 
 #include <chrono>
 #include <regex>
@@ -78,10 +87,45 @@ std::string HttpGet(const std::string &url)
     if (!WinHttpCrackUrl(wide.c_str(), 0, 0, &parts))
         return {};
     std::string body;
-    HINTERNET session =
-        WinHttpOpen(L"MetasequoiaImeSettings", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+    HINTERNET session = nullptr;
+#ifdef MSIME_WIN7_LITE
+    // WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY does not exist on Windows 7; use the
+    // user's static IE proxy when present, otherwise connect directly. The IE
+    // proxy list lives in NetworkProxy; there is no second copy here.
+    const std::wstring proxy = Widen(NetworkProxy::PickHttpsProxyFromWindowsList([] {
+        WINHTTP_CURRENT_USER_IE_PROXY_CONFIG ie{};
+        std::wstring list;
+        if (WinHttpGetIEProxyConfigForCurrentUser(&ie))
+        {
+            if (ie.lpszProxy != nullptr)
+                list.assign(ie.lpszProxy);
+            if (ie.lpszProxy != nullptr)
+                GlobalFree(ie.lpszProxy);
+            if (ie.lpszProxyBypass != nullptr)
+                GlobalFree(ie.lpszProxyBypass);
+            if (ie.lpszAutoConfigUrl != nullptr)
+                GlobalFree(ie.lpszAutoConfigUrl);
+        }
+        return list;
+    }()));
+    session = proxy.empty() ? WinHttpOpen(L"MetasequoiaImeSettings", WINHTTP_ACCESS_TYPE_NO_PROXY,
+                                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)
+                            : WinHttpOpen(L"MetasequoiaImeSettings", WINHTTP_ACCESS_TYPE_NAMED_PROXY, proxy.c_str(),
+                                          L"<local>", 0);
+#else
+    session = WinHttpOpen(L"MetasequoiaImeSettings", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+#endif
     if (!session)
         return {};
+#ifdef MSIME_WIN7_LITE
+    // Windows 7 negotiates TLS 1.0 by default; the update manifest endpoint
+    // speaks TLS 1.2 (KB3140245). This is the settings process's only direct
+    // WinHttpOpen; the server-side sessions all pin through NetworkProxy.
+    {
+        DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+        WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
+    }
+#endif
     WinHttpSetTimeouts(session, 10000, 10000, 10000, 10000);
     HINTERNET connection = WinHttpConnect(session, host, parts.nPort, 0);
     HINTERNET request =

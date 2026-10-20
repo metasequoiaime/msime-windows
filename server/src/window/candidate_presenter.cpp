@@ -21,6 +21,7 @@
 #include "window/candidate_wheel_paging.h"
 #include "window/ime_windows.h"
 
+#include "msimeui/Compat.h"
 #include "msimeui/Controls.h"
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Layout.h"
@@ -35,6 +36,8 @@
 #include <d2d1.h>
 #include <dwmapi.h>
 #include <windowsx.h>
+
+#include "utils/dwm_attributes.h"
 
 #include <algorithm>
 #include <atomic>
@@ -884,10 +887,13 @@ void CandidatePresenter::PlaceAndShow(POINT caret, float widthDip, float heightD
     // host left/up before the present, and right/down after it, keeps the
     // stale frame on the side of the card that is already on screen.
     RECT current{};
-    DWORD cloaked = 0;
-    const bool onScreen =
-        IsWindowVisible(hwnd_) && GetWindowRect(hwnd_, &current) && current.top != Global::INVALID_Y &&
-        SUCCEEDED(DwmGetWindowAttribute(hwnd_, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked == 0;
+    bool cloaked = false;
+    // IsWindowCloaked reports false when the attribute is unavailable (Win7),
+    // and the caller then treats the host as uncloaked — the normal display
+    // path. On Win8+ this matches the old SUCCEEDED(...) && cloaked == 0 test.
+    const bool cloakKnown = msimeui::compat::IsWindowCloaked(hwnd_, &cloaked);
+    const bool onScreen = IsWindowVisible(hwnd_) && GetWindowRect(hwnd_, &current) &&
+                          current.top != Global::INVALID_Y && (!cloakKnown || !cloaked);
     const int firstX = onScreen && x > current.left ? current.left : x;
     const int firstY = onScreen && y > current.top ? current.top : y;
     // WM_SIZE from this resize would present the frame once more right before
@@ -913,9 +919,9 @@ void CandidatePresenter::PlaceAndShow(POINT caret, float widthDip, float heightD
         L"candidate-d2d place source={} scale={:.3f} hwnd_dpi={} system_dpi={} remote={} caret=({},{}) "
         L"size_px=({},{}) host=({},{}) first=({},{}) on_screen={} card_px=({},{} {}w) monitor=({},{})-({},{})",
         scaleSource == CandidateScaleSource::RdpForeground ? L"rdp-foreground" : L"monitor", scale,
-        GetDpiForWindow(hwnd_), GetDpiForSystem(), GetSystemMetrics(SM_REMOTESESSION) ? 1 : 0, caret.x, caret.y,
-        hostWidthPx, hostHeightPx, x, y, firstX, firstY, onScreen, x + cardLeftPx, y + cardTopPx, cardWidthPx,
-        monitor.left, monitor.top, monitor.right, monitor.bottom);
+        msimeui::compat::GetWindowDpi(hwnd_), msimeui::compat::GetSystemDpi(),
+        GetSystemMetrics(SM_REMOTESESSION) ? 1 : 0, caret.x, caret.y, hostWidthPx, hostHeightPx, x, y, firstX, firstY,
+        onScreen, x + cardLeftPx, y + cardTopPx, cardWidthPx, monitor.left, monitor.top, monitor.right, monitor.bottom);
 }
 
 void CandidatePresenter::ShowFromGlobalState()

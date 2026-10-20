@@ -12,6 +12,7 @@
 #include "settings/dictionary_manager.h"
 #include "settings/native/native_settings_window.h"
 
+#include "msimeui/Compat.h"
 #include "msimeui/DeviceResources.h"
 #include "settings/serial_task_queue.h"
 #include "statistics/stats_overview.h"
@@ -33,6 +34,8 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
+
+#include "utils/dwm_attributes.h"
 
 #include <algorithm>
 #include <array>
@@ -115,7 +118,13 @@ void TraceStartup(const char *stage)
         return static_cast<LONGLONG>((static_cast<ULONGLONG>(creation.dwHighDateTime) << 32) | creation.dwLowDateTime);
     }();
     FILETIME now_ft{};
+#ifdef MSIME_WIN7_LITE
+    // GetSystemTimePreciseAsFileTime is Windows 8+; the trace timestamp only
+    // feeds a startup log, so GetSystemTimeAsFileTime's coarser tick is fine.
+    GetSystemTimeAsFileTime(&now_ft);
+#else
     GetSystemTimePreciseAsFileTime(&now_ft);
+#endif
     const LONGLONG now =
         static_cast<LONGLONG>((static_cast<ULONGLONG>(now_ft.dwHighDateTime) << 32) | now_ft.dwLowDateTime);
     static std::mutex mutex;
@@ -392,8 +401,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"sentence_neural_desktop", GetConfiguredAssocSentenceNeuralDesktop()},
             {"sentence_neural_desktop_model_status", [] {
                  const auto status = neural_model::GetModelStatus();
-                 return nlohmann::json{
-                     {"state", status.state}, {"progress", status.progress}, {"error", status.error}};
+                 return nlohmann::json{{"state", status.state}, {"progress", status.progress}, {"error", status.error}};
              }()},
             {"sentence_neural_desktop_model_url", neural_model::SourceUrl()},
             {"sentence_neural_keyboard", GetConfiguredAssocSentenceNeuralKeyboard()},
@@ -403,8 +411,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"sentence_collocation_model_status", [] {
                  nlohmann::json statuses = nlohmann::json::object();
                  for (const auto &[model_id, status] : collocation::GetModelStatuses())
-                     statuses[model_id] = nlohmann::json{{"state", status.state}, {"progress", status.progress},
-                                                         {"error", status.error}};
+                     statuses[model_id] = nlohmann::json{
+                         {"state", status.state}, {"progress", status.progress}, {"error", status.error}};
                  return statuses;
              }()},
             {"sentence_collocation_model", GetConfiguredAssocSentenceCollocationModel()},
@@ -1604,14 +1612,14 @@ void ReleaseMouseCapture(HWND hwnd)
 
 int TopNonClientInset(HWND hwnd)
 {
-    const UINT dpi = GetDpiForWindow(hwnd);
+    const UINT dpi = msimeui::compat::GetWindowDpi(hwnd);
     const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
     const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
     RECT caption{}, no_caption{};
-    AdjustWindowRectExForDpi(&caption, style, FALSE, ex_style, dpi);
-    AdjustWindowRectExForDpi(&no_caption, style & ~WS_CAPTION, FALSE, ex_style, dpi);
-    return no_caption.top - caption.top + GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) +
-           GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    msimeui::compat::AdjustWindowRectExForDpi(&caption, style, FALSE, ex_style, dpi);
+    msimeui::compat::AdjustWindowRectExForDpi(&no_caption, style & ~WS_CAPTION, FALSE, ex_style, dpi);
+    return no_caption.top - caption.top + msimeui::compat::GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) +
+           msimeui::compat::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
 }
 
 // 重新露面：取消延迟退出，恢复渲染与配置轮询。
@@ -1768,7 +1776,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
     }
     case WM_GETMINMAXINFO: {
         auto *info = reinterpret_cast<MINMAXINFO *>(l_param);
-        const UINT dpi = GetDpiForWindow(hwnd);
+        const UINT dpi = msimeui::compat::GetWindowDpi(hwnd);
         info->ptMinTrackSize = {MulDiv(600, dpi, 96), MulDiv(400, dpi, 96)};
         return 0;
     }
@@ -1853,7 +1861,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     // that now, alongside the config load and the page build; the window takes the
     // device when it first paints.
     msimeui::DeviceResources::PrewarmComposition();
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    msimeui::compat::SetProcessDpiAwarenessPerMonitorV2();
     const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(com_result))
         return 1;
@@ -1889,7 +1897,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     if (!RegisterClassExW(&window_class))
         return 1;
 
-    const UINT dpi = GetDpiForSystem();
+    const UINT dpi = msimeui::compat::GetSystemDpi();
     const int width = MulDiv(900, dpi, 96);
     const int height = MulDiv(710, dpi, 96);
     const int x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
@@ -1932,8 +1940,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
         }
     }
 
-    DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
-    DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_NONE;
+    DWORD corner = DWMWCP_ROUND;
+    DWORD backdrop = DWMSBT_NONE;
     ApplySettingsChromeTheme(hwnd);
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
     DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
@@ -1956,13 +1964,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     TraceStartup("ui: native window built");
     g_open_about_on_ready = false;
     // Cloaked until the first frame is drawn, so the compositor never shows the
-    // surface before it is painted (white, whatever the theme).
-    BOOL cloak = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
-    ShowWindow(hwnd, show_command == SW_HIDE ? SW_SHOWNORMAL : show_command);
-    UpdateWindow(hwnd);
-    cloak = FALSE;
-    DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    // surface before it is painted (white, whatever the theme). On Windows 7
+    // there is no cloaking; SetWindowCloaked reports the failure and the show
+    // goes through ShowWindow directly, accepting a possible first-frame flash.
+    if (msimeui::compat::SetWindowCloaked(hwnd, true))
+    {
+        ShowWindow(hwnd, show_command == SW_HIDE ? SW_SHOWNORMAL : show_command);
+        UpdateWindow(hwnd);
+        msimeui::compat::SetWindowCloaked(hwnd, false);
+    }
+    else
+    {
+        ShowWindow(hwnd, show_command == SW_HIDE ? SW_SHOWNORMAL : show_command);
+        UpdateWindow(hwnd);
+    }
     TraceStartup("ui: native window shown");
 
     MSG message{};

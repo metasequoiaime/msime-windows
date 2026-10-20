@@ -8,7 +8,11 @@
 #include "cloud/tencent_tmt.h"
 #include "cloud/translation_gloss.h"
 #include "config/ime_config.h"
+#ifndef MSIME_WIN7_LITE
+// LITE build compiles the streaming client out; the doubao branch of Run()
+// below returns an "unsupported" result without touching this header.
 #include "voice-input/doubao_asr_client.h"
+#endif
 #include "voice-input/voice_providers.h"
 
 #include "utils/network_proxy.h"
@@ -322,6 +326,12 @@ Result Run(const Request &request)
     {
         if (Value(request, "provider") != "doubao")
             return TestBatchAsr(request);
+#ifdef MSIME_WIN7_LITE
+        // The Doubao streaming client is compiled out on the Win7 target (the
+        // WinHTTP WebSocket import chain does not exist there), so the
+        // credential test has no implementation to call either.
+        return {false, "本版本不支持豆包流式语音识别，请改用批量识别接口。"};
+#else
         const bool legacy = Value(request, "authMode") == "legacy";
         const std::string app_id = Value(request, "appId");
         const std::string token = Value(request, "token");
@@ -330,6 +340,7 @@ Result Run(const Request &request)
         const std::string error = DoubaoAsrClient::TestCredentials(Value(request, "endpoint"), legacy, app_id, token,
                                                                    Value(request, "resourceId"));
         return error.empty() ? Result{true, "连接成功，豆包语音识别凭据有效。"} : Result{false, "测试失败：" + error};
+#endif
     }
     return {false, "不支持的配置测试类型。"};
 }

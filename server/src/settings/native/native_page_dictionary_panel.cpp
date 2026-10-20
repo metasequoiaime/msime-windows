@@ -1,5 +1,6 @@
 #include "settings/native/native_page_dictionary_panel.h"
 
+#include "msimeui/Compat.h"
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
 
@@ -543,7 +544,7 @@ float DictTableScroll::MaxHeight() const
     // max-height: clamp(180px, calc(100vh - 350px), 550px)
     RECT client{};
     GetClientRect(host_.Hwnd(), &client);
-    const float scale = static_cast<float>(GetDpiForWindow(host_.Hwnd())) / 96.0f;
+    const float scale = static_cast<float>(msimeui::compat::GetWindowDpi(host_.Hwnd())) / 96.0f;
     const float viewport = static_cast<float>(client.bottom - client.top) / std::max(scale, 0.01f);
     return std::clamp(viewport - 350.0f, 180.0f, 550.0f);
 }
