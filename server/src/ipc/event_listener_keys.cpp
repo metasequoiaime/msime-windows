@@ -1825,7 +1825,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         {
             bool expand = FanyImeIpc::RequestCandidateExpandOnDown(Global::Keycode, Global::ModifiersDown,
                                                                    IsUiLessMode(), Global::candidate_expand_state);
-            if (expand && !PostMessageW(hwnd_cand, WM_TOGGLE_CANDIDATE_EXPAND, 1, 0))
+            if (expand && !PostMessageW(::global_hwnd, WM_TOGGLE_CANDIDATE_EXPAND, 1, 0))
             {
                 auto expected = FanyImeIpc::CandidateExpandState::Requested;
                 Global::candidate_expand_state.compare_exchange_strong(
