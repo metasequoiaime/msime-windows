@@ -41,10 +41,14 @@ std::optional<std::string> FetchContent(const std::string &endpoint, const std::
 
     // Deliberately exclude the API token and the request body from logs.
     ResponseBuffer response;
-    const std::string authorization = "Authorization: Bearer " + token;
     curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json; charset=utf-8");
-    headers = curl_slist_append(headers, authorization.c_str());
+    // 空 token 不发空 "Bearer "。
+    if (!token.empty())
+    {
+        const std::string authorization = "Authorization: Bearer " + token;
+        headers = curl_slist_append(headers, authorization.c_str());
+    }
 
     curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
     NetworkProxy::ApplyToCurl(curl);

@@ -4,6 +4,7 @@
 #include "ai_assistant_request.h"
 #include "chat_completions.h"
 #include "jev_client.h"
+#include "utils/network_proxy.h"
 
 #include <msime/voice/provider_protocol.h>
 #include <curl/curl.h>
@@ -36,7 +37,8 @@ AiAssistant::detail::SuggestionCache g_candidate_cache;
 std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev::Client &jev_client)
 {
     const auto &config = request.config;
-    if (!config.enabled || config.token.empty() || config.endpoint.empty() || config.model.empty() ||
+    const bool needs_token = !NetworkProxy::IsLoopbackEndpoint(config.endpoint);
+    if (!config.enabled || (needs_token && config.token.empty()) || config.endpoint.empty() || config.model.empty() ||
         request.pinyin_segments.empty() || g_generation.load() != generation)
     {
         (void)0;

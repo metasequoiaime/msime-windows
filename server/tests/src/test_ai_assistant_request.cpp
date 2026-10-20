@@ -91,6 +91,25 @@ TEST_CASE(ai_request_uses_openai_completion_limit_for_older_models)
     REQUIRE_EQ(AiAssistant::detail::RequestTimeoutMs(request.config), 8000L);
 }
 
+TEST_CASE(ai_request_keys_the_output_limit_off_the_endpoint)
+{
+    auto ollama = MakeRequest("openai", "disabled", "http://localhost:11434/v1/chat/completions");
+    const auto ollama_body = AiAssistant::detail::BuildRequestBody(ollama);
+    REQUIRE_EQ(ollama_body["max_tokens"].get<int>(), 512);
+    REQUIRE(!ollama_body.contains("max_completion_tokens"));
+
+    auto real = MakeRequest("custom", "disabled", "https://api.openai.com/v1/chat/completions");
+    const auto real_body = AiAssistant::detail::BuildRequestBody(real);
+    REQUIRE_EQ(real_body["max_tokens"].get<int>(), 512);
+    REQUIRE(!real_body.contains("max_completion_tokens"));
+
+    auto azure =
+        MakeRequest("openai", "disabled", "https://example.openai.azure.com/openai/deployments/d/chat/completions");
+    const auto azure_body = AiAssistant::detail::BuildRequestBody(azure);
+    REQUIRE_EQ(azure_body["max_completion_tokens"].get<int>(), 512);
+    REQUIRE(!azure_body.contains("max_tokens"));
+}
+
 TEST_CASE(ai_request_omits_unsupported_sampling_for_openai_reasoning_models)
 {
     for (const char *model : {"gpt-5.6-luna", "GPT-5.6-Luna", "gpt-5", "o3-mini", "O3-mini"})
@@ -140,6 +159,19 @@ TEST_CASE(credential_test_uses_openai_completion_limit)
         REQUIRE(!body.contains("temperature"));
         REQUIRE_EQ(body["messages"][0]["content"].get<std::string>(), "Reply OK");
     }
+}
+
+TEST_CASE(credential_test_keys_the_output_limit_off_the_endpoint)
+{
+    const auto ollama = ApiCredentialTest::detail::BuildChatProbeRequestBody(
+        "openai", "gpt-4o-mini", "http://localhost:11434/v1/chat/completions");
+    REQUIRE_EQ(ollama["max_tokens"].get<int>(), 1);
+    REQUIRE(!ollama.contains("max_completion_tokens"));
+
+    const auto real = ApiCredentialTest::detail::BuildChatProbeRequestBody(
+        "custom", "gpt-4o-mini", "https://api.openai.com/v1/chat/completions");
+    REQUIRE_EQ(real["max_tokens"].get<int>(), 1);
+    REQUIRE(!real.contains("max_completion_tokens"));
 }
 
 TEST_CASE(credential_test_keeps_other_provider_request_shape)

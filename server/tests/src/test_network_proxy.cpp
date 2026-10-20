@@ -34,6 +34,25 @@ TEST_CASE(network_proxy_setter_rejects_invalid_values_before_writing)
     REQUIRE(!SetConfiguredNetworkString("proxy_user", "anyone"));
 }
 
+TEST_CASE(network_proxy_recognises_only_loopback_hosts)
+{
+    using NetworkProxy::IsLoopbackEndpoint;
+    REQUIRE(IsLoopbackEndpoint("http://localhost:11434/v1/chat/completions"));
+    REQUIRE(IsLoopbackEndpoint("http://127.0.0.1:11434/v1/chat/completions"));
+    REQUIRE(IsLoopbackEndpoint("http://[::1]:11434/v1/chat/completions"));
+    REQUIRE(IsLoopbackEndpoint("HTTP://LOCALHOST:11434/v1/chat/completions"));
+    REQUIRE(IsLoopbackEndpoint("http://localhost:1234/v1/chat/completions"));
+    REQUIRE(IsLoopbackEndpoint("http://user:{{EMAIL_qqucjkxr}}@127.0.0.1:11434/v1/chat/completions"));
+
+    REQUIRE(!IsLoopbackEndpoint("https://api.openai.com/v1/chat/completions"));
+    REQUIRE(!IsLoopbackEndpoint("http://192.168.2.10:11434/v1/chat/completions"));
+    REQUIRE(!IsLoopbackEndpoint("http://localhost.evil.com/v1/chat/completions"));
+    REQUIRE(!IsLoopbackEndpoint("http://127.0.0.1.evil.com/v1/chat/completions"));
+    REQUIRE(!IsLoopbackEndpoint("http://notlocalhost:11434/v1/chat/completions"));
+    REQUIRE(!IsLoopbackEndpoint("localhost:11434/v1/chat/completions"));
+    REQUIRE(!IsLoopbackEndpoint(""));
+}
+
 TEST_CASE(network_proxy_picks_https_entry_from_windows_proxy_list)
 {
     using NetworkProxy::PickHttpsProxyFromWindowsList;
