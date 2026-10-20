@@ -7,6 +7,7 @@
 #include "settings/api_credential_test.h"
 #include "settings/collocation_model.h"
 #include "settings/neural_model.h"
+#include "settings/japanese_dictionary_download.h"
 #include "settings/default_input_method.h"
 #include "settings/game_compat_name.h"
 #include "settings/dictionary_manager.h"
@@ -382,6 +383,10 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"candidate_translations", GetConfiguredCandidateTranslationsEnabled()},
             {"candidate_translation_show_pos", GetConfiguredCandidateTranslationShowPos()},
             {"candidate_translation_single_sense", GetConfiguredCandidateTranslationSingleSense()},
+            {"japanese_dictionary_status", [] {
+                 const auto status = japanese_dictionary::GetStatus();
+                 return nlohmann::json{{"state", status.state}, {"message", status.message}};
+             }()},
             {"cn_en_mixed_input_min_chars", GetConfiguredEnglishMixedInputMinChars()},
             {"cn_en_mixed_input_first_page_count", GetConfiguredEnglishMixedInputFirstPageCount()},
             {"emoji_mixed_input", GetConfiguredEmojiMixedInputEnabled()},
@@ -1316,6 +1321,15 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             PostConfig(false);
         }
         else if (type == "collocationModelStatusRequest")
+        {
+            PostConfig(false);
+        }
+        else if (type == "japaneseDictionaryBuild")
+        {
+            japanese_dictionary::StartBuild();
+            PostConfig(false);
+        }
+        else if (type == "japaneseDictionaryStatusRequest")
         {
             PostConfig(false);
         }

@@ -25,6 +25,8 @@ struct TranslationResult
     std::string key;
     TranslationDirection direction = TranslationDirection::ChineseToEnglish;
     std::string gloss;
+    // Display annotation only; translation commit continues to consume gloss.
+    std::string reading;
 };
 
 using ApplyCallback =
@@ -39,9 +41,9 @@ bool IsRunning();
 void OnInputChanged(const std::string &input, bool dedicated_mode = false, size_t mixed_min_prefix = 2);
 void Clear();
 bool IsCurrent(const std::string &input, uint64_t generation, bool dedicated_mode = false);
-// Non-English target languages have no local dictionary and must go directly
-// to cloud translation.
-void RequestTranslations(std::vector<TranslationQuery> queries, bool use_local_dictionary = true);
+// The target is captured with the job. English candidates always use en->zh;
+// Chinese candidates select the local English or Japanese dictionary.
+void RequestTranslations(std::vector<TranslationQuery> queries, std::string target_language = "en");
 void ClearTranslations();
 bool IsTranslationCurrent(uint64_t generation);
 } // namespace EnglishIme

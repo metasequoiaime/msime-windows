@@ -35,3 +35,4 @@ __pycache__/
 # 本地测试数据暂存（照 scripts/ci/test-server.ps1 的布局手工准备的）
 /stage/
 /.tmp-test/
+/japanese-dictionary/*.db*

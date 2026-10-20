@@ -326,7 +326,8 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
     for (auto &result : results)
     {
         std::string gloss = std::move(result.gloss);
-        // Merged results come from the cloud; an unmerged result carries the english.db
+        std::string reading = std::move(result.reading);
+        // Merged results come from the cloud; an unmerged result carries the local dictionary
         // gloss unless it was empty and the cloud cache had to fill in.
         const bool from_dictionary = !merge && !gloss.empty();
         if (gloss.empty() && !merge)
@@ -336,12 +337,12 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
         {
             auto existing = g_candidate_translation_glosses.find(identity);
             if (existing != g_candidate_translation_glosses.end() && existing->second.text == gloss &&
-                existing->second.from_dictionary == from_dictionary)
+                existing->second.from_dictionary == from_dictionary && existing->second.reading == reading)
                 continue;
             if (g_candidate_translation_glosses.size() >= kMaxCandidateTranslationGlosses &&
                 existing == g_candidate_translation_glosses.end())
                 g_candidate_translation_glosses.clear();
-            g_candidate_translation_glosses[identity] = {std::move(gloss), from_dictionary};
+            g_candidate_translation_glosses[identity] = {std::move(gloss), from_dictionary, std::move(reading)};
             glosses_changed = true;
         }
         else if (!merge)

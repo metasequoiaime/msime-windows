@@ -77,6 +77,10 @@ Place `english.db` next to `msime.db` in `%LOCALAPPDATA%\metasequoiaime`. Set
 Shuangpin. The master switch `utility.mixed_candidates` must also be on; English, emoji, kaomoji and date/time mixed
 candidates are queried together on the single `MixedCandidates` worker thread (`src/mixed/`).
 
+## Japanese candidate translations
+
+In Settings → Input → Candidate translations, use “下载并构建” to download the source dictionaries and build `japanese.db` locally, then restart the IME and select Japanese. This requires Python 3.10 or later. Local dictionary results include one translation and its kana reading; missing entries use the configured online provider. See [日语候选释义词库](../japanese-dictionary/README.md) for usage and dictionary sources.
+
 ## Developer Shortcuts
 
 The server process includes a few built-in global shortcuts that are useful during development:

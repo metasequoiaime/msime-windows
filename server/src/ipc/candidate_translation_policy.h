@@ -156,6 +156,14 @@ inline std::string FormatTranslationGlossForDisplay(std::string_view gloss, bool
     return displayed;
 }
 
+// Kana is a display annotation. The unmodified gloss is still used for committing.
+inline std::string AppendJapaneseReading(std::string gloss, std::string_view reading)
+{
+    if (gloss.empty() || reading.empty() || gloss == reading)
+        return gloss;
+    return gloss + "（" + std::string(reading) + "）";
+}
+
 // Ctrl+1..9: the numbered counterpart of Ctrl+Enter (which commits the highlighted one).
 // Shape only -- whether the chord is enabled is the caller's business. Alt, the Windows keys,
 // Shift and a bare digit keep their host meaning.

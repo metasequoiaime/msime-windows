@@ -151,9 +151,12 @@ Source: "{#MySourceRoot}\bundled_skins\*"; \
 Source: "{#MySourceRoot}\bundled_skins.manifest"; Flags: dontcopy
 
 #ifdef LightPackage
-; 轻量包只覆盖设置窗口的图片资源，不带词库/辅助码/出厂配置。
+; 轻量包覆盖设置窗口资源和词库构建脚本，不带词库/辅助码/出厂配置。
 Source: "{#MySourceRoot}\app_data\assets\settings\*"; \
     DestDir: "{code:GetDataDir}\assets\settings"; \
+    Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
+Source: "{#MySourceRoot}\app_data\assets\dictionaries\*"; \
+    DestDir: "{code:GetDataDir}\assets\dictionaries"; \
     Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
 #else
 ; 包内故意不带 config.toml。通配复制再排除一次，防止以后又把用户配置打进包内。
@@ -858,6 +861,10 @@ begin
     (CompareText(FileName, 'msime.db-shm') = 0) or
     (CompareText(FileName, 'msime.db-journal') = 0) or
     (CompareText(FileName, 'english.db-wal') = 0) or
+    (CompareText(FileName, 'japanese.db') = 0) or
+    (CompareText(FileName, 'japanese.db.pending') = 0) or
+    (CompareText(FileName, 'japanese-dictionary-build.log') = 0) or
+    (CompareText(FileName, 'japanese-licenses') = 0) or
     (CompareText(FileName, 'english.db-shm') = 0) or
     (CompareText(FileName, 'english.db-journal') = 0) or
     (CompareText(FileName, 'others.db-wal') = 0) or

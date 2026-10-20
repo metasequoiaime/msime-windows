@@ -64,6 +64,7 @@ struct CandidateTranslationGloss
     // a sentence whose commas are punctuation, so only dictionary glosses may be
     // trimmed at them.
     bool from_dictionary = false;
+    std::string reading;
 };
 extern std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 extern std::string g_candidate_translation_signature;

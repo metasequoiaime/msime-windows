@@ -82,6 +82,16 @@
         "settings"
       ]
     },
+    "japaneseDictionaryBuild": {
+      "surfaces": [
+        "settings"
+      ]
+    },
+    "japaneseDictionaryStatusRequest": {
+      "surfaces": [
+        "settings"
+      ]
+    },
     "neuralModelDownload": {
       "surfaces": [
         "settings"

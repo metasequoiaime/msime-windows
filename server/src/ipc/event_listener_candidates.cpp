@@ -368,6 +368,7 @@ std::string BuildCurrentCandidatePage()
         ApplyFixedPositionBadge(view, show_fixed_badge, fixed_badge_style);
         std::string raw_translation;
         bool dictionary_translation = false;
+        std::string translation_reading;
         EnglishIme::TranslationQuery translation_query;
         if (!translation_page && BuildTranslationQuery(item, translation_query))
         {
@@ -376,11 +377,13 @@ std::string BuildCurrentCandidatePage()
             {
                 raw_translation = gloss->second.text;
                 dictionary_translation = gloss->second.from_dictionary;
+                translation_reading = gloss->second.reading;
             }
         }
         view.translation = FanyImeIpc::FormatTranslationGlossForDisplay(
             raw_translation, show_translation_pos, single_translation_sense,
             single_translation_sense && dictionary_translation);
+        view.translation = FanyImeIpc::AppendJapaneseReading(std::move(view.translation), translation_reading);
         const std::string visible = view.text + view.annotation + view.badge;
         const int display_length = static_cast<int>(utf8::distance(visible.begin(), visible.end()));
         candidate_string += CandidateViewHtml(view);
@@ -463,7 +466,7 @@ void PrepareCandidateTranslationRequest()
         return;
     g_candidate_translation_signature = std::move(signature);
     CloudTranslation::Clear();
-    EnglishIme::RequestTranslations(std::move(queries), GetConfiguredTencentTmt().target_language == "en");
+    EnglishIme::RequestTranslations(std::move(queries), GetConfiguredTencentTmt().target_language);
 }
 
 // Copy the page the worker just finished into an immutable snapshot for the UI thread. This is the single publish

@@ -1299,6 +1299,10 @@ struct InputPage
     std::shared_ptr<Label> warning;
     std::shared_ptr<Hideable> warningBox;
     std::unique_ptr<CredentialTest> credentialTest;
+    std::shared_ptr<Button> japaneseDownload;
+    std::shared_ptr<Label> japaneseStatus;
+    std::shared_ptr<Hideable> japaneseRestart;
+    UINT_PTR japanesePoll = 0;
 
     // Models
     ModelRow neural;
@@ -1823,6 +1827,23 @@ VisualPtr BuildInputPage(PageContext &context)
             context, [s]() { return "translation." + s->provider; }, [s]() { return s->TestConfig(); },
             [s]() { return s->provider == "ai" ? s->AiState() : s->TestConfig(); });
 
+        s->japaneseDownload = std::make_shared<Button>(L"下载并构建", ButtonKind::Secondary);
+        s->japaneseDownload->SetOnClick([model]() { model->Post("japaneseDictionaryBuild"); });
+        s->japaneseStatus = std::make_shared<Label>(L"尚未下载日语词库", CaptionStyle());
+        auto restartJapanese = std::make_shared<Button>(L"重启生效", ButtonKind::Secondary);
+        restartJapanese->SetOnClick([model]() { model->Post("restartServer"); });
+        s->japaneseRestart = std::make_shared<Hideable>(restartJapanese, false);
+        auto japaneseActions = std::make_shared<Row>(10.0f);
+        japaneseActions->Add(s->japaneseDownload);
+        japaneseActions->Add(s->japaneseRestart);
+        auto japaneseSources = std::make_shared<Button>(L"来源与授权", ButtonKind::Secondary);
+        japaneseSources->SetOnClick([model]() {
+            model->Post("openExternalUrl",
+                        "https://github.com/metasequoiaime/msime-windows/blob/develop/japanese-dictionary/README.md");
+        });
+        auto japanese =
+            Col({LanguageRow(L"日语释义词库", L"从开放词典下载并构建，需要 Python 3.10 或以上", japaneseActions),
+                 s->japaneseStatus, japaneseSources});
         auto options = Col(
             {std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"显示词性", L"显示译文中的 n.、v. 等词性标记，关闭后仅显示释义", s->showPosBlock)),
@@ -1834,7 +1855,8 @@ VisualPtr BuildInputPage(PageContext &context)
                                     L"可使用腾讯云、小牛翻译、自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置",
                                     provider)),
              std::make_shared<Divider>(Divider::Kind::Option),
-             blockInput(LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用所选在线服务", target)),
+             blockInput(LanguageRow(L"目标语种", L"英语、日语优先使用本地词库；本地未命中时使用所选在线服务", target)),
+             std::make_shared<Divider>(Divider::Kind::Option), blockInput(japanese),
              std::make_shared<Divider>(Divider::Kind::Option), s->providerFields["tencent"],
              s->providerFields["niutrans"], s->providerFields["custom"], s->providerFields["ai"], s->warningBox,
              s->credentialTest->View()});
@@ -2107,6 +2129,19 @@ VisualPtr BuildInputPage(PageContext &context)
         s->fields["customTranslationEndpoint"]->SetText(Widen(model->GetString("custom_translation.endpoint")));
         s->fields["customTranslationApiKey"]->SetText(Widen(model->GetString("custom_translation.api_key")));
         s->SyncProviderView();
+
+        {
+            const Json *status = model->Find("general.japanese_dictionary_status");
+            const bool busy = StateOf(status) == "building";
+            s->japaneseDownload->SetDisabled(busy);
+            s->japaneseStatus->SetText(status ? Widen(status->value("message", std::string())) : L"");
+            s->japaneseRestart->SetVisible(StateOf(status) == "ready");
+            if (busy && s->japanesePoll == 0)
+                s->japanesePoll = PageTimers::Start(host->Hwnd(), 2000, true,
+                                                    [model]() { model->Post("japaneseDictionaryStatusRequest"); });
+            else if (!busy)
+                PageTimers::Stop(s->japanesePoll);
+        }
 
         // Neural model row (applyNeuralModelStatus).
         {

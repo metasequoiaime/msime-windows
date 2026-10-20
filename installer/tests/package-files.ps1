@@ -44,6 +44,7 @@ try {
         'neural-model/NOTICE.md',
         'server/assets/settings/arrow.svg',
         'server/assets/settings/sidebar/about.svg',
+        'server/assets/dictionaries/build_japanese_dictionary.py',
         'skins/default/fluent/skin.toml',
         'skins/default/canvas/skin.toml'
     )) { Write-Fixture $file }
@@ -58,6 +59,7 @@ try {
     & (Join-Path $installer 'Prepare-PackageFiles.ps1') -RepoRoot $fixture -TargetVersion '2026.9.1' -IncludeSymbols
     foreach ($file in @('app_data/assets/settings/arrow.svg', 'app_data/assets/settings/sidebar/about.svg',
                          'app_data/dictionary-manifest.json',
+                         'app_data/assets/dictionaries/build_japanese_dictionary.py',
                          'app_data/sc.lm', 'app_data/libime-lm-NOTICE.md', 'app_data/dict_pinyin.dat',
                          'app_data/sentence-model.safetensors', 'app_data/chinese-ime-lm-NOTICE.md',
                          'tsf_dll/32/MetasequoiaImeTsf.dll', 'tsf_dll/32/MetasequoiaImeTsf.pdb',
