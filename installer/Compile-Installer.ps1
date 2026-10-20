@@ -2,6 +2,9 @@
 param(
     [string]$IsccPath,
     [string]$IssPath = (Join-Path $PSScriptRoot 'msime_setup.iss'),
+    # 追加到输出文件名末尾的渠道后缀（如 win7），走 /DOutputSuffixChannel 传入；
+    # 与 _light 后缀叠加时顺序为 _light_<channel>。
+    [string]$OutputSuffix,
     [switch]$Light
 )
 
@@ -84,6 +87,10 @@ $isccArgs = @()
 if ($Light) {
     $isccArgs += '/DLightPackage=1'
     Write-Host '轻量模式：安装包不含词库，输出文件名带 _light。'
+}
+if ($OutputSuffix) {
+    $isccArgs += "/DOutputSuffixChannel=$OutputSuffix"
+    Write-Host "渠道后缀：输出文件名带 _$OutputSuffix。"
 }
 $isccArgs += $resolvedIssPath
 

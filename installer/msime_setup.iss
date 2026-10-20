@@ -49,7 +49,16 @@
 #define MyTsfRoot32    "{syswow64}\IME\MetasequoiaIME"
 #ifdef LightPackage
 #define MyOutputSuffix "_light"
-#else
+#endif
+#ifdef OutputSuffixChannel
+  #ifdef MyOutputSuffix
+    #undef MyOutputSuffix
+    #define MyOutputSuffix "_light_" + OutputSuffixChannel
+  #else
+    #define MyOutputSuffix "_" + OutputSuffixChannel
+  #endif
+#endif
+#ifndef MyOutputSuffix
 #define MyOutputSuffix ""
 #endif
 

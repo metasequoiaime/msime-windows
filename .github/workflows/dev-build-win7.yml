@@ -1,0 +1,346 @@
+name: Dev build (Windows 7)
+
+# Windows 7 SP1 test channel. Mirrors dev-build.yml but:
+#
+#   - runs on windows-2022, whose preinstalled v143 toolset still officially targets
+#     Windows 7 SP1 (VS2026's v145 dropped the 7/8/8.1 targets);
+#   - builds BOTH payloads with v143: the Server with -DMSIME_WIN7=ON, and the TSF DLL
+#     plain (the text service is Windows 7 compatible as-is, but it must not be built by
+#     v145 either -- its static CRT imports Windows 8+ APIs directly);
+#   - compiles out the Windows 8+/10+ backends (DirectComposition,
+#     Windows.UI.Composition, Doubao streaming ASR, the handwriting panel) and pins
+#     _WIN32_WINNT to 0x0601 so every stray Win8+ API fails to compile instead of
+#     failing to load on the target OS;
+#   - audits the produced binaries statically (dumpbin: PE version fields, import tables)
+#     because no real Windows 7 device is part of the loop;
+#   - packages with the same installer pipeline, output name carries a -win7 suffix.
+#
+# Same test-channel rules as dev-build.yml: -dev version suffix, per-run self-signed
+# certificate, no release, 7-day artifacts. develop/main never trigger this.
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Which component to build (all = full signed installer)
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - tip
+          - server
+  push:
+    branches-ignore:
+      - develop
+      - main
+      - 'release-please--*'
+    tags-ignore:
+      - '**'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches:
+      - develop
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+# Same ref, newer run wins; an older run keeps burning a runner for nothing.
+concurrency:
+  group: dev-build-win7-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEV_ARTIFACT_RETENTION: 7
+
+jobs:
+  tip:
+    name: TSF ${{ matrix.name }} (Win7 toolset)
+    if: ${{ (inputs.component || 'all') == 'all' || (inputs.component || 'all') == 'tip' }}
+    runs-on: windows-2022
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64
+            architecture: x64
+            triplet: x64-windows-static
+            build_dir: windows/build64-release
+          - name: Win32
+            architecture: Win32
+            triplet: x86-windows-static
+            build_dir: windows/build32-release
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Stamp the dev version into the resource
+        shell: pwsh
+        run: |
+          $base = python scripts/dev-build-version.py --base
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $date = python scripts/dev-build-version.py --date
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/apply_version.py --version "$base.$date"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Restore dependency binaries
+        id: vcpkg-cache
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          scope: win7-tip-${{ matrix.triplet }}
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: windows
+        run: vcpkg install --triplet ${{ matrix.triplet }}
+      - name: Save dependency binaries before compiling
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S windows -B ${{ matrix.build_dir }} -A ${{ matrix.architecture }}
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+      - name: Build
+        shell: pwsh
+        run: cmake --build ${{ matrix.build_dir }} --config Release --parallel
+      - name: Set up MSVC environment
+        # dumpbin for the Windows 7 compatibility audit below is not on PATH under the
+        # Visual Studio generator; the server job sets the same step for Ninja.
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Check the Release binary and symbols
+        shell: pwsh
+        run: ./scripts/ci/check-tsf-dll.ps1 -BuildDir '${{ matrix.build_dir }}'
+      - name: Audit Windows 7 compatibility
+        shell: pwsh
+        run: ./scripts/ci/check-win7-compat.ps1 -BuildDir '${{ matrix.build_dir }}/Release'
+      - name: Upload the TSF binary and symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-tsf-win7-${{ matrix.name }}
+          retention-days: 7
+          # Same layout convention as the release workflow: download-artifact restores the
+          # directory contents where Prepare-PackageFiles.ps1 expects them.
+          path: ${{ matrix.build_dir }}/Release
+          if-no-files-found: error
+
+  server:
+    name: Server (Win7)
+    if: ${{ (inputs.component || 'all') == 'all' || (inputs.component || 'all') == 'server' }}
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Stamp the dev version into the resource
+        # Same stamping contract as the main dev-build: keep every build of this run on
+        # one version so the installer, DLL resources and about page agree.
+        shell: pwsh
+        run: |
+          $base = python scripts/dev-build-version.py --base
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $date = python scripts/dev-build-version.py --date
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/apply_version.py --version "$base.$date"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Restore dependency binaries
+        id: vcpkg-cache
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          scope: win7-server
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Set up sccache
+        id: sccache
+        continue-on-error: true
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - name: Install Boost
+        shell: pwsh
+        run: ./scripts/ci/install-boost.ps1
+      - name: Save Boost binaries before configuring
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) && steps.vcpkg-cache.outputs.matched-key != format('{0}-boost', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-boost
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: server
+        run: vcpkg install --triplet x64-windows
+      - name: Save dependency binaries before compiling
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+      - name: Configure
+        shell: pwsh
+        run: |
+          $display = python scripts/dev-build-version.py --display
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cmakeArgs = @(
+            '-S', 'server', '-B', 'server/build-release', '-G', 'Ninja Multi-Config',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            '-DVCPKG_TARGET_TRIPLET=x64-windows',
+            '-DMSIME_WIN7=ON',
+            "-DMSIME_PRODUCT_VERSION_OVERRIDE=$display"
+          )
+          $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
+          cmake @cmakeArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build
+        shell: pwsh
+        run: cmake --build server/build-release --config Release --parallel
+      - name: Check the Release binaries and symbols
+        shell: pwsh
+        run: ./scripts/ci/check-server-binaries.ps1 -BuildDir server/build-release/bin/Release
+      - name: Audit Windows 7 compatibility
+        shell: pwsh
+        run: ./scripts/ci/check-win7-compat.ps1 -BuildDir server/build-release/bin/Release
+      - name: Embed the Server uiAccess manifest
+        shell: pwsh
+        run: ./scripts/ci/embed-server-manifest.ps1 -BuildDir server/build-release/bin/Release
+      - name: Upload the Server build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-server-win7
+          retention-days: 7
+          path: server/build-release/bin/Release
+          if-no-files-found: error
+
+  package:
+    name: Package installer (Win7)
+    needs: [tip, server]
+    # Only component=all produces an installer, same rule as the main dev-build: packaging
+    # needs both TSF architectures and the Server, all from this same run (the Win7 TSF
+    # build is not interchangeable with the v145 one from dev-build.yml).
+    if: ${{ !cancelled() && needs.tip.result == 'success' && needs.server.result == 'success' && (inputs.component || 'all') == 'all' }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Read the dev version
+        id: version
+        shell: pwsh
+        run: |
+          $display = python scripts/dev-build-version.py --display
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "display=$display" >> $env:GITHUB_OUTPUT
+          "installer=installer/Output/MetasequoiaIME_Setup_v${display}_win7.exe" >> $env:GITHUB_OUTPUT
+      - name: Download the Win7 Server build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-server-win7
+          path: server/build-release/bin/Release
+      - name: Download the x64 TSF binary and symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-tsf-win7-x64
+          path: windows/build64-release/Release
+      - name: Download the 32-bit TSF binary and symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-tsf-win7-Win32
+          path: windows/build32-release/Release
+      - name: Download the dictionaries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STAGING_ROOT: .
+        run: bash scripts/ci/download-dictionaries.sh
+      - name: Build the word-lattice language model
+        shell: pwsh
+        run: ./scripts/build-language-model.ps1
+      - name: Download the neural sentence models
+        shell: pwsh
+        run: ./scripts/fetch-neural-model.ps1
+      - name: Collect the installer payload
+        shell: pwsh
+        working-directory: installer
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+        run: >
+          pwsh -File ./Prepare-PackageFiles.ps1 -TargetVersion $env:TARGET_VERSION
+          -RepoRoot (Resolve-Path '..').Path
+          -TsfDirectory windows -ServerDirectory server -NoticesDirectory .
+          -HelpCodeDirectory engine/helpcode
+      - name: Sign the payload binaries
+        shell: pwsh
+        working-directory: installer
+        env:
+          DEV_CERT_PATH: ${{ runner.temp }}/dev-build.cer
+        run: ./sign-dev-build.ps1
+      - name: Install the Chinese language file for Inno Setup
+        shell: pwsh
+        run: ./scripts/ci/install-inno-language.ps1
+      - name: Compile the installer
+        shell: pwsh
+        working-directory: installer
+        run: pwsh -File ./Compile-Installer.ps1 -OutputSuffix win7
+      - name: Sign the installer
+        shell: pwsh
+        working-directory: installer
+        env:
+          DEV_CERT_PATH: ${{ runner.temp }}/dev-build.cer
+        run: ./sign-dev-build.ps1 -Installer
+      - name: Name the artifact and record its checksum
+        id: asset
+        shell: pwsh
+        working-directory: installer
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+        run: |
+          $built = "Output/MetasequoiaIME_Setup_v${env:TARGET_VERSION}_win7.exe"
+          if (-not (Test-Path $built)) { throw "Inno Setup did not produce $built" }
+          $hash = (Get-FileHash $built -Algorithm SHA256).Hash.ToLower()
+          $size = [math]::Round((Get-Item $built).Length / 1MB, 1)
+          Write-Host "$built ($size MB, sha256 $hash)"
+          "installer_path=$((Resolve-Path $built).Path)" >> $env:GITHUB_OUTPUT
+          "installer_sha256=$hash" >> $env:GITHUB_OUTPUT
+      - name: Upload the installer and the signing certificate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-installer-win7
+          retention-days: 7
+          path: |
+            ${{ steps.asset.outputs.installer_path }}
+            ${{ runner.temp }}/dev-build.cer
+            installer/import-dev-trust.ps1
+          if-no-files-found: error
+      - name: Summarise the build
+        shell: pwsh
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+          INSTALLER_SHA256: ${{ steps.asset.outputs.installer_sha256 }}
+        run: |
+          @(
+            '### Dev build (Windows 7)'
+            ''
+            "| Field | Value |"
+            "| --- | --- |"
+            "| Version | $env:TARGET_VERSION |"
+            "| Installer SHA256 | ``$env:INSTALLER_SHA256`` |"
+            ''
+            'Reduced feature set: no Doubao streaming ASR, no handwriting panel, no backdrop'
+            'blur; Direct2D 1.1 requires the KB2670838 platform update, TLS 1.2 the KB3140245'
+            'fix, and the UCRT api-ms-win-crt-* forwarders KB2999226 (preinstalled on any'
+            'Windows 7 with updates since 2016). To install: download the artifact, unzip,'
+            'then in an **admin** PowerShell run `import-dev-trust.ps1` and launch the installer.'
+          ) >> $env:GITHUB_STEP_SUMMARY
