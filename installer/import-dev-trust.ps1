@@ -1,4 +1,4 @@
-# 信任一张 dev-build 签名证书并清理旧证书。
+﻿# 信任一张 dev-build 签名证书并清理旧证书。
 #
 # CI 的 dev-build workflow 每次运行现场生成一张自签名代码签名证书，签完整包后把公钥
 # （.cer）放进 artifact。指纹每次都变，但 subject 固定，所以本脚本先把本地受信任存储里
