@@ -6,6 +6,29 @@ target_include_directories(test_voice_control_dispatch PRIVATE ../src "${MSIME_E
 target_compile_features(test_voice_control_dispatch PRIVATE cxx_std_17)
 add_test(NAME voice_control_dispatch COMMAND test_voice_control_dispatch)
 
+# Drives the real voice control queue and keyboard-hook entry with a gated fake
+# microphone; this is not a portable state-machine copy.
+add_executable(test_voice_lock_recovery
+    src/test_voice_lock_recovery.cpp
+    ${CMAKE_SOURCE_DIR}/src/voice-input/voice_input_service.cpp
+    ${CMAKE_SOURCE_DIR}/src/voice-input/voice_providers.cpp
+    ${CMAKE_SOURCE_DIR}/src/voice-input/voice_batch_protocol.cpp)
+target_compile_definitions(test_voice_lock_recovery PRIVATE MSIME_VOICE_CONTROL_TEST)
+target_include_directories(test_voice_lock_recovery
+    PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${MSIME_REPO_ROOT}"
+    "${MSIME_ENGINE_DIR}")
+target_link_libraries(test_voice_lock_recovery
+    PRIVATE
+    MetasequoiaIme::Voice
+    CURL::libcurl
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    user32)
+add_test(NAME voice_lock_recovery COMMAND test_voice_lock_recovery)
+set_tests_properties(voice_lock_recovery PROPERTIES TIMEOUT 60)
+
 set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark_model_path.cpp"

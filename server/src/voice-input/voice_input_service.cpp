@@ -4,6 +4,7 @@
 #include <limits>
 
 #include "voice_input_service.h"
+#include "voice_input_gesture.h"
 #include "config/ime_config.h"
 #include "doubao_asr_client.h"
 #include "log/candidate_diag_log.h"
@@ -35,6 +36,13 @@
 #include <thread>
 #include <vector>
 
+#ifdef MSIME_VOICE_CONTROL_TEST
+namespace VoiceInput::Detail
+{
+void ControlQueueCheckpoint(bool idle);
+}
+#endif
+
 namespace
 {
 constexpr unsigned kSampleRate = 16000;
@@ -64,7 +72,17 @@ enum class ControlCommand
     Cancel,
     Exit
 };
-std::deque<ControlCommand> g_control_commands;
+struct ControlRequest
+{
+    ControlCommand command;
+    std::uintptr_t lock_ticket;
+};
+std::deque<ControlRequest> g_control_commands;
+// 0 = no lock; an even ticket = Space asked for a lock the control thread has
+// not applied yet; ticket | 1 = applied. Tickets are never reused, so a command
+// carrying an old ticket cannot touch a newer request.
+std::atomic<std::uintptr_t> g_lock_state{0};
+std::atomic<std::uintptr_t> g_next_lock_ticket{2};
 std::atomic<bool> g_recording{false};
 std::atomic<bool> g_starting{false};
 std::atomic<bool> g_abort_start{false};
@@ -82,7 +100,6 @@ std::atomic<bool> g_lwin_pressed{false};
 std::atomic<bool> g_rwin_pressed{false};
 std::atomic<bool> g_f9_pressed{false};
 std::atomic<bool> g_ctrl_f9_consumed{false};
-std::atomic<bool> g_ralt_lock_mode{false};
 std::atomic<bool> g_suppress_ralt_until_up{false};
 std::atomic<bool> g_suppress_win_until_up{false};
 enum class HoldShortcut
@@ -121,8 +138,8 @@ std::wstring ResolveCuePath(const wchar_t *filename)
 }
 
 bool StartRecording();
-void StopRecording();
-void CancelRecording();
+void StopRecording(std::uintptr_t lock_ticket);
+void CancelRecording(std::uintptr_t lock_ticket);
 void DiscardRecording(const VoiceInputConfig &config);
 
 void MuteSystemAudioIfEnabled(const VoiceInputConfig &config)
@@ -140,73 +157,161 @@ void RestoreSystemAudioIfMuted()
     VoiceInput::RestoreOtherSystemAudio();
 }
 
-void EnqueueControlCommand(ControlCommand command)
+std::uintptr_t LockTicketOf(std::uintptr_t state)
+{
+    return state & ~std::uintptr_t{1};
+}
+
+std::uintptr_t CurrentLockTicket()
+{
+    return LockTicketOf(g_lock_state.load(std::memory_order_acquire));
+}
+
+// Clear the pending or applied lock only when it belongs to the request the
+// command was created for. A newer Space request always has a newer ticket.
+void ClearLockForRequest(std::uintptr_t lock_ticket)
+{
+    if (lock_ticket == 0)
+        return;
+    std::uintptr_t state = g_lock_state.load(std::memory_order_acquire);
+    while (LockTicketOf(state) == lock_ticket)
+    {
+        if (g_lock_state.compare_exchange_weak(state, 0, std::memory_order_acq_rel, std::memory_order_acquire))
+            return;
+    }
+}
+
+// A Stop/Cancel executes on the control thread, so an applied lock present at
+// its entry belongs to the recording it is ending. Clear that applied lock, or
+// the pending request carrying this command's ticket; a newer pending request
+// must stay for its own Lock command.
+void ClearRecordingLock(std::uintptr_t lock_ticket)
+{
+    std::uintptr_t state = g_lock_state.load(std::memory_order_acquire);
+    while (state != 0 && ((state & std::uintptr_t{1}) != 0 || LockTicketOf(state) == lock_ticket))
+    {
+        if (g_lock_state.compare_exchange_weak(state, 0, std::memory_order_acq_rel, std::memory_order_acquire))
+            return;
+    }
+}
+
+void EnqueueControlCommand(ControlCommand command, std::uintptr_t lock_ticket = 0)
 {
     {
         std::lock_guard<std::mutex> lock(g_control_mutex);
         if (command == ControlCommand::Start)
         {
-            if (!g_control_commands.empty() && g_control_commands.back() == ControlCommand::Start)
+            if (!g_control_commands.empty() && g_control_commands.back().command == ControlCommand::Start)
                 return;
         }
         else if (command == ControlCommand::Stop || command == ControlCommand::Cancel)
         {
             if (g_starting)
                 g_abort_start = true;
-            if (!g_control_commands.empty() && g_control_commands.back() == ControlCommand::Start)
-            {
-                g_control_commands.pop_back();
-                if (!g_recording && !g_starting)
-                {
-                    g_abort_start = false;
-                    return;
-                }
-            }
+            // A pending Lock may follow Start, so the tail alone cannot tell
+            // whether a cancelled startup is still waiting in the queue.
+            const auto first_removed =
+                std::remove_if(g_control_commands.begin(), g_control_commands.end(),
+                               [](const ControlRequest &request) { return request.command == ControlCommand::Start; });
+            const bool removed_start = first_removed != g_control_commands.end();
+            g_control_commands.erase(first_removed, g_control_commands.end());
+            if (removed_start && !g_recording && !g_starting)
+                g_abort_start = false;
             if (!g_recording && !g_starting)
+            {
+                // Nothing is capturing and no start is marked as in flight.
+                // Keep any pending ASR result, but still retire the ticket this
+                // Stop/Cancel was created for.
+                ClearLockForRequest(lock_ticket);
                 return;
-            if (!g_control_commands.empty() && (g_control_commands.back() == ControlCommand::Stop ||
-                                                g_control_commands.back() == ControlCommand::Cancel))
+            }
+            if (!g_control_commands.empty() && g_control_commands.back().command == command &&
+                g_control_commands.back().lock_ticket == lock_ticket)
                 return;
         }
-        g_control_commands.push_back(command);
+        g_control_commands.push_back({command, lock_ticket});
     }
     g_control_cv.notify_one();
+}
+
+void ApplyLockRequest(std::uintptr_t lock_ticket)
+{
+    if (lock_ticket == 0)
+        return;
+    std::uintptr_t expected = lock_ticket;
+    if (g_recording)
+    {
+        if (g_lock_state.compare_exchange_strong(expected, lock_ticket | std::uintptr_t{1}, std::memory_order_acq_rel,
+                                                 std::memory_order_acquire))
+            g_overlay.set_actions_visible(true);
+    }
+    else
+    {
+        g_lock_state.compare_exchange_strong(expected, 0, std::memory_order_acq_rel, std::memory_order_acquire);
+    }
 }
 
 void ControlLoop()
 {
     for (;;)
     {
-        ControlCommand command;
+#ifdef MSIME_VOICE_CONTROL_TEST
+        // The test gate runs outside the queue mutex so hook messages and
+        // Stop/Cancel can enqueue while the worker is parked before dequeue.
+        bool idle;
+        {
+            std::lock_guard<std::mutex> lock(g_control_mutex);
+            idle = g_control_commands.empty();
+        }
+        VoiceInput::Detail::ControlQueueCheckpoint(idle);
+#endif
+        ControlRequest request;
+        bool starts_recording = false;
         {
             std::unique_lock<std::mutex> lock(g_control_mutex);
             g_control_cv.wait(lock, [] { return !g_control_commands.empty(); });
-            command = g_control_commands.front();
+            request = g_control_commands.front();
             g_control_commands.pop_front();
+            // Mark startup in the same critical section that removes the
+            // request. A Stop/Cancel arriving while GetConfig or the provider
+            // prep still runs must see g_starting instead of an idle gap.
+            if ((request.command == ControlCommand::Start || request.command == ControlCommand::Toggle) && !g_recording)
+            {
+                starts_recording = true;
+                g_starting = true;
+            }
         }
-        if (command == ControlCommand::Exit)
+        if (request.command == ControlCommand::Exit)
         {
             g_cue_player.shutdown();
             return;
         }
-        if (command == ControlCommand::Start)
+        if (request.command == ControlCommand::Start)
             StartRecording();
-        else if (command == ControlCommand::Stop)
-            StopRecording();
-        else if (command == ControlCommand::Toggle)
+        else if (request.command == ControlCommand::Stop)
+            StopRecording(request.lock_ticket);
+        else if (request.command == ControlCommand::Toggle)
         {
-            if (g_recording)
-                StopRecording();
-            else
+            // The decision was already made when the request was dequeued;
+            // only this thread changes g_recording between the two points.
+            if (starts_recording)
                 StartRecording();
+            else
+                StopRecording(request.lock_ticket);
         }
-        else if (command == ControlCommand::Lock)
+        else if (request.command == ControlCommand::Lock)
+            ApplyLockRequest(request.lock_ticket);
+        else if (request.command == ControlCommand::Cancel)
+            CancelRecording(request.lock_ticket);
+        if (starts_recording)
         {
-            g_ralt_lock_mode = true;
-            g_overlay.set_actions_visible(true);
+            // Every StartRecording return path lands here. A late Stop/Cancel
+            // may have set g_abort_start; that request is queued and will
+            // handle the recording, but the flag must not poison the next start.
+            std::lock_guard<std::mutex> lock(g_control_mutex);
+            g_starting = false;
+            g_abort_start = false;
         }
-        else if (command == ControlCommand::Cancel)
-            CancelRecording();
     }
 }
 
@@ -237,6 +342,7 @@ void ResetKeyboardShortcutState()
     g_suppress_ralt_until_up = false;
     g_suppress_win_until_up = false;
     g_active_hold_shortcut = HoldShortcut::None;
+    g_lock_state = 0;
 }
 
 bool IsHoldShortcutPressed(HoldShortcut shortcut)
@@ -261,7 +367,30 @@ void ActivateHoldShortcut(HoldShortcut shortcut)
         g_suppress_ralt_until_up = true;
     else if (shortcut == HoldShortcut::CtrlWin)
         g_suppress_win_until_up = true;
-    PostMessageW(g_message_window, g_ralt_lock_mode ? kStopRecordingMessage : kStartRecordingMessage, 0, 0);
+    const std::uintptr_t lock_state = g_lock_state.load(std::memory_order_acquire);
+    PostMessageW(g_message_window, lock_state != 0 ? kStopRecordingMessage : kStartRecordingMessage,
+                 LockTicketOf(lock_state), 0);
+}
+
+void RequestLock()
+{
+    if (g_lock_state.load(std::memory_order_acquire) != 0)
+        return;
+    const std::uintptr_t lock_ticket = g_next_lock_ticket.fetch_add(2, std::memory_order_relaxed);
+    std::uintptr_t expected = 0;
+    if (!g_lock_state.compare_exchange_strong(expected, lock_ticket, std::memory_order_acq_rel,
+                                              std::memory_order_acquire))
+        return;
+    if (!PostMessageW(g_message_window, kLockRecordingMessage, lock_ticket, 0))
+        ClearLockForRequest(lock_ticket);
+}
+
+void ReleaseHoldShortcut()
+{
+    // Do not cancel a pending lock here; its Lock command decides whether the
+    // recording exists to apply it to. Only a truly unlocked hold stops now.
+    if (g_lock_state.load(std::memory_order_acquire) == 0)
+        PostMessageW(g_message_window, kStopRecordingMessage, 0, 0);
 }
 
 void ForceReleaseRAlt()
@@ -281,23 +410,23 @@ LRESULT CALLBACK VoiceMessageWindowProc(HWND hwnd, UINT message, WPARAM wparam, 
         EnqueueControlCommand(ControlCommand::Start);
         return 0;
     case kStopRecordingMessage:
-        EnqueueControlCommand(ControlCommand::Stop);
+        EnqueueControlCommand(ControlCommand::Stop, static_cast<std::uintptr_t>(wparam));
         return 0;
     case kToggleRecordingMessage:
-        EnqueueControlCommand(ControlCommand::Toggle);
+        EnqueueControlCommand(ControlCommand::Toggle, static_cast<std::uintptr_t>(wparam));
         return 0;
     case kLockRecordingMessage:
-        EnqueueControlCommand(ControlCommand::Lock);
+        EnqueueControlCommand(ControlCommand::Lock, static_cast<std::uintptr_t>(wparam));
         return 0;
     case kCancelRecordingMessage:
-        EnqueueControlCommand(ControlCommand::Cancel);
+        EnqueueControlCommand(ControlCommand::Cancel, static_cast<std::uintptr_t>(wparam));
         return 0;
     default:
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
 }
 
-LRESULT CALLBACK KeyboardHookProc(int code, WPARAM wparam, LPARAM lparam)
+LRESULT CALLBACK HandleKeyboardHook(int code, WPARAM wparam, LPARAM lparam)
 {
     if (code != HC_ACTION)
         return CallNextHookEx(g_keyboard_hook, code, wparam, lparam);
@@ -341,7 +470,7 @@ LRESULT CALLBACK KeyboardHookProc(int code, WPARAM wparam, LPARAM lparam)
     if (key->vkCode == VK_ESCAPE && g_recording.load())
     {
         if (down)
-            PostMessageW(g_message_window, kCancelRecordingMessage, 0, 0);
+            PostMessageW(g_message_window, kCancelRecordingMessage, CurrentLockTicket(), 0);
         return 1;
     }
 
@@ -365,7 +494,7 @@ LRESULT CALLBACK KeyboardHookProc(int code, WPARAM wparam, LPARAM lparam)
         if (down && !g_f9_pressed.exchange(true) && IsCtrlPressed())
         {
             g_ctrl_f9_consumed = true;
-            PostMessageW(g_message_window, kToggleRecordingMessage, 0, 0);
+            PostMessageW(g_message_window, kToggleRecordingMessage, CurrentLockTicket(), 0);
             return 1;
         }
         if (up)
@@ -393,15 +522,14 @@ LRESULT CALLBACK KeyboardHookProc(int code, WPARAM wparam, LPARAM lparam)
     else if (active_before != HoldShortcut::None && up && !IsHoldShortcutPressed(active_before))
     {
         g_active_hold_shortcut = HoldShortcut::None;
-        if (!g_ralt_lock_mode)
-            PostMessageW(g_message_window, kStopRecordingMessage, 0, 0);
+        ReleaseHoldShortcut();
     }
 
     const HoldShortcut active_now = g_active_hold_shortcut.load();
     if (key->vkCode == VK_SPACE && active_now != HoldShortcut::None && config.hotkey_hold_space_lock)
     {
-        if (down && !g_ralt_lock_mode)
-            PostMessageW(g_message_window, kLockRecordingMessage, 0, 0);
+        if (down)
+            RequestLock();
         return 1;
     }
 
@@ -876,8 +1004,8 @@ void AudioCallback(const float *samples, std::size_t frames)
 void AbortPendingStart(const char *reason)
 {
     (void)reason;
-    g_starting = false;
-    g_abort_start = false;
+    // The control loop owns the startup/completion flags; this only unwinds the
+    // partially prepared capture and session.
     ++g_voice_session;
     g_stream_inline_this_session.store(false);
     g_last_inline_preedit.clear();
@@ -907,6 +1035,11 @@ bool StartRecording()
     if (g_abort_start.exchange(false))
         return false;
     const VoiceInputConfig config = GetConfiguredVoiceInput();
+    // Deactivation or a queued Cancel may arrive while this Start waits for
+    // configuration; it must not begin a capture after that point.
+    const bool aborted_after_config = g_abort_start.exchange(false);
+    if (!g_ime_active || aborted_after_config)
+        return false;
     if (!config.enabled)
         return false;
     const bool use_doubao = VoiceInput::IsDoubaoAsrProvider(config.asr_provider);
@@ -916,7 +1049,6 @@ bool StartRecording()
         ShowVoiceNotice(L"请先在设置的“语音输入”分区填写当前 ASR 提供商的 API Token。", MB_ICONINFORMATION);
         return false;
     }
-    g_starting = true;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_samples.clear();
@@ -960,11 +1092,10 @@ bool StartRecording()
             g_last_inline_preedit.clear();
             g_doubao_asr.reset();
             ShowVoiceNotice(L"无法启动豆包流式语音识别。请检查 config.toml。");
-            g_starting = false;
             return false;
         }
     }
-    if (g_abort_start.exchange(false))
+    if (!g_ime_active || g_abort_start.exchange(false))
     {
         AbortPendingStart("aborted before capture");
         return false;
@@ -975,14 +1106,13 @@ bool StartRecording()
         ShowVoiceNotice(L"无法启动麦克风。");
         return false;
     }
-    if (g_abort_start.exchange(false))
+    if (!g_ime_active || g_abort_start.exchange(false))
     {
         g_capture.stop();
         AbortPendingStart("aborted after capture start");
         return false;
     }
     g_recording = true;
-    g_starting = false;
     g_overlay.set_input_level(0.0f);
     g_overlay.set_listening(true);
     g_overlay.show();
@@ -992,13 +1122,16 @@ bool StartRecording()
     return true;
 }
 
-void StopRecording()
+void StopRecording(std::uintptr_t lock_ticket)
 {
+    // End the lock of the recording being stopped. An older Stop must not clear
+    // a newer pending request, but an applied lock observed here belongs to
+    // this recording even when the command's ticket was captured earlier.
+    ClearRecordingLock(lock_ticket);
     if (!g_recording)
         return;
     const VoiceInputConfig config = GetConfiguredVoiceInput();
     g_recording = false;
-    g_ralt_lock_mode = false;
     g_overlay.set_listening(false);
     g_overlay.set_input_level(0.0f);
     // 先收掉提示条再关设备：WASAPI 的 stop() 可能阻塞（设备被独占或驱动挂住），
@@ -1141,8 +1274,12 @@ void StopRecording()
         }));
 }
 
-void CancelRecording()
+void CancelRecording(std::uintptr_t lock_ticket)
 {
+    // Cancel terminates the request it was created for, including one whose
+    // Lock message has not reached the control thread yet. Applied locks are
+    // always part of the recording being cancelled.
+    ClearRecordingLock(lock_ticket);
     if (!g_recording)
     {
         {
@@ -1170,7 +1307,6 @@ void DiscardRecording(const VoiceInputConfig &config)
         ++g_voice_session;
         CancelInlinePreedit();
     }
-    g_ralt_lock_mode = false;
     g_overlay.set_listening(false);
     g_overlay.set_input_level(0.0f);
     g_overlay.set_compact_status(WaveOverlay::CompactStatus::None);
@@ -1195,6 +1331,14 @@ void DiscardRecording(const VoiceInputConfig &config)
 }
 } // namespace
 
+namespace VoiceInput::Detail
+{
+LRESULT CALLBACK KeyboardHookProc(int code, WPARAM wparam, LPARAM lparam)
+{
+    return HandleKeyboardHook(code, wparam, lparam);
+}
+} // namespace VoiceInput::Detail
+
 bool VoiceInput::Initialize()
 {
     if (g_initialized)
@@ -1207,13 +1351,13 @@ bool VoiceInput::Initialize()
                 if (!g_recording)
                     ++g_voice_session;
                 if (g_message_window)
-                    PostMessageW(g_message_window, kCancelRecordingMessage, 0, 0);
+                    PostMessageW(g_message_window, kCancelRecordingMessage, CurrentLockTicket(), 0);
                 return;
             }
             if (g_recording)
             {
                 if (g_message_window)
-                    PostMessageW(g_message_window, kStopRecordingMessage, 0, 0);
+                    PostMessageW(g_message_window, kStopRecordingMessage, CurrentLockTicket(), 0);
                 return;
             }
             g_dismissed_overlay_session = g_voice_session.load();
@@ -1238,7 +1382,7 @@ bool VoiceInput::Initialize()
     g_control_thread = std::thread(ControlLoop);
     if (ShouldInstallKeyboardHook(GetConfiguredVoiceInput()))
     {
-        g_keyboard_hook = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHookProc, instance, 0);
+        g_keyboard_hook = SetWindowsHookExW(WH_KEYBOARD_LL, VoiceInput::Detail::KeyboardHookProc, instance, 0);
         if (!g_keyboard_hook)
             return false;
     }
@@ -1260,16 +1404,25 @@ void VoiceInput::RefreshKeyboardHook()
         UnhookWindowsHookEx(g_keyboard_hook);
         g_keyboard_hook = nullptr;
     }
-    if (stop_recording)
-        EnqueueControlCommand(ControlCommand::Stop);
+    if (!config.enabled && !g_recording)
+    {
+        // Cancel covers a Start that is still queued or already marked as
+        // starting. The control queue filters it when only an ASR result
+        // remains, so disabling voice input keeps a finished recognition.
+        EnqueueControlCommand(ControlCommand::Cancel);
+    }
+    else if (stop_recording)
+    {
+        EnqueueControlCommand(ControlCommand::Stop, CurrentLockTicket());
+    }
     ResetKeyboardShortcutState();
-    g_ralt_lock_mode = false;
     if (release_ralt)
         ForceReleaseRAlt();
 
     if (ShouldInstallKeyboardHook(config))
     {
-        g_keyboard_hook = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHookProc, GetModuleHandleW(nullptr), 0);
+        g_keyboard_hook =
+            SetWindowsHookExW(WH_KEYBOARD_LL, VoiceInput::Detail::KeyboardHookProc, GetModuleHandleW(nullptr), 0);
     }
 }
 
@@ -1280,14 +1433,15 @@ void VoiceInput::SetImeActive(bool active)
         return;
 
     g_active_hold_shortcut = HoldShortcut::None;
-    g_ralt_lock_mode = false;
-    if (g_recording)
-        EnqueueControlCommand(ControlCommand::Cancel);
+    g_lock_state = 0;
+    // Cancel covers a queued or starting capture. The control queue filters it
+    // when only an ASR result remains, preserving the finished transcript.
+    EnqueueControlCommand(ControlCommand::Cancel);
 }
 
 void VoiceInput::ToggleRecording()
 {
-    EnqueueControlCommand(ControlCommand::Toggle);
+    EnqueueControlCommand(ControlCommand::Toggle, CurrentLockTicket());
 }
 
 void VoiceInput::StartRecording()
@@ -1297,12 +1451,12 @@ void VoiceInput::StartRecording()
 
 void VoiceInput::StopRecording()
 {
-    EnqueueControlCommand(ControlCommand::Stop);
+    EnqueueControlCommand(ControlCommand::Stop, CurrentLockTicket());
 }
 
 void VoiceInput::CancelRecording()
 {
-    EnqueueControlCommand(ControlCommand::Cancel);
+    EnqueueControlCommand(ControlCommand::Cancel, CurrentLockTicket());
 }
 
 bool VoiceInput::IsRecording()
@@ -1319,7 +1473,7 @@ void VoiceInput::Shutdown()
         g_keyboard_hook = nullptr;
     }
     if (g_recording)
-        EnqueueControlCommand(ControlCommand::Stop);
+        EnqueueControlCommand(ControlCommand::Stop, CurrentLockTicket());
     EnqueueControlCommand(ControlCommand::Exit);
     if (g_control_thread.joinable())
         g_control_thread.join();
@@ -1336,7 +1490,6 @@ void VoiceInput::Shutdown()
     g_cue_player.shutdown();
     g_overlay.shutdown();
     ResetKeyboardShortcutState();
-    g_ralt_lock_mode = false;
     if (release_ralt)
         ForceReleaseRAlt();
     if (g_initialized)

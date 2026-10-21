@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include <string>
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <utility>
 #include "ipc.h"
@@ -557,6 +558,16 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
     return true;
 }
 
+// 按键延迟必须用高精度单调时钟。GetTickCount64 每个系统 tick 才前进一次（约 15.6 ms），
+// 分辨不出 8 ms 阈值以下的差异。steady_clock 在 Windows 上走 QPC。
+using KeyLatencyClock = std::chrono::steady_clock;
+constexpr double kSlowStageThresholdMs = 8.0;
+
+double ElapsedMilliseconds(KeyLatencyClock::time_point start, KeyLatencyClock::time_point end = KeyLatencyClock::now())
+{
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
 // HandleImeKey 的分段计时打点：构造记起点，Stop() 或析构时耗时 >=8ms 才打一条
 // stage=handle-<sub> 分段日志（阈值、字段集与 ScopedServerKeyLatency 一致）。部分调用点
 // 落在 if 条件里，RAII 作用域包不住条件求值，那些点用 Stop() 显式收口；Stop() 只生效
@@ -582,10 +593,10 @@ struct ScopedKeyStage
         if (!stopped_)
         {
             stopped_ = true;
-            const ULONGLONG elapsed_ms = GetTickCount64() - started_at_ms_;
-            if (elapsed_ms >= 8)
+            const double elapsed_ms = ElapsedMilliseconds(started_at_);
+            if (elapsed_ms >= kSlowStageThresholdMs)
             {
-                DIAG_LOGF(L"[key-latency] side=server stage={} request={} client={} epoch={} elapsed_ms={}", stage_,
+                DIAG_LOGF(L"[key-latency] side=server stage={} request={} client={} epoch={} elapsed_ms={:.3f}", stage_,
                           request_id_, client_id_, activation_epoch_, elapsed_ms);
             }
         }
@@ -595,7 +606,7 @@ struct ScopedKeyStage
     uint64_t activation_epoch_;
     uint64_t request_id_;
     const wchar_t *stage_;
-    ULONGLONG started_at_ms_ = GetTickCount64();
+    KeyLatencyClock::time_point started_at_ = KeyLatencyClock::now();
     bool stopped_ = false;
 };
 } // namespace
@@ -607,15 +618,15 @@ struct ScopedServerKeyLatency
     uint64_t client_id;
     uint64_t activation_epoch;
     uint64_t request_id;
-    ULONGLONG started_at_ms = GetTickCount64();
+    KeyLatencyClock::time_point started_at = KeyLatencyClock::now();
 
     ~ScopedServerKeyLatency()
     {
-        const ULONGLONG elapsed_ms = GetTickCount64() - started_at_ms;
-        if (elapsed_ms >= 8)
+        const double elapsed_ms = ElapsedMilliseconds(started_at);
+        if (elapsed_ms >= kSlowStageThresholdMs)
         {
-            DIAG_LOGF(L"[key-latency] side=server stage=handle request={} client={} epoch={} elapsed_ms={}", request_id,
-                      client_id, activation_epoch, elapsed_ms);
+            DIAG_LOGF(L"[key-latency] side=server stage=handle request={} client={} epoch={} elapsed_ms={:.3f}",
+                      request_id, client_id, activation_epoch, elapsed_ms);
         }
     }
 };

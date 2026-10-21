@@ -618,7 +618,7 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
         _KEYSTROKE_STATE keyState = {};
         GUID preservedKey = {};
         uint64_t focusGeneration = 0;
-        ULONGLONG queuedAtMs = 0;
+        std::chrono::steady_clock::time_point queuedAt{};
     };
     enum class KeyDownDispatchResult
     {

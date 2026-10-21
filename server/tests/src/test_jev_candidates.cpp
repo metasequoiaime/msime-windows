@@ -158,6 +158,10 @@ TEST_CASE(jev_accepts_a_configured_endpoint_but_only_over_http)
     // 空端点回落到官方地址；取消回调立刻为真时一个请求都不发。
     REQUIRE(!Jev::Fetch("", "test-only", "{}", [] { return true; }).has_value());
     REQUIRE(!Jev::Fetch(Jev::kEndpoint, "test-only", "{}", [] { return true; }).has_value());
+    // 官方端点缺 Key 时不发请求；自建端点允许空 Token。
+    REQUIRE(!Jev::Fetch("", "", "{}").has_value());
+    REQUIRE(!Jev::Fetch(Jev::kEndpoint, "", "{}").has_value());
+    REQUIRE(!Jev::Fetch("http://127.0.0.1:1", "", "{}").has_value());
 }
 
 TEST_CASE(jev_is_builtin_but_not_a_chat_translation_model)

@@ -2,6 +2,7 @@
 #include "ipc/event_listener_internal.h"
 #include <Windows.h>
 #include <string>
+#include <chrono>
 #include <cstdint>
 #include <utility>
 #include "ipc.h"
@@ -39,7 +40,9 @@ std::shared_ptr<IInputSession> PersistentInputSession()
 // so the state it describes may already be superseded. Normal typing never gets
 // near it: queue waits stay under a few milliseconds unless something blocks the
 // task thread.
-constexpr ULONGLONG kCandidateHideBacklogMs = 24;
+constexpr double kCandidateHideBacklogMs = 24.0;
+// 排队日志与按键分段使用同一个 8 ms 门槛。高精度时钟让这个门槛真正可用。
+constexpr double kSlowQueueThresholdMs = 8.0;
 
 uint64_t g_last_status_snapshot_client_id = 0;
 
@@ -131,7 +134,7 @@ struct Task
     FanyImeNamedpipeData pipe_data = {};
     uint64_t client_id = 0;
     uint64_t activation_epoch = 0;
-    ULONGLONG enqueued_at_ms = 0;
+    std::chrono::steady_clock::time_point enqueued_at{};
     std::string cloud_candidate;
     std::string cloud_pinyin;
     uint64_t cloud_generation = 0;
@@ -160,6 +163,14 @@ struct Task
     int page_steps = 0;
     bool toolbar_from_ime_enabled = false;
 };
+
+// 排队延迟与按键分段共用高精度时钟。零值表示该任务没有记录入队时间。
+double QueueWaitMilliseconds(const Task &task)
+{
+    if (task.enqueued_at == std::chrono::steady_clock::time_point{})
+        return 0.0;
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - task.enqueued_at).count();
+}
 
 std::queue<Task> taskQueue;
 std::mutex queueMutex;
@@ -294,8 +305,8 @@ void WorkerThread()
 
         case TaskType::HideCandidate: {
             ::ReadDataFromNamedPipe(0b100000);
-            const ULONGLONG queue_elapsed_ms = task.enqueued_at_ms == 0 ? 0 : GetTickCount64() - task.enqueued_at_ms;
-            CAND_DIAG_LOGF(L"task HideCandidate client={} epoch={} request={} queued_ms={}", task.client_id,
+            const double queue_elapsed_ms = QueueWaitMilliseconds(task);
+            CAND_DIAG_LOGF(L"task HideCandidate client={} epoch={} request={} queued_ms={:.3f}", task.client_id,
                            task.activation_epoch, task.pipe_data.request_id, queue_elapsed_ms);
             // 顶字/自动上屏推送引发的 TSF HideCandidateWnd：余码组合还活着，绝不能 ClearState，
             // 否则用户刚敲下的那个字母就从服务端组合里消失了。无论组合是否为空都消费一笔记账，
@@ -345,10 +356,10 @@ void WorkerThread()
         }
 
         case TaskType::ImeKeyEvent: {
-            const ULONGLONG queue_elapsed_ms = task.enqueued_at_ms == 0 ? 0 : GetTickCount64() - task.enqueued_at_ms;
-            if (queue_elapsed_ms >= 8)
+            const double queue_elapsed_ms = QueueWaitMilliseconds(task);
+            if (queue_elapsed_ms >= kSlowQueueThresholdMs)
             {
-                DIAG_LOGF(L"[key-latency] side=server stage=queue request={} client={} epoch={} elapsed_ms={}",
+                DIAG_LOGF(L"[key-latency] side=server stage=queue request={} client={} epoch={} elapsed_ms={:.3f}",
                           task.pipe_data.request_id, task.client_id, task.activation_epoch, queue_elapsed_ms);
             }
             // 顶字后第 4 码丢失的定位探针：DLL 侧 keydown-sent 已确认发出，若这里没打出来，
@@ -870,7 +881,7 @@ void EnqueueTask(TaskType type, const FanyImeNamedpipeData &pipeData, uint64_t a
         task.pipe_data = pipeData;
         task.client_id = pipeData.client_id;
         task.activation_epoch = activation_epoch;
-        task.enqueued_at_ms = GetTickCount64();
+        task.enqueued_at = std::chrono::steady_clock::now();
         taskQueue.push(std::move(task));
     }
     pipe_queueCv.notify_one();

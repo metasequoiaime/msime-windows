@@ -36,7 +36,9 @@ AiAssistant::detail::SuggestionCache g_candidate_cache;
 std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev::Client &jev_client)
 {
     const auto &config = request.config;
-    if (!config.enabled || config.token.empty() || config.endpoint.empty() || config.model.empty() ||
+    // 自建或转发的选择器可以不要 Key（如 OpenCode Zen 的免费模型），Jev 的 Token 交给 Jev::Client 判断。
+    const bool token_missing = config.token.empty() && config.provider != "jev";
+    if (!config.enabled || token_missing || config.endpoint.empty() || config.model.empty() ||
         request.pinyin_segments.empty() || g_generation.load() != generation)
     {
         (void)0;

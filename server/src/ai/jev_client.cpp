@@ -90,7 +90,9 @@ std::optional<std::string> Client::Fetch(const std::string &endpoint, const std:
     if (target.empty())
         target = kEndpoint;
     const bool scheme_ok = target.rfind("https://", 0) == 0 || target.rfind("http://", 0) == 0;
-    if (!scheme_ok || (cancelled && cancelled()))
+    // 官方端点必须带 Key，空 Token 发过去只会被拒，还白白把前文送出设备。
+    const bool official_without_token = target == kEndpoint && token.empty();
+    if (!scheme_ok || official_without_token || (cancelled && cancelled()))
         return std::nullopt;
     // Reuse retains TLS connections; no API key or text is logged.
     auto *easy = impl_->easy;
@@ -101,7 +103,7 @@ std::optional<std::string> Client::Fetch(const std::string &endpoint, const std:
     std::string response;
     curl_slist *raw_headers = nullptr;
     raw_headers = curl_slist_append(raw_headers, "Content-Type: application/json");
-    // 自建实现要求带 Bearer 头；空 token 时照发，服务端会忽略。
+    // 自建实现要求带 Bearer 头；空 token 时照发，免 Key 的服务端会忽略空值。
     raw_headers = curl_slist_append(raw_headers, ("Authorization: Bearer " + token).c_str());
     const std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(raw_headers, curl_slist_free_all);
     curl_easy_setopt(easy, CURLOPT_URL, target.c_str());
