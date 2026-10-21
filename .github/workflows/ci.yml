@@ -340,5 +340,7 @@ jobs:
         run: ./installer/tests/retired-desktop-model.ps1
       - name: Stop local packaging after failed component builds
         run: ./installer/tests/build-failures.ps1
+      - name: Test development installer certificate bootstrap without trusting certificates
+        run: ./installer/tests/dev-trust.ps1
       - name: Test local Server test entrypoints in a moved checkout
         run: ./tests/server-test-entrypoints.ps1

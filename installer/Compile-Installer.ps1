@@ -2,6 +2,7 @@
 param(
     [string]$IsccPath,
     [string]$IssPath = (Join-Path $PSScriptRoot 'msime_setup.iss'),
+    [string]$DevCertificatePath,
     [switch]$Light
 )
 
@@ -81,6 +82,12 @@ Write-Host "Inno Setup 编译器：$resolvedIsccPath"
 Write-Host "安装脚本：$resolvedIssPath"
 
 $isccArgs = @()
+if ($DevCertificatePath) {
+    $certificatePath = (Resolve-Path -LiteralPath $DevCertificatePath -ErrorAction Stop).Path
+    $certificateHash = (Get-FileHash -LiteralPath $certificatePath -Algorithm SHA256).Hash
+    $isccArgs += "/DDevCertificate=$certificatePath"
+    $isccArgs += "/DDevCertificateSha256=$certificateHash"
+}
 if ($Light) {
     $isccArgs += '/DLightPackage=1'
     Write-Host '轻量模式：安装包不含词库，输出文件名带 _light。'

@@ -2,8 +2,7 @@ name: Dev build
 
 # Development builds for contributors. The point is that a newcomer does not install vcpkg,
 # Boost, Inno Setup and the Windows SDK to try a change; the runner builds, packages and signs,
-# and the artifact is a full installer with a fresh self-signed certificate plus the public key
-# to trust it.
+# and the artifact is a full installer embedding and importing its fresh test signing certificate.
 #
 # Three ways in. A feature-branch push builds automatically, so the artifact is ready when the
 # push finishes. A pull_request run gives reviewers and fork contributors an installer for real
@@ -329,7 +328,7 @@ jobs:
       - name: Compile the installer
         shell: pwsh
         working-directory: installer
-        run: pwsh -File ./Compile-Installer.ps1
+        run: pwsh -File ./Compile-Installer.ps1 -DevCertificatePath "$env:RUNNER_TEMP/dev-build.cer"
       - name: Sign the installer
         shell: pwsh
         working-directory: installer
@@ -350,15 +349,12 @@ jobs:
           Write-Host "$built ($size MB, sha256 $hash)"
           "installer_path=$((Resolve-Path $built).Path)" >> $env:GITHUB_OUTPUT
           "installer_sha256=$hash" >> $env:GITHUB_OUTPUT
-      - name: Upload the installer and the signing certificate
+      - name: Upload the self-contained development installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dev-installer
           retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
-          path: |
-            ${{ steps.asset.outputs.installer_path }}
-            ${{ runner.temp }}/dev-build.cer
-            installer/import-dev-trust.ps1
+          path: ${{ steps.asset.outputs.installer_path }}
           if-no-files-found: error
       # 免安装包与安装包共用同一次 Prepare-PackageFiles 产物，额外只花一次复制加压缩的工夫。
       # 它解决的问题是「只想看一眼设置窗口」：安装包要管理员权限、装 TSF、导入证书，看界面
@@ -395,9 +391,9 @@ jobs:
             "| Version | $env:TARGET_VERSION |"
             "| Installer SHA256 | ``$env:INSTALLER_SHA256`` |"
             ''
-            'To install: download the artifact, unzip, then in an **admin** PowerShell run'
-            '`import-dev-trust.ps1` and launch the installer. Re-run the trust import for every'
-            'new build; the certificate is minted per run and the script replaces the old one.'
+            'To install: download the artifact, unzip and launch the installer. Approve the Windows'
+            'administrator prompt. The installer imports its embedded test certificate before'
+            'replacing files; no separate certificate or PowerShell command is needed.'
             ''
             "To just look at the settings window: download `dev-settings-portable` ($env:PORTABLE_SIZE MB),"
             'unzip anywhere and double-click `run-settings.cmd`. No admin rights, no certificate, no'

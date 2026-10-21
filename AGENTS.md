@@ -39,7 +39,7 @@ Server 当前仍使用引擎的兼容 `InputSession`，尚未迁移公共 `Sessi
 
 ## 构建
 
-**用户想编译验证但没装工具链时，优先用 dev-build workflow 而不是让用户装 vcpkg**：特性分支 push 自动触发，PR 会自动跑一次，或 `gh workflow run dev-build.yml --ref <分支> -f component=all` 手动触发，然后 `gh run watch` 等它，`gh run download <runId> -n dev-installer` 拿安装包与证书，安装步骤见 [CONTRIBUTING.md](CONTRIBUTING.md#没有本地工具链时dev-build-workflow)。develop 和 main 不触发；版本号带 `-dev.<日期>.<commit>`，与正式发布隔离。
+**用户想编译验证但没装工具链时，优先用 dev-build workflow 而不是让用户装 vcpkg**：特性分支 push 自动触发，PR 会自动跑一次，或 `gh workflow run dev-build.yml --ref <分支> -f component=all` 手动触发，然后 `gh run watch` 等它，`gh run download <runId> -n dev-installer` 拿安装包。开发安装器内嵌并导入匹配的测试证书，用户双击 EXE 并确认管理员授权即可，无需手动运行 PS1；安装步骤见 [CONTRIBUTING.md](CONTRIBUTING.md#没有本地工具链时dev-build-workflow)。develop 和 main 不触发；版本号带 `-dev.<日期>.<commit>`，与正式发布隔离。
 
 每个组件是独立的 CMake 工程，各自带 `vcpkg.json` 和 preset，从仓库根目录指定 `-S`：
 

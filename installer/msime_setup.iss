@@ -83,6 +83,12 @@ VersionInfoVersion={#MyVersionInfo}
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+#ifdef DevCertificate
+[Messages]
+chinesesimplified.ReadyLabel1=本开发测试版会将本次构建的测试证书加入系统信任存储，以便候选窗口正常运行。点击“安装”继续。
+english.ReadyLabel1=This development build will trust its test signing certificate so the candidate window can run. Click Install to continue.
+#endif
+
 [Dirs]
 Name: "{#MyTsfRoot32}\{code:GetVersionDir}"
 Name: "{#MyTsfRoot64}\{code:GetVersionDir}"
@@ -96,6 +102,10 @@ Name: "{code:GetDataDir}\helpcodes\custom"
 Name: "{code:GetDataDir}\shuangpin\custom"
 
 [Files]
+#ifdef DevCertificate
+Source: "{#DevCertificate}"; DestName: "dev-build.cer"; Flags: dontcopy
+Source: "{#MySourceRoot}\import-dev-trust.ps1"; Flags: dontcopy
+#endif
 ; 独立安装应用图标，供 Windows“已安装的应用”列表稳定显示。
 Source: "{#MySourceRoot}\MetasequoiaIME.ico"; \
     DestDir: "{commonpf64}\metasequoiaime"; Flags: ignoreversion
@@ -1589,6 +1599,10 @@ begin
   end;
 end;
 
+#ifdef DevCertificate
+#include "dev_trust.iss"
+#endif
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   DataDirProblem: String;
@@ -1619,6 +1633,12 @@ begin
     Result := DataDirProblem;
     exit;
   end;
+
+#ifdef DevCertificate
+  Result := PrepareDevCertificate;
+  if Result <> '' then
+    exit;
+#endif
 
   { 先锁定本次目录名，再清理能够释放的旧版本 DLL。}
   VersionDirName := GetVersionDir('');
