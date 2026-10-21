@@ -1,4 +1,4 @@
-; Included only in development builds and the isolated installer probe.
+// Included only in development builds and the isolated installer probe.
 function PrepareDevCertificate: String;
 var
   CertificatePath, ScriptPath: String;
