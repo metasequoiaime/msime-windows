@@ -88,7 +88,9 @@ DWORD WaitForSingleObject(int, DWORD)
     return 0;
 }
 
-void Sleep(int) {}
+void Sleep(int)
+{
+}
 
 void MarkNamedpipeSessionDirty()
 {
@@ -97,7 +99,7 @@ void MarkNamedpipeSessionDirty()
 
 #include "focus_activation_source.h"
 
-#define CHECK(condition)                                                                                                \
+#define CHECK(condition)                                                                                               \
     do                                                                                                                 \
     {                                                                                                                  \
         if (!(condition))                                                                                              \

@@ -16,7 +16,9 @@ constexpr UINT WM_IpcReconnect = 2;
 
 struct ITfDocumentMgr
 {
-    void Release() {}
+    void Release()
+    {
+    }
 };
 
 struct FakeThreadMgr
@@ -109,8 +111,12 @@ class CMetasequoiaIME
         return &threadMgr;
     }
 
-    void _RefreshLanguageBarThemeIcons() {}
-    void _ClearSmartPunctuationAction() {}
+    void _RefreshLanguageBarThemeIcons()
+    {
+    }
+    void _ClearSmartPunctuationAction()
+    {
+    }
 
     bool _IsComposing()
     {
