@@ -774,8 +774,12 @@ void WorkerThread()
                 break;
             }
             // 用户在浏览展开面板，保持已显示的顺序，新展开的候选只追加在后面。
-            Global::candidate_ui.begin_selection();
-            ExpandCandidatesKeepingPagePosition();
+            if (Global::candidate_expand_state.load(std::memory_order_acquire) ==
+                FanyImeIpc::CandidateExpandState::Expanded)
+            {
+                Global::candidate_ui.begin_selection();
+                ExpandCandidatesKeepingPagePosition();
+            }
             // 刚打开面板时即使没有新候选，也要重新发布一次，候选页才带上后续候选。
             RefreshCandidatePageUi(true);
             break;

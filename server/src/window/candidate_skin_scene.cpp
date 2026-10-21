@@ -450,6 +450,7 @@ void CandidateSkinScene::Build(bool horizontal, bool pageArrows, bool expandPane
         });
         expandGrid_ = std::make_shared<msimeui::CandidateList>(28.0f);
         expandGrid_->SetOrientation(msimeui::CandidateList::Orientation::Horizontal);
+        expandGrid_->SetSelectionVisible(false);
         expandGrid_->SetOnItemActivated([this](size_t index) {
             if (callbacks_.gridItemActivated)
                 callbacks_.gridItemActivated(index);
@@ -753,11 +754,10 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
         expandToggle_->SetMargin(
             {2.0f, (std::max)(0.0f, (appearance.itemHeight - toggleAppearance.buttonHeight) * 0.5f), 1.0f, 0.0f});
 
-        // 网格沿用首行的字体与行高，但没有序号、没有选中态，按等宽列排开；点中即上屏。
+        // 网格沿用首行的字体与行高，没有序号，按等宽列排开；点中即上屏。
         msimeui::CandidateList::Appearance gridAppearance = appearance;
-        // 网格没有选中项：列表内部的选中下标总落在某一格上，不关掉的话那一格（通常是第一格）
-        // 永远按选中态画，悬停高亮就出不来。
-        gridAppearance.selectable = false;
+        // Presenter 只在键盘高亮位于网格时显示选中态。
+        gridAppearance.selectable = true;
         gridAppearance.rowFillPressed = tokens.hover;
         gridAppearance.showSelectedBar = false;
         gridAppearance.outerCornerRadius = 0.0f;

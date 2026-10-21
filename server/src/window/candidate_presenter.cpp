@@ -131,6 +131,7 @@ bool SystemTransparencyEnabled()
 
 struct CandidatePresenter::Impl
 {
+    Global::CandidatePageSnapshotPtr page;
     msimeui::DeviceResources resources;
     std::unique_ptr<msimeui::Window> window;
     // 整棵候选框场景与套皮肤的逻辑（与设置页的皮肤预览共用）。下面几个是它里面的控件，候选窗要直接摆弄；
@@ -339,6 +340,7 @@ void CandidatePresenter::ApplySkin()
 std::uint64_t CandidatePresenter::FillItemsFromUi()
 {
     const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
+    impl_->page = page;
     const bool translationsEnabled = GetConfiguredCandidateTranslationsEnabled();
     std::vector<msimeui::CandidateList::Item> items;
     items.reserve(page->page_views.size());
@@ -373,6 +375,8 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
     }
     ignoreSelectionCallback_ = true;
     impl_->list->SetItems(std::move(items));
+    impl_->list->SetSelectionVisible(page->selected_index_in_page >= 0 &&
+                                     static_cast<size_t>(page->selected_index_in_page) < page->page_views.size());
     impl_->list->SetSelectedIndex(static_cast<size_t>((std::max)(0, page->selected_index_in_page)));
     ignoreSelectionCallback_ = false;
     impl_->scene.SetDecorationCandidates(words, static_cast<size_t>((std::max)(0, page->selected_index_in_page)));
@@ -392,6 +396,7 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
             if (!sameContent)
             {
                 impl_->expandScroller->SetScrollOffset(0.0f);
+                lastExpandedSelection_ = -1;
                 // 新的一批还没请求过「再展开」。
                 expandRequestedCount_ = static_cast<size_t>(-1);
             }
@@ -407,6 +412,11 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
         }
         const bool showGrid = !gridItems.empty();
         impl_->expandGrid->SetItems(std::move(gridItems));
+        const int gridSelection = page->selected_index_in_page - static_cast<int>(page->page_views.size());
+        impl_->expandGrid->SetSelectionVisible(expanded_ && gridSelection >= 0 &&
+                                               static_cast<size_t>(gridSelection) < expandedWords_.size());
+        if (gridSelection >= 0)
+            impl_->expandGrid->SetSelectedIndex(static_cast<size_t>(gridSelection));
         impl_->expandContent->SetShowGrid(showGrid);
         impl_->expandToggle->SetExpanded(expanded_);
     }
@@ -448,6 +458,10 @@ void CandidatePresenter::SetExpanded(bool expanded)
         std::memory_order_release);
     if (!expanded)
     {
+        lastExpandedSelection_ = -1;
+        std::atomic_store_explicit(&Global::candidate_navigation_layout,
+                                   std::shared_ptr<const Global::CandidateNavigationLayout>{},
+                                   std::memory_order_release);
         expandedWords_.clear();
         expandedStart_ = 0;
         expandRequestedCount_ = 0;
@@ -474,6 +488,7 @@ void CandidatePresenter::ToggleExpanded()
     if (expanded_)
     {
         SetExpanded(false);
+        PostMessageW(hwnd_, WM_EXPAND_CANDIDATES, 0, 0);
     }
     else
     {
@@ -483,6 +498,35 @@ void CandidatePresenter::ToggleExpanded()
         PostMessageW(hwnd_, WM_EXPAND_CANDIDATES, 0, 0);
     }
     ShowFromGlobalState();
+}
+
+void CandidatePresenter::UpdateExpandedNavigationLayout()
+{
+    if (!expanded_ || !impl_->expandBody || !impl_->page)
+        return;
+    const auto &page = impl_->page;
+    const size_t firstCount = page->page_views.size();
+    const size_t count = firstCount + page->expanded_words.size();
+    const auto boundsAt = [&](size_t index) {
+        return index < firstCount ? impl_->list->GetItemBounds(index)
+                                  : impl_->expandGrid->GetItemBounds(index - firstCount);
+    };
+    if (page->selected_index_in_page != lastExpandedSelection_ && page->selected_index_in_page >= 0 &&
+        static_cast<size_t>(page->selected_index_in_page) < count)
+    {
+        impl_->expandScroller->ScrollIntoView(boundsAt(static_cast<size_t>(page->selected_index_in_page)));
+        lastExpandedSelection_ = page->selected_index_in_page;
+    }
+    auto layout = std::make_shared<Global::CandidateNavigationLayout>();
+    layout->page = page;
+    layout->positions.reserve(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const auto rect = boundsAt(i);
+        layout->positions.push_back({rect.x + rect.width * 0.5f, rect.y});
+    }
+    std::shared_ptr<const Global::CandidateNavigationLayout> published = std::move(layout);
+    std::atomic_store_explicit(&Global::candidate_navigation_layout, std::move(published), std::memory_order_release);
 }
 
 void CandidatePresenter::RequestMoreExpandedIfNearEnd()
@@ -1048,6 +1092,7 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
             layoutRoot();
         }
     }
+    UpdateExpandedNavigationLayout();
     hoverArmed_ = false;
     if (!GetCursorPos(&hoverBaseline_))
     {

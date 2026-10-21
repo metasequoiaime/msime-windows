@@ -716,6 +716,7 @@ class CandidateList : public Visual
     const Item *GetItem(size_t index) const;
     // 候选项相对窗口的最终矩形（含铺满后的行宽），供命中测试与布局校验使用。
     RectF GetItemBounds(size_t index) const;
+    void SetSelectionVisible(bool visible);
     void SetOnSelectionChanged(SelectionChangedHandler handler);
     void SetOnItemActivated(ItemActivatedHandler handler);
     void SetOnContextMenu(ContextMenuHandler handler);
@@ -776,6 +777,7 @@ class CandidateList : public Visual
     std::wstring textLayoutFamily_;
     float layoutWidth_ = 0.0f;
     Appearance appearance_{};
+    bool selectionVisible_ = true;
     Orientation orientation_ = Orientation::Vertical;
     bool focused_ = false;
     bool pressed_ = false;

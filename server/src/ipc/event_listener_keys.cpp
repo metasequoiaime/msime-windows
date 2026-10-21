@@ -1759,8 +1759,9 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             result = response_type;
             // 要在下面的扩展之前标记：扩展得按「已开始选词」只追加，不能重排已显示的候选。
             ui.begin_selection();
-            if (offset > 0 && (ui.is_selection_at_last_candidate() ||
-                               (ui.is_selection_at_current_page_end() && ui.is_next_page_partial_last_page())))
+            if (ui.expanded_count == 0 && offset > 0 &&
+                (ui.is_selection_at_last_candidate() ||
+                 (ui.is_selection_at_current_page_end() && ui.is_next_page_partial_last_page())))
             {
                 ScopedKeyStage expand_nav{client_id, activation_epoch, request_id, L"handle-candidates"};
                 ExpandCandidatesKeepingPagePosition();
@@ -1834,7 +1835,29 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             }
             if (!expand)
             {
-                if (Global::Keycode == VK_UP)
+                if (!IsUiLessMode() && (Global::ModifiersDown & 0b111u) == 0 &&
+                    Global::candidate_expand_state.load(std::memory_order_acquire) ==
+                        FanyImeIpc::CandidateExpandState::Expanded)
+                {
+                    const auto layout =
+                        std::atomic_load_explicit(&Global::candidate_navigation_layout, std::memory_order_acquire);
+                    const int current = ui.selected_index_in_page;
+                    const int direction = Global::Keycode == VK_UP ? -1 : 1;
+                    const int target =
+                        layout ? FanyImeIpc::CandidateInAdjacentRow(layout->positions, current, direction) : -1;
+                    // Reject geometry from an old page or from before asynchronous candidates moved.
+                    if (layout && layout->page->page_index == ui.page_index && target >= 0 && current >= 0 &&
+                        static_cast<size_t>(target) < ui.page_words.size() &&
+                        static_cast<size_t>(current) < ui.page_words.size() &&
+                        static_cast<size_t>(target) < layout->page->page_words.size() &&
+                        static_cast<size_t>(current) < layout->page->page_words.size() &&
+                        ui.page_words[target] == layout->page->page_words[target] &&
+                        ui.page_words[current] == layout->page->page_words[current])
+                        move_selection(target - current, direction < 0
+                                                             ? Global::DataFromServerMsgType::MoveSelectionPrevious
+                                                             : Global::DataFromServerMsgType::MoveSelectionNext);
+                }
+                else if (Global::Keycode == VK_UP)
                     move_selection(-1, Global::DataFromServerMsgType::MoveSelectionPrevious);
                 else
                     move_selection(1, Global::DataFromServerMsgType::MoveSelectionNext);

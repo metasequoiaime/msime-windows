@@ -23,6 +23,38 @@ TEST_CASE(candidate_ui_selection_moves_from_page_end_to_next_page_start)
     REQUIRE_EQ(state.selected_index_in_page, 0);
 }
 
+TEST_CASE(candidate_ui_expanded_selection_keeps_its_anchor_until_the_panel_collapses)
+{
+    auto state = MakeCandidateUiState(30, 3);
+    state.page_index = 2;
+    state.expanded_count = 12;
+    state.selected_index_in_page = 1;
+    REQUIRE(state.move_selection(7));
+    REQUIRE_EQ(state.page_index, 2);
+    REQUIRE_EQ(state.selected_index_in_page, 8);
+    REQUIRE_EQ(state.current_page_start() + state.selected_index_in_page, 14);
+    REQUIRE(state.selection_started);
+    state.collapse_expanded_selection();
+    REQUIRE_EQ(state.expanded_count, 0);
+    REQUIRE_EQ(state.page_index, 4);
+    REQUIRE_EQ(state.selected_index_in_page, 2);
+    REQUIRE_EQ(state.current_page_start() + state.selected_index_in_page, 14);
+}
+
+TEST_CASE(candidate_ui_expanded_selection_stops_at_the_loaded_grid_boundaries)
+{
+    auto state = MakeCandidateUiState(30, 3);
+    state.expanded_count = 7;
+    REQUIRE(!state.move_selection(-1));
+    REQUIRE(state.move_selection(6));
+    REQUIRE(!state.move_selection(1));
+    REQUIRE_EQ(state.page_index, 0);
+    REQUIRE_EQ(state.selected_index_in_page, 6);
+    state.set_items({WordItem("hao", "好", 1)});
+    REQUIRE_EQ(state.expanded_count, 0);
+    REQUIRE_EQ(state.selected_index_in_page, 0);
+}
+
 TEST_CASE(candidate_ui_selection_moves_from_page_start_to_previous_page_end)
 {
     auto state = MakeCandidateUiState(8, 3);

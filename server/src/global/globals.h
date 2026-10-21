@@ -304,6 +304,8 @@ struct CandidateUiState
     int page_size = 8;
     int page_index = 0;
     int selected_index_in_page = 0;
+    // While expanded, selection stays relative to the original page and can reach its grid.
+    int expanded_count = 0;
     int item_total_count = 0;
     int cur_page_max_word_len = 2;
     int cur_page_item_cnt = 8;
@@ -323,6 +325,7 @@ struct CandidateUiState
 
     void clear_page()
     {
+        expanded_count = 0;
         page_views.clear();
         page_words.clear();
         page_glosses.clear();
@@ -341,6 +344,17 @@ struct CandidateUiState
         selection_started = item_total_count > 0;
     }
 
+    void collapse_expanded_selection()
+    {
+        if (page_size > 0 && selected_index_in_page >= page_size)
+        {
+            const int absolute = current_page_start() + selected_index_in_page;
+            page_index = absolute / page_size;
+            selected_index_in_page = absolute % page_size;
+        }
+        expanded_count = 0;
+    }
+
     bool move_selection(int offset)
     {
         if (page_size <= 0)
@@ -348,6 +362,15 @@ struct CandidateUiState
             page_index = 0;
             selected_index_in_page = 0;
             return false;
+        }
+        if (expanded_count > 0)
+        {
+            begin_selection();
+            const int next = std::clamp(selected_index_in_page, 0, expanded_count - 1) + offset;
+            if (next < 0 || next >= expanded_count)
+                return false;
+            selected_index_in_page = next;
+            return true;
         }
         const int count = current_page_count();
         if (count <= 0)
@@ -455,6 +478,14 @@ struct CandidatePageSnapshot
 };
 
 using CandidatePageSnapshotPtr = std::shared_ptr<const CandidatePageSnapshot>;
+
+struct CandidateNavigationLayout
+{
+    CandidatePageSnapshotPtr page;
+    std::vector<FanyImeIpc::CandidateRowPosition> positions;
+};
+// UI publishes the actual DIP layout; the worker owns the selection it describes.
+inline std::shared_ptr<const CandidateNavigationLayout> candidate_navigation_layout;
 
 inline std::mutex &CandidatePageSnapshotMutex()
 {

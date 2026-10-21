@@ -55,3 +55,28 @@ TEST_CASE(candidate_down_expansion_resets_after_hide_or_switching_to_a_non_expan
     FanyImeIpc::PublishCandidateExpandAvailability(state, true, false);
     REQUIRE(FanyImeIpc::RequestCandidateExpandOnDown(0x28, 0, false, state));
 }
+
+TEST_CASE(candidate_row_navigation_uses_the_nearest_column_in_the_adjacent_visual_row)
+{
+    const std::vector<FanyImeIpc::CandidateRowPosition> positions{{15, 0},  {75, 0},   {130, 0}, {20, 30},
+                                                                  {60, 30}, {100, 30}, {20, 60}};
+    REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, 1, 1), 4);
+    REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, 4, -1), 1);
+    REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, 5, 1), 6);
+    REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, 0, -1), -1);
+    REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, 6, 1), -1);
+    REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, -1, 1), -1);
+    REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, 7, 1), -1);
+    REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow({}, 0, 1), -1);
+}
+
+TEST_CASE(candidate_row_navigation_is_unchanged_by_dpi_scaling_and_scrolling)
+{
+    for (const float scale : {1.0f, 1.25f, 1.5f, 2.0f})
+    {
+        const std::vector<FanyImeIpc::CandidateRowPosition> positions{
+            {20 * scale, -60 * scale}, {80 * scale, -60 * scale}, {20 * scale, -30 * scale}, {80 * scale, -30 * scale}};
+        REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, 1, 1), 3);
+        REQUIRE_EQ(FanyImeIpc::CandidateInAdjacentRow(positions, 3, -1), 1);
+    }
+}

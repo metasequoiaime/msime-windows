@@ -48,6 +48,7 @@ class CandidatePresenter
     void SetExpanded(bool expanded);
     void ToggleExpanded();
     void RequestMoreExpandedIfNearEnd();
+    void UpdateExpandedNavigationLayout();
     void ScrollExpanded(short delta);
     void ShowItemContextMenu(size_t pageIndex, POINT clientPoint);
     void CloseContextMenu(bool restoreHost);
@@ -98,6 +99,7 @@ class CandidatePresenter
     int wheelDeltaAccumulator_ = 0;
     // Expanded by the button or Down; the button collapses it. Hide resets the state.
     bool expanded_ = false;
+    int lastExpandedSelection_ = -1;
     // 网格里显示的后续候选，取自最近一次画出来的候选页；expandedStart_ 是第一个的绝对下标。
     int expandedStart_ = 0;
     std::vector<std::wstring> expandedWords_;

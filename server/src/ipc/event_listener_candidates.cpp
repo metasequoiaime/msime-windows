@@ -221,7 +221,10 @@ namespace event_listener_detail
 {
 void EnsureCandidatePageReady()
 {
-    if (!Global::candidate_ui.page_words.empty())
+    if (!Global::candidate_ui.page_words.empty() &&
+        (Global::candidate_ui.expanded_count == 0 ||
+         (!IsUiLessMode() && Global::candidate_expand_state.load(std::memory_order_acquire) ==
+                                 FanyImeIpc::CandidateExpandState::Expanded)))
     {
         return;
     }
@@ -262,6 +265,10 @@ constexpr size_t kExpandedCandidateLimit = 300;
 std::string BuildCurrentCandidatePage()
 {
     auto &ui = Global::candidate_ui;
+    const bool expanded = !IsUiLessMode() && Global::candidate_expand_state.load(std::memory_order_acquire) ==
+                                                 FanyImeIpc::CandidateExpandState::Expanded;
+    if (!expanded)
+        ui.collapse_expanded_selection();
     ui.clear_page();
     const SchemeType current_scheme = g_inputSession->current_scheme_type();
     const bool uppercase_all_helpcodes = current_scheme == SchemeType::Quanpin;
@@ -397,6 +404,18 @@ std::string BuildCurrentCandidatePage()
         }
     }
 
+    if (expanded)
+    {
+        const size_t first = static_cast<size_t>(start + loop);
+        const size_t end = (std::min)(ui.items.size(), first + kExpandedCandidateLimit);
+        for (size_t i = first; i < end; ++i)
+        {
+            ui.page_words.push_back(string_to_wstring(CandidateTextForOutput(ui.items[i].word)));
+            ui.page_glosses.emplace_back();
+        }
+        ui.expanded_count = static_cast<int>(ui.page_words.size());
+    }
+
     if (maxCount > 2)
     {
         ui.cur_page_max_word_len = maxCount;
@@ -404,7 +423,8 @@ std::string BuildCurrentCandidatePage()
     ui.cur_page_item_cnt = loop;
     if (!ui.page_words.empty())
     {
-        ui.selected_index_in_page = std::clamp(ui.selected_index_in_page, 0, loop - 1);
+        ui.selected_index_in_page =
+            std::clamp(ui.selected_index_in_page, 0, static_cast<int>(ui.page_words.size()) - 1);
         ui.selected_text = ui.page_words[ui.selected_index_in_page];
     }
     return candidate_string;
@@ -489,11 +509,9 @@ void PublishBuiltCandidatePage(const std::wstring &candidate_string)
         !IsUiLessMode())
     {
         // 展开面板只显示文字，徽标、辅助码与译文仍只在首行（当前页）上。
-        const size_t start = static_cast<size_t>(ui.current_page_start() + ui.current_page_count());
-        const size_t end = (std::min)(ui.items.size(), start + kExpandedCandidateLimit);
-        snapshot->expanded_start = static_cast<int>(start);
-        for (size_t i = start; i < end; ++i)
-            snapshot->expanded_words.push_back(string_to_wstring(CandidateTextForOutput(ui.items[i].word)));
+        const size_t first = ui.page_views.size();
+        snapshot->expanded_start = ui.current_page_start() + static_cast<int>(first);
+        snapshot->expanded_words.assign(ui.page_words.begin() + first, ui.page_words.end());
     }
     // Stamp before publishing so the UI thread can echo back exactly which page it painted.
     snapshot->generation = ++Global::candidate_page_generation;
