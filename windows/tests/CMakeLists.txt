@@ -96,6 +96,21 @@ target_include_directories(test_reconnect_recovery PRIVATE "${CMAKE_CURRENT_BINA
 target_compile_features(test_reconnect_recovery PRIVATE cxx_std_17)
 add_test(NAME reconnect_recovery COMMAND test_reconnect_recovery)
 
+# All activation callers share this IPC gate, including ordinary background
+# status packets that do not enter either reconnect handler.
+set(focus_activation_ipc_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/IPC/Ipc.cpp")
+set(focus_activation_generator "${CMAKE_CURRENT_SOURCE_DIR}/generate_focus_activation_fixture.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${focus_activation_ipc_source}" "${focus_activation_generator}")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${focus_activation_generator}"
+        "${focus_activation_ipc_source}" "${CMAKE_CURRENT_BINARY_DIR}/focus_activation_source.h"
+    COMMAND_ERROR_IS_FATAL ANY)
+add_executable(test_focus_activation focus_activation.cpp)
+target_include_directories(test_focus_activation PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_features(test_focus_activation PRIVATE cxx_std_17)
+add_test(NAME focus_activation COMMAND test_focus_activation)
+
 # Link the same inline key classifier used by normal and queued TSF paths.
 if(WIN32)
     add_executable(test_temporary_japanese_input temporary_japanese_input.cpp)

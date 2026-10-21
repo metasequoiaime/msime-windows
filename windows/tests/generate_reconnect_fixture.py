@@ -39,9 +39,11 @@ def generate(window_path, key_path, output_path):
     fallback = extract_body(keys, 'void CMetasequoiaIME::_TryLeaveServerUnavailableFallback()')
     timer = extract_body(window, 'if (wParam == TIMER_CONNECT_ALL_NAMEDPIPE)')
     message = extract_body(window, 'case WM_IpcReconnect:')
+    thread_focus = extract_body(window, 'case WM_ThreadFocus:')
     generated = '// Generated from the production reconnect handlers; do not edit.\n'
     generated += 'void CMetasequoiaIME::_TryLeaveServerUnavailableFallback() ' + fallback + '\n'
-    for name, body in (('RunReconnectTimer', timer), ('RunReconnectMessage', message)):
+    for name, body in (('RunReconnectTimer', timer), ('RunReconnectMessage', message),
+                       ('RunThreadFocusMessage', thread_focus)):
         generated += f'void {name}(CMetasequoiaIME &service) {{\n'
         generated += '    CMetasequoiaIME *pIME = &service;\n    HWND hWnd = 1;\n    do '
         generated += body + ' while (false);\n}\n'

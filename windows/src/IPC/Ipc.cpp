@@ -35,7 +35,7 @@ static thread_local std::map<uint64_t, FanyImeNamedpipeDataToTsf> pendingReplies
 static thread_local std::deque<FanyImeNamedpipeDataToTsf> unsolicitedReplies;
 static thread_local uint64_t nextRequestId = 0;
 static thread_local uint64_t nextFocusSessionToken = 0;
-static thread_local const void *boundFocusStateOwner = nullptr;
+static thread_local CMetasequoiaIME *boundFocusStateOwner = nullptr;
 static thread_local bool *boundFocusResetPending = nullptr;
 static thread_local bool *boundActivationRequired = nullptr;
 static thread_local std::atomic<uint64_t> *boundExpectedWorkerFocusToken = nullptr;
@@ -635,7 +635,7 @@ bool TryOpenClientPipe(HANDLE &hPipeHandle, const wchar_t *pipeName, UINT pipeRo
 }
 } // namespace
 
-void BindNamedpipeFocusState(const void *owner, bool *focusResetPending, bool *activationRequired,
+void BindNamedpipeFocusState(CMetasequoiaIME *owner, bool *focusResetPending, bool *activationRequired,
                              std::atomic<uint64_t> *expectedWorkerFocusToken,
                              std::atomic<bool> *localSessionResetPending, std::atomic<UINT> *localSessionResetToken,
                              std::atomic<bool> *workerCommitReady, std::atomic<uint64_t> *acknowledgedWorkerFocusToken,
@@ -694,6 +694,13 @@ void UnbindNamedpipeFocusState(const void *owner)
 bool IsNamedpipeFocusStateOwner(const void *owner)
 {
     return owner != nullptr && boundFocusStateOwner == owner;
+}
+
+bool IsNamedpipeThreadFocused()
+{
+    ITfThreadMgr *threadMgr = boundFocusStateOwner ? boundFocusStateOwner->_GetThreadMgr() : nullptr;
+    BOOL focused = FALSE;
+    return threadMgr && SUCCEEDED(threadMgr->IsThreadFocus(&focused)) && focused;
 }
 
 UINT BeginNamedpipeLocalSessionReset()
@@ -1943,6 +1950,16 @@ bool EnsureNamedpipeFocusSessionActivated()
                 return true;
             }
             break;
+        }
+
+        // Document notifications and ordinary background packets can reach this
+        // handshake too. Only the TSF thread that currently owns input focus
+        // may replace the Server's active client and composition. Keep pending
+        // activation intact until thread focus returns; this is not a failure
+        // of the transport. Already acknowledged sessions may still clean up.
+        if (!IsNamedpipeThreadFocused())
+        {
+            return false;
         }
 
         const uint64_t token =

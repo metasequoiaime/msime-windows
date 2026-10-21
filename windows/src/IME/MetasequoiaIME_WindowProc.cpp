@@ -380,6 +380,11 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         // Main and reply-pipe failures invalidate only their own TLS handle.
         // Preserve a healthy worker read and let ConnectToAllNamedpipe reopen
         // just the missing channel(s).
+        if (!IsNamedpipeThreadFocused())
+        {
+            KillTimer(hWnd, TIMER_CONNECT_ALL_NAMEDPIPE);
+            break;
+        }
         if (Global::g_connected)
         {
             const bool resetPending = pIME->_localSessionResetPending.load(std::memory_order_acquire);
@@ -445,8 +450,9 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         }
         if (wParam == TIMER_CONNECT_ALL_NAMEDPIPE)
         {
-            // 如果用户已经切换走了，就不用继续重试
-            if (!Global::g_connected)
+            // A document can retain focus after its thread moves to the
+            // background. A timer must recheck actual focus when it runs.
+            if (!Global::g_connected || !IsNamedpipeThreadFocused())
             {
                 KillTimer(hWnd, TIMER_CONNECT_ALL_NAMEDPIPE);
                 pIME->_ipcConsecutiveFailures = 0;
@@ -511,6 +517,25 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         // changes. Refresh this thread's cached TSF language-bar item even when
         // there was no document-focus transition.
         pIME->_RefreshLanguageBarThemeIcons();
+        if (!IsNamedpipeFocusStateOwner(pIME) || !IsNamedpipeThreadFocused())
+        {
+            break;
+        }
+        ITfDocumentMgr *document = nullptr;
+        if (SUCCEEDED(pIME->_GetThreadMgr()->GetFocus(&document)) && document)
+        {
+            document->Release();
+            // A background document notification may precede thread focus,
+            // and no second document notification is guaranteed on return.
+            if (!Global::g_connected || pIME->_focusLostToWindowsTextInputHost)
+            {
+                pIME->_ClearSmartPunctuationAction();
+                Global::g_connected = true;
+                RequireNamedpipeFocusActivation();
+                pIME->_focusLostToWindowsTextInputHost = false;
+            }
+            PostMessage(hWnd, WM_IpcReconnect, 0, 0);
+        }
         SendCurrentImeStatusSnapshot(pIME);
         break;
     }

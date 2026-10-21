@@ -102,14 +102,11 @@ STDAPI CMetasequoiaIME::OnSetThreadFocus()
         return S_OK;
     }
     // Do not consume this marker here. TextInputHost owns a separate TSF
-    // client, so the authoritative document OnSetFocus must use it to force a
-    // new Server activation even when our local pipe handles still look live.
-    // Match bcaf34e: thread focus is observational. Document OnSetFocus owns
-    // disconnect/reconnect; this callback only refreshes status/presenter.
-    //
-    // This is the only focus callback that resends a snapshot, and it fires
-    // per thread rather than per window. Its absence in a window-switch trace
-    // is itself the finding.
+    // client, so document focus or its deferred thread-focus recovery must use
+    // it to force a new Server activation even when the pipes still look live.
+    // The owner window rechecks actual thread focus before resuming a pending
+    // connection and refreshing status. Document focus can arrive while this
+    // thread is still in the background and need not be repeated on return.
     if (_msgWndHandle && IsWindow(_msgWndHandle))
     {
         PostMessage(_msgWndHandle, WM_ThreadFocus, 0, 0);

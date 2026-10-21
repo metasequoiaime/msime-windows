@@ -18,6 +18,8 @@
 #include "../../../engine/contracts/temporary_japanese_input.h"
 #include "../../../engine/contracts/trilingual_input.h"
 
+class CMetasequoiaIME;
+
 int InitIpc();
 int InitNamedpipe();
 int ConnectToAllNamedpipe();
@@ -27,7 +29,7 @@ int CloseNamedpipe();
 void ResetNamedpipeReplyState();
 HANDLE GetToTsfWorkerThreadNamedpipe();
 void BindNamedpipeFocusState(
-    _In_ const void *owner, _In_opt_ bool *focusResetPending, _In_opt_ bool *activationRequired,
+    _In_ CMetasequoiaIME *owner, _In_opt_ bool *focusResetPending, _In_opt_ bool *activationRequired,
     _In_opt_ std::atomic<uint64_t> *expectedWorkerFocusToken, _In_opt_ std::atomic<bool> *localSessionResetPending,
     _In_opt_ std::atomic<UINT> *localSessionResetToken, _In_opt_ std::atomic<bool> *workerCommitReady,
     _In_opt_ std::atomic<uint64_t> *acknowledgedWorkerFocusToken, _In_opt_ std::atomic<HANDLE> *workerPipeHandle,
@@ -44,6 +46,7 @@ void BindNamedpipeWakeEvents(_In_ const void *owner, _In_opt_ HANDLE workerAckEv
                              _In_opt_ HANDLE workerPipePublishedEvent);
 void UnbindNamedpipeFocusState(_In_ const void *owner);
 bool IsNamedpipeFocusStateOwner(_In_ const void *owner);
+bool IsNamedpipeThreadFocused();
 UINT BeginNamedpipeLocalSessionReset();
 void InvalidateNamedpipeWorkerGeneration();
 void MarkNamedpipeFocusLost();
