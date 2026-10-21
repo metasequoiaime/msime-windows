@@ -119,6 +119,19 @@ TEST_CASE(candidate_frame_signature_keeps_length_prefixed_candidate_identity)
     REQUIRE(CandidateFrameSignature(L"", {ab, c}, 10, 20, page) != CandidateFrameSignature(L"", {a, bc}, 10, 20, page));
 }
 
+TEST_CASE(candidate_frame_signature_does_not_deduplicate_changed_expanded_candidates)
+{
+    CandidateViewItem item;
+    item.text = "unchanged first row";
+    const CandidateFramePageState page{0, 0, false, true};
+    const auto closed = CandidateFrameSignature(L"", {item}, 0, 0, page);
+    const auto expanded = CandidateFrameSignature(L"", {item}, 0, 0, page, {L"a,b", L"c"});
+    REQUIRE(closed != expanded);
+    REQUIRE(expanded != CandidateFrameSignature(L"", {item}, 0, 0, page, {L"a", L"b,c"}));
+    REQUIRE(expanded != CandidateFrameSignature(L"", {item}, 0, 0, page, {L"a,b", L"c", L"d"}));
+    REQUIRE_EQ(expanded, CandidateFrameSignature(L"", {item}, 0, 0, page, {L"a,b", L"c"}));
+}
+
 TEST_CASE(fixed_position_candidates_get_pin_badge_visible_in_both_backends)
 {
     CandidateViewItem item;

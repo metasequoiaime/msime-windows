@@ -160,7 +160,8 @@ struct CandidateFramePageState
 };
 
 inline std::wstring CandidateFrameSignature(const std::wstring &preedit, const std::vector<CandidateViewItem> &views,
-                                            int caretX, int caretY, const CandidateFramePageState &pageState)
+                                            int caretX, int caretY, const CandidateFramePageState &pageState,
+                                            const std::vector<std::wstring> &expandedWords = {})
 {
     const std::string candidateSignature = CandidatePageSignature(views);
     std::wstring signature = std::to_wstring(preedit.size()) + L":" + preedit;
@@ -181,5 +182,9 @@ inline std::wstring CandidateFrameSignature(const std::wstring &preedit, const s
     signature += pageState.has_previous_page ? L'1' : L'0';
     signature += L',';
     signature += pageState.has_next_page ? L'1' : L'0';
+    signature += L'|';
+    signature += std::to_wstring(expandedWords.size()) + L":";
+    for (const auto &word : expandedWords)
+        signature += std::to_wstring(word.size()) + L":" + word;
     return signature;
 }
