@@ -776,6 +776,46 @@ void run_literal_mixed_pinyin_tests(const std::filesystem::path &data_directory)
     }
 }
 
+// 单字母输入不做字面整词提升：一个字母任何单字都能整串吃下，提升只会把「嗯」这类
+// 单字母读音的语气词顶到词频更高的常用字前面（打 n 的首位从「你」变成「嗯」）。
+// 字面整词提升的用途是让「nbn」这类整词读法领衔，那需要至少两个字母才谈得上整词。
+void run_single_letter_candidate_order_tests(const std::filesystem::path &data_directory)
+{
+    const auto directory = data_directory / "single-letter-candidate-order";
+    std::filesystem::create_directories(directory);
+    {
+        Database database(directory / "msime.db");
+        database.execute("CREATE TABLE tbl_1_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_n VALUES('ni','n','你',1000000);"
+                         "INSERT INTO tbl_1_n VALUES('nian','n','年',900000);"
+                         "INSERT INTO tbl_1_n VALUES('na','n','呐',800000);"
+                         "INSERT INTO tbl_1_n VALUES('na','n','那',700000);"
+                         "INSERT INTO tbl_1_n VALUES('na','n','拿',600000);"
+                         "INSERT INTO tbl_1_n VALUES('ne','n','呢',500000);"
+                         "INSERT INTO tbl_1_n VALUES('neng','n','能',400000);"
+                         "INSERT INTO tbl_1_n VALUES('n','n','嗯',300000);"
+                         "INSERT INTO tbl_1_n VALUES('ng','n','嗯',200000);");
+    }
+
+    QuanpinDictionary dictionary(metasequoia::path_to_utf8(directory / "msime.db"));
+
+    const auto candidates = dictionary.query("n");
+    require(!candidates.empty(), "A single-letter query must return candidates.");
+    require(candidates.front().word == "你",
+            "A single letter must keep dictionary frequency order; 嗯 (pinyin n) must not lead the page.");
+    const auto index_of = [&candidates](const char *word) {
+        const auto found =
+            std::find_if(candidates.begin(), candidates.end(), [word](const auto &item) { return item.word == word; });
+        return static_cast<std::size_t>(std::distance(candidates.begin(), found));
+    };
+    require(index_of("嗯") > index_of("能"), "A single-letter query must not lift 嗯 above higher-frequency words.");
+
+    // 回归：两字母输入照常按词频排序，提升开关对它没有影响。
+    const auto two_letter = dictionary.query("ne");
+    require(!two_letter.empty() && two_letter.front().word == "呢",
+            "A two-letter query must keep its dictionary head.");
+}
+
 // 光标驱动的前缀解码（PRD R2–R7，Stage 1）：候选与量化边界按「光标之前的完整音节
 // 单元前缀」重算。自建隔离词库，不与主 fixture 互相污染；Server（Stage 2）将以
 // set_caret + recompute_candidates 的同一方式消费这些入口。
@@ -3132,6 +3172,7 @@ int run_test()
     run_caret_prefix_session_tests(data_directory);
     run_autocorrect_mixed_jianpin_tests(data_directory);
     run_literal_mixed_pinyin_tests(data_directory);
+    run_single_letter_candidate_order_tests(data_directory);
     run_autocorrect_context_ranking_tests(data_directory);
     run_autocorrect_context_layering_tests(data_directory);
     run_autocorrect_context_user_choice_tests(data_directory);
