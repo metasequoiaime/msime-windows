@@ -184,7 +184,14 @@ bool CssButton::OnMouseUp(const POINT &point, WPARAM)
     pressed_ = false;
     InvalidateVisual();
     if (!disabled_ && Hit(window_, *this, point) && onClick_)
-        onClick_();
+    {
+        // A handler that closes the dialog this button lives in destroys *this and the
+        // std::function it is running, mid-call. Copy the handler first so the closure
+        // outlives its operator(); nothing below touches *this. Same trap as
+        // MenuFlyoutItem::OnMouseUp and Button::OnClick in ui/.
+        std::function<void()> handler = onClick_;
+        handler();
+    }
     return true;
 }
 
