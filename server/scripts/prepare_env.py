@@ -59,6 +59,7 @@ clangd_substitutions = {
     "@SERVER_ROOT@": MetasequoiaImeServer_root_path,
     "@SERVER_SRC@": MetasequoiaImeServer_src_path,
     "@VCPKG_INCLUDE@": vcpkg_include_path,
+    "@HOST_API_INCLUDE@": os.path.join(MetasequoiaImeServer_root_path, "build", "host-api", "include"),
     "@ENGINE_ROOT@": engine_path,
     "@UTFCPP@": utfcpp_path,
     "@VOICE_INCLUDE@": engine_path + "/voice/include",

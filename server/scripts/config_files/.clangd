@@ -7,6 +7,8 @@ CompileFlags:
       "-I@SERVER_ROOT@",
       "-I@SERVER_SRC@",
       "-I@VCPKG_INCLUDE@",
+      # Rust host-api C ABI header (staged by scripts/ci/build-host-api.ps1)
+      "-I@HOST_API_INCLUDE@",
       # engine includes
       "-I@ENGINE_ROOT@",
       # utfcpp includes

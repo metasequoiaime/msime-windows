@@ -155,6 +155,53 @@ jobs:
       # before configuring. Defaults to the x64 host/target, matching the build below.
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Resolve the host-api source commit
+        id: host-api-pin
+        shell: pwsh
+        run: |
+          $pin = (Get-Content scripts/ci/host-api-pin.txt -Raw).Trim()
+          if ($pin -eq 'latest') {
+            # Resolve develop's head with git ls-remote: the API via gh hit flaky
+            # TLS on the runner, and ls-remote uses the same smart-HTTP transport
+            # as the msime clone below, so one working path covers both.
+            $head = $null
+            foreach ($attempt in 1..3) {
+              $head = git ls-remote https://github.com/metasequoiaime/msime.git refs/heads/develop 2>$null |
+                ForEach-Object { ($_ -split '\s+')[0] } | Select-Object -First 1
+              if ($head -match '^[0-9a-f]{40}$') { break }
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+            if (-not ($head -match '^[0-9a-f]{40}$')) { throw "Could not resolve msime develop's head" }
+            $pin = $head
+          }
+          if ($pin -notmatch '^[0-9a-f]{40}$') { throw "Invalid host-api pin: $pin" }
+          "commit=$pin" >> $env:GITHUB_OUTPUT
+      - name: Restore the host-api build
+        id: host-api-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.4.0
+        with:
+          path: host-api-build
+          key: host-api-x64-${{ steps.host-api-pin.outputs.commit }}
+      - name: Build the Rust host-api from msime
+        if: steps.host-api-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          # The upstream toolchain pin (rust-toolchain.toml) is installed by the script.
+          $rustup = (Get-Command rustup -ErrorAction SilentlyContinue)
+          if (-not $rustup) { throw "rustup is not on the runner PATH" }
+          ./scripts/ci/build-host-api.ps1 -TargetCommit '${{ steps.host-api-pin.outputs.commit }}' -OutputDir host-api-build
+      # Configure before staging so CMake records the host-api include/lib paths; the staged
+      # layout lands in the build tree the Build step compiles against.
+      - name: Stage the host-api artifacts into the build layout
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path host-api-build/include, host-api-build/lib | Out-Null
+          Copy-Item host-api-build/msime_client.h host-api-build/include/ -Force
+          Copy-Item host-api-build/msime_host_api.dll.lib, host-api-build/msime_host_api.dll host-api-build/lib/ -Force
+          New-Item -ItemType Directory -Force -Path server/build-release/host-api/lib, server/build-release/host-api/include | Out-Null
+          Copy-Item host-api-build/lib/* server/build-release/host-api/lib/ -Force
+          Copy-Item host-api-build/include/* server/build-release/host-api/include/ -Force
+          Get-ChildItem host-api-build -Recurse -File | Select-Object FullName, Length
       - name: Verify direct MSVC fallback
         shell: pwsh
         run: ./scripts/ci/test-sccache-fallback.ps1
@@ -194,6 +241,12 @@ jobs:
         with:
           path: ${{ steps.vcpkg-cache.outputs.path }}
           key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+      - name: Save the host-api build
+        if: steps.host-api-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: host-api-build
+          key: host-api-x64-${{ steps.host-api-pin.outputs.commit }}
       - name: Build
         shell: pwsh
         run: cmake --build server/build-release --config Release --parallel

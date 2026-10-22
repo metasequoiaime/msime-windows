@@ -121,4 +121,5 @@ VisualPtr BuildStatsPage(PageContext &context);
 VisualPtr BuildHelpPage(PageContext &context);
 VisualPtr BuildAboutPage(PageContext &context);
 VisualPtr BuildFeedbackPage(PageContext &context);
+VisualPtr BuildAccountPage(PageContext &context);
 } // namespace native_settings

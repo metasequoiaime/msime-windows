@@ -57,6 +57,14 @@ cd "$project_root"
 #   - ngram/octagram/darts.h is darts-clone itself, listed by exact path rather
 #     than by directory the way the other copies are: its siblings in that
 #     directory are ours (octagram_gram.{h,cpp}) and stay under the gate.
+#   - server/src/settings/native/msime_client.h is the upstream host-api C ABI
+#     header (scripts/ci/HOST-API.md): scripts/ci/build-host-api.ps1 refreshes
+#     it from metasequoiaime/msime, and reformatting it here would break that
+#     byte-for-byte update the next time it is copied over.
+#   - server/src/settings/native/msime_client.h is the upstream host-api C ABI
+#     header (scripts/ci/HOST-API.md): scripts/ci/build-host-api.ps1 refreshes
+#     it from metasequoiaime/msime, and reformatting it here would break that
+#     byte-for-byte update the next time it is copied over.
 git ls-files --cached --others --exclude-standard \
         'server/*.cpp' 'server/*.h' \
         'windows/*.cpp' 'windows/*.h' \
@@ -67,6 +75,7 @@ git ls-files --cached --others --exclude-standard \
     | grep -vE '^engine/(googlepinyinime-rev|ngram/kenlm|utfcpp)/' \
     | grep -v '/third_party/' \
     | grep -vxF \
+        -e server/src/settings/native/msime_client.h \
         -e engine/contracts/assets/assets.h \
         -e engine/contracts/dictionary/format.h \
         -e engine/contracts/punctuation/policy.h \

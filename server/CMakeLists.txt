@@ -546,6 +546,7 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/native/native_page_help_widgets.cpp"
     "./src/settings/native/native_page_help_widgets.h"
     "./src/settings/native/native_page_about.cpp"
+    "./src/settings/native/native_page_account.cpp"
     "./src/settings/native/native_page_feedback.cpp"
     "./src/skin/candidate_skin_catalog.cpp"
     "./src/skin/candidate_skin_catalog.h"
@@ -618,11 +619,17 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/utils/ime_paths.cpp"
     "./src/utils/network_proxy.cpp"
     "./src/utils/network_proxy.h"
+    "./src/settings/account/msime_account_client.cpp"
+    "./src/settings/account/msime_account_client.h"
     "./src/resource/resource.rc"
 )
 target_include_directories(${SETTINGS_EXECUTABLE_NAME}
     PRIVATE
     "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/include"
+    # msime_client.h describes the Rust host-api C ABI; the header and the
+    # import library are staged under <build>/host-api by scripts/ci/build-host-api.ps1
+    # (wired into the CI job before configure), see HOST-API.md in scripts/ci/.
+    "${CMAKE_BINARY_DIR}/host-api/include"
 )
 target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     msimeui
@@ -643,10 +650,21 @@ target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     d2d1
     dwrite
     shell32
+    version
+    "${CMAKE_BINARY_DIR}/host-api/lib/msime_host_api.dll.lib"
 )
 if(MSVC)
     target_compile_options(${SETTINGS_EXECUTABLE_NAME} PRIVATE /W4)
 endif()
+# The Rust host DLL must sit next to the settings executable; the import
+# library above only resolves the symbols, the DLL carries the implementation.
+# Packaging collects everything under bin/Release (Prepare-PackageFiles.ps1
+# copies the directory wholesale), so the DLL rides along into the installer.
+add_custom_command(TARGET ${SETTINGS_EXECUTABLE_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_BINARY_DIR}/host-api/lib/msime_host_api.dll"
+        "$<TARGET_FILE_DIR:${SETTINGS_EXECUTABLE_NAME}>"
+)
 # The server launches the settings executable from the same output directory.
 # Building the server target alone must therefore also produce Settings.
 add_dependencies(${PROJECT_NAME} ${SETTINGS_EXECUTABLE_NAME})

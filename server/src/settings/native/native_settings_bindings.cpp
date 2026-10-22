@@ -238,6 +238,7 @@ const std::vector<PageInfo> &Pages()
         {"floating-toolbar", L"悬浮工具栏", L"sidebar/floating_toolbar.svg", &BuildFloatingToolbarPage},
         {"stats", L"统计", L"sidebar/stats.svg", &BuildStatsPage},
         {"help-settings", L"帮助", L"sidebar/help.svg", &BuildHelpPage},
+        {"account-settings", L"账号", L"sidebar/account.svg", &BuildAccountPage},
         {"about-settings", L"关于", L"sidebar/about.svg", &BuildAboutPage},
         {"feedback-settings", L"反馈", L"sidebar/feedback.svg", &BuildFeedbackPage},
     };
