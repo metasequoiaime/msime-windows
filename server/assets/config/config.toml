@@ -147,6 +147,8 @@ secret_key = ""
 enabled = false
 endpoint = ""
 api_key = ""
+# 译后校对：译完再让同一模型复核一遍，只把确实要改的条目写回词库。
+review = true
 
 #
 # 小牛翻译（NiuTrans）机器翻译。app_id 与 apikey 在“控制台->API应用”中查看。

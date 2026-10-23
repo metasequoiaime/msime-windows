@@ -735,14 +735,9 @@ void HandleTranslationCommitKey(uint64_t client_id, uint64_t activation_epoch, u
         return;
     }
 
-    if (senses.size() == 1)
-    {
-        Global::MsgTypeToTsf = Global::DataFromServerMsgType::CommitExactText;
-        ui.selected_text = string_to_wstring(CandidateTextForOutput(senses.front()));
-        // Normal/CommitExactText 的回复由 SendCurrentDataToClient 负责收尾（ClearState）。
-        SendCurrentDataToClient(client_id, activation_epoch, request_id);
-        return;
-    }
+    // Ctrl+Enter 只负责把释义展开成候选，不直接上屏：哪怕只有一个义项，也给用户
+    // 一次确认机会（空格/数字选词）。旧行为是单义项时立刻 CommitExactText，导致
+    // 高亮还没对准就已经把第一条译文插进文档。
 
     g_translation_saved_items = ui.items;
     g_translation_saved_page_index = ui.page_index;

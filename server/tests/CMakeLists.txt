@@ -26,7 +26,8 @@ add_executable(test_voice_lock_recovery
     src/test_voice_lock_recovery.cpp
     ${CMAKE_SOURCE_DIR}/src/voice-input/voice_input_service.cpp
     ${CMAKE_SOURCE_DIR}/src/voice-input/voice_providers.cpp
-    ${CMAKE_SOURCE_DIR}/src/voice-input/voice_batch_protocol.cpp)
+    ${CMAKE_SOURCE_DIR}/src/voice-input/voice_batch_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/cloud/ai_wire.cpp)
 target_compile_definitions(test_voice_lock_recovery PRIVATE MSIME_VOICE_CONTROL_TEST)
 target_include_directories(test_voice_lock_recovery
     PRIVATE

@@ -463,7 +463,7 @@ void PrepareCandidateTranslationRequest()
         return;
     g_candidate_translation_signature = std::move(signature);
     CloudTranslation::Clear();
-    EnglishIme::RequestTranslations(std::move(queries), GetConfiguredTencentTmt().target_language == "en");
+    EnglishIme::RequestTranslations(std::move(queries), true, GetConfiguredTencentTmt().target_language);
 }
 
 // Copy the page the worker just finished into an immutable snapshot for the UI thread. This is the single publish
