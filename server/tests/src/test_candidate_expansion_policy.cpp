@@ -248,7 +248,8 @@ const test::FakeTraditionalSpellingIndex &FakeIndex()
 
 std::vector<WordItem> Expand(std::vector<WordItem> items)
 {
-    return FanyImeIpc::ExpandTraditionalVariants(std::move(items), FakeIndex(), FanyImeIpc::TraditionalRegion::Taiwan);
+    return FanyImeIpc::ExpandTraditionalVariants(std::move(items), FakeIndex(), FanyImeIpc::TraditionalRegion::Taiwan,
+                                                 FanyImeIpc::NoRememberedSpellings());
 }
 
 // 只敲首字母时引擎给的候选：first 排在前面，后面跟 filler_count 个别的字，later 排在 position_of_later 处
@@ -315,7 +316,8 @@ TEST_CASE(candidate_expansion_after_selection_keeps_a_shown_spelling_that_is_not
     const test::FakeTraditionalSpellingIndex hong_kong_order({{"着", {"着", "著"}}, {"著", {"著"}}});
     const auto expand = [&](std::vector<WordItem> items) {
         return FanyImeIpc::ExpandTraditionalVariants(std::move(items), hong_kong_order,
-                                                     FanyImeIpc::TraditionalRegion::Taiwan);
+                                                     FanyImeIpc::TraditionalRegion::Taiwan,
+                                                     FanyImeIpc::NoRememberedSpellings());
     };
     constexpr size_t kInitialCount = 24;
     constexpr size_t kFullFillerCount = 40;
@@ -351,7 +353,8 @@ TEST_CASE(candidate_expansion_after_selection_renumbers_a_group_whose_first_spel
 {
     const test::FakeTraditionalSpellingIndex index({{"钟", {"鍾", "鐘", "鈡"}}, {"锺", {"鍾"}}}, {}, {{"鍾", "钟"}});
     const auto expand = [&](std::vector<WordItem> items) {
-        return FanyImeIpc::ExpandTraditionalVariants(std::move(items), index, FanyImeIpc::TraditionalRegion::Taiwan);
+        return FanyImeIpc::ExpandTraditionalVariants(std::move(items), index, FanyImeIpc::TraditionalRegion::Taiwan,
+                                                     FanyImeIpc::NoRememberedSpellings());
     };
     constexpr size_t kInitialCount = 24;
     constexpr size_t kFullFillerCount = 40;
@@ -410,7 +413,8 @@ TEST_CASE(candidate_expansion_after_selection_renumbers_two_adjacent_groups_of_t
 {
     const test::FakeTraditionalSpellingIndex index({{"钟", {"鍾", "鐘", "鈡"}}, {"锺", {"鍾"}}}, {}, {{"鍾", "钟"}});
     const auto expand = [&](std::vector<WordItem> items) {
-        return FanyImeIpc::ExpandTraditionalVariants(std::move(items), index, FanyImeIpc::TraditionalRegion::Taiwan);
+        return FanyImeIpc::ExpandTraditionalVariants(std::move(items), index, FanyImeIpc::TraditionalRegion::Taiwan,
+                                                     FanyImeIpc::NoRememberedSpellings());
     };
     Global::CandidateUiState ui;
     ui.page_size = 9;

@@ -212,6 +212,12 @@ bool ensure_schema(sqlite3 *db)
         "CREATE TABLE IF NOT EXISTS date_time_format_order("
         "category TEXT NOT NULL,format TEXT NOT NULL,position INTEGER NOT NULL CHECK(position>=0),"
         "PRIMARY KEY(category,format));"
+        "CREATE TABLE IF NOT EXISTS traditional_variant_choices("
+        "key TEXT NOT NULL,base_word TEXT NOT NULL,spelling TEXT NOT NULL,"
+        "updated_at INTEGER NOT NULL DEFAULT(unixepoch()),"
+        "PRIMARY KEY(key,base_word));"
+        "CREATE INDEX IF NOT EXISTS traditional_variant_choices_by_base_word "
+        "ON traditional_variant_choices(base_word);"
         "CREATE TABLE IF NOT EXISTS dictionary_state(name TEXT PRIMARY KEY,value TEXT NOT NULL);"
         // 用户加的字母词，见 add_user_latin_words。
         "CREATE TABLE IF NOT EXISTS user_latin_words("
@@ -1659,6 +1665,88 @@ bool learn_entered_english_word(const std::string &english_db_path, const std::s
     if (rollback_insert && bind_text(rollback_insert.get(), 1, word) && bind_text(rollback_insert.get(), 2, display))
         (void)sqlite3_step(rollback_insert.get());
     return false;
+}
+
+bool remember_traditional_variant(const std::string &user_db_path, const std::string &key, const std::string &base_word,
+                                  const std::string &spelling)
+{
+    if (key.empty() || base_word.empty() || spelling.empty())
+        return false;
+    UserDatabase db(user_db_path);
+    if (!db)
+        return false;
+    auto stmt = prepare(db.get(), "INSERT INTO traditional_variant_choices(key,base_word,spelling) VALUES(?1,?2,?3)"
+                                  " ON CONFLICT(key,base_word) DO UPDATE SET spelling=excluded.spelling,"
+                                  "updated_at=unixepoch()");
+    return stmt && bind_text(stmt.get(), 1, key) && bind_text(stmt.get(), 2, base_word) &&
+           bind_text(stmt.get(), 3, spelling) && sqlite3_step(stmt.get()) == SQLITE_DONE;
+}
+
+bool forget_traditional_variant(const std::string &user_db_path, const std::string &key, const std::string &base_word)
+{
+    if (key.empty() || base_word.empty())
+        return false;
+    UserDatabase db(user_db_path);
+    if (!db)
+        return false;
+    auto stmt = prepare(db.get(), "DELETE FROM traditional_variant_choices WHERE key=?1 AND base_word=?2");
+    return stmt && bind_text(stmt.get(), 1, key) && bind_text(stmt.get(), 2, base_word) &&
+           sqlite3_step(stmt.get()) == SQLITE_DONE;
+}
+
+bool forget_traditional_variants_of_word(const std::string &user_db_path, const std::string &base_word)
+{
+    if (base_word.empty())
+        return false;
+    UserDatabase db(user_db_path);
+    if (!db)
+        return false;
+    auto stmt = prepare(db.get(), "DELETE FROM traditional_variant_choices WHERE base_word=?1");
+    return stmt && bind_text(stmt.get(), 1, base_word) && sqlite3_step(stmt.get()) == SQLITE_DONE;
+}
+
+namespace
+{
+// 作用域内这条连接的查询遇到锁时不等待，离开作用域时恢复 kJournalBusyTimeoutMs。连接按线程缓存，别的读写还要等。
+class NoBusyWaitScope
+{
+  public:
+    explicit NoBusyWaitScope(sqlite3 *db) : db_(db)
+    {
+        if (db_ != nullptr)
+            sqlite3_busy_timeout(db_, 0);
+    }
+    ~NoBusyWaitScope()
+    {
+        if (db_ != nullptr)
+            sqlite3_busy_timeout(db_, kJournalBusyTimeoutMs);
+    }
+
+    NoBusyWaitScope(const NoBusyWaitScope &) = delete;
+    NoBusyWaitScope &operator=(const NoBusyWaitScope &) = delete;
+
+  private:
+    sqlite3 *db_;
+};
+} // namespace
+
+std::optional<std::string> traditional_variant_choice(const std::string &user_db_path, const std::string &key,
+                                                      const std::string &base_word)
+{
+    if (key.empty() || base_word.empty())
+        return std::nullopt;
+    UserDatabase db(user_db_path);
+    // 展开候选时每个候选查一次，在按键路径上；等锁会撑爆 TSF 在编辑会话内的等待，查不到只是按地区默认排。
+    const NoBusyWaitScope no_busy_wait(db.get());
+    auto stmt = db ? prepare(db.get(), "SELECT spelling FROM traditional_variant_choices WHERE key=?1 AND base_word=?2")
+                   : Stmt{};
+    if (!stmt || !bind_text(stmt.get(), 1, key) || !bind_text(stmt.get(), 2, base_word) ||
+        sqlite3_step(stmt.get()) != SQLITE_ROW)
+        return std::nullopt;
+    const unsigned char *spelling = sqlite3_column_text(stmt.get(), 0);
+    if (spelling == nullptr)
+        return std::nullopt;
+    return std::string(reinterpret_cast<const char *>(spelling));
 }
 
 bool clear_fixed_position(const std::string &user_db_path, const std::string &context_key, const std::string &entry_key,

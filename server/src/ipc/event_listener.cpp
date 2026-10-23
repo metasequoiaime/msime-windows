@@ -6,6 +6,7 @@
 #include <string>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <utility>
 #include <unordered_map>
@@ -670,12 +671,27 @@ std::string CandidateOutputText(const WordItem &item)
     return FanyImeIpc::CandidateOutputTextFor(item, convert, ToTraditionalText);
 }
 
+namespace
+{
+// 一次展开里查询写法记录与转换写法的累计墙钟上限，从第一次查询算起。候选很多（单字母追加批）或 CPU 满载时
+// 可能用尽，用尽后剩下的候选按地区默认排序。
+constexpr std::int64_t kRememberedSpellingLookupBudgetMs = 50;
+
+std::int64_t SteadyClockMilliseconds()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+} // namespace
+
 std::vector<WordItem> WithTraditionalVariantsFor(std::vector<WordItem> items, const std::string &character_set)
 {
     if (!ShouldConvertCandidateTextIn(character_set, IsRadicalCandidateListActive()))
         return items;
-    return FanyImeIpc::ExpandTraditionalVariants(std::move(items), ChineseConverter::OpenCcTraditionalSpellingIndex(),
-                                                 ChineseConverter::UserTraditionalRegion());
+    return FanyImeIpc::ExpandTraditionalVariants(
+        std::move(items), ChineseConverter::OpenCcTraditionalSpellingIndex(), ChineseConverter::UserTraditionalRegion(),
+        FanyImeIpc::WithLookupBudget(FanyNamedPipe::RememberedSpellingFromUserJournal(),
+                                     kRememberedSpellingLookupBudgetMs, SteadyClockMilliseconds));
 }
 
 std::vector<WordItem> WithTraditionalVariants(std::vector<WordItem> items)
@@ -689,12 +705,17 @@ void ReorderCandidatesAsOneItemPerWord(std::vector<WordItem> &items,
     items = FanyImeIpc::ReorderAsOneItemPerWord(std::move(items), reorder, WithTraditionalVariants);
 }
 
+std::string RegionalFirstSpellingOfText(const std::string &text)
+{
+    const auto spellings = TraditionalSpellingsOfText(text);
+    return spellings.empty() ? text : spellings.front();
+}
+
 std::string FirstSpellingOfText(const std::string &text)
 {
     if (!ShouldConvertCandidateTextIn(ShownCandidateCharacterSet(), /*radical_candidate_list=*/false))
         return text;
-    const auto spellings = TraditionalSpellingsOfText(text);
-    return spellings.empty() ? text : spellings.front();
+    return RegionalFirstSpellingOfText(text);
 }
 
 FanyImeIpc::ChosenText CreatingWordChosenText()
@@ -712,6 +733,14 @@ FanyImeIpc::CandidateSpellingSettings CandidateListSpellingSettings()
             FanyNamedPipe::CandidateListCharacterSet() == "traditional",
             g_inputSession ? g_inputSession->current_scheme_type() : SchemeType::Quanpin,
             IsRadicalCandidateListActive()};
+}
+
+FanyImeIpc::VariantChoiceScope CurrentVariantChoiceScope(const WordItem &item)
+{
+    const bool japanese_scheme =
+        item.scheme == SchemeType::JapaneseRomaji ||
+        (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji);
+    return {ShownCandidateCharacterSet() == "traditional", japanese_scheme, IsRadicalCandidateListActive()};
 }
 
 WordItem WithFirstTraditionalSpelling(WordItem item)
