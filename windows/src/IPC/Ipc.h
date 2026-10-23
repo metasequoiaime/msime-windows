@@ -46,7 +46,9 @@ void BindNamedpipeWakeEvents(_In_ const void *owner, _In_opt_ HANDLE workerAckEv
                              _In_opt_ HANDLE workerPipePublishedEvent);
 void UnbindNamedpipeFocusState(_In_ const void *owner);
 bool IsNamedpipeFocusStateOwner(_In_ const void *owner);
+bool IsCurrentThreadForegroundInput();
 bool IsNamedpipeThreadFocused();
+void QueueNamedpipeFocusGateDiagnostic(bool allowed);
 UINT BeginNamedpipeLocalSessionReset();
 void InvalidateNamedpipeWorkerGeneration();
 void MarkNamedpipeFocusLost();

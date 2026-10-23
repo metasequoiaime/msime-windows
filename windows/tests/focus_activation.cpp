@@ -45,7 +45,19 @@ std::atomic<bool> *boundWorkerCommitReady = &workerReady;
 int boundWorkerAckEvent = 1;
 int activationWrites = 0;
 int dirtyResets = 0;
+int gateDiagnostics = 0;
 uint64_t sentToken = 0;
+bool win32Foreground = false;
+
+bool IsCurrentThreadForegroundInput()
+{
+    return win32Foreground;
+}
+
+void QueueNamedpipeFocusGateDiagnostic(bool)
+{
+    ++gateDiagnostics;
+}
 
 bool IsLocalSessionResetPending()
 {
@@ -112,7 +124,8 @@ void MarkNamedpipeSessionDirty()
 int main()
 {
     // A pending activation is never authorized by an unbound/background owner,
-    // or a failed TSF focus query. Deferral keeps its token and transport.
+    // or a failed TSF focus query outside the Win32 foreground. Deferral keeps
+    // its token and transport.
     CHECK(!EnsureNamedpipeFocusSessionActivated());
     CMetasequoiaIME service;
     boundFocusStateOwner = &service;
@@ -157,6 +170,28 @@ int main()
     transportReady = true;
     CHECK(EnsureNamedpipeFocusSessionActivated());
     CHECK(activationWrites == 2 && sentToken == 43 && dirtyResets == 0);
+
+    // When TSF answers, it is authoritative even if Win32 disagrees.
+    activationRequired = true;
+    acknowledged = false;
+    expectedToken.store(44);
+    service.threadMgr.focused = false;
+    win32Foreground = true;
+    CHECK(!EnsureNamedpipeFocusSessionActivated());
+    CHECK(activationWrites == 2 && activationRequired);
+
+    // A host that cannot answer IsThreadFocus falls back to Win32 foreground
+    // ownership: a process started in the background stays deferred, the
+    // window being typed into still connects. The out value is ignored.
+    service.threadMgr.querySucceeds = false;
+    service.threadMgr.focused = true;
+    win32Foreground = false;
+    CHECK(!EnsureNamedpipeFocusSessionActivated());
+    CHECK(activationWrites == 2 && activationRequired && dirtyResets == 0);
+    win32Foreground = true;
+    CHECK(EnsureNamedpipeFocusSessionActivated());
+    CHECK(activationWrites == 3 && sentToken == 44 && !activationRequired);
+    CHECK(gateDiagnostics > 0);
 
     std::cout << "Foreground activation, delayed focus and acknowledged cleanup guards passed\n";
     return 0;
