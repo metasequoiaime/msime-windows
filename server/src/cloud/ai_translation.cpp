@@ -2,6 +2,7 @@
 
 #include "ai/chat_completions.h"
 #include "ai/chat_request_params.h"
+#include "config/ai_provider.h"
 #include "translation_gloss.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -163,12 +164,15 @@ std::vector<std::string> ParseTranslations(const std::string &content, size_t ex
 Config FromConfiguredTranslation(const TranslationConfig &config)
 {
     return {config.ai.provider, CloudTranslation::TrimSecret(config.ai.endpoint),
-            CloudTranslation::TrimSecret(config.ai.token), CloudTranslation::TrimSecret(config.ai.model)};
+            AiAssistant::RequestToken(config.ai.provider, CloudTranslation::TrimSecret(config.ai.token)),
+            CloudTranslation::TrimSecret(config.ai.model)};
 }
 
 bool IsUsableConfig(const Config &config)
 {
-    return config.provider != "jev" && CloudTranslation::IsUsableSecret(config.token) && !config.model.empty() &&
+    return config.provider != "jev" &&
+           (!AiAssistant::ProviderUsesToken(config.provider) || CloudTranslation::IsUsableSecret(config.token)) &&
+           !config.model.empty() &&
            (config.endpoint.rfind("https://", 0) == 0 || config.endpoint.rfind("http://", 0) == 0);
 }
 

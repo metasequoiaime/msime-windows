@@ -92,3 +92,7 @@ Write-Host "Dev 证书已就绪：$($certificate.Subject)"
 Write-Host "指纹：$($certificate.Thumbprint)（本次构建专有，换新 build 需重跑本脚本）"
 Write-Host "有效期至：$($certificate.NotAfter.ToString('yyyy-MM-dd HH:mm'))（本机时间）"
 Write-Host '现在可以安装同目录下的 dev 安装包了。'
+Write-Host ''
+Write-Host '如果不做这一步就直接装：程序能启动、能打字，但在以管理员身份运行的窗口'
+Write-Host '（管理员 PowerShell、以管理员打开的记事本或终端）里候选窗不会出现。'
+Write-Host 'Server 带 uiAccess 清单，Windows 只对可信签名的程序承认这个权限。'

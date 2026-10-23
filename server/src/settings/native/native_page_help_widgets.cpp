@@ -184,7 +184,11 @@ bool CssButton::OnMouseUp(const POINT &point, WPARAM)
     pressed_ = false;
     InvalidateVisual();
     if (!disabled_ && Hit(window_, *this, point) && onClick_)
-        onClick_();
+    {
+        // A handler that closes the dialog destroys this button and onClick_ mid-call.
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 
@@ -305,7 +309,10 @@ bool RichParagraph::OnMouseUp(const POINT &point, WPARAM)
     const bool clicked = link >= 0 && link == pressed_;
     pressed_ = -1;
     if (clicked && onLink_)
-        onLink_(links_[static_cast<size_t>(link)].url);
+    {
+        const auto handler = onLink_;
+        handler(links_[static_cast<size_t>(link)].url);
+    }
     return true;
 }
 
@@ -368,7 +375,10 @@ StyledInput::StyledInput(std::wstring placeholder, float fontSize) : fontSize_(f
             {
                 committed_ = text;
                 if (onCommit_)
-                    onCommit_(text);
+                {
+                    const auto handler = onCommit_;
+                    handler(text);
+                }
             }
         }
         InvalidateVisual();
@@ -379,7 +389,10 @@ StyledInput::StyledInput(std::wstring placeholder, float fontSize) : fontSize_(f
         {
             committed_ = text;
             if (onCommit_)
-                onCommit_(text);
+            {
+                const auto handler = onCommit_;
+                handler(text);
+            }
         }
     });
     SetChild(box_);
@@ -558,7 +571,7 @@ void RunInBackground(HWND hwnd, std::function<std::string()> work, std::function
     // The result comes back as a posted message rather than through a polling timer:
     // Windows holds back WM_TIMER for a window that is covered or minimized, which left
     // the about page's update check hanging until the next input arrived.
-    std::thread([hwnd, id, job, work = std::move(work)]() {
+    std::thread([hwnd, id, job = std::move(job), work = std::move(work)]() {
         std::string result;
         try
         {

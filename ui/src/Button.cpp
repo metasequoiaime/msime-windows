@@ -318,7 +318,8 @@ bool CheckBox::OnMouseUp(const POINT &point, WPARAM keyState)
         checked_ = !checked_;
         if (onChanged_)
         {
-            onChanged_(checked_);
+            const auto handler = onChanged_;
+            handler(checked_);
         }
     }
 

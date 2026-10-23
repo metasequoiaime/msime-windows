@@ -1,6 +1,7 @@
 #include "settings/native/native_page_voice_fields.h"
 
 #include "ai/ai_provider_store.h"
+#include "config/ai_provider.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
@@ -446,7 +447,10 @@ InputBox::InputBox(Options options) : options_(std::move(options))
             return;
         committed_ = text;
         if (onCommit_)
-            onCommit_(text);
+        {
+            const auto handler = onCommit_;
+            handler(text);
+        }
     };
     box_->SetOnFocusChanged([this, commit](bool focused) {
         if (!focused)
@@ -815,7 +819,11 @@ bool PlainButton::OnMouseUp(const POINT &point, WPARAM)
     pressed_ = false;
     InvalidateVisual();
     if (Hit(window_, *this, point) && onClick_ && !disabled_)
-        onClick_();
+    {
+        // A handler may tear down the visual that owns onClick_ while it runs.
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 
@@ -1038,7 +1046,10 @@ bool PlainExpander::OnMouseUp(const POINT &point, WPARAM)
         if (window_)
             window_->RequestAnimationFrame();
         if (onToggled_)
-            onToggled_(expanded_);
+        {
+            const auto handler = onToggled_;
+            handler(expanded_);
+        }
     }
     return true;
 }
@@ -1160,7 +1171,8 @@ const std::map<std::string, std::wstring> &BuiltinAiNames()
         {"minimax", L"MiniMax"},         {"moonshot", L"Moonshot Kimi"},
         {"zhipu", L"智谱 GLM"},          {"dashscope", L"通义千问"},
         {"volcengine", L"火山方舟"},     {"openrouter", L"OpenRouter"},
-        {"custom", L"自定义接口"},       {"jev", L"Jev (TypeSafe)"},
+        {"ollama", L"Ollama"},           {"custom", L"自定义接口"},
+        {"jev", L"Jev (TypeSafe)"},
     };
     return names;
 }
@@ -1298,7 +1310,9 @@ ActiveAiConfig ReadActiveAiConfig(const SettingsModel &model)
     config.tokenSet = !IsPlaceholderToken(config.token);
 
     const bool scheme = config.endpoint.rfind("https://", 0) == 0 || config.endpoint.rfind("http://", 0) == 0;
-    config.usable = config.provider != "jev" && config.tokenSet && !config.model.empty() && scheme;
+    // 不用 Token 的服务商（Ollama 的本机服务）存没存、存的是什么都不影响它可不可用。
+    const bool tokenOk = !AiAssistant::ProviderUsesToken(config.provider) || config.tokenSet;
+    config.usable = config.provider != "jev" && tokenOk && !config.model.empty() && scheme;
     return config;
 }
 } // namespace native_settings::voice_fields

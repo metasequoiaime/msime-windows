@@ -9,7 +9,7 @@ Push-Location $serverRoot
 try {
     cmake --preset=$preset -DBUILD_TESTING=ON
     if ($LASTEXITCODE -ne 0) { throw "Server test configure failed ($LASTEXITCODE)" }
-    cmake --build $buildDirectory --config $Configuration --target MetasequoiaImeServerTests test_webview_contract
+    cmake --build $buildDirectory --config $Configuration --target MetasequoiaImeServerTests MetasequoiaImeSettingsUiTests test_webview_contract
     if ($LASTEXITCODE -ne 0) { throw "Server test build failed ($LASTEXITCODE)" }
 } finally {
     Pop-Location

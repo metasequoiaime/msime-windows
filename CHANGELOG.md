@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Behaviour Changes
+
+- **全拼漏字 / 多字纠错改为独立开关且默认关闭**：新增 `quanpin.autocorrect_deletion`（漏敲一个字母，如 `shng → shang`）与 `quanpin.autocorrect_insertion`（多敲一个相邻按键，如 `sjhang → shang`），设置页「输入纠错」各一个勾，与乱序 / 邻键并列；四个开关各管一类手误、互不联动。两个新键出厂与老配置缺失时都按关闭处理，**不继承**已有的乱序 / 邻键开关——升级后漏字 / 多字纠错会从「随这两个开关一起开」变为关闭。如需保留原行为，请在设置页手动勾选「漏字纠错」与「多字纠错」。默认更保守，误报更少。
+
 ## [0.6.7](https://github.com/metasequoiaime/MSIME-Windows/compare/v0.6.6...v0.6.7) (2026-09-08)
 
 

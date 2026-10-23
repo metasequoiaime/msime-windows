@@ -407,6 +407,8 @@ void ImeSession::apply_request_options(QueryRequest &request) const
     request.enable_quanpin_autocorrect_transposition =
         (quanpin_autocorrect_types_ & quanpin::kAutocorrectTransposition) != 0;
     request.enable_quanpin_autocorrect_neighbor = (quanpin_autocorrect_types_ & quanpin::kAutocorrectNeighbor) != 0;
+    request.enable_quanpin_autocorrect_deletion = (quanpin_autocorrect_types_ & quanpin::kAutocorrectDeletion) != 0;
+    request.enable_quanpin_autocorrect_insertion = (quanpin_autocorrect_types_ & quanpin::kAutocorrectInsertion) != 0;
     request.fuzzy_pinyin = fuzzy_pinyin_;
     request.sentence_association = sentence_association_;
     request.rescoring_context = rescoring_context_;

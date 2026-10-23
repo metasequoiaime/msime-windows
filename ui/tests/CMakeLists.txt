@@ -13,6 +13,8 @@ add_executable(${TEST_EXECUTABLE_NAME}
     src/test_font_fallback.cpp
     src/test_menu_flyout_item.cpp
     src/test_pager_arrows.cpp
+    src/test_scroll_axis.cpp
+    src/test_scroll_viewer.cpp
     src/test_text_selection.cpp
     includes/test_framework.h
 )

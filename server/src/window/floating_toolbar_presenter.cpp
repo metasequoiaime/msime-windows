@@ -265,7 +265,9 @@ class ToolbarIconButton : public msimeui::Visual
         InvalidateVisual();
         if (shouldClick && onClick_)
         {
-            onClick_();
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
         }
         return true;
     }

@@ -9,8 +9,8 @@
 // 量化验收载体。
 //
 // 注错的变体生成规则与 server/scripts/generate_quanpin_autocorrect.py
-// 保持一致（交换相邻字母对 / QWERTY 邻键替换 / 删除一个字母 / 在相邻键
-// 邻键或重复键位置插入一个字母，变体长度限制 3–6 且不落在合法音节上），
+// 保持一致（交换相邻字母对 / QWERTY 邻键替换 / 删除一个字母 / 在相邻键的
+// QWERTY 邻键位置插入一个字母，变体长度限制 3–6 且不落在合法音节上），
 // 固定种子保证运行可复现。
 //
 // 用法（在仓库根目录执行）：
@@ -421,6 +421,9 @@ std::vector<Entry> build_sample_pool(sqlite3 *db, const std::unordered_set<std::
 std::vector<std::string> raw_variants(ErrorKind kind, const std::string &syllable)
 {
     std::vector<std::string> out;
+    // 与生成器必须逐键一致（engine/tests/README.md 的契约）：注错模型即纠错表的
+    // 假设空间，任一侧漂移都会让评测基线失去可比性。双击插入（重复相邻键）在这一
+    // 侧与生成器 insertion_variants 同一批改动里移除，不要只改一边。
     if (kind == ErrorKind::Transposition)
     {
         for (size_t i = 0; i + 1 < syllable.size(); ++i)
@@ -456,14 +459,13 @@ std::vector<std::string> raw_variants(ErrorKind kind, const std::string &syllabl
     {
         // 插入：与生成器 insertion_variants 同款约束——位置锚定串首（参照右
         // 邻）、串尾（参照左邻）、中间（参照任一侧），插入字母必须是相邻键的
-        // QWERTY 邻键或重复（双击）。
+        // QWERTY 邻键，不含「重复相邻键（双击）」。
         for (size_t position = 0; position <= syllable.size(); ++position)
         {
             std::unordered_set<char> candidates;
             if (position > 0)
             {
                 const char left = syllable[position - 1];
-                candidates.insert(left);
                 for (const auto &[key, neighbors] : qwerty_neighbors())
                 {
                     if (key == left)
@@ -475,7 +477,6 @@ std::vector<std::string> raw_variants(ErrorKind kind, const std::string &syllabl
             if (position < syllable.size())
             {
                 const char right = syllable[position];
-                candidates.insert(right);
                 for (const auto &[key, neighbors] : qwerty_neighbors())
                 {
                     if (key == right)

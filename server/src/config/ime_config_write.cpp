@@ -91,6 +91,9 @@ HWND FindImeServerCandidateWindow()
 
 bool SendAuxConfigNotification(const wchar_t *message)
 {
+    // 这条通知只是「尽快处理一下」的提示，不是配置本身的载体：配置已经落在 config.toml 里，
+    // 服务端的 300ms 轮询会独立地把它捡起来。所以这里拿不到管道就直接放弃，不做重试，
+    // 让瞬时被占用的情况自然收敛到下一次轮询，而不是在客户端堆阻塞逻辑。
     HANDLE pipe = CreateFileW(FANY_IME_AUX_NAMED_PIPE, GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
     if (pipe == INVALID_HANDLE_VALUE && GetLastError() == ERROR_PIPE_BUSY &&
         WaitNamedPipeW(FANY_IME_AUX_NAMED_PIPE, 200))

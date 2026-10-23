@@ -1,4 +1,5 @@
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 
 #include "skin/candidate_skin_catalog.h"
 #include "window/candidate_skin_palette.h"
@@ -413,8 +414,7 @@ namespace
 {
 std::filesystem::path MakeLookRoot()
 {
-    const auto root = std::filesystem::temp_directory_path() /
-                      (L"msime-skin-look-" + std::to_wstring(GetCurrentProcessId())) / L"skins";
+    const auto root = test::TempRoot() / (L"msime-skin-look-" + std::to_wstring(GetCurrentProcessId())) / L"skins";
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root / L"default" / L"wechat", ec);

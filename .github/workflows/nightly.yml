@@ -1,0 +1,583 @@
+name: Nightly
+
+# The nightly channel: one installer on Monday, Wednesday and Saturday, signed with a certificate
+# pinned in the repository secrets instead of one minted per run.
+#
+# Three channels, three different promises. Release is the only one a user should install and
+# expect support. Dev builds answer "does my branch work" and re-mint the certificate every run, so
+# trusting them means re-running import-dev-trust.ps1 before every install. Nightly sits in
+# between: built from develop's HEAD on a schedule with no human deciding it is good, but signed
+# once and for all with a stable certificate, so a user imports trust once and downloads from a
+# stable URL that needs no login.
+#
+# Nightly is never a Release in the sense GitHub means: the tag is always the literal "nightly"
+# and the release is a prerelease, so it can never take the Latest slot, and no update manifest
+# points at it.
+#
+# A failing schedule is silent by default -- GitHub only mails whoever triggered a run, and a
+# schedule has no triggerer. The notify job files or updates an issue instead.
+on:
+  schedule:
+    # Monday, Wednesday and Saturday at 20:00 UTC (04:00 Beijing the next morning). Hourly would
+    # spend a full runner quota on builds nobody asked for; three a week keeps the channel fresh
+    # without turning every merge into a published package. GitHub delays scheduled runs at peak
+    # times, so this is a target rather than a guarantee: nothing downstream depends on the hour.
+    - cron: '0 20 * * 1,3,6'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the prerelease (uncheck to build and upload artifacts only)
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  issues: write
+
+# A manual run and the schedule can overlap; the newer one wins.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  NIGHTLY_ASSET_RETENTION: 14
+
+jobs:
+  gate:
+    name: Skip if nothing changed
+    # Only the schedule honours the "no new commits" gate: a manual run always
+    # builds, whoever clicked it explicitly asked for a build.
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+    steps:
+      - name: Compare develop's HEAD against the last published nightly
+        id: compare
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The '<!-- nightly-sha: ... -->' trailer in the nightly release body is
+          # the source of truth for what the channel already covers (the tag never
+          # moves, so the tag's own commit would stay at the first nightly). Any
+          # failure to read the marker -- first run, no release, network flake --
+          # counts as "changed": a spurious rebuild is harmless, a skipped one
+          # silently withholds commits from the channel.
+          changed=true
+          body=$(gh release view nightly --json body --jq .body 2>/dev/null || true)
+          if [ -n "$body" ] && previous=$(printf '%s' "$body" | grep -oP '<!--\s*nightly-sha:\s*\K[0-9a-f]{7,40}' | head -n1); then
+            if [ "${#previous}" -ge 7 ] && git merge-base --is-ancestor "$previous" "$CURRENT_SHA" 2>/dev/null && \
+               [ "$previous" = "$CURRENT_SHA" ]; then
+              changed=false
+            fi
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          if [ "$changed" = false ]; then
+            echo "develop HEAD ${CURRENT_SHA:0:12} is already covered by the last nightly; skipping."
+          else
+            echo "New commits since the last nightly (or the marker could not be read); building."
+          fi
+
+  tip:
+    name: TSF ${{ matrix.name }}
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.gate.outputs.changed != 'false' }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64
+            architecture: x64
+            triplet: x64-windows-static
+            build_dir: windows/build64-release
+          - name: Win32
+            architecture: Win32
+            triplet: x86-windows-static
+            build_dir: windows/build32-release
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Stamp the nightly version into the resource
+        shell: pwsh
+        run: |
+          $base = python scripts/dev-build-version.py --base
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $date = python scripts/dev-build-version.py --date
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/apply_version.py --version "$base.$date"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Restore dependency binaries
+        id: vcpkg-cache
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          scope: nightly-tip-${{ matrix.triplet }}
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: windows
+        run: vcpkg install --triplet ${{ matrix.triplet }}
+      - name: Save dependency binaries before compiling
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S windows -B ${{ matrix.build_dir }} -A ${{ matrix.architecture }}
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+      - name: Build
+        shell: pwsh
+        run: cmake --build ${{ matrix.build_dir }} --config Release --parallel
+      - name: Check the Release binary and symbols
+        shell: pwsh
+        run: ./scripts/ci/check-tsf-dll.ps1 -BuildDir '${{ matrix.build_dir }}'
+      - name: Upload the TSF binary and symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-tsf-${{ matrix.name }}
+          retention-days: ${{ env.NIGHTLY_ASSET_RETENTION }}
+          path: ${{ matrix.build_dir }}/Release
+          if-no-files-found: error
+
+  server:
+    name: Server
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.gate.outputs.changed != 'false' }}
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Stamp the nightly version into the resource
+        shell: pwsh
+        run: |
+          $base = python scripts/dev-build-version.py --base
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $date = python scripts/dev-build-version.py --date
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/apply_version.py --version "$base.$date"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Restore dependency binaries
+        id: vcpkg-cache
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          scope: nightly-server-x64-windows-and-static-md
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Set up sccache
+        id: sccache
+        continue-on-error: true
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - name: Install Boost
+        shell: pwsh
+        run: ./scripts/ci/install-boost.ps1
+      - name: Save Boost binaries before configuring
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) && steps.vcpkg-cache.outputs.matched-key != format('{0}-boost', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-boost
+      - name: Configure
+        shell: pwsh
+        run: |
+          $display = python scripts/dev-build-version.py --display --channel nightly
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cmakeArgs = @(
+            '-S', 'server', '-B', 'server/build-release', '-G', 'Ninja Multi-Config',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            '-DVCPKG_TARGET_TRIPLET=x64-windows',
+            "-DMSIME_PRODUCT_VERSION_OVERRIDE=$display"
+          )
+          $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
+          cmake @cmakeArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save dependency binaries before compiling
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+      - name: Build
+        shell: pwsh
+        run: cmake --build server/build-release --config Release --parallel
+      - name: Check the Release binaries and symbols
+        shell: pwsh
+        run: ./scripts/ci/check-server-binaries.ps1 -BuildDir server/build-release/bin/Release
+      - name: Test with the product's exact data
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/ci/test-server.ps1 -ServerRoot server -StagingRoot "$env:RUNNER_TEMP/product-data" -BuildDir build-release
+      - name: Embed the Server uiAccess manifest
+        shell: pwsh
+        run: ./scripts/ci/embed-server-manifest.ps1 -BuildDir server/build-release/bin/Release
+      - name: Upload the Server build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-server
+          retention-days: ${{ env.NIGHTLY_ASSET_RETENTION }}
+          path: server/build-release/bin/Release
+          if-no-files-found: error
+
+  package:
+    name: Package and publish
+    needs: [gate, tip, server]
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.gate.outputs.changed != 'false' && needs.tip.result == 'success' && needs.server.result == 'success' }}
+    # The publish step talks to github.com several times (release view/create/edit/upload) and
+    # the downloads upstream of it have been the flakiest part of the week -- retry the whole
+    # job once on failure before the notify job files an issue. Retrying a job re-runs every
+    # step in it; the downloads and signing are deterministic, so a second attempt starts from
+    # a clean slate at the cost of a few minutes.
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Read the nightly version
+        id: version
+        shell: pwsh
+        run: |
+          $base = python scripts/dev-build-version.py --base
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $display = python scripts/dev-build-version.py --display --channel nightly
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $date = python scripts/dev-build-version.py --date
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The PE quad carries YYMMDD in the fourth field, same as dev builds; the installer's
+          # VersionInfoVersion only accepts digits and dots.
+          "display=$display" >> $env:GITHUB_OUTPUT
+          "quad=$base.$date" >> $env:GITHUB_OUTPUT
+      - name: Download the x64 TSF binary and symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nightly-tsf-x64
+          path: windows/build64-release/Release
+      - name: Download the 32-bit TSF binary and symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nightly-tsf-Win32
+          path: windows/build32-release/Release
+      - name: Download the Server build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nightly-server
+          path: server/build-release/bin/Release
+      - name: Download the dictionaries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STAGING_ROOT: .
+        run: bash scripts/ci/download-dictionaries.sh
+      - name: Build the word-lattice language model
+        shell: pwsh
+        run: ./scripts/build-language-model.ps1
+      - name: Download the neural sentence models
+        shell: pwsh
+        run: ./scripts/fetch-neural-model.ps1
+      - name: Collect the installer payload
+        shell: pwsh
+        working-directory: installer
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+        run: >
+          pwsh -File ./Prepare-PackageFiles.ps1 -TargetVersion $env:TARGET_VERSION
+          -RepoRoot (Resolve-Path '..').Path
+          -TsfDirectory windows -ServerDirectory server -NoticesDirectory .
+          -HelpCodeDirectory engine/helpcode
+      # Same signer as the release path, different certificate: the pinned nightly one. A missing
+      # secret fails the run instead of silently publishing an unsigned installer, because an
+      # unsigned nightly would lose uiAccess and report it only as a mystery at runtime.
+      - name: Sign the payload binaries
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.NIGHTLY_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.NIGHTLY_CERTIFICATE_PASSWORD }}
+          TIMESTAMP_URL: ${{ vars.WINDOWS_SIGNING_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+        run: |
+          if (-not $env:CERTIFICATE_BASE64 -or -not $env:CERTIFICATE_PASSWORD) {
+            throw 'NIGHTLY_CERTIFICATE_BASE64 / NIGHTLY_CERTIFICATE_PASSWORD are not configured. Nightly must not ship unsigned.'
+          }
+          ./scripts/ci/sign-binaries.ps1 -Path (Join-Path $PWD 'installer/server_exe'), (Join-Path $PWD 'installer/tsf_dll') -Recurse
+      - name: Install the Chinese language file for Inno Setup
+        shell: pwsh
+        run: ./scripts/ci/install-inno-language.ps1
+      - name: Compile the installer
+        shell: pwsh
+        working-directory: installer
+        run: pwsh -File ./Compile-Installer.ps1
+      - name: Sign the installer
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.NIGHTLY_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.NIGHTLY_CERTIFICATE_PASSWORD }}
+          TIMESTAMP_URL: ${{ vars.WINDOWS_SIGNING_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+        run: ./scripts/ci/sign-binaries.ps1 -Path (Join-Path $PWD "installer/Output/MetasequoiaIME_Setup_v${{ steps.version.outputs.display }}.exe")
+      - name: Verify every signature came from the nightly certificate
+        shell: pwsh
+        env:
+          NIGHTLY_CERT_PATH: installer/nightly-signing.cer
+        run: |
+          # The trust anchor is the .cer committed in the repository, not whatever the signing
+          # step used, so a mistyped secret cannot publish a payload signed by something else.
+          $expected = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2((Resolve-Path $env:NIGHTLY_CERT_PATH).Path)
+          $targets = @(
+            Get-ChildItem -Path 'installer/server_exe', 'installer/tsf_dll' -Recurse -File |
+              Where-Object { $_.Extension -in @('.exe', '.dll') }
+            Get-ChildItem -Path 'installer/Output' -Filter '*.exe' -File
+          )
+          if ($targets.Count -eq 0) { throw 'Nothing to verify.' }
+          $bad = @()
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $target.FullName
+            if ($signature.Status -ne 'Valid' -or
+                -not $signature.SignerCertificate -or
+                $signature.SignerCertificate.Thumbprint -ne $expected.Thumbprint) {
+              $bad += "$($target.FullName): status=$($signature.Status) signer=$($signature.SignerCertificate.Thumbprint)"
+            }
+          }
+          if ($bad) {
+            throw "Files not signed by the nightly certificate:`n$($bad -join "`n")"
+          }
+          Write-Host "Verified $($targets.Count) file(s) against $($expected.Thumbprint)."
+      - name: Name the artifact and record its checksum
+        id: asset
+        shell: pwsh
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+        run: |
+          $built = "installer/Output/MetasequoiaIME_Setup_v$env:TARGET_VERSION.exe"
+          if (-not (Test-Path $built)) { throw "Inno Setup did not produce $built" }
+          $hash = (Get-FileHash $built -Algorithm SHA256).Hash.ToLower()
+          $size = [math]::Round((Get-Item $built).Length / 1MB, 1)
+          Write-Host "$built ($size MB, sha256 $hash)"
+          "installer_path=$((Resolve-Path $built).Path)" >> $env:GITHUB_OUTPUT
+          "installer_sha256=$hash" >> $env:GITHUB_OUTPUT
+      - name: Upload the installer as an artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-installer
+          retention-days: ${{ env.NIGHTLY_ASSET_RETENTION }}
+          path: |
+            ${{ steps.asset.outputs.installer_path }}
+            installer/nightly-signing.cer
+            installer/import-nightly-trust.ps1
+          if-no-files-found: error
+      - name: Publish the prerelease
+        # github.com's release endpoints have dropped connections repeatedly this
+        # week, and one dropped call would otherwise fail the whole night. The
+        # publish body is written to a script and run twice on failure: release
+        # view/create/edit and the --clobber upload are idempotent, so attempt 2
+        # finishes a partially done attempt 1 instead of duplicating anything.
+        if: ${{ github.event_name == 'schedule' || inputs.publish }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+          INSTALLER_PATH: ${{ steps.asset.outputs.installer_path }}
+          INSTALLER_SHA256: ${{ steps.asset.outputs.installer_sha256 }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          $publishScript = Join-Path $env:RUNNER_TEMP 'publish-nightly.ps1'
+          @'
+          # The tag is a fixed literal, never a version: users get one bookmarkable URL, and a
+          # version-shaped tag would read as a release. --prerelease keeps it out of Latest, which
+          # GitHub reserves for non-prerelease releases, so the front page never points here.
+          #
+          # gh release create only creates the tag when it is missing; with the tag already there it
+          # attaches to it and --target is ignored. That is what makes a rolling channel work at
+          # all, since git refuses to create a second tag with the same name. The consequence is
+          # that the tag keeps pointing at the first nightly's commit, which is why the body names
+          # the real commit and the '<!-- nightly-sha: ... -->' trailer below is the source of truth
+          # for the next run's changelog.
+          $ErrorActionPreference = 'Stop'
+          $tag = 'nightly'
+          $marker = '<!-- nightly-sha: {0} -->'
+
+          # The previous commit comes from the marker in the existing body, not from the tag: the
+          # tag never moves, so it would compare today's HEAD against the first nightly forever.
+          $previous = ''
+          gh release view $tag --repo $env:GH_REPO --json body --jq .body *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $existing = gh release view $tag --repo $env:GH_REPO --json body --jq .body
+            if ($existing -match '<!--\s*nightly-sha:\s*([0-9a-f]{7,40})\s*-->') {
+              $previous = $Matches[1]
+            }
+          }
+
+          # A shallow clone still has the full history of the default branch, so the range works.
+          # Anything unexpected (a rebased-away commit, a first run, a detached marker) falls back
+          # to a plain statement instead of failing the publish.
+          $changes = @()
+          $rangeNote = ''
+          $rangeResolved = $false
+          if ($previous) {
+            $log = @(git log --no-merges --pretty=format:'- %s (`%h`)' "$previous..$env:CURRENT_SHA" 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+              # @() around the pipeline above is required: one commit yields a scalar, and
+              # StrictMode makes .Count on a scalar throw.
+              $changes = @($log | Where-Object { $_ -ne '' })
+              $rangeNote = "相较上一次构建（``$($previous.Substring(0, [Math]::Min(12, $previous.Length)))``），共 $($changes.Count) 个提交。"
+              $rangeResolved = $true
+            }
+            else {
+              $rangeNote = '上一次构建的提交不在当前历史里（可能来自 force-push 或合并），这里只列出当前提交。'
+            }
+          }
+          else {
+            $rangeNote = '这是 nightly 通道的第一次构建，没有可比较的上一次。'
+          }
+          if ($changes.Count -eq 0) { $changes = @("- $env:CURRENT_SHA") }
+
+          # Cap the list: the body is a summary, and a month of drift would push the install steps
+          # off the screen. The full comparison is one click away.
+          $shown = @($changes | Select-Object -First 25)
+          $changelog = ($shown -join "`n")
+          if ($changes.Count -gt $shown.Count) {
+            $changelog += "`n`n……还有 $($changes.Count - $shown.Count) 个提交，见下方完整对比。"
+          }
+
+          $notes = @"
+          自动构建，不是正式版本。
+
+          - 构建自 ``${{ github.ref_name }}`` 的 HEAD（``$env:CURRENT_SHA``），无人挑选，未做发布前验证
+          - 不保证可用，可能损坏配置或数据，**不要用于生产**
+          - 设置页的更新检查不会提示升级到 nightly
+          - 正式版本见 [Releases](https://github.com/${{ github.repository }}/releases/latest)
+
+          ## 改了什么
+
+          $rangeNote
+
+          $changelog
+
+          | 字段 | 值 |
+          | --- | --- |
+          | 版本 | $env:TARGET_VERSION |
+          | 安装包 SHA256 | ``$env:INSTALLER_SHA256`` |
+
+          ## 装之前要先导入证书
+
+          这个包用一张自签名证书签名，Windows 默认不信任它。**不导入证书就直接装，程序能启动、能打字，但会在管理员身份运行的窗口里出问题**：以管理员权限打开的记事本、终端、任务管理器里的搜索框等，候选窗不会出现，输入法看起来像坏了。
+
+          原因在这里：为了让候选窗能浮在被 UIPI 保护的高权限窗口之上，Server 带 ``uiAccess="true"`` 清单。Windows 只对「有可信签名、且装在受信任位置」的程序承认这个权限，没有签名的 uiAccess 程序会被静默降权，于是候选窗在管理员窗口上就显示不出来。
+
+          导入方法和后果的完整说明见 [installer/README.md](https://github.com/${{ github.repository }}/blob/develop/installer/README.md#nightly-build)。简单说：解压后和安装包放同一目录，在**管理员** PowerShell 里跑一次
+
+          ``````
+          pwsh -File .\import-nightly-trust.ps1
+          ``````
+
+          看到 ``有效期至：<日期>`` 就说明成功。**只需要跑一次**，之后每次新的 nightly 都直接装，不用重导——这正是 nightly 与 dev build 的区别（dev build 每次换证，每装一次都要重导）。
+
+          $($marker -f $env:CURRENT_SHA)
+          "@
+          $notesFile = Join-Path $env:RUNNER_TEMP 'nightly-notes.md'
+          $notes | Set-Content -LiteralPath $notesFile -Encoding utf8NoBOM
+
+          # The full comparison link lets a reader check the claims above without leaving the page.
+          # Only when the range resolved: a commit that is not in the history has no compare page.
+          if ($rangeResolved) {
+            "" | Add-Content -LiteralPath $notesFile -Encoding utf8NoBOM
+            "完整对比：https://github.com/$env:GH_REPO/compare/$previous...$env:CURRENT_SHA" | Add-Content -LiteralPath $notesFile -Encoding utf8NoBOM
+          }
+
+          gh release view $tag --repo $env:GH_REPO *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GH_REPO --prerelease --target $env:CURRENT_SHA --title 'Nightly build（自动，非正式版本）' --notes-file $notesFile
+            if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
+          }
+          else {
+            gh release edit $tag --repo $env:GH_REPO --prerelease --title 'Nightly build（自动，非正式版本）' --notes-file $notesFile
+            if ($LASTEXITCODE -ne 0) { throw 'gh release edit failed' }
+          }
+          # --clobber replaces yesterday's asset; the release keeps exactly one installer.
+          gh release upload $tag $env:INSTALLER_PATH (Join-Path $PWD 'installer/nightly-signing.cer') (Join-Path $PWD 'installer/import-nightly-trust.ps1') --repo $env:GH_REPO --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'gh release upload failed' }
+          '@ | Set-Content -LiteralPath $publishScript -Encoding utf8NoBOM
+          $published = $false
+          for ($attempt = 1; $attempt -le 2 -and -not $published; $attempt++) {
+              Write-Host "::group::Publish attempt $attempt"
+              try {
+                  & $publishScript
+                  if ($LASTEXITCODE -eq 0) { $published = $true }
+                  else { throw "publish script exited with $LASTEXITCODE" }
+              }
+              catch {
+                  if ($attempt -eq 2) { throw }
+                  Write-Warning "Publish attempt $attempt failed: $($_.Exception.Message)"
+                  Write-Host 'Retrying once after a short backoff (github.com connection drops).'
+                  Start-Sleep -Seconds 30
+              }
+              finally {
+                  Write-Host '::endgroup'
+              }
+          }
+          if (-not $published) { throw 'publish did not complete' }
+
+  notify:
+    name: Report a failed night
+    needs: [gate, tip, server, package]
+    # fail() covers the case where an earlier job was skipped because its dependency failed; the
+    # explicit result checks cover a job that never started for another reason. A gate skip
+    # (nothing to build) makes every downstream job "skipped", which is the channel working as
+    # intended and files nothing.
+    if: ${{ failure() || cancelled() == false && (needs.tip.result == 'failure' || needs.server.result == 'failure' || needs.package.result == 'failure') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: File or update the nightly failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_SHA: ${{ github.sha }}
+          FAILED: ${{ needs.tip.result }}/${{ needs.server.result }}/${{ needs.package.result }}
+        run: |
+          # One issue per outage, not one per night: consecutive failures become comments on the
+          # issue that is already open. Nothing closes it automatically -- a single green night
+          # does not mean the cause is gone, and an issue that closes itself teaches people to
+          # ignore it.
+          set -euo pipefail
+          existing=$(gh issue list --repo "$GH_REPO" --label nightly-failure --state open --limit 1 --json number --jq '.[0].number // empty')
+          entry="- $(date -u '+%Y-%m-%d %H:%M UTC') failed（tip/server/package: ${FAILED}）commit \`${RUN_SHA:0:12}\` — $RUN_URL"
+          if [ -n "$existing" ]; then
+            body=$(printf '又一次失败：\n\n%s\n\n' "$entry")
+            gh issue comment "$existing" --repo "$GH_REPO" --body "$body"
+          else
+            cat > /tmp/nightly-issue.md <<EOF
+          Nightly 构建失败。
+
+          这个 issue 由 nightly workflow 自动创建，会一直开着，直到有人确认问题消失后手动关闭。同一个故障的后续失败会追加在评论里。
+
+          $entry
+
+          - 运行：$RUN_URL
+          - commit：\`$RUN_SHA\`
+          - 各 job 结果（tip/server/package）：\`$FAILED\`
+
+          ## 怎么排查
+
+          1. 打开上面的运行链接，看是编译失败、签名失败还是发布失败
+          2. 本地复现不了的话，先看是不是 vcpkg 或 GitHub 侧的临时故障（下载 503 之类），重跑一次就知道
+          3. 确认修好之后，手动跑一次 nightly，绿了再关这个 issue
+          EOF
+            gh issue create --repo "$GH_REPO" --title "Nightly 构建失败（${{ github.run_number }}）" --label bug --label nightly-failure --body-file /tmp/nightly-issue.md
+          fi

@@ -32,6 +32,13 @@ jobs:
       # runner. Cheap and early: a formatting slip fails in seconds instead of after the full compile.
       - name: Check formatting
         run: scripts/format.sh --check
+      # The generated autocorrect table must stay byte-identical to what the generator emits for
+      # the current syllable list; a stale table silently drops or adds correction keys. Same
+      # reasoning as Check formatting: no compiler or data needed, so it runs here. The path is
+      # relative to this repo root, like Check formatting above — the workflows in this repo run
+      # in its own checkout, not in a parent tree that happens to have a msime-windows/ directory.
+      - name: Check autocorrect table
+        run: python3 server/scripts/generate_quanpin_autocorrect.py --check
   dependencies:
     name: Dependency review
     runs-on: ubuntu-24.04

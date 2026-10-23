@@ -1252,7 +1252,7 @@ float ScrollViewer::GetScrollOffset() const
 
 float ScrollViewer::GetMaxScrollOffset() const
 {
-    return std::max(measuredContent_.height - bounds_.height, 0.0f);
+    return MaxScrollOffset(GetVerticalExtent());
 }
 
 void ScrollViewer::SetScrollOffset(float offset)
@@ -1263,21 +1263,17 @@ void ScrollViewer::SetScrollOffset(float offset)
 
 void ScrollViewer::ScrollIntoView(const RectF &rect)
 {
-    const float top = rect.y - bounds_.y + scrollOffsetY_;
-    const float bottom = top + rect.height;
-    if (top < scrollOffsetY_)
+    const float contentTop = rect.y - bounds_.y + scrollOffsetY_;
+    const float revealed = OffsetToReveal(GetVerticalExtent(), scrollOffsetY_, contentTop, rect.height);
+    if (revealed != scrollOffsetY_)
     {
-        SetScrollOffset(top);
-    }
-    else if (bottom > scrollOffsetY_ + bounds_.height)
-    {
-        SetScrollOffset(std::min(top, bottom - bounds_.height));
+        SetScrollOffset(revealed);
     }
 }
 
 void ScrollViewer::ApplyScrollOffset(float offset)
 {
-    const float clamped = std::clamp(offset, 0.0f, GetMaxScrollOffset());
+    const float clamped = msimeui::ClampScrollOffset(offset, GetVerticalExtent());
     if (clamped == scrollOffsetY_)
     {
         return;
@@ -1331,8 +1327,9 @@ void ScrollViewer::Render(DeviceResources &deviceResources)
         // frame catches up instead of slowing the whole glide down.
         const double now = window_->GetFrameTime();
         scrollFrameMs_ = now;
-        const bool done = now >= scrollStartMs_ + scrollDurationMs_;
-        const float offset = std::clamp(done ? scrollTarget_ : GlideOffsetAt(now), 0.0f, GetMaxScrollOffset());
+        const bool done = glide_.IsDoneAt(now);
+        const float offset =
+            msimeui::ClampScrollOffset(done ? glide_.target : glide_.OffsetAt(now), GetVerticalExtent());
         if (offset != scrollOffsetY_)
         {
             scrollOffsetY_ = offset;
@@ -1464,18 +1461,10 @@ bool ScrollViewer::OnMouseDown(const POINT &point, WPARAM keyState)
     }
 
     scrollAnimating_ = false;
-    RectF thumbRect = GetScrollbarThumbRect();
-    if (dipPoint.y < thumbRect.y || dipPoint.y > thumbRect.y + thumbRect.height)
-    {
-        // Clicking the track jumps there, then keeps dragging from the thumb's center.
-        const float travel = std::max(trackRect.height - appearance_.thumbInset * 2.0f - thumbRect.height, 1.0f);
-        const float trackTop = trackRect.y + appearance_.thumbInset;
-        const float targetTop = std::clamp(dipPoint.y - thumbRect.height * 0.5f, trackTop, trackTop + travel);
-        ApplyScrollOffset((targetTop - trackTop) / travel * GetMaxScrollOffset());
-        thumbRect = GetScrollbarThumbRect();
-    }
+    const ThumbGrab grab = PressScrollbar(GetVerticalExtent(), GetVerticalTrack(), scrollOffsetY_, dipPoint.y);
+    ApplyScrollOffset(grab.offset);
     scrollbarDragging_ = true;
-    scrollbarDragOffsetY_ = dipPoint.y - thumbRect.y;
+    scrollbarGrip_ = grab.grip;
     RefreshViewport();
     return true;
 }
@@ -1516,12 +1505,7 @@ bool ScrollViewer::OnMouseMove(const POINT &point, WPARAM keyState)
         return hovered;
     }
 
-    const RectF trackRect = GetScrollbarTrackRect();
-    const RectF thumbRect = GetScrollbarThumbRect();
-    const float trackTop = trackRect.y + appearance_.thumbInset;
-    const float travel = std::max(trackRect.height - appearance_.thumbInset * 2.0f - thumbRect.height, 1.0f);
-    const float targetTop = std::clamp(dipPoint.y - scrollbarDragOffsetY_, trackTop, trackTop + travel);
-    ApplyScrollOffset((targetTop - trackTop) / travel * GetMaxScrollOffset());
+    ApplyScrollOffset(DragThumb(GetVerticalExtent(), GetVerticalTrack(), scrollbarGrip_, dipPoint.y));
     return true;
 }
 
@@ -1540,67 +1524,35 @@ bool ScrollViewer::OnMouseWheel(const POINT &point, short delta, WPARAM keyState
         return false;
     }
 
-    // Control Panel's "lines to scroll at a time"; the step is the distance at its default 3.
-    UINT lines = 3;
-    SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
-    if (lines == 0)
+    const float notch = WheelNotchDistance(SystemWheelScrollLines(), appearance_.wheelStep, bounds_.height);
+    if (notch <= 0.0f)
     {
         return true;
     }
-    const float notch = lines == WHEEL_PAGESCROLL ? std::max(bounds_.height * 0.875f, appearance_.wheelStep)
-                                                  : appearance_.wheelStep * static_cast<float>(lines) / 3.0f;
-    const float step = (static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA)) * notch;
+    const float step = WheelScrollDelta(delta, notch);
     if (appearance_.smoothScrollMs <= 0.0)
     {
-        ApplyScrollOffset(scrollOffsetY_ - step);
+        ApplyScrollOffset(scrollOffsetY_ + step);
         return true;
     }
 
     // Successive notches extend the glide from where it is heading, and the new glide
     // starts from where the last frame showed it.
     const double now = scrollAnimating_ ? std::max(NowMs(), scrollFrameMs_) : NowMs();
-    const float from = scrollAnimating_ ? GlideOffsetAt(now) : scrollOffsetY_;
-    const float velocity = scrollAnimating_ ? GlideVelocityAt(now) : 0.0f;
-    const float base = scrollAnimating_ ? scrollTarget_ : scrollOffsetY_;
-    const float target = std::clamp(base - step, 0.0f, maxOffset);
+    const float from = scrollAnimating_ ? glide_.OffsetAt(now) : scrollOffsetY_;
+    const float velocity = scrollAnimating_ ? glide_.VelocityAt(now) : 0.0f;
+    const float base = scrollAnimating_ ? glide_.target : scrollOffsetY_;
+    const float target = msimeui::ClampScrollOffset(base + step, GetVerticalExtent());
     if (target == base && !scrollAnimating_)
     {
         return true;
     }
 
-    // Each glide eases out (cubic), so it starts at its fastest, like a browser's wheel
-    // scroll, and comes to rest without a crawl at the end. A notch that arrives while
-    // the content moves faster than the new glide would start shortens the glide so the
-    // speed carries on without a jolt.
-    const float distance = target - from;
-    double duration = appearance_.smoothScrollMs;
-    if (velocity * distance > 0.0f && std::fabs(velocity) * duration > 3.0 * std::fabs(distance))
-    {
-        duration = std::max(3.0 * std::fabs(distance) / std::fabs(velocity), 1.0);
-    }
-    scrollFrom_ = from;
-    scrollTarget_ = target;
-    scrollStartMs_ = now;
-    scrollDurationMs_ = duration;
+    glide_ = ScrollGlide::Start(from, velocity, target, now, appearance_.smoothScrollMs);
     scrollFrameMs_ = now;
     scrollAnimating_ = true;
     window_->RequestAnimationFrame();
     return true;
-}
-
-float ScrollViewer::GlideOffsetAt(double now) const
-{
-    const double s = std::clamp((now - scrollStartMs_) / std::max(scrollDurationMs_, 1.0), 0.0, 1.0);
-    const double rest = 1.0 - s;
-    return scrollFrom_ + (scrollTarget_ - scrollFrom_) * static_cast<float>(1.0 - rest * rest * rest);
-}
-
-float ScrollViewer::GlideVelocityAt(double now) const
-{
-    const double duration = std::max(scrollDurationMs_, 1.0);
-    const double s = std::clamp((now - scrollStartMs_) / duration, 0.0, 1.0);
-    const double rest = 1.0 - s;
-    return static_cast<float>(3.0 * (scrollTarget_ - scrollFrom_) * rest * rest / duration);
 }
 
 HCURSOR ScrollViewer::GetCursor() const
@@ -1624,12 +1576,12 @@ void ScrollViewer::OnMouseLeave()
 
 void ScrollViewer::ClampScrollOffset()
 {
-    const float maxOffset = GetMaxScrollOffset();
-    scrollOffsetY_ = std::clamp(scrollOffsetY_, 0.0f, maxOffset);
+    const ScrollExtent extent = GetVerticalExtent();
+    scrollOffsetY_ = msimeui::ClampScrollOffset(scrollOffsetY_, extent);
     if (scrollAnimating_)
     {
-        scrollFrom_ = std::clamp(scrollFrom_, 0.0f, maxOffset);
-        scrollTarget_ = std::clamp(scrollTarget_, 0.0f, maxOffset);
+        glide_.from = msimeui::ClampScrollOffset(glide_.from, extent);
+        glide_.target = msimeui::ClampScrollOffset(glide_.target, extent);
     }
 }
 
@@ -1650,23 +1602,28 @@ RectF ScrollViewer::GetScrollbarTrackRect() const
     return {bounds_.x + bounds_.width - width, bounds_.y, width, std::max(bounds_.height, 0.0f)};
 }
 
+ScrollExtent ScrollViewer::GetVerticalExtent() const
+{
+    return {measuredContent_.height, bounds_.height};
+}
+
+ScrollTrack ScrollViewer::GetVerticalTrack() const
+{
+    const RectF trackRect = GetScrollbarTrackRect();
+    return {trackRect.y, trackRect.height, appearance_.thumbInset, appearance_.thumbMinLength};
+}
+
 RectF ScrollViewer::GetScrollbarThumbRect() const
 {
     const RectF trackRect = GetScrollbarTrackRect();
-    const float length = std::max(trackRect.height - appearance_.thumbInset * 2.0f, 0.0f);
-    const float visibleRatio =
-        bounds_.height > 0.0f ? std::clamp(bounds_.height / std::max(measuredContent_.height, 1.0f), 0.0f, 1.0f) : 1.0f;
-    const float thumbHeight = std::min(std::max(length * visibleRatio, appearance_.thumbMinLength), length);
-    const float maxOffset = GetMaxScrollOffset();
-    const float trackTravel = std::max(length - thumbHeight, 0.0f);
-    const float ratio = maxOffset > 0.0f ? scrollOffsetY_ / maxOffset : 0.0f;
+    const ThumbSpan thumb = ThumbAt(GetVerticalExtent(), GetVerticalTrack(), scrollOffsetY_);
     const float x = trackRect.x + trackRect.width - appearance_.thumbRightInset - appearance_.thumbWidth;
-    return {x, trackRect.y + appearance_.thumbInset + trackTravel * ratio, appearance_.thumbWidth, thumbHeight};
+    return {x, thumb.start, appearance_.thumbWidth, thumb.length};
 }
 
 bool ScrollViewer::HasVerticalScrollbar() const
 {
-    return measuredContent_.height > bounds_.height + 0.5f;
+    return CanScroll(GetVerticalExtent());
 }
 
 void ScrollViewer::UpdateContentLayout()

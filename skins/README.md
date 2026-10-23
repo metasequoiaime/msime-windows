@@ -73,7 +73,7 @@ my-skin/
 
 | 表 / 键 | 说明 |
 | --- | --- |
-| `schema_version` | 皮肤格式版本，`1` 或 `2`；`2` 是全贴图皮肤，必须以 `canvas` 为 base |
+| `schema_version` | 皮肤格式版本，`1` 或 `2`，也是 msime 各平台共用的清单版本；`2` 配 `base = "canvas"` 才是全贴图皮肤，配别的基底时按 `1` 加载，皮肤照常可用，只是用不上九宫格面板与自由挂件 |
 | `id` / `name` / `version` / `author` / `description` | 基本信息，`id` 建议与目录名一致 |
 | `base` | 继承的内置皮肤，如 `fluent`；未写的键沿用 base。`canvas` 是只给 v2 皮肤用的全贴图基底（透明面板，外观来自九宫格面板图与挂件），不能单独选用，见 [schema 说明](../examples/skin-examples/schema/README.md) |
 | `[supports]` | `layouts`（`horizontal` / `vertical`）、`themes`（`dark` / `light`） |

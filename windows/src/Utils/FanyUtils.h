@@ -29,6 +29,7 @@ struct SwitchLanguageHotkeys
     bool ctrl = false;
     bool ctrl_alt_space = true;
     bool character_set_ctrl_shift_f = true;
+    bool commit_pinyin_shift_enter = true;
     FanyImeInputStateShortcuts::Snapshot input_state;
 };
 // Read keybindings.switch_language_* from shared config.toml.

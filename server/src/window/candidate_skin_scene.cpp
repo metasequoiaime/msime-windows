@@ -230,7 +230,9 @@ bool CandidateExpandToggle::OnMouseUp(const POINT &point, WPARAM)
     InvalidateVisual();
     if (HitTest(window_->ClientPixelsToDips(point)) && onClick_)
     {
-        onClick_();
+        // A handler may tear down the visual that owns onClick_ while it runs.
+        const auto handler = onClick_;
+        handler();
     }
     return true;
 }

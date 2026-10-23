@@ -19,3 +19,6 @@ MetasequoiaImeTip.ico
 *.p12
 *.pvk
 *.spc
+# The nightly trust anchor is a distributed public key, not a local test artifact: users download
+# it to verify the nightly channel, so it has to be in the repository.
+!nightly-signing.cer

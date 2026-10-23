@@ -245,13 +245,24 @@ jobs:
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       # Keep Ninja Multi-Config: CMake ignores CMAKE_<LANG>_COMPILER_LAUNCHER under the Visual
       # Studio generator, so switching back to -A x64 would silently disable sccache.
+      #
+      # X_VCPKG_APPLOCAL_DEPS_SERIALIZED exists for this job and little else. vcpkg's default
+      # applocal pass runs as a POST_BUILD command on every executable, and every one of them
+      # copies the same sqlite3.dll into the same Release directory. Twenty-plus test binaries
+      # linking in parallel therefore race to write one file, and the loser dies with "The
+      # process cannot access the file because it is being used by another process", a red
+      # Engine check with nothing wrong in the code. The option adds USES_TERMINAL to those
+      # commands, which makes Ninja run post-build steps one at a time. It is marked
+      # experimental upstream (microsoft/vcpkg#13025); if a future vcpkg drops it, the durable
+      # fix is VCPKG_APPLOCAL_DEPS=OFF plus a PATH entry in the CTest environment.
       - name: Configure
         shell: pwsh
         run: |
           $cmakeArgs = @(
             '-S', 'engine', '-B', 'engine/build', '-G', 'Ninja Multi-Config',
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
-            '-DVCPKG_TARGET_TRIPLET=x64-windows', '-DBUILD_TESTING=ON'
+            '-DVCPKG_TARGET_TRIPLET=x64-windows', '-DBUILD_TESTING=ON',
+            '-DX_VCPKG_APPLOCAL_DEPS_SERIALIZED=ON'
           )
           $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
           cmake @cmakeArgs

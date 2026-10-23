@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Brush.h"
+#include "ScrollAxis.h"
 #include "Types.h"
 
 #include <dwrite.h>
@@ -311,31 +312,27 @@ class ScrollViewer : public Visual
     void RefreshViewport();
     void ClampScrollOffset();
     void ApplyScrollOffset(float offset);
+    ScrollExtent GetVerticalExtent() const;
+    ScrollTrack GetVerticalTrack() const;
     RectF GetScrollbarTrackRect() const;
     RectF GetScrollbarThumbRect() const;
     bool HasVerticalScrollbar() const;
     void UpdateContentLayout();
-    float GlideOffsetAt(double now) const;
-    float GlideVelocityAt(double now) const;
 
     std::shared_ptr<Visual> content_;
     Appearance appearance_{};
     SizeF measuredContent_ = {};
     float scrollOffsetY_ = 0.0f;
-    // Smooth wheel scrolling: the offset glides from `scrollFrom_` to `scrollTarget_`
-    // between `scrollStartMs_` and `scrollStartMs_ + scrollDurationMs_`; each notch starts
-    // a new glide from where the last one is. `scrollFrameMs_` is the time of the last
-    // frame drawn.
-    float scrollFrom_ = 0.0f;
-    float scrollTarget_ = 0.0f;
-    double scrollStartMs_ = 0.0;
-    double scrollDurationMs_ = 0.0;
+    // Smooth wheel scrolling while `scrollAnimating_`; each notch starts a new glide from
+    // where the last one is. `scrollFrameMs_` is the time of the last frame drawn.
+    ScrollGlide glide_{};
     double scrollFrameMs_ = 0.0;
     bool scrollAnimating_ = false;
     bool scrollbarHovered_ = false;
     bool thumbHovered_ = false;
     bool scrollbarDragging_ = false;
-    float scrollbarDragOffsetY_ = 0.0f;
+    // Where along the thumb the pointer holds it while dragging.
+    float scrollbarGrip_ = 0.0f;
 };
 
 class Grid : public Visual

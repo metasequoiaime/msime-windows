@@ -61,7 +61,8 @@ void ListView::SetSelectedIndex(size_t index)
     selectedIndex_ = clamped;
     if (onSelectionChanged_)
     {
-        onSelectionChanged_(selectedIndex_);
+        const auto handler = onSelectionChanged_;
+        handler(selectedIndex_);
     }
     if (window_)
     {

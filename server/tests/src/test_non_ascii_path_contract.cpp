@@ -53,8 +53,7 @@ TEST_CASE(filesystem_narrow_conversions_are_utf8_not_ansi)
 TEST_CASE(user_dictionary_journal_round_trips_under_non_ascii_path)
 {
     namespace fs = std::filesystem;
-    const fs::path unique_root =
-        fs::temp_directory_path() / (L"msime-journal-test-" + std::to_wstring(GetCurrentProcessId()));
+    const fs::path unique_root = test::TempRoot() / (L"msime-journal-test-" + std::to_wstring(GetCurrentProcessId()));
 
     std::error_code ec;
     fs::remove_all(unique_root, ec);

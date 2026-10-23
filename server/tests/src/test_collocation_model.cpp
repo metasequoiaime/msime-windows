@@ -2,6 +2,7 @@
 // 激活写入与「空激活 = 未选择任何模型」的解析语义。消息 schema 的形状（collocationModel
 // Download/Delete 带 modelId）由 webview_contract 的 fixtures 覆盖，这里钉 Server 侧行为。
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 #include "src/config/ime_config.h"
 #include "src/session/engine_input_session.h"
 #include "src/settings/collocation_model.h"
@@ -70,8 +71,7 @@ class ScopedCollocationEnvironment
 {
   public:
     ScopedCollocationEnvironment()
-        : root_(std::filesystem::temp_directory_path() /
-                (L"msime-collocation-model-test-" + std::to_wstring(GetCurrentProcessId()))),
+        : root_(test::TempRoot() / (L"msime-collocation-model-test-" + std::to_wstring(GetCurrentProcessId()))),
           local_app_data_(L"LOCALAPPDATA", root_.wstring()),
           config_dir_(L"METASEQUOIA_IME_CONFIG_DIR", (root_ / L"metasequoiaime").wstring()),
           data_dir_(L"METASEQUOIA_IME_DATA_DIR", (root_ / L"metasequoiaime").wstring())

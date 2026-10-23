@@ -9,6 +9,7 @@
 #include "settings/neural_model.h"
 #include "settings/default_input_method.h"
 #include "settings/game_compat_name.h"
+#include "settings/input_method_install.h"
 #include "settings/dictionary_manager.h"
 #include "settings/native/native_settings_window.h"
 
@@ -107,6 +108,23 @@ bool PostToPage(const std::wstring &message)
         return false;
     g_native->OnHostMessage(message);
     return true;
+}
+
+// 给页面回一条只在宿主侧产生的消息。契约里的 server 段是穷举的，新类型必须同时写进
+// engine/contracts/webview/messages.json，否则 Validate 会拒。
+void PostToSettingsPage(const json::value &message)
+{
+    if (!g_native)
+        return;
+    PostToPage(string_to_wstring(json::serialize(message)));
+}
+
+// restartServer 的回执。页面那个「3 秒后恢复按钮」的定时器挂在设置窗口上，窗口一隐藏
+// 就随之失效，按钮会永远停在「重启中…」，所以由宿主在重启流程里统一发这一条。
+void PostRestartServerDone(bool ok)
+{
+    PostToSettingsPage(
+        json::value{{"type", "restartServerDone"}, {"protocolVersion", metasequoia::webview::Version}, {"ok", ok}});
 }
 
 // 冷启动打点：设置 METASEQUOIA_IME_SETTINGS_TRACE=1 后，各阶段距进程启动的毫秒数追加到
@@ -307,7 +325,9 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
     if (g_candidate_skin_catalog)
     {
         for (const auto &issue : g_candidate_skin_catalog->issues)
-            skin_issues.push_back({{"folder", issue.folder}, {"reason", issue.reason}});
+            skin_issues.push_back({{"folder", issue.folder},
+                                   {"reason", issue.reason},
+                                   {"noticed", issue.kind == CandidateSkinCatalog::Issue::Kind::Noticed}});
     }
     nlohmann::json polish_presets = nlohmann::json::array();
     for (const auto &preset : VoiceInput::BuiltinPolishPromptPresets())
@@ -440,6 +460,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"switch_language_ctrl", GetConfiguredSwitchLanguageCtrlEnabled()},
             {"switch_language_ctrl_alt_space", GetConfiguredSwitchLanguageCtrlAltSpaceEnabled()},
             {"toggle_character_set_ctrl_shift_f", GetConfiguredCharacterSetShortcutEnabled()},
+            {"commit_pinyin_shift_enter", GetConfiguredPinyinCommitShortcutEnabled()},
             {"input_state_shortcuts", BuildInputStateShortcutMetadata()},
             {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()}}},
           {"frequency_adjustment",
@@ -471,6 +492,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"appearance",
            {{"settings_window_linger", GetConfiguredSettingsWindowLinger()},
             {"settings_launch_animation", GetConfiguredSettingsLaunchAnimation()},
+            {"auto_download_update", GetConfiguredAutoDownloadUpdate()},
             {"candidate_window_layout", GetConfiguredCandidateWindowLayout()},
             {"candidate_window_follow_cursor", GetConfiguredCandidateWindowFollowCursor()},
             {"candidate_window_fit_content", GetConfiguredCandidateWindowFitContent()},
@@ -601,6 +623,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"quanpin",
            {{"autocorrect_transposition", GetConfiguredQuanpinAutocorrectTransposition()},
             {"autocorrect_neighbor", GetConfiguredQuanpinAutocorrectNeighbor()},
+            {"autocorrect_deletion", GetConfiguredQuanpinAutocorrectDeletion()},
+            {"autocorrect_insertion", GetConfiguredQuanpinAutocorrectInsertion()},
             {"autocorrect_marker", GetConfiguredQuanpinAutocorrectMarker()}}},
           {"statistics",
            {{"enabled", GetConfiguredStatisticsEnabled()}, {"retention", GetConfiguredStatisticsRetention()}}}}}};
@@ -719,6 +743,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredSettingsWindowLinger(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.settings_launch_animation")
         return SetConfiguredSettingsLaunchAnimation(json::value_to<bool>(data.at("value")));
+    if (path == "appearance.auto_download_update")
+        return SetConfiguredAutoDownloadUpdate(json::value_to<bool>(data.at("value")));
     if (path == "appearance.candidate_window_layout")
         return SetConfiguredCandidateWindowLayout(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.candidate_window_follow_cursor")
@@ -907,6 +933,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredSwitchLanguageCtrlAltSpaceEnabled(json::value_to<bool>(data.at("value")));
     if (path == "keybindings.toggle_character_set_ctrl_shift_f")
         return SetConfiguredCharacterSetShortcutEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "keybindings.commit_pinyin_shift_enter")
+        return SetConfiguredPinyinCommitShortcutEnabled(json::value_to<bool>(data.at("value")));
     if (path == "keybindings.trilingual_cycle")
         return SetConfiguredTrilingualCycleEnabled(json::value_to<bool>(data.at("value")));
     if (const std::size_t index = InputStateShortcutIndex(path); index < FanyImeInputStateShortcuts::Definitions.size())
@@ -1038,6 +1066,10 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredQuanpinAutocorrectTransposition(json::value_to<bool>(data.at("value")));
     if (path == "quanpin.autocorrect_neighbor")
         return SetConfiguredQuanpinAutocorrectNeighbor(json::value_to<bool>(data.at("value")));
+    if (path == "quanpin.autocorrect_deletion")
+        return SetConfiguredQuanpinAutocorrectDeletion(json::value_to<bool>(data.at("value")));
+    if (path == "quanpin.autocorrect_insertion")
+        return SetConfiguredQuanpinAutocorrectInsertion(json::value_to<bool>(data.at("value")));
     if (path == "quanpin.autocorrect_marker")
         return SetConfiguredQuanpinAutocorrectMarker(json::value_to<bool>(data.at("value")));
     return false;
@@ -1494,6 +1526,7 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             {
                 MessageBoxW(g_settings_hwnd, L"未能重启输入法进程，请稍后重试。", L"水杉输入法",
                             MB_OK | MB_ICONWARNING);
+                PostRestartServerDone(false);
             }
             else if (g_worker && !g_closing)
             {
@@ -1502,6 +1535,7 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                 // 不重启设置进程：避免单实例/重开时序问题和窗口闪现。
                 g_restart_refresh_remaining = kRestartRefreshTicks;
                 SetTimer(hwnd, kRestartRefreshTimer, 500, nullptr);
+                PostRestartServerDone(true);
             }
         }
         else if (type == "openExternalUrl")
@@ -1918,6 +1952,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_command)
 {
     TraceStartup("wWinMain");
+    // Per-user keyboard list entry, started by the installer as the original user; no window, no single-instance
+    // check. Must come before the elevated half below: that one writes HKLM and must not touch HKCU.
+    if (const int profile_result = input_method_install::RunRegisterProfileIfRequested(command_line);
+        profile_result >= 0)
+        return profile_result;
     // The elevated half of the game-compat switch: write HKLM and exit, no window, no single-instance check.
     if (const int elevated_result = game_compat_name::RunElevatedApplyIfRequested(command_line); elevated_result >= 0)
         return elevated_result;

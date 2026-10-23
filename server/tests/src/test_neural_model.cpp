@@ -1,6 +1,7 @@
 // 神经整句高精度档模型的按需下载：路径解析只认已落位的文件、状态跟随磁盘、校验拒绝字节
 // 不符的文件、删除后回到未下载。消息 schema 由 webview_contract 的 fixtures 覆盖。
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 #include "src/session/engine_input_session.h"
 #include "src/settings/neural_model.h"
 
@@ -18,8 +19,7 @@ class ScopedDataDirectory
 {
   public:
     ScopedDataDirectory()
-        : root_(std::filesystem::temp_directory_path() /
-                (L"msime-neural-model-测试-" + std::to_wstring(GetCurrentProcessId())))
+        : root_(test::TempRoot() / (L"msime-neural-model-测试-" + std::to_wstring(GetCurrentProcessId())))
     {
         wchar_t *previous = nullptr;
         size_t size = 0;

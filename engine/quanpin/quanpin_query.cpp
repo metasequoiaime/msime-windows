@@ -1286,6 +1286,53 @@ std::vector<KeyedQueryItem> query_exact_segmentations_keyed_flat(
     return result;
 }
 
+std::vector<KeyedQueryItem> query_key_range_keyed(sqlite3 *db,
+                                                  std::unordered_map<std::string, sqlite3_stmt *> &statement_cache,
+                                                  const std::string &table, const std::string &lower,
+                                                  const std::string &upper, const int limit)
+{
+    if (db == nullptr || table.empty() || lower.empty() || lower >= upper || limit <= 0)
+    {
+        return {};
+    }
+    const std::string sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
+                            "\" WHERE \"key\" >= ?1 AND \"key\" < ?2 ORDER BY \"weight\" DESC LIMIT ?3";
+    sqlite3_stmt *stmt = nullptr;
+    const auto found = statement_cache.find(sql);
+    if (found != statement_cache.end())
+    {
+        stmt = found->second;
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
+    }
+    else
+    {
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+        {
+            return {};
+        }
+        statement_cache.emplace(sql, stmt);
+    }
+    sqlite3_bind_text(stmt, 1, lower.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, upper.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, limit);
+
+    std::vector<KeyedQueryItem> rows;
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        const unsigned char *key = sqlite3_column_text(stmt, 0);
+        const unsigned char *value_text = sqlite3_column_text(stmt, 1);
+        rows.push_back(KeyedQueryItem{
+            key == nullptr ? "" : reinterpret_cast<const char *>(key),
+            value_text == nullptr ? "" : reinterpret_cast<const char *>(value_text),
+            sqlite3_column_int64(stmt, 2),
+        });
+    }
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
+    return rows;
+}
+
 std::shared_ptr<const CharReadingTotals> load_char_reading_totals(sqlite3 *db)
 {
     auto totals = std::make_shared<CharReadingTotals>();

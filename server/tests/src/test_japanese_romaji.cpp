@@ -45,7 +45,7 @@ size_t WordIndex(const std::vector<WordItem> &items, const std::string &word)
 
 std::filesystem::path CreateJapaneseDatabase()
 {
-    const auto path = std::filesystem::temp_directory_path() / "msime-japanese-provider-test.db";
+    const auto path = test::TempRoot() / "msime-japanese-provider-test.db";
     std::filesystem::remove(path);
     sqlite3 *db = nullptr;
     if (sqlite3_open(test::Utf8(path).c_str(), &db) != SQLITE_OK)

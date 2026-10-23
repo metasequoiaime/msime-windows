@@ -127,6 +127,7 @@ extern bool g_switch_language_shift_enabled;
 extern bool g_switch_language_ctrl_enabled;
 extern bool g_switch_language_ctrl_alt_space_enabled;
 extern bool g_character_set_shortcut_enabled;
+extern bool g_commit_pinyin_shift_enter_enabled;
 extern InputStateShortcutValues g_input_state_shortcuts;
 extern int g_candidate_page_size;
 extern std::string g_candidate_font;
@@ -171,6 +172,8 @@ extern bool g_show_shuangpin_helpcode_in_candidate_window;
 extern bool g_show_quanpin_helpcode_in_candidate_window;
 extern bool g_quanpin_autocorrect_transposition;
 extern bool g_quanpin_autocorrect_neighbor;
+extern bool g_quanpin_autocorrect_deletion;
+extern bool g_quanpin_autocorrect_insertion;
 extern bool g_quanpin_autocorrect_marker;
 extern std::uint32_t g_fuzzy_pinyin_rules;
 extern bool g_fuzzy_pinyin_enabled;
@@ -261,6 +264,7 @@ extern std::string g_candidate_fixed_badge_style;
 extern std::string g_candidate_ai_badge_style;
 extern std::string g_settings_window_linger;
 extern bool g_settings_launch_animation;
+extern bool g_auto_download_update;
 extern std::string g_theme_mode;
 extern std::string g_theme_settings;
 extern std::string g_theme_cand;
@@ -330,6 +334,9 @@ void ProtectPlaintextCredentials();
 // ime_config_template.cpp
 void RecoverLegacyAcpMangledConfig();
 void SyncConfigWithInstalledTemplate();
+
+// 配置文件的 FNV-1a 64 位摘要，用来在修改时间不可靠时判断内容是否真的变了。
+uint64_t HashFileContents(const std::filesystem::path &path);
 
 // ime_config_write.cpp
 bool WriteConfiguredValues(const std::vector<ConfigValueUpdate> &updates);

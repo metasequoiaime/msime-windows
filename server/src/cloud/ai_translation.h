@@ -20,7 +20,7 @@ struct Config
 // 两边对「配置是否可用」的判断不会分叉。
 Config FromConfiguredTranslation(const TranslationConfig &config);
 
-// token 按 CloudTranslation::IsUsableSecret 校验，出厂模板里的占位符不算可用。
+// token 按 CloudTranslation::IsUsableSecret 校验，出厂模板里的占位符不算可用；Ollama 不用 Token。
 bool IsUsableConfig(const Config &config);
 
 // 设置页输入框里的原始值：去空白、接口地址没写协议时补 https。凭据测试用它，

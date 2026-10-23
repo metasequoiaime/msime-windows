@@ -1029,8 +1029,19 @@ namespace
 {
 SerialTaskRunner &DictionaryWriter()
 {
-    static SerialTaskRunner writer(/*below_normal_priority=*/true);
-    return writer;
+    struct Writer
+    {
+        Writer()
+        {
+            // The checkpoint copies the journal's write-ahead log back into the database, which SQLite would otherwise
+            // do on whichever commit crosses its threshold -- inside a selection the user is waiting for. Here it runs
+            // once the queue is empty, i.e. after the user stops typing.
+            runner.SetIdleHandler([] { user_dictionary::checkpoint_user_journal_if_needed(); });
+        }
+        SerialTaskRunner runner{/*below_normal_priority=*/true};
+    };
+    static Writer writer;
+    return writer.runner;
 }
 } // namespace
 

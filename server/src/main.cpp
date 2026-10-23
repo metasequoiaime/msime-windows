@@ -27,6 +27,7 @@
 #include "utils/single_instance.h"
 #include "session/session_factory.h"
 #include "settings/collocation_model.h"
+#include "settings/update_check.h"
 #include "statistics/stats_pipe.h"
 #include "voice-input/voice_input_service.h"
 
@@ -218,6 +219,10 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     int ret = CreateCandidateWindow(hInstance);
     if (radical_warmup.joinable())
         radical_warmup.join();
+
+    // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
+    // 这正是把下载放在 Server 而不是设置进程的原因。
+    update_check::StartPolling();
 
     FanyNamedPipe::RegisterStatusSnapshotWindow(nullptr);
 

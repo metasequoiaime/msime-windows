@@ -41,6 +41,10 @@ constexpr UINT_PTR kImageFrameTimer = 0x4E55;
 // Lifts the launch splash if no configSnapshot arrives, so a failed config load still
 // leaves a usable window.
 constexpr UINT_PTR kSplashTimer = 0x4E56;
+// Builds the pages the user has not opened yet so their settings are searchable from the first
+// keystroke. One page per tick: a page builder is a few hundred control constructions, which is
+// milliseconds, but sixteen of them in one go would be a visible hitch on a cold start.
+constexpr UINT_PTR kIndexPageTimer = 0x4E57;
 
 // 系统「显示动画」关闭时预览里的动图只显示首帧，与候选窗同一个开关；读不到时按开启处理。
 bool SystemAnimationsEnabled()
@@ -442,6 +446,94 @@ class NavItem : public msimeui::Visual
     bool pressed_ = false;
 };
 
+// One line of the settings search results: the row title, with its page name under it when the
+// title alone is ambiguous. Clicking it jumps to the row.
+class SearchResultItem : public msimeui::Visual
+{
+  public:
+    SearchResultItem(std::wstring title, std::wstring pageTitle, std::function<void()> onActivate)
+        : onActivate_(std::move(onActivate))
+    {
+        TextStyle style;
+        style.size = kFontDefault;
+        title_.Set(std::move(title), style);
+        TextStyle meta = style;
+        meta.size = kFontCaption;
+        page_.Set(std::move(pageTitle), meta);
+        SetMargin({8.0f, 1.0f, 8.0f, 1.0f});
+    }
+
+    SizeF Measure(const SizeF &availableSize) override
+    {
+        // padding 6px 12px; two stacked lines, the second one small.
+        return {availableSize.width, LineHeight(title_.Style()) + LineHeight(page_.Style()) + 10.0f};
+    }
+
+    void Arrange(const RectF &finalRect) override
+    {
+        bounds_ = finalRect;
+    }
+
+    void Render(msimeui::DeviceResources &dr) override
+    {
+        const Palette &p = CurrentPalette();
+        if (hovered_ || pressed_)
+            FillRounded(dr, bounds_, 5.0f, p.sidebarHover);
+        const float textX = bounds_.x + 12.0f;
+        const SizeF title = title_.Measure(bounds_.width - 24.0f);
+        const SizeF page = page_.Measure(bounds_.width - 24.0f);
+        const float blockY = bounds_.y + (bounds_.height - (title.height + page.height)) * 0.5f;
+        title_.Draw(dr, {textX, blockY}, p.text, bounds_.width - 24.0f);
+        page_.Draw(dr, {textX, blockY + title.height}, p.textMuted, bounds_.width - 24.0f);
+    }
+
+    bool OnMouseDown(const POINT &point, WPARAM) override
+    {
+        pressed_ = window_ && HitTest(window_->ClientPixelsToDips(point));
+        return pressed_;
+    }
+
+    bool OnMouseUp(const POINT &point, WPARAM) override
+    {
+        if (!pressed_)
+            return false;
+        pressed_ = false;
+        InvalidateVisual();
+        if (window_ && HitTest(window_->ClientPixelsToDips(point)) && onActivate_)
+        {
+            // The handler switches pages, which drops this item out of the list it lives in.
+            const auto handler = onActivate_;
+            handler();
+        }
+        return true;
+    }
+
+    void OnMouseEnter() override
+    {
+        hovered_ = true;
+        InvalidateVisual();
+    }
+
+    void OnMouseLeave() override
+    {
+        hovered_ = false;
+        pressed_ = false;
+        InvalidateVisual();
+    }
+
+    HCURSOR GetCursor() const override
+    {
+        return LoadCursor(nullptr, IDC_HAND);
+    }
+
+  private:
+    std::function<void()> onActivate_;
+    TextLayout title_;
+    TextLayout page_;
+    bool hovered_ = false;
+    bool pressed_ = false;
+};
+
 class SidebarHeader : public msimeui::Visual
 {
   public:
@@ -484,6 +576,122 @@ class SidebarHeader : public msimeui::Visual
     BitmapImage logo_{AssetPath(L"msime.png"), 25.0f, 25.0f, 6.0f};
 };
 
+// The search box at the top of the sidebar, plus the result list that opens under it.
+//
+// Both live inside the sidebar's own vertical flow rather than in a popup: the sidebar is the only
+// place the window already scrolls, and a popup would have to reproduce its clipping and DPI
+// handling. When there are no results the list takes no height, so the sidebar looks exactly like
+// it did before the box was added.
+class SidebarSearch : public msimeui::Panel
+{
+  public:
+    using ActivateHandler = std::function<void(const SettingsIndexEntry &entry)>;
+
+    explicit SidebarSearch(ActivateHandler onActivate) : onActivate_(std::move(onActivate))
+    {
+        TextField::Options options;
+        options.height = 28.0f;
+        options.fontSize = kFontCaption;
+        options.paddingX = 8.0f;
+        options.paddingY = 4.0f;
+        options.placeholder = L"搜索设置";
+        field_ = std::make_shared<TextField>(options);
+        field_->SetOnChanged([this](const std::wstring &text) { Search(text); });
+        // Enter picks the first result, so the box is usable without the mouse.
+        field_->SetOnCommit([this](const std::wstring &text) {
+            Search(text);
+            if (!results_.empty())
+                Activate(results_.front());
+        });
+        field_->SetMargin({12.0f, 0.0f, 12.0f, 8.0f});
+        listHolder_ = std::make_shared<msimeui::Container>();
+        AddChild(field_);
+        AddChild(listHolder_);
+    }
+
+    // Rows collected so far, in page order. The window rebuilds this as pages get built.
+    // Re-runs the current query against a new index.
+    void SetIndex(const std::shared_ptr<const std::vector<SettingsIndexEntry>> &index)
+    {
+        index_ = index;
+        if (!Query().empty())
+            Search(Query());
+    }
+
+    void Focus()
+    {
+        if (field_ && window_)
+            window_->FocusVisual(field_->Box().get());
+    }
+
+    SizeF Measure(const SizeF &availableSize) override
+    {
+        // MeasureInLayout already accounts for each child's margin.
+        const SizeF field = field_->MeasureInLayout(availableSize);
+        const SizeF list = listHolder_->MeasureInLayout({availableSize.width, availableSize.height});
+        return {availableSize.width, field.height + list.height};
+    }
+
+    void Arrange(const RectF &finalRect) override
+    {
+        bounds_ = finalRect;
+        const SizeF field = field_->MeasureInLayout({finalRect.width, finalRect.height});
+        field_->ArrangeInLayout({finalRect.x, finalRect.y, finalRect.width, field.height});
+        const float listTop = finalRect.y + field.height;
+        const SizeF list = listHolder_->MeasureInLayout({finalRect.width, finalRect.height - field.height});
+        listHolder_->ArrangeInLayout({finalRect.x, listTop, finalRect.width, list.height});
+    }
+
+    void Render(msimeui::DeviceResources &dr) override
+    {
+        for (const auto &child : children_)
+        {
+            if (dr.IsVisible(Inflate(child->GetBounds(), 4.0f)))
+                child->Render(dr);
+        }
+    }
+
+  private:
+    std::wstring Query() const
+    {
+        return field_ ? field_->GetText() : std::wstring();
+    }
+
+    void Search(const std::wstring &query)
+    {
+        results_.clear();
+        auto fresh = std::make_shared<Column>(0.0f);
+        if (index_ && !query.empty())
+        {
+            results_ = SearchSettings(*index_, query);
+            for (const SettingsIndexEntry &entry : results_)
+            {
+                fresh->Add(std::make_shared<SearchResultItem>(entry.title, entry.pageTitle,
+                                                              [this, entry]() { Activate(entry); }));
+            }
+        }
+        listHolder_->SetChild(fresh);
+        InvalidateMeasure();
+        if (window_)
+            window_->Relayout();
+    }
+
+    void Activate(const SettingsIndexEntry &entry)
+    {
+        if (onActivate_)
+        {
+            const auto handler = onActivate_;
+            handler(entry);
+        }
+    }
+
+    std::shared_ptr<TextField> field_;
+    std::shared_ptr<msimeui::Container> listHolder_;
+    std::shared_ptr<const std::vector<SettingsIndexEntry>> index_;
+    std::vector<SettingsIndexEntry> results_;
+    ActivateHandler onActivate_;
+};
+
 class Sidebar : public msimeui::Panel
 {
   public:
@@ -492,6 +700,8 @@ class Sidebar : public msimeui::Panel
     Sidebar()
     {
         AddChild(std::make_shared<SidebarHeader>());
+        search_ = std::make_shared<SidebarSearch>([this](const SettingsIndexEntry &entry) { Activate(entry); });
+        AddChild(search_);
         const auto &pages = Pages();
         for (size_t i = 0; i < pages.size(); ++i)
         {
@@ -499,6 +709,18 @@ class Sidebar : public msimeui::Panel
             items_.push_back(item);
             AddChild(item);
         }
+    }
+
+    SidebarSearch *Search()
+    {
+        return search_.get();
+    }
+
+    // Jumps to an arbitrary row, rather than a sidebar page: switches to the entry's page and asks
+    // the window to scroll the row into view.
+    void SetOnActivateEntry(std::function<void(const SettingsIndexEntry &entry)> handler)
+    {
+        onActivateEntry_ = std::move(handler);
     }
 
     void SetOnSelect(SelectHandler handler)
@@ -551,7 +773,17 @@ class Sidebar : public msimeui::Panel
             return;
         Select(index, true);
         if (onSelect_)
-            onSelect_(index);
+        {
+            const auto handler = onSelect_;
+            handler(index);
+        }
+    }
+
+    // A search hit: switch to its page, then hand the entry to the window so it can scroll.
+    void Activate(const SettingsIndexEntry &entry)
+    {
+        if (onActivateEntry_)
+            onActivateEntry_(entry);
     }
 
     SizeF Measure(const SizeF &availableSize) override
@@ -615,7 +847,9 @@ class Sidebar : public msimeui::Panel
     }
 
     std::vector<std::shared_ptr<NavItem>> items_;
+    std::shared_ptr<SidebarSearch> search_;
     SelectHandler onSelect_;
+    std::function<void(const SettingsIndexEntry &entry)> onActivateEntry_;
     size_t selected_ = 0;
     msimeui::Tween indicator_{0.0f};
     bool positioned_ = false;
@@ -873,7 +1107,10 @@ class ModalLayer : public msimeui::Visual
         if (!dialog_)
             return;
         if (window_)
+        {
+            window_->DispatchImportedMessage(WM_MOUSELEAVE, 0, 0);
             window_->FocusVisual(nullptr);
+        }
         ReleaseChild(dialog_);
         dialog_.reset();
         onDismiss_ = nullptr;
@@ -1121,7 +1358,7 @@ class RootPanel : public msimeui::Panel
     {
         const Columns c = Split(availableSize);
         titleBar_->MeasureInLayout({availableSize.width, kTitleBarHeight});
-        sidebar_->MeasureInLayout({kSidebarWidth, c.bodyHeight});
+        sidebar_->MeasureInLayout({c.sidebarWidth, c.bodyHeight});
         content_->MeasureInLayout({c.contentWidth, c.bodyHeight - 2.0f});
         modal_->MeasureInLayout({availableSize.width, c.bodyHeight});
         toast_->MeasureInLayout(availableSize);
@@ -1134,7 +1371,7 @@ class RootPanel : public msimeui::Panel
         bounds_ = finalRect;
         const Columns c = Split({finalRect.width, finalRect.height});
         titleBar_->ArrangeInLayout({finalRect.x, finalRect.y, finalRect.width, kTitleBarHeight});
-        sidebar_->ArrangeInLayout({finalRect.x, finalRect.y + kTitleBarHeight, kSidebarWidth, c.bodyHeight});
+        sidebar_->ArrangeInLayout({finalRect.x, finalRect.y + kTitleBarHeight, c.sidebarWidth, c.bodyHeight});
         // #content-container { margin-top: 2px }
         content_->ArrangeInLayout({finalRect.x + c.sidebarWidth, finalRect.y + kTitleBarHeight + 2.0f, c.contentWidth,
                                    std::max(c.bodyHeight - 2.0f, 0.0f)});
@@ -1268,6 +1505,7 @@ class SettingsWindowImpl : public HostServices
         root_ = std::make_shared<RootPanel>(titleBar_, sidebarScroll_, contentScroll_, modal_, toast_, splash_);
 
         sidebar_->SetOnSelect([this](size_t index) { ShowPageIndex(index, false); });
+        sidebar_->SetOnActivateEntry([this](const SettingsIndexEntry &entry) { ActivateSearchEntry(entry); });
 
         auto scene = std::make_unique<msimeui::Scene>();
         scene->SetRoot(root_);
@@ -1278,6 +1516,9 @@ class SettingsWindowImpl : public HostServices
                      SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         model_.Post("configRequest");
         ShowPage(initialPage.empty() ? std::string("input") : initialPage);
+        // Fill in the pages the user has not opened, one per tick, so search covers the whole
+        // settings tree rather than only what has been visited this session.
+        SetTimer(hwnd_, kIndexPageTimer, 1, nullptr);
         if (model_.HasConfig())
             splash_->Dismiss();
         else
@@ -1406,7 +1647,7 @@ class SettingsWindowImpl : public HostServices
         modal_->Close();
         auto &page = pageCache_[index];
         if (!page)
-            page = pages[index].build(context_);
+            page = BuildPageAndIndex(index);
         pageHost_->SetChild(page);
         page->Attach(window_.get());
         // All pages share one scroller; a new page starts at the top.
@@ -1416,13 +1657,110 @@ class SettingsWindowImpl : public HostServices
         window_->RefreshHover();
     }
 
+    // Builds a page under an index scope, so every row it creates is recorded, and hands it back
+    // for the cache.
+    //
+    // Indexed pages stay in `pageCache_` rather than being thrown away after their rows are
+    // collected. The index points at the page's rows, so a click has to scroll the very row that
+    // is on screen; a page held only long enough to read its titles would hand back rows that no
+    // longer exist. Holding one page per settings page costs what visiting them all costs, which
+    // is what `pageCache_` already did, and a builder does not decode images or query the
+    // dictionary on its own: those happen on first render and on user action.
+    VisualPtr BuildPageAndIndex(size_t index)
+    {
+        const auto &pages = Pages();
+        const std::string pageId = pages[index].id;
+        const std::wstring pageTitle = pages[index].title;
+        auto slice = std::make_shared<std::vector<SettingsIndexEntry>>();
+        VisualPtr built;
+        {
+            SettingsIndexScope scope(pageId, [slice, pageId, pageTitle](const SettingsIndexScope::Row &row) {
+                slice->push_back({pageId, pageTitle, row.title, row.description, row.row});
+            });
+            built = pages[index].build(context_);
+        }
+        // A rebuild of this page replaces whatever it contributed before.
+        pageEntries_.erase(std::remove_if(pageEntries_.begin(), pageEntries_.end(),
+                                          [&pageId](const std::shared_ptr<std::vector<SettingsIndexEntry>> &entry) {
+                                              return !entry->empty() && entry->front().pageId == pageId;
+                                          }),
+                           pageEntries_.end());
+        pageEntries_.push_back(std::move(slice));
+        RebuildSearchIndex();
+        return built;
+    }
+
+    // Flattens per-page entry lists into the vector the search box reads.
+    void RebuildSearchIndex()
+    {
+        auto flat = std::make_shared<std::vector<SettingsIndexEntry>>();
+        for (const auto &pageEntries : pageEntries_)
+        {
+            for (const SettingsIndexEntry &entry : *pageEntries)
+            {
+                if (!entry.row.expired())
+                    flat->push_back(entry);
+            }
+        }
+        searchIndex_ = std::move(flat);
+        if (sidebar_)
+            sidebar_->Search()->SetIndex(searchIndex_);
+    }
+
+    // Builds the pages nobody has opened yet, one per timer tick, so every setting is findable
+    // from the first keystroke. A page builder is a few hundred control constructions; sixteen of
+    // them in one go would stall the first frame, so they are spread over ticks once the window is
+    // already up and responsive.
+    void IndexNextPage()
+    {
+        const auto &pages = Pages();
+        while (nextIndexPage_ < pages.size())
+        {
+            const size_t index = nextIndexPage_++;
+            // Built already: either it is on screen, or the indexer got to it earlier. Both are
+            // in `pageCache_`, so membership is the only test needed and a page cannot be skipped
+            // just because it happens to be the one showing.
+            if (pageCache_.count(index) != 0)
+                continue;
+            pageCache_[index] = BuildPageAndIndex(index);
+            return;
+        }
+        KillTimer(hwnd_, kIndexPageTimer);
+    }
+
+    // Switches to the entry's page and scrolls its row into view.
+    void ActivateSearchEntry(const SettingsIndexEntry &entry)
+    {
+        const auto &pages = Pages();
+        for (size_t i = 0; i < pages.size(); ++i)
+        {
+            if (entry.pageId != pages[i].id)
+                continue;
+            ShowPageIndex(i, false);
+            if (auto row = entry.row.lock())
+            {
+                ScrollIntoView(*row);
+                // Focus the row so the scroll target is also where the keyboard goes next.
+                if (window_)
+                    window_->FocusVisual(row.get());
+            }
+            return;
+        }
+    }
+
     void RebuildPages()
     {
         const size_t current = current_;
         pageCache_.clear();
+        // Every cached page is gone, so its rows are too and the index has to be dropped with it.
+        pageEntries_.clear();
+        RebuildSearchIndex();
         current_ = static_cast<size_t>(-1);
+        // Re-index from the start: the pages that were indexed before the rebuild no longer exist.
+        nextIndexPage_ = 0;
         if (current < Pages().size())
             ShowPageIndex(current, true);
+        SetTimer(hwnd_, kIndexPageTimer, 1, nullptr);
     }
 
     void OnHostMessage(const std::wstring &message)
@@ -1515,6 +1853,12 @@ class SettingsWindowImpl : public HostServices
                 result = 0;
                 return true;
             }
+            if (wParam == kIndexPageTimer)
+            {
+                IndexNextPage();
+                result = 0;
+                return true;
+            }
             if (wParam == kImageFrameTimer)
             {
                 KillTimer(hwnd_, kImageFrameTimer);
@@ -1532,6 +1876,14 @@ class SettingsWindowImpl : public HostServices
             if (wParam == VK_ESCAPE && modal_->IsOpen() && window_->GetScene())
             {
                 modal_->Dismiss();
+                result = 0;
+                return true;
+            }
+            // Ctrl+F focuses the settings search, so the box is reachable without the mouse and
+            // without having to tab through the page that happens to be open.
+            if (wParam == 'F' && (GetKeyState(VK_CONTROL) & 0x8000) && sidebar_)
+            {
+                sidebar_->Search()->Focus();
                 result = 0;
                 return true;
             }
@@ -1716,6 +2068,11 @@ class SettingsWindowImpl : public HostServices
     std::shared_ptr<SplashView> splash_;
     std::shared_ptr<RootPanel> root_;
     std::map<size_t, VisualPtr> pageCache_;
+    // Per-page search entries, one list per built page, flattened into `searchIndex_`.
+    std::vector<std::shared_ptr<std::vector<SettingsIndexEntry>>> pageEntries_;
+    std::shared_ptr<const std::vector<SettingsIndexEntry>> searchIndex_;
+    // Next page for the background indexer, which fills in the pages the user has not opened.
+    size_t nextIndexPage_ = 0;
     size_t current_ = static_cast<size_t>(-1);
     CaptionState caption_;
     bool themed_ = false;

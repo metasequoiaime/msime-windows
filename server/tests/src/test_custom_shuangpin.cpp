@@ -1,4 +1,5 @@
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 #include "src/config/ime_config.h"
 #include "src/config/ime_config_internal.h"
 #include "engine/core/data_path.h"
@@ -69,8 +70,7 @@ class ScopedDataRoot
             previous_ = previous;
         }
         std::free(previous);
-        root_ = std::filesystem::temp_directory_path() /
-                (L"msime-自定义双拼测试-" + std::to_wstring(GetCurrentProcessId()));
+        root_ = test::TempRoot() / (L"msime-自定义双拼测试-" + std::to_wstring(GetCurrentProcessId()));
         std::error_code ec;
         std::filesystem::remove_all(root_, ec);
         std::filesystem::create_directories(custom_directory(), ec);

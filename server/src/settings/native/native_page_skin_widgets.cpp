@@ -594,7 +594,11 @@ bool PillButton::OnMouseUp(const POINT &point, WPARAM)
         return false;
     pressed_ = false;
     if (HitSelf(window_, *this, point) && onClick_)
-        onClick_();
+    {
+        // A handler may tear down the visual that owns onClick_ while it runs.
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 
@@ -689,7 +693,11 @@ bool AccentButton::OnMouseUp(const POINT &point, WPARAM)
     pressed_ = false;
     InvalidateVisual();
     if (HitSelf(window_, *this, point) && onClick_)
-        onClick_();
+    {
+        // A handler may tear down the visual that owns onClick_ while it runs.
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 

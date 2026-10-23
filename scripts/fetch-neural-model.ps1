@@ -41,7 +41,23 @@ foreach ($model in $lock.models) {
     }
     if ($needsDownload) {
         Write-Host "下载 $($model.file) ..."
-        Invoke-WebRequest -Uri $model.url -OutFile $dest
+        # GitHub's release CDN drops connections regularly (the nightly pipeline has
+        # seen it all week); the digest check below catches a truncated file either
+        # way, so retry the download and let the checksum arbitrate.
+        $downloaded = $false
+        foreach ($attempt in 1..3) {
+            try {
+                Invoke-WebRequest -Uri $model.url -OutFile $dest -MaximumRetryCount 3 -RetryIntervalSec 5
+                $downloaded = $true
+                break
+            }
+            catch {
+                if ($attempt -eq 3) { throw }
+                Write-Warning "下载失败（第 $attempt 次）：$($_.Exception.Message)"
+                Start-Sleep -Seconds (10 * $attempt)
+            }
+        }
+        if (-not $downloaded) { throw "下载失败：$($model.url)" }
         $hash = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($hash -ne $model.sha256.ToLowerInvariant()) {
             throw "$($model.file) sha256 校验失败：期望 $($model.sha256)，实际 $hash"

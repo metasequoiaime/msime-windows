@@ -1,4 +1,5 @@
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 
 #include "skin/candidate_skin_catalog.h"
 
@@ -21,7 +22,7 @@ namespace fs = std::filesystem;
 fs::path MakeSkinsRoot(const std::wstring &leaf)
 {
     const fs::path root =
-        fs::temp_directory_path() / (L"msime-skin-support-" + std::to_wstring(GetCurrentProcessId())) / leaf / L"skins";
+        test::TempRoot() / (L"msime-skin-support-" + std::to_wstring(GetCurrentProcessId())) / leaf / L"skins";
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root, ec);

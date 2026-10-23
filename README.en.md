@@ -13,7 +13,7 @@
 
 A free and open-source Chinese and Japanese input method for Windows 10 and 11, built on TSF with no legacy IMM32 path.
 
-This repository is the whole Windows product: the TSF text service DLL, the resident server, the conversion engine, a self-written native GUI framework, the HTML surfaces and the installer. The engine was imported from [MSIME-Engine](https://github.com/metasequoiaime/MSIME-Engine) and specialized for Windows; it now lives in `engine/` as a first-party component, so a plain clone builds the product. See [`engine/UPSTREAM.md`](engine/UPSTREAM.md).
+This repository is the whole Windows product: the TSF text service DLL, the resident server, the conversion engine, a self-written native GUI framework (all windows, including settings, are drawn with Direct2D) and the installer. The engine was imported from [MSIME-Engine](https://github.com/metasequoiaime/MSIME-Engine) and specialized for Windows; it now lives in `engine/` as a first-party component, so a plain clone builds the product. See [`engine/UPSTREAM.md`](engine/UPSTREAM.md).
 
 **This is a public beta.** Expect rough edges and read the release notes before upgrading.
 
@@ -21,7 +21,7 @@ This repository is the whole Windows product: the TSF text service DLL, the resi
 
 Download the installer from [Releases](https://github.com/metasequoiaime/MSIME-Windows/releases) or the [download page](https://msime.app/download/), run it, then switch with `Win + Space`.
 
-Current builds are **not code signed**. SmartScreen will block them and uiAccess is unavailable, which means the candidate window cannot float above elevated applications. Verify the download with the SHA256 published on the download page.
+Releases are code signed: up to v0.9.3 with the project's Certum Open Source Developer certificate, and from now on through SignPath in CI (see the [code signing policy](docs/code-signing-policy.md)). An installer whose name ends in `-unsigned` was built without a signing certificate; SmartScreen will block it and uiAccess is unavailable, which means the candidate window cannot float above elevated applications. Either way, verify the download with the SHA256 published on the download page.
 
 You need the **Microsoft Visual C++ 2015–2022 Redistributable (x64)**. The server and settings app are 64-bit; the x86 redistributable is a separate package and does not substitute for it. If you cannot switch to the IME, the server keeps exiting, or the settings window closes immediately, install that first.
 
@@ -61,3 +61,9 @@ What is signed, who the committers, reviewers and approvers are, the build and r
 ## Licence
 
 GPL-3.0. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
+
+## Support the project
+
+If Metasequoia IME helps you, feel free to buy me a roasted sweet potato, roasted corn, roasted chestnuts or roasted ginkgo nuts.
+
+<img src="docs/images/sponsor-wechat.jpg" width="300" alt="WeChat appreciation code for 苏小凡 Channel">

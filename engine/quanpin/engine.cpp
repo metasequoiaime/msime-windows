@@ -4,17 +4,15 @@
 #include "quanpin_utils.h"
 
 namespace
-{ // The request carries one bool per correction type; the dictionary layer gates
-// the whole feature with a single mask, so bridge the two here. Design D2: any
-// correction switch on also enables the deletion bit -- the user's intent to
-// have typos fixed covers dropped letters -- while both off stays 0. The same
-// linkage carries the insertion bit (design D4 of the insertion task).
+{ // The request carries one bool per user-visible correction switch; the dictionary layer
+// gates the whole feature with a single mask. The mapping itself lives in
+// quanpin::autocorrect_types_from_switches (quanpin_utils.h) so this, the preedit
+// rebuild (input_session_composition.cpp) and the server session adapter cannot drift.
 unsigned autocorrect_types_from_request(const QueryRequest &request)
 {
-    const unsigned legacy =
-        (request.enable_quanpin_autocorrect_transposition ? quanpin::kAutocorrectTransposition : 0u) |
-        (request.enable_quanpin_autocorrect_neighbor ? quanpin::kAutocorrectNeighbor : 0u);
-    return legacy == 0 ? 0u : legacy | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+    return quanpin::autocorrect_types_from_switches(
+        request.enable_quanpin_autocorrect_transposition, request.enable_quanpin_autocorrect_neighbor,
+        request.enable_quanpin_autocorrect_deletion, request.enable_quanpin_autocorrect_insertion);
 }
 } // namespace
 

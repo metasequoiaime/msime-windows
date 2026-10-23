@@ -32,9 +32,12 @@ class ManifestTests(unittest.TestCase):
                 for key in ("name", "version", "base"):
                     self.assertTrue(data[key].strip(), key)
                 self.assertIn(data["base"], BUILTIN_SKINS + SHARED_BASES + (CANVAS_BASE,))
-                # Mirrors the Server catalog: canvas needs schema 2, and schema 2 needs canvas (otherwise the
-                # catalog loads the skin as schema 1 and ignores every v2 table).
-                self.assertEqual(data["schema_version"] == 2, data["base"] == CANVAS_BASE, "schema 2 <=> canvas")
+                # Mirrors the Server catalog: canvas needs schema 2, and on any other base a schema 2 manifest loads as
+                # schema 1, so the canvas-only tables below are ignored (the catalog reports the keys, it still loads).
+                if data["schema_version"] == 2:
+                    self.assertEqual(data["base"], CANVAS_BASE, "schema 2 needs the canvas base")
+                else:
+                    self.assertNotEqual(data["base"], CANVAS_BASE, "canvas needs schema 2")
                 window = data.get("candidate_window", {})
                 assets = {key: data.get(key) for key in ("toolbar_stylesheet", "preview")}
                 for table in ("decoration", "background"):

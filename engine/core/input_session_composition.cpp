@@ -209,16 +209,15 @@ std::string ResolveQuanpinCloudCacheKey(const QueryRequest &request)
     return quanpin::strip_active_helpcodes(request.raw_input, request.raw_input_with_cases);
 }
 
-// Same four-bit mapping as autocorrect_types_from_request (engine.cpp): the
-// request only carries the two legacy bools, and either one on also enables
-// deletion and insertion so the preedit rebuild sees the same correction space
-// as the query.
+// Adapter over the request fields: the switch -> mask rule itself lives in
+// quanpin::autocorrect_types_from_switches (quanpin_utils.h), shared with
+// engine.cpp and the server session so the preedit rebuild always sees the same
+// correction space as the query.
 unsigned QuanpinAutocorrectTypes(const QueryRequest &request)
 {
-    const unsigned legacy =
-        (request.enable_quanpin_autocorrect_transposition ? quanpin::kAutocorrectTransposition : 0u) |
-        (request.enable_quanpin_autocorrect_neighbor ? quanpin::kAutocorrectNeighbor : 0u);
-    return legacy == 0 ? 0u : legacy | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
+    return quanpin::autocorrect_types_from_switches(
+        request.enable_quanpin_autocorrect_transposition, request.enable_quanpin_autocorrect_neighbor,
+        request.enable_quanpin_autocorrect_deletion, request.enable_quanpin_autocorrect_insertion);
 }
 
 std::string QuanpinLettersWithoutDelimiters(const std::string &text)
@@ -647,6 +646,19 @@ std::string InputSession::build_pinyin_segmentation_with_cases(bool shuangpin_ra
     }
     if (current_scheme_type() == SchemeType::Quanpin)
     {
+        // 容错仲裁选中的读音（句中简拼展开、槽内漏字变体）与敲的字母不逐音节相同，
+        // 下面几条按首选重建显示的路径都会比对失败、退回字面切分；那时预编辑会和
+        // 首选候选对不上（layout-and-unit-boundaries：切分即编辑单元）。仲裁已经把
+        // 分段显示按原串大小写算好，直接用。全拼方案下 shuangpin_raw 也会是 true
+        // （宿主默认取原串形态），所以这里只能按方案判断，不能用它当门。
+        if (!is_shuangpin())
+        {
+            const std::string &fault_display = engine_.fault_segmentation_with_cases();
+            if (!fault_display.empty())
+            {
+                return decorate(fault_display);
+            }
+        }
         if (!candidates().empty())
         {
             const auto &head = candidates().front();
@@ -1042,6 +1054,13 @@ InputSession::SelectionTransition InputSession::advance_composition_after_select
                 raw_input_without_helpcodes, quanpin::split_segments(selected_pinyin), autocorrect_types))
         {
             consumed_letters = *aligned;
+        }
+        else if (const auto fault_aligned = quanpin::fault_reading_raw_length(raw_input_without_helpcodes,
+                                                                              quanpin::split_segments(selected_pinyin)))
+        {
+            // 长句容错仲裁的读音（句中简拼展开、槽内漏字变体）不在 k-best 切分里，
+            // corrected_reading_raw_length 对不上；按槽位模型对回原始字母。
+            consumed_letters = *fault_aligned;
         }
     }
 

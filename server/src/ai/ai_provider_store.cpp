@@ -20,9 +20,9 @@ constexpr int kSchemaVersion = 1;
 
 const std::vector<std::string_view> &BuiltinProviderIds()
 {
-    static const std::vector<std::string_view> ids{"deepseek",  "openai",     "siliconflow", "groq",
-                                                   "custom",    "minimax",    "moonshot",    "zhipu",
-                                                   "dashscope", "volcengine", "openrouter",  "jev"};
+    static const std::vector<std::string_view> ids{"deepseek",   "openai",   "siliconflow", "groq",      "custom",
+                                                   "minimax",    "moonshot", "zhipu",       "dashscope", "volcengine",
+                                                   "openrouter", "jev",      "ollama"};
     return ids;
 }
 
@@ -48,6 +48,8 @@ const std::map<std::string_view, std::pair<std::string_view, std::string_view>> 
         {"dashscope", {"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "qwen-plus"}},
         {"volcengine", {"https://ark.cn-beijing.volces.com/api/v3/chat/completions", "doubao-seed-1.6-flash"}},
         {"openrouter", {"https://openrouter.ai/api/v1/chat/completions", "openrouter/auto"}},
+        // 本机的 Ollama 服务，不做鉴权。装了哪些模型因人而异，不预设模型，用「查询模型」从 /v1/models 列出。
+        {"ollama", {"http://localhost:11434/v1/chat/completions", ""}},
         {"jev", {"https://api.typesafe.ai/v1/systemone", "jev-1.13.0"}},
     };
     return defaults;

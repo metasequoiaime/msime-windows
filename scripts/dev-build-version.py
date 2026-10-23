@@ -63,9 +63,9 @@ def read_short_sha(explicit: str | None) -> str:
     return result.stdout.strip()
 
 
-def build(base: tuple[str, str, str], today: datetime.date, sha: str) -> tuple[str, str]:
+def build(base: tuple[str, str, str], today: datetime.date, sha: str, channel: str = "dev") -> tuple[str, str]:
     major, minor, patch = base
-    display = f"{major}.{minor}.{patch}-dev.{today:%Y%m%d}.{sha}"
+    display = f"{major}.{minor}.{patch}-{channel}.{today:%Y%m%d}.{sha}"
     # 四段 quad 的末位放 YYMMDD：YY > 79 恒大于本产品存在的一切年份，任何正式版该位是 0，
     # 所以 dev DLL 恒读作比基线新、比下一个发布旧。
     date = today.strftime("%y%m%d")
@@ -80,10 +80,15 @@ def main() -> int:
     output.add_argument("--base", action="store_true", help="print the base version only")
     output.add_argument("--date", action="store_true", help="print the YYMMDD stamp only")
     parser.add_argument("--commit", metavar="SHA", help="use this short commit instead of reading git")
+    parser.add_argument(
+        "--channel",
+        default="dev",
+        help="prerelease label in the display version: dev for feature builds, nightly for the scheduled one",
+    )
     args = parser.parse_args()
 
     base = read_base()
-    display, date = build(base, datetime.date.today(), read_short_sha(args.commit))
+    display, date = build(base, datetime.date.today(), read_short_sha(args.commit), args.channel)
     if args.display:
         print(display)
     elif args.base:

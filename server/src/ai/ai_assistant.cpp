@@ -36,8 +36,11 @@ AiAssistant::detail::SuggestionCache g_candidate_cache;
 std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev::Client &jev_client)
 {
     const auto &config = request.config;
-    // 自建或转发的选择器可以不要 Key（如 OpenCode Zen 的免费模型），Jev 的 Token 交给 Jev::Client 判断。
-    const bool token_missing = config.token.empty() && config.provider != "jev";
+    const std::string token = AiAssistant::RequestToken(config.provider, config.token);
+    // 自建或转发的选择器可以不要 Key（如 OpenCode Zen 的免费模型），Jev 的 Token 交给 Jev::Client 判断；
+    // Ollama 这类本机服务本来就不鉴权，ProviderUsesToken 直接放行。
+    const bool token_missing =
+        token.empty() && config.provider != "jev" && AiAssistant::ProviderUsesToken(config.provider);
     if (!config.enabled || token_missing || config.endpoint.empty() || config.model.empty() ||
         request.pinyin_segments.empty() || g_generation.load() != generation)
     {
@@ -65,7 +68,7 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
         }
     }
     const nlohmann::json body = AiAssistant::detail::BuildRequestBody(request);
-    const auto content = ChatCompletions::FetchContent(config.endpoint, config.token, body.dump(),
+    const auto content = ChatCompletions::FetchContent(config.endpoint, token, body.dump(),
                                                        AiAssistant::detail::RequestTimeoutMs(config));
     if (!content || g_generation.load() != generation)
         return {};

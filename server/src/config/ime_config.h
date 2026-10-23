@@ -97,9 +97,10 @@ struct AiAssistantConfig
         {"volcengine", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"},
         {"openrouter", "https://openrouter.ai/api/v1/chat/completions"},
         {"jev", "https://api.typesafe.ai/v1/systemone"},
+        {"ollama", "http://localhost:11434/v1/chat/completions"},
         {"custom", ""}};
     // Groq 已弃用 llama-3.3-70b-versatile，默认模型改用 qwen/qwen3.8-27b。
-    // custom 槽位不预设接口地址和模型，全部由用户填写并单独保存。
+    // custom 槽位不预设接口地址和模型，全部由用户填写并单独保存。ollama 不预设模型：本机装了哪些模型因人而异。
     std::map<std::string, std::string> models{{"deepseek", "deepseek-v4-flash"},
                                               {"openai", "gpt-4o-mini"},
                                               {"siliconflow", "Qwen/Qwen3-8B"},
@@ -111,6 +112,7 @@ struct AiAssistantConfig
                                               {"volcengine", "doubao-seed-1.6-flash"},
                                               {"openrouter", "openrouter/auto"},
                                               {"jev", "jev-1.13.0"},
+                                              {"ollama", ""},
                                               {"custom", ""}};
     int candidate_limit = 3;
     // DeepSeek reasoning effort: disabled | low | high | max. Other providers ignore it.
@@ -280,6 +282,10 @@ const std::string &GetConfiguredCharacterSet();
 bool SetConfiguredCharacterSet(const std::string &character_set);
 bool GetConfiguredCharacterSetShortcutEnabled();
 bool SetConfiguredCharacterSetShortcutEnabled(bool enabled);
+// Shift+Enter commits the converted spelling under the Shuangpin scheme. Turning it off
+// leaves the chord to the plain Enter path, which commits the raw input.
+bool GetConfiguredPinyinCommitShortcutEnabled();
+bool SetConfiguredPinyinCommitShortcutEnabled(bool enabled);
 // "chinese" | "english" — default CN/EN when activating this IME.
 const std::string &GetConfiguredDefaultImeMode();
 bool SetConfiguredDefaultImeMode(const std::string &mode);
@@ -424,6 +430,10 @@ bool GetConfiguredQuanpinAutocorrectTransposition();
 bool SetConfiguredQuanpinAutocorrectTransposition(bool enabled);
 bool GetConfiguredQuanpinAutocorrectNeighbor();
 bool SetConfiguredQuanpinAutocorrectNeighbor(bool enabled);
+bool GetConfiguredQuanpinAutocorrectDeletion();
+bool SetConfiguredQuanpinAutocorrectDeletion(bool enabled);
+bool GetConfiguredQuanpinAutocorrectInsertion();
+bool SetConfiguredQuanpinAutocorrectInsertion(bool enabled);
 bool GetConfiguredQuanpinAutocorrectMarker();
 bool SetConfiguredQuanpinAutocorrectMarker(bool enabled);
 // Fuzzy pinyin rules are flat [input] booleans ("fuzzy_z_zh", ...) so the settings page can
@@ -680,6 +690,9 @@ bool SetConfiguredSettingsWindowLinger(const std::string &linger);
 // 设置窗口的齿轮启动画面，出厂开启。
 bool GetConfiguredSettingsLaunchAnimation();
 bool SetConfiguredSettingsLaunchAnimation(bool enabled);
+// 发现新版本时由后台自动下载安装包并校验 SHA256，出厂关闭。
+bool GetConfiguredAutoDownloadUpdate();
+bool SetConfiguredAutoDownloadUpdate(bool enabled);
 // "fluent" | "wechat" | "wechat_scroll" | "graphite" | "willow_green" | "autumn_osmanthus" | "microsoft"
 // — candidate-window and floating-toolbar skin.
 const std::string &GetConfiguredCandidateSkin();

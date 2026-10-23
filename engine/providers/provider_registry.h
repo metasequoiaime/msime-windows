@@ -13,6 +13,11 @@ class ProviderRegistry
                               metasequoia::RuntimePaths paths = metasequoia::RuntimePaths::legacy());
     ICandidateProvider &resolve(SchemeType scheme_type);
     std::optional<WordItem> find_candidate(SchemeType scheme_type, const std::string &key, const std::string &value);
+    // 容错仲裁选中读音后的分段显示（大小写原样）；空表示当前串没有容错布局。
+    const std::string &fault_segmentation_with_cases() const
+    {
+        return pinyin_provider_.fault_segmentation_with_cases();
+    }
     bool can_expand_initial_candidates(const QueryRequest &request, const std::vector<WordItem> &candidates) const;
     bool expand_initial_candidates(const QueryRequest &request, std::vector<WordItem> &candidates);
     // 双拼直接辅助码只出在拼音 provider 上，见 PinyinCandidateProvider::resolve_direct_helpcode。

@@ -71,7 +71,7 @@ metasequoia::RuntimePaths PathsIn(const std::filesystem::path &directory)
 
 std::filesystem::path CreateWubiDatabase()
 {
-    const auto path = std::filesystem::temp_directory_path() / "msime-wubi-provider-test.db";
+    const auto path = test::TempRoot() / "msime-wubi-provider-test.db";
     std::filesystem::remove(path);
 
     sqlite3 *db = nullptr;
@@ -164,8 +164,7 @@ TEST_CASE(WubiProviderReturnsPrefixMatchesWithExactCodeFirst)
 
 TEST_CASE(WubiProviderLimitsPrefixScanToBoundedRows)
 {
-    const auto directory =
-        std::filesystem::temp_directory_path() / ("msime-wubi-provider-limit-" + std::to_string(GetCurrentProcessId()));
+    const auto directory = test::TempRoot() / ("msime-wubi-provider-limit-" + std::to_string(GetCurrentProcessId()));
     std::filesystem::create_directories(directory);
     const auto db_path = directory / "limit.db";
     {
@@ -195,8 +194,7 @@ TEST_CASE(WubiProviderLimitsPrefixScanToBoundedRows)
 
 TEST_CASE(WubiProviderLearnsSelectionIntoWeightAndJournal)
 {
-    const auto directory =
-        std::filesystem::temp_directory_path() / ("msime-wubi-provider-learn-" + std::to_string(GetCurrentProcessId()));
+    const auto directory = test::TempRoot() / ("msime-wubi-provider-learn-" + std::to_string(GetCurrentProcessId()));
     std::filesystem::create_directories(directory);
     const auto db_path = directory / "main.db";
     const auto paths = PathsIn(directory);
@@ -230,8 +228,7 @@ TEST_CASE(WubiProviderLearnsSelectionIntoWeightAndJournal)
 
 TEST_CASE(WubiProviderDeletesWubiCandidateThroughJournal)
 {
-    const auto directory = std::filesystem::temp_directory_path() /
-                           ("msime-wubi-provider-delete-" + std::to_string(GetCurrentProcessId()));
+    const auto directory = test::TempRoot() / ("msime-wubi-provider-delete-" + std::to_string(GetCurrentProcessId()));
     std::filesystem::create_directories(directory);
     const auto db_path = directory / "main.db";
     const auto paths = PathsIn(directory);

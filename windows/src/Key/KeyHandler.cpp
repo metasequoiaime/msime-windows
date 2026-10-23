@@ -439,6 +439,10 @@ HRESULT CMetasequoiaIME::_HandleCommitCandidateAndContinue(TfEditCookie ec, _In_
 HRESULT CMetasequoiaIME::_HandleUpdateVoiceComposition(TfEditCookie ec, _In_ ITfContext *pContext,
                                                        const std::wstring &text)
 {
+    if (_pComposition != nullptr && !_voiceCompositionActive)
+    {
+        return S_OK; // Keyboard input owns this composition now.
+    }
     if (text.empty())
     {
         return S_OK;
@@ -463,12 +467,16 @@ HRESULT CMetasequoiaIME::_HandleUpdateVoiceComposition(TfEditCookie ec, _In_ ITf
 
     CStringRange voiceString;
     voiceString.Set(text.c_str(), text.length());
-    return _AddComposingAndChar(ec, pContext, &voiceString);
+    return _AddComposingAndChar(ec, pContext, &voiceString, true);
 }
 
 HRESULT CMetasequoiaIME::_HandleCommitVoiceComposition(TfEditCookie ec, _In_ ITfContext *pContext,
                                                        const std::wstring &text)
 {
+    if (_pComposition != nullptr && !_voiceCompositionActive)
+    {
+        return S_OK; // A late final result must not replace keyboard preedit.
+    }
     _voiceCompositionActive = false;
     if (_pCompositionProcessorEngine)
     {
@@ -498,7 +506,7 @@ HRESULT CMetasequoiaIME::_HandleCommitVoiceComposition(TfEditCookie ec, _In_ ITf
 
 HRESULT CMetasequoiaIME::_HandleCancelVoiceComposition(TfEditCookie ec, _In_ ITfContext *pContext)
 {
-    if (!_voiceCompositionActive && _pComposition == nullptr)
+    if (!_voiceCompositionActive)
     {
         return S_OK;
     }

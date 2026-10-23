@@ -70,6 +70,22 @@ TEST_CASE(shortcut_config_upgrade_preserves_word_selection_and_adds_defaults)
     REQUIRE(merged.find("toggle_character_set_ctrl_shift_f = true") != std::string::npos);
 }
 
+TEST_CASE(commit_pinyin_shortcut_upgrade_adds_default_and_preserves_choice)
+{
+    std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string installed((std::istreambuf_iterator<char>(input)), {});
+    const std::string legacy = "[keybindings]\nswitch_language_shift = true\n";
+    // 升级：旧配置没有这个键，出厂模板补上默认值，否则模板缺键会让它每次升级都被丢掉。
+    const auto added = toml::parse(MergeConfigIntoTemplate(installed, legacy, legacy));
+    REQUIRE(added["keybindings"]["commit_pinyin_shift_enter"].value_or(false));
+    // 用户在设置页关掉过，升级后必须还是关的。
+    const std::string disabled = legacy + "commit_pinyin_shift_enter = false\n";
+    const auto merged = toml::parse(MergeConfigIntoTemplate(installed, disabled, legacy));
+    REQUIRE(!merged["keybindings"]["commit_pinyin_shift_enter"].value_or(true));
+    REQUIRE(merged["keybindings"]["switch_language_shift"].value_or(false));
+}
+
 TEST_CASE(input_state_shortcut_upgrade_preserves_custom_and_disabled_bindings)
 {
     std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);

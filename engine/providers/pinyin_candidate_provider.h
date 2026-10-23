@@ -31,6 +31,11 @@ class PinyinCandidateProvider : public ICandidateProvider
         quanpin_engine_.set_helpcode_keymap(table);
         shuangpin_engine_.set_helpcode_keymap(std::move(table));
     }
+    // 容错仲裁选中读音后的分段显示（大小写原样）；空表示当前串没有容错布局。
+    const std::string &fault_segmentation_with_cases() const
+    {
+        return quanpin_engine_.fault_segmentation_with_cases();
+    }
 
   private:
     const ShuangpinProfile shuangpin_profile_;

@@ -216,8 +216,9 @@ struct FreeDecoration
 
 struct Package
 {
-    // 皮肤规范版本：1 为通用现代卡片皮肤，2 为支持九宫格与自由挂件的高级皮肤。v2 必须以 canvas 为 base，
-    // 声明 2 而 base 不是 canvas 的按 1 处理（v2 字段全部忽略），并在 notices 里记一条。
+    // 皮肤规范版本：1 为通用现代卡片皮肤，2 在 canvas 上支持九宫格与自由挂件。声明 2 而 base 不是 canvas 的按 1
+    // 处理（九宫格、挂件等 canvas 字段全部忽略），清单写了这些字段时在 notices 里列出；只写了 [animation] 或装饰图
+    // motion 的不记，Windows 按静态显示。
     int schemaVersion = 1;
     // 不妨碍加载的问题；Scan 把它们和加载失败一起列进 issues，设置页的诊断信息会显示。
     std::vector<std::string> notices;
@@ -302,8 +303,21 @@ struct Package
 
 struct Issue
 {
+    // 这条 issue 的性质，设置页据此把加载失败的目录和带提示的皮肤分开计数。不看 issue 的 folder 能否在
+    // packages 里找到：官方包在设置页单独成组，目录名读不出时 folder 也不是皮肤 id。
+    enum class Kind
+    {
+        // 目录加载失败，不会出现在可选列表里。
+        LoadFailed,
+        // 皮肤能用，只是有些字段被忽略。
+        Noticed,
+        // 皮肤目录本身读不全，folder 指的是 skinsRoot。
+        ScanFailed,
+    };
+
     std::string folder;
     std::string reason;
+    Kind kind = Kind::LoadFailed;
 };
 
 struct ScanResult

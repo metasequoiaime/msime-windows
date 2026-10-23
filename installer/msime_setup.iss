@@ -1673,8 +1673,29 @@ begin
   Result := '';
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+{ TSF 的语言配置要以原用户身份装进键盘列表：提权进程的 HKCU 指向管理员账户，写进去当前用户看不到
+  （见 server/src/settings/input_method_install.h）。放在最后，失败也不影响装好的文件。}
+procedure RegisterProfileForUser;
+var
+  ErrorCode: Integer;
+  Executable: String;
 begin
+  Executable := ExpandConstant(
+    '{commonpf64}\metasequoiaime\server\MetasequoiaImeSettings.exe');
+  if not FileExists(Executable) then
+  begin
+    Log('settings program missing, skipping keyboard list registration');
+    Exit;
+  end;
+  if not ShellExecAsOriginalUser('', Executable, '--register-profile', '', SW_HIDE,
+    ewWaitUntilTerminated, ErrorCode) then
+    Log('could not start the settings program as the original user: ' +
+      IntToStr(ErrorCode))
+  else
+    Log('keyboard list registration exit code: ' + IntToStr(ErrorCode));
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);begin
   if CurStep = ssPostInstall then
   begin
     { 先打标记，再调整权限：之后的覆盖安装和卸载靠它判断这个目录是不是我们建的。}
@@ -1695,6 +1716,9 @@ begin
     { 偏好写入放在最后：它失败只弹提示，不能挡住上面这些必需步骤。}
     ApplyNetworkChoiceToUserConfig;
 #endif
+    { TSF 的语言配置要以原用户身份装进键盘列表：提权进程的 HKCU 指向管理员账户，写进去当前用户
+      看不到（见 server/src/settings/input_method_install.h）。放在最后，失败也不影响装好的文件。}
+    RegisterProfileForUser;
   end;
 end;
 

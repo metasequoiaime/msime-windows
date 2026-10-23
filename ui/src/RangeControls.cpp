@@ -200,7 +200,8 @@ void Slider::SetValueInternal(float value, bool notify)
 
     if (notify && oldValue != value_ && onChanged_)
     {
-        onChanged_(value_);
+        const auto handler = onChanged_;
+        handler(value_);
     }
 }
 

@@ -296,6 +296,9 @@ class InputSession
   private:
     const QueryRequest &request() const;
     // 拼音类方案的预编辑切分；shuangpin_raw 决定双拼显示按键原串还是转换后的全拼。
+    // 容错仲裁给出了分段显示时（QuanpinDictionary::fault_preedit_with_cases_ 非空，
+    // 经 QuanpinEngine::fault_segmentation_with_cases 读出），直接返回它：
+    // 读音与敲的字母不再逐音节相同，重建式比对永远过不了，只会退回字面切分。
     std::string build_pinyin_segmentation_with_cases(bool shuangpin_raw) const;
     bool is_shuangpin() const;
     bool is_wubi() const;
@@ -358,6 +361,8 @@ class InputSession
     CreatingWordProgress immediate_phrase_progress_;
     bool shuangpin_preedit_uses_raw_ = true;
     std::unique_ptr<QuanpinEngine> canonical_phrase_engine_;
+    // 容错仲裁的分段显示串在 QuanpinDictionary::fault_preedit_with_cases_（经
+    // QuanpinEngine::fault_segmentation_with_cases 读出），会话侧不另存一份。
     std::string pending_pinyin_sequence_;
     std::string pending_pinyin_sequence_with_cases_;
     bool has_pending_pinyin_sequence_ = false;

@@ -6,6 +6,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include "config/ai_provider.h"
 #include "voice-input/voice_providers.h"
 
 using namespace ime_config_detail;
@@ -636,6 +637,9 @@ static bool ApplyAiAssistantString(const std::string &key, const std::string &va
     {
         const std::string provider = key.substr(std::string("token_").size());
         const std::string id = VoiceInput::NormalizeProviderId(provider);
+        // 不用 Token 的服务商（Ollama 的本机服务）没有槽位：拒绝写入，免得 config.toml 里多一个谁都不读的空值。
+        if (!AiAssistant::ProviderUsesToken(id))
+            return false;
         // Every provider's token is a config.toml credential (token_<id>, DPAPI-protected), the
         // registry ones included; the store never holds tokens.
         const auto registered = std::find_if(g_ai_assistant.providers.begin(), g_ai_assistant.providers.end(),

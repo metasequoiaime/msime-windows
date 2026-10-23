@@ -148,7 +148,8 @@ TextBox::TextBox(float height, std::wstring placeholder)
     editor_->SetTextChangedCallback([this]() {
         if (onTextChanged_ && !suppressTextChanged_ && !editor_->IsComposing())
         {
-            onTextChanged_(GetText());
+            const auto handler = onTextChanged_;
+            handler(GetText());
         }
         InvalidateVisual();
     });
@@ -515,7 +516,8 @@ void TextBox::OnFocusChanged(bool focused)
 
     if (onFocusChanged_)
     {
-        onFocusChanged_(focused_);
+        const auto handler = onFocusChanged_;
+        handler(focused_);
     }
 
     InvalidateVisual();
@@ -693,7 +695,9 @@ bool TextBox::OnKeyDown(WPARAM key, LPARAM lParam)
         }
         if (onSubmit_)
         {
-            onSubmit_();
+            // A handler may tear down the control that owns onSubmit_ while it runs.
+            const auto handler = onSubmit_;
+            handler();
             return true;
         }
         return false;

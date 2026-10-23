@@ -1,6 +1,8 @@
 #include "settings/native/native_page_voice_fields.h"
 #include "settings/native/native_settings_pages.h"
 
+#include "config/ai_provider.h"
+
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Fonts.h"
 #include "msimeui/Window.h"
@@ -500,7 +502,11 @@ class GhostButton : public msimeui::Visual
             return false;
         pressed_ = false;
         if (HitSelf(window_, *this, point) && onClick_)
-            onClick_();
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
         return true;
     }
 
@@ -592,7 +598,11 @@ class TestButton : public msimeui::Visual
             return false;
         pressed_ = false;
         if (HitSelf(window_, *this, point) && onClick_)
-            onClick_();
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
         return true;
     }
 
@@ -690,7 +700,10 @@ class BareRadio : public msimeui::Visual
             return false;
         pressed_ = false;
         if (HitSelf(window_, *this, point) && !checked_ && onSelected_)
-            onSelected_();
+        {
+            const auto handler = onSelected_;
+            handler();
+        }
         return true;
     }
 
@@ -942,7 +955,10 @@ class ApiField : public msimeui::Panel
             return;
         committed_ = text;
         if (onCommit_)
-            onCommit_(text);
+        {
+            const auto handler = onCommit_;
+            handler(text);
+        }
     }
 
     bool password_ = false;
@@ -1352,7 +1368,7 @@ struct InputPage
             const voice_fields::ActiveAiConfig state = AiState();
             // 选择器模式下这里的 provider 已经解析成「生成式上次用的那家」，所以不再是 jev。
             // AI 联想总开关与这里无关，只要凭据齐就能用。
-            text = L"请先在「AI 与云联想」页面填写当前服务商的接口地址、Token 和模型";
+            text = L"请先在「AI 与云联想」页面填写当前服务商的接口地址、模型和 Token（Ollama 不需要）";
             ok = state.usable;
         }
         else if (provider == "custom")
@@ -1690,10 +1706,14 @@ VisualPtr BuildInputPage(PageContext &context)
         Col({MakeTitleBlock(
                  L"输入纠错",
                  L"全拼输错时按误键类型给出纠正候选，默认关闭；开启后预编辑始终显示原始输入，纠正结果仅出现在候选中"),
-             ItemSetting(L"乱序纠错", L"相邻字母顺序打错时纠正，如 sahng → shang（上）",
+             ItemSetting(L"乱序纠错", L"相邻字母顺序打错时纠正，如 sahng → shang（上）；默认关闭",
                          Toggle(context, "quanpin.autocorrect_transposition"), true, false),
              ItemSetting(L"邻键纠错", L"误触相邻按键时纠正，如 shabg → shang（上）；默认关闭",
                          Toggle(context, "quanpin.autocorrect_neighbor"), false, false),
+             ItemSetting(L"漏字纠错", L"漏敲一个字母时纠正，如 shng → shang（上）；默认关闭",
+                         Toggle(context, "quanpin.autocorrect_deletion"), false, false),
+             ItemSetting(L"多字纠错", L"多敲一个相邻按键时纠正，如 sjhang → shang（上）；默认关闭",
+                         Toggle(context, "quanpin.autocorrect_insertion"), false, false),
              ItemSetting(L"显示纠错标记", L"纠错得到的候选末尾显示 * 号，便于和正常候选区分；不影响上屏文字",
                          Toggle(context, "quanpin.autocorrect_marker"), false, true)}));
 

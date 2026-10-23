@@ -234,7 +234,11 @@ class AddFontButton : public msimeui::Visual
             return false;
         pressed_ = false;
         if (window_ && HitTest(window_->ClientPixelsToDips(point)) && onClick_)
-            onClick_();
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
         return true;
     }
     void OnMouseEnter() override
@@ -435,7 +439,11 @@ class ColorSwatch : public msimeui::Visual
             return false;
         pressed_ = false;
         if (window_ && HitTest(window_->ClientPixelsToDips(point)) && onClick_)
-            onClick_();
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
         return true;
     }
     HCURSOR GetCursor() const override

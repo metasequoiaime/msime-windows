@@ -1092,6 +1092,17 @@
       ],
       "additionalProperties": false
     },
+    "restartServerDone": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
     "dictionaryResponse": {
       "properties": {
         "requestId": {

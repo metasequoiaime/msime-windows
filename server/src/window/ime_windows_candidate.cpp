@@ -7,6 +7,7 @@
 #include "ime_windows.h"
 #include "window/candidate_presenter.h"
 #include "window/floating_toolbar_presenter.h"
+#include "window/caret_fallback.h"
 #include "defines/defines.h"
 #include "defines/globals.h"
 #include <algorithm>
@@ -35,6 +36,83 @@ bool g_candidate_hide_pending = false;
 // the next session always paints.
 std::wstring g_last_rendered_candidate_signature;
 ULONGLONG g_last_rendered_candidate_tick = 0;
+
+// Server-side caret lookup for compositions whose TSF anchor stays unresolved.
+// The generation changes on every hide, so a lookup finishing after its
+// composition ended is dropped.
+const UINT WM_CANDIDATE_CARET_FALLBACK = RegisterWindowMessageW(L"WM_CANDIDATE_CARET_FALLBACK");
+uint32_t g_caret_fallback_generation = 0;
+bool g_caret_fallback_armed = false;
+int g_caret_fallback_attempts = 0;
+bool g_caret_fallback_valid = false;
+POINT g_caret_fallback_anchor{};
+// The card sits on the fallback anchor, so the first real TSF anchor must still
+// be placed even though position locking would otherwise ignore it.
+bool g_caret_fallback_placed = false;
+// Last resort when no lookup found a caret: the card is pinned to the screen
+// corner. Retries still run, and a caret found later replaces the corner.
+bool g_caret_fallback_pinned = false;
+
+void ArmCaretFallback(HWND hwnd)
+{
+    const bool resolved = g_caret_fallback_valid && !g_caret_fallback_pinned;
+    if (Global::Point[1] != Global::INVALID_Y || resolved || g_caret_fallback_armed ||
+        g_caret_fallback_attempts >= kCandidateCaretFallbackMaxAttempts)
+    {
+        return;
+    }
+    g_caret_fallback_armed = true;
+    SetTimer(hwnd, TIMER_ID_CANDIDATE_CARET_FALLBACK, kCandidateCaretFallbackDelayMs, nullptr);
+}
+
+void UnpinCaretFallback()
+{
+    if (g_caret_fallback_pinned)
+    {
+        g_caret_fallback_pinned = false;
+        CandidatePresenter::Instance().SetPinnedCardOrigin(nullptr);
+    }
+}
+
+void ResetCaretFallback(HWND hwnd)
+{
+    KillTimer(hwnd, TIMER_ID_CANDIDATE_CARET_FALLBACK);
+    ++g_caret_fallback_generation;
+    g_caret_fallback_armed = false;
+    g_caret_fallback_attempts = 0;
+    g_caret_fallback_valid = false;
+    g_caret_fallback_placed = false;
+    UnpinCaretFallback();
+}
+
+// Puts the card's top-left at (2,2) on the foreground window's monitor.
+void PinCandidateToScreenCorner(HWND hwnd)
+{
+    if (g_caret_fallback_pinned || !::is_global_wnd_cand_shown || Global::Point[1] != Global::INVALID_Y)
+    {
+        return;
+    }
+    MONITORINFO monitorInfo{sizeof(monitorInfo)};
+    if (!GetMonitorInfoW(MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTOPRIMARY), &monitorInfo))
+    {
+        return;
+    }
+    const POINT corner{monitorInfo.rcMonitor.left + kCandidateCornerFallbackInsetPx,
+                       monitorInfo.rcMonitor.top + kCandidateCornerFallbackInsetPx};
+    g_caret_fallback_valid = true;
+    g_caret_fallback_pinned = true;
+    g_caret_fallback_anchor = corner;
+    CandidatePresenter::Instance().SetPinnedCardOrigin(&corner);
+    CAND_DIAG_LOGF(L"caret-fallback pinned to screen corner ({},{})", corner.x, corner.y);
+    FineTuneWindow(hwnd);
+}
+
+void NotePlacedCandidateCaret(POINT layoutCaret)
+{
+    g_last_placed_caret_x = layoutCaret.x;
+    g_last_placed_caret_y = layoutCaret.y;
+    g_caret_fallback_placed = g_caret_fallback_valid && Global::Point[1] == Global::INVALID_Y;
+}
 } // namespace
 
 namespace ime_windows_detail
@@ -42,7 +120,18 @@ namespace ime_windows_detail
 POINT GetCandidateLayoutCaret()
 {
     POINT caret{Global::Point[0], Global::Point[1]};
-    if (GetConfiguredCandidateWindowFollowCursor() || caret.y == Global::INVALID_Y)
+    if (caret.y == Global::INVALID_Y)
+    {
+        return g_caret_fallback_valid ? g_caret_fallback_anchor : caret;
+    }
+    if (g_caret_fallback_valid)
+    {
+        // TSF caught up; its anchor is the accurate one.
+        g_caret_fallback_valid = false;
+        UnpinCaretFallback();
+        CAND_DIAG_LOGF(L"caret-fallback superseded by tsf anchor ({},{})", caret.x, caret.y);
+    }
+    if (GetConfiguredCandidateWindowFollowCursor())
     {
         return caret;
     }
@@ -71,7 +160,8 @@ bool IsCandidateHostPaintedVisible(HWND hwnd)
 
 bool CandidateCaretNeedsStableFollow(HWND hwnd, POINT caret)
 {
-    if (g_last_placed_caret_x == Global::INVALID_Y || g_last_placed_caret_y == Global::INVALID_Y)
+    if (g_last_placed_caret_x == Global::INVALID_Y || g_last_placed_caret_y == Global::INVALID_Y ||
+        g_caret_fallback_placed)
     {
         return true;
     }
@@ -105,8 +195,7 @@ int FineTuneWindow(HWND /*hwnd*/)
     if (CandidatePresenter::Instance().IsBound())
     {
         CandidatePresenter::Instance().ShowFromGlobalState(layoutCaret);
-        g_last_placed_caret_x = layoutCaret.x;
-        g_last_placed_caret_y = layoutCaret.y;
+        NotePlacedCandidateCaret(layoutCaret);
     }
     return 0;
 }
@@ -197,6 +286,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
                        DescribeCandidateHostState());
         EnsureSmallWindowsTopmost(L"show-candidate");
         const POINT layoutCaret = GetCandidateLayoutCaret();
+        ArmCaretFallback(hwnd);
         const bool showPreedit = GetConfiguredCandidateWindowPreeditStyle() != "empty";
         const std::wstring preedit = GetPreeditWithCaretMarker();
         // Suppress a repaint that would reproduce the frame already on screen.
@@ -223,8 +313,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         if (CandidatePresenter::Instance().IsBound())
         {
             CandidatePresenter::Instance().ShowFromGlobalState(layoutCaret);
-            g_last_placed_caret_x = layoutCaret.x;
-            g_last_placed_caret_y = layoutCaret.y;
+            NotePlacedCandidateCaret(layoutCaret);
             CAND_DIAG_LOGF(L"candidate-frame path=d2d elapsed_ms={}", GetTickCount64() - updateStartedTick);
         }
         return 0;
@@ -257,6 +346,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         g_last_rendered_candidate_signature.clear();
         KillTimer(hwnd, TIMER_ID_CANDIDATE_MOVE_SETTLE);
         g_candidate_session_anchor_valid = false;
+        ResetCaretFallback(hwnd);
         ResetCandidatePlacementMemory();
         {
             SuppressCandidateDpiChange suppressDpi;
@@ -284,10 +374,12 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         }
         const bool forceLayout = g_candidate_force_layout.exchange(false);
         const POINT layoutCaret = GetCandidateLayoutCaret();
+        ArmCaretFallback(hwnd);
         const bool sameCaret = g_last_placed_caret_x == layoutCaret.x && g_last_placed_caret_y == layoutCaret.y;
         // Position locking applies only after the first usable anchor has been
-        // placed. A deferred show still needs its first valid MoveCandidate.
-        const bool awaitingInitialPlacement = g_last_placed_caret_y == Global::INVALID_Y;
+        // placed. A deferred show still needs its first valid MoveCandidate, and
+        // so does a card that is only standing on the fallback anchor.
+        const bool awaitingInitialPlacement = g_last_placed_caret_y == Global::INVALID_Y || g_caret_fallback_placed;
         if (!forceLayout && !GetConfiguredCandidateWindowFollowCursor() && !awaitingInitialPlacement)
         {
             CAND_DIAG_LOGF(L"candidate-position move-ignored locked_anchor=({},{}) reported=({},{})", layoutCaret.x,
@@ -411,6 +503,38 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         return 0;
     }
 
+    if (WM_CANDIDATE_CARET_FALLBACK != 0 && message == WM_CANDIDATE_CARET_FALLBACK)
+    {
+        CaretFallback::Result result;
+        if (static_cast<uint32_t>(wParam) != g_caret_fallback_generation ||
+            !CaretFallback::TakeResult(g_caret_fallback_generation, &result))
+        {
+            CAND_DIAG_LOGF(L"caret-fallback stale result generation={} current={}", static_cast<uint32_t>(wParam),
+                           g_caret_fallback_generation);
+            return 0;
+        }
+        CAND_DIAG_LOGF(L"caret-fallback result source={} anchor=({},{}) elapsed_ms={} attempt={} tsf=({},{}) trace:{}",
+                       CaretFallback::SourceName(result.source), result.anchor.x, result.anchor.y, result.elapsedMs,
+                       g_caret_fallback_attempts, Global::Point[0], Global::Point[1], result.trace);
+        if (result.source == CaretFallback::Source::None)
+        {
+            // Let a later keystroke try again, up to the per-composition cap;
+            // meanwhile show the card in the screen corner rather than not at all.
+            g_caret_fallback_armed = false;
+            PinCandidateToScreenCorner(hwnd);
+            return 0;
+        }
+        if (!::is_global_wnd_cand_shown || Global::Point[1] != Global::INVALID_Y)
+        {
+            return 0;
+        }
+        UnpinCaretFallback();
+        g_caret_fallback_valid = true;
+        g_caret_fallback_anchor = result.anchor;
+        FineTuneWindow(hwnd);
+        return 0;
+    }
+
     if (CandidatePresenter::Instance().HandleMessage(message, wParam, lParam))
     {
         return message == WM_ERASEBKGND ? 1 : 0;
@@ -419,6 +543,28 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
     switch (message)
     {
     case WM_TIMER: {
+        if (wParam == TIMER_ID_CANDIDATE_CARET_FALLBACK)
+        {
+            KillTimer(hwnd, TIMER_ID_CANDIDATE_CARET_FALLBACK);
+            if (!::is_global_wnd_cand_shown || Global::Point[1] != Global::INVALID_Y)
+            {
+                // TSF delivered an anchor in time; a later unresolved one may arm again.
+                g_caret_fallback_armed = false;
+                break;
+            }
+            const DWORD clientProcessId = static_cast<DWORD>(GetActivePipeClient().client_id >> 32);
+            if (clientProcessId == 0)
+            {
+                CAND_DIAG_LOGF(L"caret-fallback skipped: no active client");
+                PinCandidateToScreenCorner(hwnd);
+                break;
+            }
+            ++g_caret_fallback_attempts;
+            CAND_DIAG_LOGF(L"caret-fallback request generation={} attempt={} client_pid={}",
+                           g_caret_fallback_generation, g_caret_fallback_attempts, clientProcessId);
+            CaretFallback::Request(hwnd, WM_CANDIDATE_CARET_FALLBACK, g_caret_fallback_generation, clientProcessId);
+            break;
+        }
         if (wParam == TIMER_ID_CANDIDATE_MOVE_SETTLE)
         {
             KillTimer(hwnd, TIMER_ID_CANDIDATE_MOVE_SETTLE);

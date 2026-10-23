@@ -56,6 +56,9 @@ struct SeriesQueryResolution
     // 用户敲出的合法切分，这些读法与它按整句打分争领衔，见 arbitrate_legal_corrections。
     std::vector<quanpin::AutocorrectCut> legal_corrected_cuts;
     bool corrected_input = false;
+    // 容错槽位仲裁胜出时的分段显示（大小写原样，槽界插分隔符）。随 resolution 缓存复用：
+    // series_cache_ 命中的重复查询不会重跑仲裁，靠它把显示带回来。
+    std::string fault_preedit;
 };
 
 class QuanpinDictionary
@@ -113,6 +116,12 @@ class QuanpinDictionary
         return pinyin_segmentation_;
     }
 
+    // 容错仲裁选中读音后的分段显示（大小写原样）。空表示没有容错布局，调用方照旧重建。
+    const std::string &fault_segmentation_with_cases() const
+    {
+        return fault_preedit_with_cases_;
+    }
+
     const std::vector<WordItem> &get_current_candidate_list() const
     {
         return current_candidate_list_;
@@ -151,6 +160,15 @@ class QuanpinDictionary
                                                       const quanpin::Segments &plain_segments,
                                                       const std::vector<quanpin::AutocorrectCut> &corrected_cuts,
                                                       std::vector<WordItem> result);
+    // 长句容错仲裁（方案 C）：字面切分含非法槽、槽多于短串上限且 k-best 被预算卡死的
+    // 输入，按容错槽位建词格（合法槽固定、单字母槽简拼展开、Fault 槽纠错表目标），由
+    // decode_fault_lattice（kenlm，不装配 scorer）解 n-best，路径分扣手误代价后把胜出
+    // 读音的整键块顶到 result 最前（字面候选留在其后）。winning_segments / winning_display
+    // 返回胜出读音与其分段显示（显示为空表示读音不能逐字母对回原串，预编辑保持原切分）；
+    // 不接管或词格解不出路径时返回原候选、两者置空。
+    std::vector<WordItem> arbitrate_fault_slots(const std::string &raw_input, unsigned autocorrect_types,
+                                                std::vector<WordItem> result, quanpin::Segments &winning_segments,
+                                                std::string &winning_display);
     // 词格对一条完整切分的最佳路径分（加载了 sc.lm 时是 log10，否则是启发式的 ln）。
     // 与整句候选开关无关；单音节也能打分。不是全合法音节或解不出路径时为空。
     std::optional<double> lattice_best_path_score(const quanpin::Segments &cut);
@@ -239,6 +257,8 @@ class QuanpinDictionary
 
     std::string pinyin_sequence_;
     std::string pinyin_segmentation_;
+    // 容错仲裁选中读音后的分段显示（原串大小写、含分隔符）。空表示当前串没有容错布局。
+    std::string fault_preedit_with_cases_;
     // Joined alternative correction cuts (k-best readings after the primary)
     // backing mark_autocorrect_candidates on every query, cached or not.
     std::vector<std::string> pinyin_alternative_segmentations_;

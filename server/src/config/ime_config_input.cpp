@@ -91,6 +91,19 @@ bool SetConfiguredCharacterSetShortcutEnabled(bool enabled)
     return true;
 }
 
+bool GetConfiguredPinyinCommitShortcutEnabled()
+{
+    return g_commit_pinyin_shift_enter_enabled;
+}
+
+bool SetConfiguredPinyinCommitShortcutEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("keybindings", "commit_pinyin_shift_enter", enabled ? "true" : "false"))
+        return false;
+    g_commit_pinyin_shift_enter_enabled = enabled;
+    return true;
+}
+
 const std::string &GetConfiguredDefaultImeMode()
 {
     return g_default_ime_mode;
@@ -772,6 +785,36 @@ bool SetConfiguredQuanpinAutocorrectNeighbor(bool enabled)
         return false;
     }
     g_quanpin_autocorrect_neighbor = enabled;
+    return true;
+}
+
+bool GetConfiguredQuanpinAutocorrectDeletion()
+{
+    return g_quanpin_autocorrect_deletion;
+}
+
+bool SetConfiguredQuanpinAutocorrectDeletion(bool enabled)
+{
+    if (!WriteConfiguredValue("quanpin", "autocorrect_deletion", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_quanpin_autocorrect_deletion = enabled;
+    return true;
+}
+
+bool GetConfiguredQuanpinAutocorrectInsertion()
+{
+    return g_quanpin_autocorrect_insertion;
+}
+
+bool SetConfiguredQuanpinAutocorrectInsertion(bool enabled)
+{
+    if (!WriteConfiguredValue("quanpin", "autocorrect_insertion", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_quanpin_autocorrect_insertion = enabled;
     return true;
 }
 

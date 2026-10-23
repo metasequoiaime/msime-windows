@@ -29,6 +29,10 @@ class SerialTaskRunner
     // called by the destructor.
     void Stop();
 
+    // Called on the runner's own thread each time it goes idle, i.e. right after the queue empties. Used to move
+    // background work that benefits from a quiet moment (a database checkpoint) off the caller's path.
+    void SetIdleHandler(std::function<void()> handler);
+
   private:
     void Run();
 
@@ -37,5 +41,6 @@ class SerialTaskRunner
     std::deque<std::function<void()>> jobs_;
     bool stopping_ = false;
     bool below_normal_priority_ = false;
+    std::function<void()> idle_handler_;
     std::thread thread_;
 };

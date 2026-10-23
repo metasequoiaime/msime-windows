@@ -1,5 +1,6 @@
 #include "chat_completions.h"
 
+#include "config/ai_provider.h"
 #include "utils/network_proxy.h"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -41,10 +42,11 @@ std::optional<std::string> FetchContent(const std::string &endpoint, const std::
 
     // Deliberately exclude the API token and the request body from logs.
     ResponseBuffer response;
-    const std::string authorization = "Authorization: Bearer " + token;
+    const std::string authorization = AiAssistant::AuthorizationHeader(token);
     curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json; charset=utf-8");
-    headers = curl_slist_append(headers, authorization.c_str());
+    if (!authorization.empty())
+        headers = curl_slist_append(headers, authorization.c_str());
 
     curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
     NetworkProxy::ApplyToCurl(curl);

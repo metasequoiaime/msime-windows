@@ -86,6 +86,14 @@ std::vector<KeyedQueryItem> query_exact_segmentations_keyed_flat(
     const std::vector<Segments> &segmentations, sqlite3 *db,
     std::unordered_map<std::string, sqlite3_stmt *> &statement_cache, int limit = 128);
 
+// 键区间扫描：返回 table 里 key ∈ [lower, upper) 的行（按权重降序，至多 limit 行）。
+// 容错词格用它现算简拼展开候选：行键在展开槽位上以某字母开头，展开出的全拼音节
+// 从行键解析——候选集合来自词库真实命中，天然有界（行数由 limit 截断）。
+std::vector<KeyedQueryItem> query_key_range_keyed(sqlite3 *db,
+                                                  std::unordered_map<std::string, sqlite3_stmt *> &statement_cache,
+                                                  const std::string &table, const std::string &lower,
+                                                  const std::string &upper, int limit);
+
 // 多音单字在各读音下的权重和（单字 → Σweight），只收词库里挂在两个以上读音下的字。
 // 词格用它算 P(读音|字)，见 make_lattice_db_lookup。
 using CharReadingTotals = std::unordered_map<std::string, std::int64_t>;

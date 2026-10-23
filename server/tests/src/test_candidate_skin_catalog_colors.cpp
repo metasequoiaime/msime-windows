@@ -1,4 +1,5 @@
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 
 #include "skin/candidate_skin_catalog.h"
 
@@ -28,7 +29,7 @@ std::filesystem::path WriteSkin(const std::wstring &leaf, const std::string &can
 {
     namespace fs = std::filesystem;
     const fs::path skins_root =
-        fs::temp_directory_path() / (L"msime-skin-colors-" + std::to_wstring(GetCurrentProcessId())) / leaf / L"skins";
+        test::TempRoot() / (L"msime-skin-colors-" + std::to_wstring(GetCurrentProcessId())) / leaf / L"skins";
     std::error_code ec;
     fs::remove_all(skins_root, ec);
     fs::create_directories(skins_root / L"gloss", ec);

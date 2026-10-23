@@ -35,6 +35,11 @@ target_include_directories(test_caps_lock_input_policy PRIVATE ../src)
 target_compile_features(test_caps_lock_input_policy PRIVATE cxx_std_17)
 add_test(NAME caps_lock_input_policy COMMAND test_caps_lock_input_policy)
 
+add_executable(test_pinyin_commit_shortcut_policy pinyin_commit_shortcut_policy.cpp)
+target_include_directories(test_pinyin_commit_shortcut_policy PRIVATE ../src)
+target_compile_features(test_pinyin_commit_shortcut_policy PRIVATE cxx_std_17)
+add_test(NAME pinyin_commit_shortcut_policy COMMAND test_pinyin_commit_shortcut_policy)
+
 add_executable(test_commit_candidate_and_continue_payload commit_candidate_and_continue_payload.cpp)
 target_include_directories(test_commit_candidate_and_continue_payload PRIVATE ../src)
 target_compile_features(test_commit_candidate_and_continue_payload PRIVATE cxx_std_17)
@@ -111,8 +116,37 @@ target_include_directories(test_focus_activation PRIVATE "${CMAKE_CURRENT_BINARY
 target_compile_features(test_focus_activation PRIVATE cxx_std_17)
 add_test(NAME focus_activation COMMAND test_focus_activation)
 
+# Exercise both production extent handlers with clipped and collapsed host rectangles
+set(caret_layout_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Tf/TfTextLayoutSink.cpp")
+set(caret_edit_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Edit/GetTextExtentEditSession.cpp")
+set(caret_fixture_generator "${CMAKE_CURRENT_SOURCE_DIR}/generate_caret_extent_fixture.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${caret_layout_source}" "${caret_edit_source}" "${caret_fixture_generator}" "${reconnect_fixture_generator}")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -B "${caret_fixture_generator}"
+        "${caret_layout_source}" "${caret_edit_source}" "${CMAKE_CURRENT_BINARY_DIR}/caret_extent_source.h"
+    COMMAND_ERROR_IS_FATAL ANY)
+add_executable(test_caret_extent caret_extent.cpp)
+target_include_directories(test_caret_extent PRIVATE ../src "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_features(test_caret_extent PRIVATE cxx_std_17)
+add_test(NAME caret_extent COMMAND test_caret_extent)
+
 # Link the same inline key classifier used by normal and queued TSF paths.
 if(WIN32)
+    # Compile actual preview write/cancel bodies; the text store is in memory, with no host UI.
+    set(voice_composition_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Composition/Composition.cpp")
+    set(voice_key_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Key/KeyHandler.cpp")
+    set(voice_fixture_generator "${CMAKE_CURRENT_SOURCE_DIR}/generate_voice_ownership_fixture.py")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${voice_composition_source}" "${voice_key_source}" "${voice_fixture_generator}")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${voice_fixture_generator}"
+        "${voice_composition_source}" "${voice_key_source}"
+        "${CMAKE_CURRENT_BINARY_DIR}/voice_ownership_source.h" COMMAND_ERROR_IS_FATAL ANY)
+    add_executable(test_voice_composition_ownership voice_composition_ownership.cpp)
+    target_include_directories(test_voice_composition_ownership PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_features(test_voice_composition_ownership PRIVATE cxx_std_17)
+    add_test(NAME voice_composition_ownership COMMAND test_voice_composition_ownership)
+
     add_executable(test_temporary_japanese_input temporary_japanese_input.cpp)
     target_include_directories(test_temporary_japanese_input PRIVATE ../src/Header)
     target_compile_features(test_temporary_japanese_input PRIVATE cxx_std_17)

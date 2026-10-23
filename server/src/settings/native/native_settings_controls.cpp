@@ -5,6 +5,7 @@
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Fonts.h"
 #include "msimeui/Scene.h"
+#include "msimeui/ScrollAxis.h"
 #include "msimeui/Window.h"
 
 #include <d2d1_1.h>
@@ -17,6 +18,7 @@
 #include <fstream>
 #include <regex>
 #include <sstream>
+#include <utility>
 
 using Microsoft::WRL::ComPtr;
 
@@ -689,7 +691,10 @@ bool Label::OnMouseUp(const POINT &point, WPARAM)
         return false;
     pressed_ = false;
     if (HitSelf(window_, *this, point) && onClick_)
-        onClick_();
+    {
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 
@@ -1178,6 +1183,12 @@ SettingRow::SettingRow(VisualPtr left, VisualPtr control) : left_(std::move(left
         AddChild(control_);
 }
 
+void SettingRow::SetSearchText(std::wstring title, std::wstring description)
+{
+    searchTitle_ = std::move(title);
+    searchDescription_ = std::move(description);
+}
+
 SizeF SettingRow::Measure(const SizeF &availableSize)
 {
     constexpr float kGap = 10.0f;
@@ -1227,10 +1238,38 @@ VisualPtr MakeTitleBlock(std::wstring title, std::wstring description, bool subI
     return column;
 }
 
+namespace
+{
+// Innermost SettingsIndexScope, or empty when no page is being indexed.
+struct RowCollectorState
+{
+    std::string pageId;
+    std::function<void(const SettingsIndexScope::Row &)> collector;
+};
+
+thread_local std::vector<RowCollectorState> g_rowCollectorStack;
+} // namespace
+
 std::shared_ptr<SettingRow> MakeRow(std::wstring title, std::wstring description, VisualPtr control, bool subItem)
 {
-    return std::make_shared<SettingRow>(MakeTitleBlock(std::move(title), std::move(description), subItem),
-                                        std::move(control));
+    auto row = std::make_shared<SettingRow>(MakeTitleBlock(title, description, subItem), std::move(control));
+    // Search text is kept on the row because the index is built from it later; the labels above
+    // only own their own copies.
+    row->SetSearchText(std::move(title), std::move(description));
+    if (!g_rowCollectorStack.empty() && g_rowCollectorStack.back().collector)
+        g_rowCollectorStack.back().collector({row->SearchTitle(), row->SearchDescription(), row});
+    return row;
+}
+
+SettingsIndexScope::SettingsIndexScope(std::string pageId, std::function<void(const Row &)> collector)
+{
+    g_rowCollectorStack.push_back({std::move(pageId), std::move(collector)});
+}
+
+SettingsIndexScope::~SettingsIndexScope()
+{
+    if (!g_rowCollectorStack.empty())
+        g_rowCollectorStack.pop_back();
 }
 
 PageBuilder::PageBuilder(std::wstring title) : column_(std::make_shared<Column>(0.0f))
@@ -1392,7 +1431,147 @@ void ToggleSwitch::Toggle()
 {
     SetChecked(!on_);
     if (onChanged_)
-        onChanged_(on_);
+    {
+        const auto handler = onChanged_;
+        handler(on_);
+    }
+}
+
+// ---------------------------------------------------------------------------------
+// CompactMenuScrollbar
+// ---------------------------------------------------------------------------------
+namespace
+{
+constexpr float kMenuThumbWidth = 4.0f;
+constexpr float kMenuThumbRightGap = 2.0f;
+constexpr float kMenuThumbEndGap = 4.0f;
+constexpr float kMenuThumbMinLength = 24.0f;
+constexpr float kMenuScrollbarHitWidth = 8.0f;
+// A wheel notch at the system's default of 3 lines scrolls two compact rows (28 + 2).
+constexpr float kMenuWheelStep = 2.0f * (28.0f + 2.0f);
+} // namespace
+
+void CompactMenuScrollbar::Layout(float contentHeight, float viewport, const RectF &bounds)
+{
+    contentHeight_ = contentHeight;
+    viewport_ = viewport;
+    bounds_ = bounds;
+    offset_ = msimeui::ClampScrollOffset(offset_, Extent());
+}
+
+void CompactMenuScrollbar::Reset()
+{
+    offset_ = 0.0f;
+    hovered_ = false;
+    dragging_ = false;
+}
+
+bool CompactMenuScrollbar::CanScroll() const
+{
+    return msimeui::CanScroll(Extent());
+}
+
+float CompactMenuScrollbar::GetOffset() const
+{
+    return offset_;
+}
+
+float CompactMenuScrollbar::GetPlacedOffset(float dpi) const
+{
+    const float scale = dpi / 96.0f;
+    return scale > 0.0f ? std::round(offset_ * scale) / scale : offset_;
+}
+
+bool CompactMenuScrollbar::SetOffset(float offset)
+{
+    const float clamped = msimeui::ClampScrollOffset(offset, Extent());
+    if (clamped == offset_)
+        return false;
+    offset_ = clamped;
+    return true;
+}
+
+bool CompactMenuScrollbar::Reveal(float start, float length)
+{
+    return SetOffset(msimeui::OffsetToReveal(Extent(), offset_, start, length));
+}
+
+bool CompactMenuScrollbar::Wheel(short delta)
+{
+    const float notch = msimeui::WheelNotchDistance(msimeui::SystemWheelScrollLines(), kMenuWheelStep, viewport_);
+    return SetOffset(offset_ + msimeui::WheelScrollDelta(delta, notch));
+}
+
+bool CompactMenuScrollbar::IsOnScrollbar(const PointF &point) const
+{
+    return CanScroll() && Contains(bounds_, point) && point.x >= bounds_.x + bounds_.width - kMenuScrollbarHitWidth;
+}
+
+bool CompactMenuScrollbar::IsDragging() const
+{
+    return dragging_;
+}
+
+bool CompactMenuScrollbar::IsHot() const
+{
+    return hovered_ || dragging_;
+}
+
+bool CompactMenuScrollbar::Press(const PointF &point)
+{
+    const msimeui::ThumbGrab grab = msimeui::PressScrollbar(Extent(), Track(), offset_, point.y);
+    dragging_ = true;
+    grip_ = grab.grip;
+    SetOffset(grab.offset);
+    return true;
+}
+
+bool CompactMenuScrollbar::Move(const PointF &point, WPARAM keyState)
+{
+    if (dragging_)
+        return (keyState & MK_LBUTTON) && SetOffset(msimeui::DragThumb(Extent(), Track(), grip_, point.y));
+    const bool hovered = IsOnScrollbar(point);
+    if (hovered == hovered_)
+        return false;
+    hovered_ = hovered;
+    return true;
+}
+
+bool CompactMenuScrollbar::Release(const PointF &point)
+{
+    dragging_ = false;
+    hovered_ = IsOnScrollbar(point);
+    return true;
+}
+
+bool CompactMenuScrollbar::Leave()
+{
+    if (!hovered_)
+        return false;
+    hovered_ = false;
+    return !dragging_;
+}
+
+void CompactMenuScrollbar::Render(msimeui::DeviceResources &dr, const D2D1_COLOR_F &color,
+                                  const D2D1_COLOR_F &hotColor) const
+{
+    if (!CanScroll())
+        return;
+    const msimeui::ThumbSpan thumb = msimeui::ThumbAt(Extent(), Track(), offset_);
+    FillRounded(
+        dr,
+        {bounds_.x + bounds_.width - kMenuThumbRightGap - kMenuThumbWidth, thumb.start, kMenuThumbWidth, thumb.length},
+        kMenuThumbWidth * 0.5f, IsHot() ? hotColor : color);
+}
+
+msimeui::ScrollExtent CompactMenuScrollbar::Extent() const
+{
+    return {contentHeight_, viewport_};
+}
+
+msimeui::ScrollTrack CompactMenuScrollbar::Track() const
+{
+    return {bounds_.y, bounds_.height, kMenuThumbEndGap, kMenuThumbMinLength};
 }
 
 // ---------------------------------------------------------------------------------
@@ -1436,7 +1615,10 @@ class DropdownMenu : public msimeui::Visual
         hovered_ = kNone;
         pressed_ = kNone;
         focused_ = kNone;
-        scroll_ = 0.0f;
+        arranged_ = false;
+        pendingReveal_ = kNone;
+        scrollbar_.Reset();
+        LayoutScrollbar();
         layouts_.clear();
         for (size_t row = 0; row < filtered_.size(); ++row)
         {
@@ -1484,7 +1666,9 @@ class DropdownMenu : public msimeui::Visual
     void Arrange(const RectF &finalRect) override
     {
         bounds_ = finalRect;
-        ClampScroll();
+        arranged_ = true;
+        LayoutScrollbar();
+        ScrollIntoView(std::exchange(pendingReveal_, kNone));
     }
 
     void Render(msimeui::DeviceResources &dr) override
@@ -1512,56 +1696,75 @@ class DropdownMenu : public msimeui::Visual
         }
         target->PopAxisAlignedClip();
 
-        const float overflow = ContentHeight() - 2.0f - bounds_.height;
-        if (overflow > 0.5f)
-        {
-            const float trackHeight = bounds_.height - 8.0f;
-            const float thumbHeight = std::max(24.0f, trackHeight * bounds_.height / (ContentHeight() - 2.0f));
-            const float thumbY = bounds_.y + 4.0f + (trackHeight - thumbHeight) * (scroll_ / overflow);
-            FillRounded(dr, {bounds_.x + bounds_.width - 6.0f, thumbY, 4.0f, thumbHeight}, 2.0f,
-                        thumbHot_ ? p.scrollbarThumbHover : p.scrollbarThumb);
-        }
+        scrollbar_.Render(dr, p.scrollbarThumb, p.scrollbarThumbHover);
     }
 
+    // The search box of a searchable dropdown keeps the keyboard while the menu is used
+    // with the mouse; otherwise the menu takes it to move between rows.
     bool IsFocusable() const override
     {
-        return true;
+        return !owner_->search_;
     }
 
-    bool OnMouseMove(const POINT &point, WPARAM) override
+    // Window sends a press to whatever this returns, focusable or not, so the menu claims
+    // its whole box: a press must not reach a control the menu covers.
+    msimeui::Visual *FindFocusableAt(const PointF &point) override
+    {
+        return HitTest(point) ? this : nullptr;
+    }
+
+    bool OnMouseMove(const POINT &point, WPARAM keyState) override
     {
         if (!window_)
             return false;
         const PointF dip = window_->ClientPixelsToDips(point);
-        const size_t row = HitTestRow(dip);
-        const bool thumbHot = dip.x >= bounds_.x + bounds_.width - 8.0f && Contains(bounds_, dip);
-        if (row != hovered_ || thumbHot != thumbHot_)
+        bool changed = scrollbar_.Move(dip, keyState);
+        if (!scrollbar_.IsDragging())
         {
+            const size_t row = scrollbar_.IsOnScrollbar(dip) ? kNone : HitTestRow(dip);
+            changed = changed || row != hovered_;
             hovered_ = row;
-            thumbHot_ = thumbHot;
-            InvalidateVisual();
         }
+        if (changed)
+            InvalidateVisual();
         return true;
     }
 
     void OnMouseLeave() override
     {
-        if (hovered_ != kNone || thumbHot_)
-        {
-            hovered_ = kNone;
-            thumbHot_ = false;
+        const bool changed = scrollbar_.Leave() || hovered_ != kNone;
+        hovered_ = kNone;
+        if (changed)
             InvalidateVisual();
-        }
     }
 
     bool OnMouseDown(const POINT &point, WPARAM) override
     {
-        pressed_ = window_ ? HitTestRow(window_->ClientPixelsToDips(point)) : kNone;
+        pressed_ = kNone;
+        if (!window_)
+            return true;
+        const PointF dip = window_->ClientPixelsToDips(point);
+        if (scrollbar_.IsOnScrollbar(dip))
+        {
+            scrollbar_.Press(dip);
+            hovered_ = kNone;
+            InvalidateVisual();
+            return true;
+        }
+        pressed_ = HitTestRow(dip);
         return true;
     }
 
     bool OnMouseUp(const POINT &point, WPARAM) override
     {
+        if (scrollbar_.IsDragging())
+        {
+            // The press belonged to the scrollbar, so releasing over a row picks nothing.
+            scrollbar_.Release(window_ ? window_->ClientPixelsToDips(point) : PointF{});
+            pressed_ = kNone;
+            InvalidateVisual();
+            return true;
+        }
         const size_t row = window_ ? HitTestRow(window_->ClientPixelsToDips(point)) : kNone;
         const bool clicked = row != kNone && row == pressed_;
         pressed_ = kNone;
@@ -1572,10 +1775,8 @@ class DropdownMenu : public msimeui::Visual
 
     bool OnMouseWheel(const POINT &, short delta, WPARAM) override
     {
-        scroll_ -=
-            static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA) * (MenuItemHeight(true) + kMenuItemGap) * 2.0f;
-        ClampScroll();
-        InvalidateVisual();
+        if (scrollbar_.Wheel(delta))
+            InvalidateVisual();
         return true;
     }
 
@@ -1652,11 +1853,25 @@ class DropdownMenu : public msimeui::Visual
         return 2.0f + kMenuInset * 2.0f + static_cast<float>(rows) * item + static_cast<float>(rows - 1) * kMenuItemGap;
     }
 
+    // The rows inside the 1 DIP border (ContentHeight counts the border) against the
+    // height the menu shows. Until the rows just prepared are arranged, that height is
+    // not known yet and the one the menu asks for stands in.
+    void LayoutScrollbar()
+    {
+        const float visible = arranged_ ? bounds_.height : PreferredHeight() - 2.0f;
+        scrollbar_.Layout(ContentHeight() - 2.0f, visible, bounds_);
+    }
+
+    float PlacedScroll() const
+    {
+        return scrollbar_.GetPlacedOffset(window_ ? window_->GetDpi() : 96.0f);
+    }
+
     RectF ItemRect(size_t row) const
     {
         const float item = MenuItemHeight(owner_->settings_.compact);
         return {bounds_.x + kMenuInset,
-                bounds_.y + kMenuInset + static_cast<float>(row) * (item + kMenuItemGap) - scroll_,
+                bounds_.y + kMenuInset + static_cast<float>(row) * (item + kMenuItemGap) - PlacedScroll(),
                 bounds_.width - kMenuInset * 2.0f, item};
     }
 
@@ -1672,24 +1887,20 @@ class DropdownMenu : public msimeui::Visual
         return kNone;
     }
 
-    void ClampScroll()
-    {
-        const float visible = bounds_.height > 0.0f ? bounds_.height : PreferredHeight() - 2.0f;
-        scroll_ = std::clamp(scroll_, 0.0f, std::max(0.0f, ContentHeight() - 2.0f - visible));
-    }
-
+    // Brings the row and the inset around it into view. Before the rows are arranged
+    // the window may still cut the menu shorter than it asks, so the reveal waits for the
+    // height the menu gets.
     void ScrollIntoView(size_t row)
     {
         if (row >= filtered_.size())
             return;
+        if (!arranged_)
+        {
+            pendingReveal_ = row;
+            return;
+        }
         const float item = MenuItemHeight(owner_->settings_.compact);
-        const float visible = PreferredHeight() - 2.0f;
-        const float top = static_cast<float>(row) * (item + kMenuItemGap);
-        if (top < scroll_)
-            scroll_ = top;
-        else if (top + item + kMenuInset * 2.0f > scroll_ + visible)
-            scroll_ = top + item + kMenuInset * 2.0f - visible;
-        ClampScroll();
+        scrollbar_.Reveal(static_cast<float>(row) * (item + kMenuItemGap), item + kMenuInset * 2.0f);
     }
 
     Dropdown *owner_ = nullptr;
@@ -1699,8 +1910,11 @@ class DropdownMenu : public msimeui::Visual
     size_t hovered_ = kNone;
     size_t pressed_ = kNone;
     size_t focused_ = kNone;
-    bool thumbHot_ = false;
-    float scroll_ = 0.0f;
+    // Whether bounds_ holds the box of the rows Prepare last filtered.
+    bool arranged_ = false;
+    // The row to reveal at the next arrange.
+    size_t pendingReveal_ = kNone;
+    CompactMenuScrollbar scrollbar_;
 };
 
 class DropdownPopup : public msimeui::Popup
@@ -2150,7 +2364,10 @@ void Dropdown::Commit(size_t index)
     InvalidateMeasure();
     InvalidateVisual();
     if (changed && onChanged_)
-        onChanged_(index, options_[index]);
+    {
+        const auto handler = onChanged_;
+        handler(index, options_[index]);
+    }
 }
 
 // ---------------------------------------------------------------------------------
@@ -2277,7 +2494,10 @@ bool CheckOption::OnMouseUp(const POINT &point, WPARAM)
         checked_ = !checked_;
         InvalidateVisual();
         if (onChanged_)
-            onChanged_(checked_);
+        {
+            const auto handler = onChanged_;
+            handler(checked_);
+        }
     }
     return true;
 }
@@ -2301,7 +2521,10 @@ bool CheckOption::OnKeyDown(WPARAM key, LPARAM)
     checked_ = !checked_;
     InvalidateVisual();
     if (onChanged_)
-        onChanged_(checked_);
+    {
+        const auto handler = onChanged_;
+        handler(checked_);
+    }
     return true;
 }
 
@@ -2400,7 +2623,10 @@ bool RadioOption::OnMouseUp(const POINT &point, WPARAM)
         checked_ = true;
         InvalidateVisual();
         if (onSelected_)
-            onSelected_();
+        {
+            const auto handler = onSelected_;
+            handler();
+        }
     }
     return true;
 }
@@ -2411,7 +2637,10 @@ std::shared_ptr<RadioOption> RadioGroup::Add(std::wstring text, std::string valu
     option->SetOnSelected([this, value]() {
         SetValue(value);
         if (onChanged_)
-            onChanged_(value);
+        {
+            const auto handler = onChanged_;
+            handler(value);
+        }
     });
     options_.emplace_back(std::move(value), option);
     return option;
@@ -2677,7 +2906,10 @@ bool Button::OnMouseUp(const POINT &point, WPARAM)
     pressed_ = false;
     InvalidateVisual();
     if (HitSelf(window_, *this, point) && onClick_)
-        onClick_();
+    {
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 
@@ -2698,7 +2930,8 @@ bool Button::OnKeyDown(WPARAM key, LPARAM)
 {
     if (!disabled_ && (key == VK_RETURN || key == VK_SPACE) && onClick_)
     {
-        onClick_();
+        const auto handler = onClick_;
+        handler();
         return true;
     }
     return false;
@@ -2802,7 +3035,10 @@ TextField::TextField(Options options) : options_(std::move(options))
     box_->SetPlaceholderFontSize(options_.fontSize);
     box_->SetOnTextChanged([this](const std::wstring &text) {
         if (onChanged_)
-            onChanged_(text);
+        {
+            const auto handler = onChanged_;
+            handler(text);
+        }
     });
     box_->SetOnFocusChanged([this](bool focused) {
         if (!focused)
@@ -2812,7 +3048,10 @@ TextField::TextField(Options options) : options_(std::move(options))
             {
                 committed_ = text;
                 if (onCommit_)
-                    onCommit_(text);
+                {
+                    const auto handler = onCommit_;
+                    handler(text);
+                }
             }
         }
     });
@@ -2822,7 +3061,10 @@ TextField::TextField(Options options) : options_(std::move(options))
         {
             committed_ = text;
             if (onCommit_)
-                onCommit_(text);
+            {
+                const auto handler = onCommit_;
+                handler(text);
+            }
         }
     });
     SetChild(box_);
@@ -3030,7 +3272,10 @@ void NumberStepper::Change(int value)
     value_ = value;
     InvalidateVisual();
     if (onChanged_)
-        onChanged_(value_);
+    {
+        const auto handler = onChanged_;
+        handler(value_);
+    }
 }
 
 bool NumberStepper::OnMouseDown(const POINT &point, WPARAM)
@@ -3169,7 +3414,10 @@ bool Expander::OnMouseUp(const POINT &point, WPARAM)
     {
         SetExpanded(!expanded_);
         if (onToggled_)
-            onToggled_(expanded_);
+        {
+            const auto handler = onToggled_;
+            handler(expanded_);
+        }
     }
     return true;
 }

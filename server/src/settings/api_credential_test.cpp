@@ -8,6 +8,7 @@
 #include "cloud/niutrans_translation.h"
 #include "cloud/tencent_tmt.h"
 #include "cloud/translation_gloss.h"
+#include "config/ai_provider.h"
 #include "config/ime_config.h"
 #include "voice-input/doubao_asr_client.h"
 #include "voice-input/voice_providers.h"
@@ -104,8 +105,9 @@ HttpResponse PerformJsonRequest(const std::string &endpoint, const std::string &
     char error[CURL_ERROR_SIZE] = {};
     curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, payload ? "Content-Type: application/json" : "Accept: application/json");
-    const std::string authorization = "Authorization: Bearer " + token;
-    headers = curl_slist_append(headers, authorization.c_str());
+    const std::string authorization = AiAssistant::AuthorizationHeader(token);
+    if (!authorization.empty())
+        headers = curl_slist_append(headers, authorization.c_str());
     curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
     NetworkProxy::ApplyToCurl(curl);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -160,14 +162,14 @@ std::string ModelListEndpoint(const std::string &endpoint)
 
 ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
 {
-    const std::string token = Value(request, "token");
+    const std::string provider = Value(request, "provider");
+    const std::string token = AiAssistant::RequestToken(provider, Value(request, "token"));
     const std::string endpoint = Value(request, "endpoint");
     const std::string model = Value(request, "model");
-    if (!CloudTranslation::IsUsableSecret(token))
+    if (AiAssistant::ProviderUsesToken(provider) && !CloudTranslation::IsUsableSecret(token))
         return {false, "请先填写有效的 API Key。"};
     if (!IsHttpEndpoint(endpoint) || model.empty())
         return {false, "请填写有效的 HTTPS 接口地址和模型名。"};
-    const std::string provider = Value(request, "provider");
     const std::string payload = ApiCredentialTest::detail::BuildChatProbeRequestBody(provider, model, endpoint).dump();
     const HttpResponse response = PerformJsonRequest(endpoint, token, &payload);
     if (response.code == CURLE_OK && response.status >= 200 && response.status < 300)
@@ -277,7 +279,7 @@ ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &requ
         {
             if (config.provider == "jev")
                 return {false, "Jev 只能从已有候选中挑选，不能用于翻译；请在「AI 与云联想」页换成生成式服务商。"};
-            return {false, "请先在「AI 与云联想」页面填写有效的接口地址、Token 和模型。"};
+            return {false, "请先在「AI 与云联想」页面填写有效的接口地址、Token（Ollama 不需要）和模型。"};
         }
         translated = AiTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en");
     }
@@ -366,9 +368,10 @@ ModelListResult FetchModels(const Request &request)
     // 与服务类型无关。
     if (request.service != "ai.assistant" && request.service != "voice.asr" && request.service != "voice.polish")
         return {false, "不支持的模型列表类型。", {}};
-    const std::string token = Value(request, "token");
+    const std::string provider = Value(request, "provider");
+    const std::string token = AiAssistant::RequestToken(provider, Value(request, "token"));
     const std::string endpoint = Value(request, "endpoint");
-    if (!CloudTranslation::IsUsableSecret(token))
+    if (AiAssistant::ProviderUsesToken(provider) && !CloudTranslation::IsUsableSecret(token))
         return {false, "请先填写有效的 API Key。", {}};
     if (!IsHttpEndpoint(endpoint))
         return {false, "请先填写以 http:// 或 https:// 开头的接口地址。", {}};

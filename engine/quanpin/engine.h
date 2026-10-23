@@ -29,6 +29,11 @@ class QuanpinEngine
     std::string search_sentence_from_ime_engine(const std::string &user_pinyin);
     void reset_state();
     void reset_cache();
+    // 容错仲裁选中读音后的分段显示（大小写原样）；空表示当前串没有容错布局。
+    const std::string &fault_segmentation_with_cases() const
+    {
+        return dictionary_.fault_segmentation_with_cases();
+    }
     void reset_sentence_cache();
     void set_helpcode_keymap(HelpcodeUtils::SharedKeymap table)
     {
