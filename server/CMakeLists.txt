@@ -320,6 +320,8 @@ set(SRC_FILES
     "./src/utils/window_utils.h"
     "./src/window/candidate_presenter.cpp"
     "./src/window/candidate_presenter.h"
+    "./src/window/caret_fallback.cpp"
+    "./src/window/caret_fallback.h"
     "./src/window/candidate_skin_layers.cpp"
     "./src/window/candidate_skin_layers.h"
     "./src/window/candidate_skin_overlay.cpp"
@@ -396,7 +398,7 @@ add_dependencies(${PROJECT_NAME} Dictionaries)
 target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
-target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 bcrypt)
+target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 oleaut32 oleacc bcrypt)
 target_link_libraries(${PROJECT_NAME} PRIVATE oleaut32)
 
 # The helper executables below already build at /W4. The server itself -- the process that owns

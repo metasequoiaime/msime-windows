@@ -35,6 +35,19 @@ constexpr UINT_PTR TIMER_ID_FTB_AUTO_HIDE_FADE = 14;
 constexpr UINT kFloatingToolbarAutoHidePollMs = 200;
 constexpr UINT kFloatingToolbarAutoHideFadeStepMs = 16;
 constexpr UINT kFloatingToolbarAutoHideFadeMs = 400;
+// The DLL sends (0, INVALID_Y) when the host gives no usable text extent. Chromium
+// does that for a moment at composition start and then reports the real one, so
+// only ask the host for its caret ourselves (window/caret_fallback.h) once the
+// anchor has stayed unresolved this long. Firefox's overflowed address bar never
+// resolves it (#618).
+constexpr UINT_PTR TIMER_ID_CANDIDATE_CARET_FALLBACK = 15;
+constexpr UINT kCandidateCaretFallbackDelayMs = 100;
+// A failed lookup is retried on a later keystroke, at most this many times per
+// composition: the first MSAA/UIA query may only wake the host's accessibility.
+constexpr int kCandidateCaretFallbackMaxAttempts = 3;
+// When every lookup fails the card's top-left goes to this many physical pixels
+// from the top-left of the foreground window's monitor.
+constexpr LONG kCandidateCornerFallbackInsetPx = 2;
 // A show repeating the previous frame's preedit, page and caret within this
 // window is a duplicate post rather than new state — the candidate rebuild and
 // the English/cloud merge each request a show per keystroke. Rendering both
