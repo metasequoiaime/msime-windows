@@ -26,8 +26,8 @@ std::filesystem::path CreateCaretPrefixFixture()
 {
     // PID 后缀：目录开场会被 remove_all，固定名在并行 ctest 或多工作树同时跑时会删掉
     // 另一个进程正在用的夹具。
-    const auto directory = std::filesystem::temp_directory_path() /
-                           ("msime-caret-prefix-input-session-test-" + std::to_string(GetCurrentProcessId()));
+    const auto directory =
+        test::TempRoot() / ("msime-caret-prefix-input-session-test-" + std::to_string(GetCurrentProcessId()));
     std::error_code ec;
     std::filesystem::remove_all(directory, ec);
     std::filesystem::create_directories(directory);

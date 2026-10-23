@@ -1,5 +1,7 @@
 #include "game_compat_name.h"
 
+#include "settings/input_method_install.h"
+
 #include <shellapi.h>
 
 #include <vector>
@@ -15,7 +17,10 @@ constexpr wchar_t kClearSwitch[] = L"--clear-game-compat-name";
 // Read by windows/src/Register/Register.cpp at registration time; keep the two in step.
 constexpr wchar_t kRecordKey[] = L"Software\\Metasequoia\\MetasequoiaIME";
 constexpr wchar_t kRecordValue[] = L"GameCompatProfileName";
-// Same profile as default_input_method.cpp and windows/src/Global/Globals.cpp.
+// Where windows/src/Register/Register.cpp registers the profile, and the only place a TSF profile name lives:
+// GetLanguageProfileDescription and the language bar read Display Description if the key has one and Description
+// otherwise. What those views actually show is the keyboard list entry the user has, which is why the profile has to
+// be installed there (input_method_install.h) for a rename to be visible at all.
 constexpr wchar_t kTipProfileKey[] = L"SOFTWARE\\Microsoft\\CTF\\TIP\\{E3062E9A-D834-4637-8958-ED8CFA427D01}"
                                      L"\\LanguageProfile\\0x00000804\\{4D59B1B4-D503-44AE-9259-BAD9BB2778AB}";
 // TEXTSERVICE_DESC in windows/src/Register/Register.cpp: what the profile is called with the switch off.
@@ -27,7 +32,6 @@ enum ExitCode : int
     BadArguments = 2,
     RecordFailed = 3,
     NotRegistered = 4,
-    DescriptionFailed = 5,
 };
 
 std::wstring ReadHklmString(const wchar_t *subkey, const wchar_t *value)
@@ -85,9 +89,9 @@ int ApplyElevated(bool enabled, const std::wstring &name)
         if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND && status != ERROR_PATH_NOT_FOUND)
             return RecordFailed;
     }
-    return WriteHklmString(kTipProfileKey, L"Description", enabled ? name : std::wstring(kProductName), false)
-               ? Ok
-               : DescriptionFailed;
+    if (!WriteHklmString(kTipProfileKey, L"Description", enabled ? name : std::wstring(kProductName), false))
+        return RecordFailed;
+    return Ok;
 }
 
 std::string DescribeExitCode(DWORD code)
@@ -100,8 +104,6 @@ std::string DescribeExitCode(DWORD code)
         return "无法写入设置，请确认在弹出的授权窗口中选择了「是」。";
     case NotRegistered:
         return "水杉输入法没有在系统中注册，请重新安装输入法。";
-    case DescriptionFailed:
-        return "无法修改输入法在系统中登记的名称。";
     default:
         return "应用失败（错误码 " + std::to_string(code) + "）。";
     }
@@ -152,6 +154,10 @@ bool Apply(HWND owner, bool enabled, const std::wstring &name, std::string &erro
         error = DescribeExitCode(BadArguments);
         return false;
     }
+    // The keyboard list is per user and this process is not elevated, so the entry the elevated half below cannot
+    // write is added here. That covers installs which predate the installer running it as the original user.
+    if (enabled)
+        input_method_install::EnsureInKeyboardList();
     const std::wstring executable = OwnExecutablePath();
     if (executable.empty())
     {

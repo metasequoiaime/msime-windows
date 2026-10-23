@@ -117,7 +117,7 @@ icon = "#f6e4eb"
 
 ```toml
 schema_version = 2
-base = "canvas"                  # v2 必须以 canvas 为 base
+base = "canvas"                  # 九宫格与挂件只在 canvas 上生效；base 不是 canvas 时按 1 加载
 
 [candidate_window.border_image]
 source = "assets/panel.png"      # 64×64 的 2 倍图

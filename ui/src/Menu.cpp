@@ -284,7 +284,8 @@ void MenuFlyoutItem::SetHovered(bool hovered)
     InvalidateVisual();
     if (onHover_)
     {
-        onHover_(hovered_);
+        const auto handler = onHover_;
+        handler(hovered_);
     }
 }
 

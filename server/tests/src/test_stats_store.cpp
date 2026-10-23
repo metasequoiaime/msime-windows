@@ -38,7 +38,7 @@ class ScopedTempDir
   public:
     ScopedTempDir()
     {
-        root_ = fs::temp_directory_path() / L"msime-统计测试-存储";
+        root_ = test::TempRoot() / L"msime-统计测试-存储";
         std::error_code ec;
         fs::remove_all(root_, ec);
         fs::create_directories(root_, ec);

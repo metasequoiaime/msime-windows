@@ -2,7 +2,7 @@
 # 上下两层挂件和一个循环播放的 APNG 小动画拼出整个候选框；深色是夜蓝玻璃面板，浅色换成薄荷白面板。
 # 所有图片都是程序生成的几何图形；浅色面板由 examples/skin-examples/tools/gen_green_leaf_panel.py 生成。
 
-schema_version = 2                 # v2 必须以 canvas 为 base；写了 2 而 base 不是 canvas 的皮肤按 1 处理
+schema_version = 2                 # 九宫格与挂件只在 canvas 基底上生效；base 不是 canvas 时按 1 加载
 id = "green_leaf"
 name = "绿叶"
 version = "1.1.0"

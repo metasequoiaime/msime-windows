@@ -618,7 +618,7 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
         _KEYSTROKE_STATE keyState = {};
         GUID preservedKey = {};
         uint64_t focusGeneration = 0;
-        ULONGLONG queuedAtMs = 0;
+        std::chrono::steady_clock::time_point queuedAt{};
     };
     enum class KeyDownDispatchResult
     {
@@ -696,7 +696,8 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     BOOL _IsComposing();
     BOOL _IsKeyboardDisabled();
 
-    HRESULT _AddComposingAndChar(TfEditCookie ec, _In_ ITfContext *pContext, _In_ CStringRange *pstrAddString);
+    HRESULT _AddComposingAndChar(TfEditCookie ec, _In_ ITfContext *pContext, _In_ CStringRange *pstrAddString,
+                                 bool voicePreview = false);
     HRESULT _AddCharAndFinalize(TfEditCookie ec, _In_ ITfContext *pContext, _In_ CStringRange *pstrAddString,
                                 bool requireSelection = false);
     HRESULT _InsertTextToComposition(TfEditCookie ec, _In_ ITfContext *pContext, _In_ CStringRange *pstrAddString);

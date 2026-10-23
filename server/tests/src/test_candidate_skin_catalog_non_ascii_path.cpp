@@ -1,4 +1,5 @@
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 
 #include "skin/candidate_skin_catalog.h"
 
@@ -48,8 +49,7 @@ TEST_CASE(candidate_skin_catalog_loads_under_non_ascii_path)
     namespace fs = std::filesystem;
     // The root stays ASCII so the ascii_root control below really is ASCII end to end: only the
     // non_ascii_root leg carries Chinese characters, which is what the assertions must isolate.
-    const fs::path unique_root =
-        fs::temp_directory_path() / (L"msime-skin-test-" + std::to_wstring(GetCurrentProcessId()));
+    const fs::path unique_root = test::TempRoot() / (L"msime-skin-test-" + std::to_wstring(GetCurrentProcessId()));
 
     std::error_code ec;
     fs::remove_all(unique_root, ec);

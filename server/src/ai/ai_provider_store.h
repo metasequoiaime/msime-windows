@@ -26,6 +26,11 @@ using Entries = std::vector<AiProvider>;
 const std::vector<std::string_view> &BuiltinProviderIds();
 bool IsBuiltinProvider(std::string_view id);
 
+// 内置服务商出厂默认的接口地址与模型。配置层用它补空槽位，设置页用它填占位符，
+// 两边读同一份表，避免各写一份镜像后改一处忘另一处。未知 id 返回空串。
+std::string BuiltinDefaultEndpoint(std::string_view id);
+std::string BuiltinDefaultModel(std::string_view id);
+
 // Entries as stored. Nullopt when the file does not exist yet, so the caller can seed a first
 // generation of entries. A present-but-corrupt file also reads as nullopt: the next Save()
 // rewrites it wholesale. An explicit path keeps tests off the real data directory.

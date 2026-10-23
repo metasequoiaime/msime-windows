@@ -15,6 +15,67 @@
 
 Boost 按 `-DBoost_ROOT=...` → 环境变量 `BOOST_ROOT` → `%USERPROFILE%\scoop\apps\boost\current` 的顺序解析。preset 里的 vcpkg 路径取自 `$env{VCPKG_ROOT}`，不需要改文件。
 
+### 没有本地工具链时：dev-build workflow
+
+只想验证一个小改动、不想为它装一整套工具链的话，让 CI 编。`Dev build` workflow 平时不跑主分支（develop 和 main 有自己的 CI 和发布流），三种触发方式：
+
+```powershell
+# 特性分支一推就自动编，不需要任何手动操作
+git push -u origin fix/xxx
+
+# 或者手动触发，可选单个组件快速迭代
+gh workflow run dev-build.yml --ref <你的分支> -f component=all
+
+# 等 run 结束拿产物；agent 也可以在这里等
+gh run list --workflow=dev-build.yml --branch <你的分支> --limit 1 --json databaseId,status
+gh run watch <runId> --exit-status
+gh run download <runId> -n dev-installer
+```
+
+开向 develop 的 PR 也会自动跑一次，评审者和 fork 贡献者都能从 PR 的检查页拿到安装包。版本号带 `-dev.<日期>.<commit>`，一眼可辨，设置页的更新检查不会提示它升级。产物保留 7 天。
+
+#### 怎么装
+
+网页上打开那次运行的页面，滚到底部 Artifacts，点 `dev-installer` 下载。**别去点 `dev-tsf-*` 和 `dev-server`**：它们是打包用的中间产物，安装包里已经包含全部内容。
+
+解压后目录里有三个文件：
+
+```
+MetasequoiaIME_Setup_v0.7.1-dev.<日期>.<commit>.exe
+dev-build.cer
+import-dev-trust.ps1
+```
+
+在**管理员** PowerShell 里跑一次导入：
+
+```powershell
+cd <解压目录>
+pwsh -File .\import-dev-trust.ps1
+```
+
+看到 `有效期至：<日期>` 就说明成功，然后双击安装包。
+
+**每次换新的 dev 构建都要重跑这个脚本。** 证书是每次运行现场生成的，指纹每次都不同；脚本按固定 subject 清旧导新，所以受信任存储不会越堆越多。嫌麻烦的话用 [nightly 通道](../installer/README.md#三个通道怎么选)，它的证书固定，导一次就够。
+
+证书有效期 90 天。下载后放太久才装的话，脚本会发现证书已过期并直接退出——这时候要回仓库重新下载新构建，而不是继续装旧包。
+
+#### 边界
+
+`workflow_dispatch` 需要仓库写权限；fork PR 的构建用 `pull_request` 触发（只读 token，无 secrets），首个 run 要维护者点一次批准；`component=tip` 或 `server` 只编译单个组件出裸二进制，其中 `component=server` 的产物会额外签名并附带 `dev-server-certificate`，因为带 `uiAccess` 的 Server 没有可信签名会静默失效；这个 workflow 不出 release、不碰更新清单，合并门槛仍然由 PR 上的 CI 把守。
+
+推送 `win7*` 开头的分支不会触发，那些分支属于 Windows 7 移植的工作。
+
+#### 注意事项
+只想看设置窗口的界面、不想为一个页面改动装整套输入法时，同一次构建还会出一个 `dev-settings-portable` 压缩包：
+
+```powershell
+gh run download <runId> -n dev-settings-portable
+```
+
+解压到普通目录（不要放 `Program Files`），双击 `run-settings.cmd` 即可。它不写注册表、不装 TSF、不需要管理员权限，也不需要导入证书；数据目录指向包内的 `data\`，实例名加了后缀，可以和已安装的正式版同时开着。改动写进包内的 `data\config.toml`，删掉整个目录就是卸载。代价是看不到真实输入效果（候选窗、上屏、皮肤在实际输入时的样子），那些仍然要靠安装包。
+
+几个边界：`workflow_dispatch` 需要仓库写权限；fork PR 的构建用 `pull_request` 触发（只读 token，无 secrets），首个 run 要维护者点一次批准；`component=tip` 或 `server` 只编译单个组件出裸二进制；这个 workflow 不出 release、不碰更新清单，合并门槛仍然由 PR 上的 CI 把守。
+
 ## 取代码
 
 ```powershell

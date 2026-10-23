@@ -283,4 +283,32 @@ std::map<std::string, std::string> ReadProviderMap(const SettingsModel &model, c
                                                    const std::string &base, const std::string &provider,
                                                    const std::vector<std::string> &providers, bool slots);
 std::wstring Trim(const std::wstring &text);
+
+// AI 联想模式。`jev` 把拼音、前文和本地候选交给 TypeSafe Choice 接口，从已有候选里挑一个；
+// 其余服务商走 OpenAI 兼容的 Chat Completions，自己生成候选文本。
+std::string AiModeOf(const std::string &provider);
+std::string AiProviderForMode(const std::string &mode, const std::string &provider);
+// 候选词翻译复用的服务商：选择器模式（jev）下取生成式上次用的那家，其余情况就是 provider 本身。
+std::string AiTranslationProvider(const SettingsModel &model, const std::string &provider);
+// 出厂默认的接口地址与模型；未知服务商返回空串。空槽位在界面上显示它作占位符。
+std::wstring AiDefaultEndpoint(const std::string &provider);
+std::wstring AiDefaultModel(const std::string &provider);
+// 内置服务商的显示名；用户自建的服务商读注册表里的 name，缺失时退回 id。
+std::wstring AiProviderLabel(const std::string &provider, const Json *providers = nullptr);
+// 名称与 id 的候选列表，供服务商下拉框使用。
+std::vector<std::pair<std::string, std::wstring>> AiProviderChoices(const Json *providers, const std::string &mode);
+
+// 当前服务商在这次快照里的生效配置。分槽优先（`tokens` / `endpoints` / `models`），
+// 单值键只在它就是当前服务商时作数，最后回退到出厂默认值。
+struct ActiveAiConfig
+{
+    std::string provider;
+    std::string endpoint;
+    std::string model;
+    std::string token;
+    bool tokenSet = false;
+    bool usable = false; // 与后端 AiTranslation::IsUsableConfig 同一口径
+};
+ActiveAiConfig ReadActiveAiConfig(const SettingsModel &model);
+bool AiProviderIsJev(const std::string &provider);
 } // namespace native_settings::voice_fields

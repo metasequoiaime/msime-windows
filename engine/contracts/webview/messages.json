@@ -272,6 +272,7 @@
             "type": "string",
             "enum": [
               "translation.tencent",
+              "translation.aliyun",
               "translation.niutrans",
               "translation.custom",
               "translation.ai",
@@ -1088,6 +1089,17 @@
         "requestId",
         "ok",
         "message"
+      ],
+      "additionalProperties": false
+    },
+    "restartServerDone": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
       ],
       "additionalProperties": false
     },

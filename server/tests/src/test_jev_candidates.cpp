@@ -147,11 +147,21 @@ TEST_CASE(jev_cache_key_tracks_candidate_pool_and_order)
     REQUIRE(before != AiAssistant::detail::BuildSuggestionCacheKey(request));
 }
 
-TEST_CASE(jev_never_sends_credentials_to_a_different_endpoint_or_on_cancel)
+TEST_CASE(jev_accepts_a_configured_endpoint_but_only_over_http)
 {
+    // 协议是公开的，Laya、OpenJev 这类自建实现照同一套协议就跑得通，所以端点必须可配。
+    // 这里验证的是「只发到合法的 http(s) 地址」：给一个连不上的本地端口，请求会失败，
+    // 但不能因为地址不是官方端点就被提前拒绝。
     REQUIRE(!Jev::Fetch("http://127.0.0.1:1", "test-only", "{}").has_value());
+    REQUIRE(!Jev::Fetch("ftp://127.0.0.1/", "test-only", "{}").has_value());
+    REQUIRE(!Jev::Fetch("not-a-url", "test-only", "{}").has_value());
+    // 空端点回落到官方地址；取消回调立刻为真时一个请求都不发。
+    REQUIRE(!Jev::Fetch("", "test-only", "{}", [] { return true; }).has_value());
     REQUIRE(!Jev::Fetch(Jev::kEndpoint, "test-only", "{}", [] { return true; }).has_value());
+    // 官方端点缺 Key 时不发请求；自建端点允许空 Token。
+    REQUIRE(!Jev::Fetch("", "", "{}").has_value());
     REQUIRE(!Jev::Fetch(Jev::kEndpoint, "", "{}").has_value());
+    REQUIRE(!Jev::Fetch("http://127.0.0.1:1", "", "{}").has_value());
 }
 
 TEST_CASE(jev_is_builtin_but_not_a_chat_translation_model)

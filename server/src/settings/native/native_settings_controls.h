@@ -1,10 +1,12 @@
 #pragma once
 
+#include "settings/native/native_settings_search.h"
 #include "settings/native/native_settings_theme.h"
 
 #include "msimeui/Animation.h"
 #include "msimeui/Controls.h"
 #include "msimeui/Layout.h"
+#include "msimeui/ScrollAxis.h"
 
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -380,6 +382,20 @@ class SettingRow : public msimeui::Panel
     // `left` is usually a Column of title + description; `control` may be null.
     SettingRow(VisualPtr left, VisualPtr control);
 
+    // Searchable text of this row: the title, and the description as secondary matches. Set by
+    // MakeRow, which is where every settings row is built; pages that hand-build a SettingRow are
+    // simply not indexed. Kept here rather than read back out of the title labels so the index
+    // does not depend on how a row happens to lay out its left column.
+    void SetSearchText(std::wstring title, std::wstring description);
+    const std::wstring &SearchTitle() const
+    {
+        return searchTitle_;
+    }
+    const std::wstring &SearchDescription() const
+    {
+        return searchDescription_;
+    }
+
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
     void Render(msimeui::DeviceResources &dr) override;
@@ -389,6 +405,8 @@ class SettingRow : public msimeui::Panel
     VisualPtr control_;
     SizeF leftSize_ = {};
     SizeF controlSize_ = {};
+    std::wstring searchTitle_;
+    std::wstring searchDescription_;
 };
 
 // Title (+ description) block used on the left of a SettingRow.
@@ -396,6 +414,31 @@ VisualPtr MakeTitleBlock(std::wstring title, std::wstring description = {}, bool
 // The common row: section title, optional description, control on the right.
 std::shared_ptr<SettingRow> MakeRow(std::wstring title, std::wstring description, VisualPtr control,
                                     bool subItem = false);
+
+// Scope that tells MakeRow which page is being built, so every row it creates lands in that
+// page's slice of the search index. Set by the window around a PageInfo::build call; nested
+// scopes restore the previous one. Without it rows still build, they are just not indexed, which
+// is what happens in the control tests.
+class SettingsIndexScope
+{
+  public:
+    struct Row
+    {
+        std::wstring title;
+        std::wstring description;
+        std::weak_ptr<SettingRow> row;
+    };
+
+    // `collector` is called once per row created inside the scope, in build order.
+    SettingsIndexScope(std::string pageId, std::function<void(const Row &)> collector);
+    ~SettingsIndexScope();
+    SettingsIndexScope(const SettingsIndexScope &) = delete;
+    SettingsIndexScope &operator=(const SettingsIndexScope &) = delete;
+};
+
+// One indexed settings row, plus the matcher that ranks it. Defined in native_settings_search.h
+// because that header and its .cpp stay free of D2D so they can run in the portable test target.
+// (including the header here re-exports them to every page, which is what the pages want)
 
 // `.content-header` + sections, wrapped in the page column (max 900, centered).
 class PageBuilder
@@ -454,6 +497,65 @@ class ToggleSwitch : public msimeui::Visual
     bool disabled_ = false;
     msimeui::Tween knob_{0.0f};
     ChangeHandler onChanged_;
+};
+
+// The scrollbar of a `.compact-scroll-menu` list (dropdown menus, the AI model list): a
+// 4 DIP thumb 2 DIPs from the list's right edge and 4 from each end, at least 24 long. A
+// band along the right edge, wider than the thumb, takes presses and hover while the
+// content overflows. It owns the list's scroll offset; the list draws its rows at
+// GetPlacedOffset and forwards the mouse here first.
+//
+// The list calls Layout whenever its content or box changes, before any other call.
+class CompactMenuScrollbar
+{
+  public:
+    // `contentHeight` covers the rows and their inset. `viewport` is the height shown, or
+    // the height the list asks for while it is not arranged yet. `bounds` is the list's
+    // box.
+    void Layout(float contentHeight, float viewport, const RectF &bounds);
+    // Back to the top, with no drag or hover.
+    void Reset();
+
+    bool CanScroll() const;
+    float GetOffset() const;
+    // The offset rounded to whole device pixels at `dpi`: scrolled rows keep the pixel
+    // phase they have unscrolled.
+    float GetPlacedOffset(float dpi) const;
+    // The following return whether the list has to be redrawn.
+    bool SetOffset(float offset);
+    // Scrolls as little as possible to show content [start, start + length).
+    bool Reveal(float start, float length);
+    bool Wheel(short delta);
+
+    bool IsOnScrollbar(const PointF &point) const;
+    bool IsDragging() const;
+    // Drawn in the hot color: the pointer is over the scrollbar, or dragging the thumb
+    // wherever it is.
+    bool IsHot() const;
+    // A press on the scrollbar starts a drag that lasts until Release; the pointer may
+    // leave the list meanwhile.
+    bool Press(const PointF &point);
+    // Pointer moves: drags while dragging with the left button held, otherwise tracks
+    // hover.
+    bool Move(const PointF &point, WPARAM keyState);
+    bool Release(const PointF &point);
+    bool Leave();
+
+    // `hotColor` while IsHot.
+    void Render(msimeui::DeviceResources &dr, const D2D1_COLOR_F &color, const D2D1_COLOR_F &hotColor) const;
+
+  private:
+    msimeui::ScrollExtent Extent() const;
+    msimeui::ScrollTrack Track() const;
+
+    float contentHeight_ = 0.0f;
+    float viewport_ = 0.0f;
+    RectF bounds_ = {};
+    float offset_ = 0.0f;
+    bool hovered_ = false;
+    bool dragging_ = false;
+    // Where along the thumb the pointer holds it while dragging.
+    float grip_ = 0.0f;
 };
 
 // One entry of a dropdown menu.

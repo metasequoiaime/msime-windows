@@ -64,6 +64,12 @@ RECT FloatingToolbarShadowInsetsPx(int hostWidthPx, int hostHeightPx, FLOAT scal
     return {};
 }
 
+// 皮肤图片模式的工具栏是异形窗口：裁到屏幕内的同时要保住图片的形状，不能拿矩形把它盖掉。
+void ClipFloatingToolbarToVisibleScreens(HWND hwnd)
+{
+    ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea, FloatingToolbarPresenter::Instance().ShapeRegion());
+}
+
 void KeepFloatingToolbarInsideVisibleScreens(HWND hwnd)
 {
     RECT rect{};
@@ -82,12 +88,12 @@ void KeepFloatingToolbarInsideVisibleScreens(HWND hwnd)
             rect, ScreenArea::WorkArea, &monitor,
             FloatingToolbarShadowInsetsPx(rect.right - rect.left, rect.bottom - rect.top, GetWindowScale(hwnd))))
     {
-        ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea);
+        ClipFloatingToolbarToVisibleScreens(hwnd);
         return;
     }
 
     SetWindowPos(hwnd, nullptr, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-    ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea);
+    ClipFloatingToolbarToVisibleScreens(hwnd);
 
     MONITORINFO info{sizeof(info)};
     GetMonitorInfo(monitor, &info);
@@ -183,7 +189,7 @@ void LayoutFloatingToolbar(HWND hwnd, bool reset_to_default_corner, FLOAT scaleO
     const BOOL ok = SetWindowPos(hwnd, nullptr, posX, posY, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
     ::FTB_HOST_INSETS_PX = shadowInsets;
     ::FTB_HOST_INSETS_VALID = true;
-    ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea);
+    ClipFloatingToolbarToVisibleScreens(hwnd);
     if (FloatingToolbarPresenter::Instance().IsBound())
     {
         FloatingToolbarPresenter::Instance().Present();
@@ -244,12 +250,27 @@ void RestoreFloatingToolbarAlpha()
 
 // GetCursorPos and GetWindowRect are both physical pixels under per-monitor-v2,
 // so this needs no DPI conversion. Sampling the rect instead of tracking mouse
-// messages also covers the caption drag area.
+// messages also covers the caption drag area. A window region (an image-mode
+// skin's shape, or the part left on screen) narrows it: the cursor over a
+// clipped-away pixel is over whatever lies behind.
 bool IsCursorOverFloatingToolbar()
 {
     POINT cursor{};
     RECT rect{};
-    return GetCursorPos(&cursor) && GetWindowRect(::global_hwnd_ftb, &rect) && PtInRect(&rect, cursor);
+    if (!GetCursorPos(&cursor) || !GetWindowRect(::global_hwnd_ftb, &rect) || !PtInRect(&rect, cursor))
+    {
+        return false;
+    }
+    bool inside = true;
+    if (HRGN region = CreateRectRgn(0, 0, 0, 0))
+    {
+        if (GetWindowRgn(::global_hwnd_ftb, region) != ERROR)
+        {
+            inside = PtInRegion(region, cursor.x - rect.left, cursor.y - rect.top) != FALSE;
+        }
+        DeleteObject(region);
+    }
+    return inside;
 }
 
 void CancelFloatingToolbarAutoHideFade()
@@ -634,7 +655,7 @@ LRESULT CALLBACK WndProcFtbWindow(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         const auto *pos = reinterpret_cast<const WINDOWPOS *>(lParam);
         if (pos && (pos->flags & (SWP_NOMOVE | SWP_NOSIZE)) != (SWP_NOMOVE | SWP_NOSIZE))
         {
-            ClipWindowToVisibleScreens(hwnd, ScreenArea::WorkArea);
+            ClipFloatingToolbarToVisibleScreens(hwnd);
         }
         return DefWindowProc(hwnd, message, wParam, lParam);
     }

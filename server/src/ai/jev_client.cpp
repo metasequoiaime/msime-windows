@@ -80,7 +80,19 @@ Client::~Client() = default;
 std::optional<std::string> Client::Fetch(const std::string &endpoint, const std::string &token,
                                          const std::string &payload, const std::function<bool()> &cancelled)
 {
-    if (endpoint != kEndpoint || token.empty() || (cancelled && cancelled()))
+    // 端点可配置：Laya、OpenJev 等开源实现都照 TypeSafe 的 v0.2.0 协议实现，把请求发到自建
+    // 服务即可。只接受 http(s)，空值回落到官方端点；前后空白一并去掉，与 Chat Completions
+    // 那条路径的 TrimSecret 保持一致。
+    std::string target = endpoint;
+    const auto first = target.find_first_not_of(" \t\r\n");
+    const auto last = target.find_last_not_of(" \t\r\n");
+    target = first == std::string::npos ? std::string() : target.substr(first, last - first + 1);
+    if (target.empty())
+        target = kEndpoint;
+    const bool scheme_ok = target.rfind("https://", 0) == 0 || target.rfind("http://", 0) == 0;
+    // 官方端点必须带 Key，空 Token 发过去只会被拒，还白白把前文送出设备。
+    const bool official_without_token = target == kEndpoint && token.empty();
+    if (!scheme_ok || official_without_token || (cancelled && cancelled()))
         return std::nullopt;
     // Reuse retains TLS connections; no API key or text is logged.
     auto *easy = impl_->easy;
@@ -91,9 +103,10 @@ std::optional<std::string> Client::Fetch(const std::string &endpoint, const std:
     std::string response;
     curl_slist *raw_headers = nullptr;
     raw_headers = curl_slist_append(raw_headers, "Content-Type: application/json");
+    // 自建实现要求带 Bearer 头；空 token 时照发，免 Key 的服务端会忽略空值。
     raw_headers = curl_slist_append(raw_headers, ("Authorization: Bearer " + token).c_str());
     const std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(raw_headers, curl_slist_free_all);
-    curl_easy_setopt(easy, CURLOPT_URL, kEndpoint);
+    curl_easy_setopt(easy, CURLOPT_URL, target.c_str());
     NetworkProxy::ApplyToCurl(easy);
     curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
     curl_easy_setopt(easy, CURLOPT_POSTFIELDS, payload.c_str());

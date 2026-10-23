@@ -152,7 +152,14 @@ def fetch_dictionaries(staging: Path, data: dict) -> None:
                    "--repo", data["dictionary"]["repository"], "--dir", str(incoming)]
         for name in sorted(data["dictionary"]["assets"]):
             command.extend(["--pattern", name])
-        subprocess.run(command, check=True)
+        # gh hits api.github.com before the CDN; the nightly pipeline has seen
+        # connection drops mid-week, so give the download one retry before the
+        # digest verification below would fail the run anyway.
+        try:
+            subprocess.run(command, check=True)
+        except subprocess.CalledProcessError as error:
+            print(f"gh release download failed ({error.returncode}); retrying once", file=sys.stderr)
+            subprocess.run(command, check=True)
         verify_assets(incoming, data)
         target.mkdir(exist_ok=True)
         for name in sorted(data["dictionary"]["assets"]):

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "voice_overlay_layout.h"
 #include <windows.h>
 #include <atomic>
 #include <functional>
@@ -28,11 +29,17 @@ class WaveOverlay
     WaveOverlay(const WaveOverlay &) = delete;
     WaveOverlay &operator=(const WaveOverlay &) = delete;
 
+    // Create and destroy on the UI thread.
     bool init(HINSTANCE instance, std::function<void(Action)> action_handler);
     void shutdown();
 
+    // Publish visibility without waiting for the UI thread. Queued messages apply the latest state.
     void show();
     void hide();
+
+    // Thread-safe. Pass the anchor captured once at recording start; an invalid anchor restores
+    // the foreground-monitor fallback used by standalone fixtures.
+    void set_anchor(const VoiceOverlayAnchor &anchor);
 
     void set_listening(bool listening);
     void set_input_level(float level);
@@ -46,13 +53,16 @@ class WaveOverlay
     static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 
     LRESULT handle_message(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+    void apply_visibility();
     bool ensure_render_target();
     bool ensure_text_layout(const std::wstring &transcript, float width, float height);
     void release_render_target();
     void release_text_layout();
     void update_wave_levels();
     void draw();
-    void update_dpi_scale();
+    VoiceOverlayAnchor resolve_anchor() const;
+    void refresh_anchor_for_display_change();
+    void update_dpi_scale(const VoiceOverlayAnchor &anchor);
     void update_window_bounds();
     bool hit_test_action(float x, float y, Action &action) const;
 
@@ -61,6 +71,9 @@ class WaveOverlay
 
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
+    // Safe publication target for background callers; cleared before DestroyWindow.
+    std::atomic<HWND> post_hwnd_{nullptr};
+    std::atomic<bool> visibility_requested_{false};
     UINT dpi_ = 96;
     float scale_x_ = 1.0f;
     float scale_y_ = 1.0f;
@@ -75,6 +88,8 @@ class WaveOverlay
     std::function<void(Action)> action_handler_;
     std::mutex transcript_mutex_;
     std::wstring transcript_;
+    mutable std::mutex anchor_mutex_;
+    VoiceOverlayAnchor anchor_;
     float levels_[kLevelCount] = {};
     float amplitudes_[kLevelCount] = {};
     float phases_[kLevelCount] = {};

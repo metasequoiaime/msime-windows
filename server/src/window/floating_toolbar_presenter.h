@@ -25,6 +25,11 @@ class FloatingToolbarPresenter
     // screen edge (KeepRectOnVisibleScreens' offscreenInsets), for a host of
     // the given physical size. Everything inside it is the bar and its border.
     RECT ShadowInsetsPx(int hostWidthPx, int hostHeightPx, FLOAT scale) const;
+    // A skin's image-mode toolbar is shaped like its background image: the
+    // region (window coordinates) of the image's non-transparent pixels and the
+    // button boxes, still owned by the presenter. Null for the bar, and when the
+    // image cannot be read.
+    HRGN ShapeRegion() const;
     bool HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 
   private:
@@ -34,6 +39,12 @@ class FloatingToolbarPresenter
     FloatingToolbarPresenter &operator=(const FloatingToolbarPresenter &) = delete;
 
     void RebuildScene();
+    // Rebuilds ShapeRegion for a background image drawn at this many physical px,
+    // plus the button boxes at `scale` physical px per DIP.
+    void UpdateShape(int imageWidthPx, int imageHeightPx, float scale);
+    // Animated skin images: one timer per frame while the toolbar is on screen.
+    void ScheduleAnimationFrame();
+    void StopAnimationFrames();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

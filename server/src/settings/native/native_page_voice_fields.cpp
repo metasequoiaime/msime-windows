@@ -1,5 +1,8 @@
 #include "settings/native/native_page_voice_fields.h"
 
+#include "ai/ai_provider_store.h"
+#include "config/ai_provider.h"
+
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
 
@@ -444,7 +447,10 @@ InputBox::InputBox(Options options) : options_(std::move(options))
             return;
         committed_ = text;
         if (onCommit_)
-            onCommit_(text);
+        {
+            const auto handler = onCommit_;
+            handler(text);
+        }
     };
     box_->SetOnFocusChanged([this, commit](bool focused) {
         if (!focused)
@@ -813,7 +819,11 @@ bool PlainButton::OnMouseUp(const POINT &point, WPARAM)
     pressed_ = false;
     InvalidateVisual();
     if (Hit(window_, *this, point) && onClick_ && !disabled_)
-        onClick_();
+    {
+        // A handler may tear down the visual that owns onClick_ while it runs.
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 
@@ -1036,7 +1046,10 @@ bool PlainExpander::OnMouseUp(const POINT &point, WPARAM)
         if (window_)
             window_->RequestAnimationFrame();
         if (onToggled_)
-            onToggled_(expanded_);
+        {
+            const auto handler = onToggled_;
+            handler(expanded_);
+        }
     }
     return true;
 }
@@ -1115,5 +1128,191 @@ std::wstring Trim(const std::wstring &text)
         return {};
     const size_t end = text.find_last_not_of(L" \t\r\n");
     return text.substr(begin, end - begin + 1);
+}
+
+std::string AiModeOf(const std::string &provider)
+{
+    return provider == "jev" ? "select" : "generate";
+}
+
+std::string AiProviderForMode(const std::string &mode, const std::string &provider)
+{
+    if (mode == "select")
+        return "jev";
+    return provider == "jev" || provider.empty() ? "deepseek" : provider;
+}
+
+std::string AiTranslationProvider(const SettingsModel &model, const std::string &provider)
+{
+    if (provider != "jev")
+        return provider;
+    const std::string remembered = model.GetString("ai_assistant.generate_provider");
+    return remembered.empty() ? std::string("deepseek") : remembered;
+}
+
+std::wstring AiDefaultEndpoint(const std::string &provider)
+{
+    return Widen(AiAssistant::ProviderStore::BuiltinDefaultEndpoint(provider));
+}
+
+std::wstring AiDefaultModel(const std::string &provider)
+{
+    return Widen(AiAssistant::ProviderStore::BuiltinDefaultModel(provider));
+}
+
+namespace
+{
+// 内置服务商的显示名。注册表里内置项的 name 就是 id，所以这里单独维护一份。
+const std::map<std::string, std::wstring> &BuiltinAiNames()
+{
+    static const std::map<std::string, std::wstring> names{
+        {"deepseek", L"DeepSeek"},       {"openai", L"OpenAI"},
+        {"siliconflow", L"SiliconFlow"}, {"groq", L"Groq"},
+        {"minimax", L"MiniMax"},         {"moonshot", L"Moonshot Kimi"},
+        {"zhipu", L"智谱 GLM"},          {"dashscope", L"通义千问"},
+        {"volcengine", L"火山方舟"},     {"openrouter", L"OpenRouter"},
+        {"ollama", L"Ollama"},           {"custom", L"自定义接口"},
+        {"jev", L"Jev (TypeSafe)"},
+    };
+    return names;
+}
+
+// 出厂默认值来自 ai_provider_store，配置层与设置页读同一份表。
+std::string TrimAscii(std::string text)
+{
+    const size_t begin = text.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos)
+        return {};
+    const size_t end = text.find_last_not_of(" \t\r\n");
+    return text.substr(begin, end - begin + 1);
+}
+
+// 出厂模板里的占位符与假 token 都算没填。
+bool IsPlaceholderToken(const std::string &token)
+{
+    if (token.empty())
+        return true;
+    if (token.front() == '<' && token.back() == '>')
+        return true;
+    return token.rfind("FAKESECRET_", 0) == 0;
+}
+
+const Json *FindEntry(const Json *providers, const std::string &provider, const char *field)
+{
+    if (!providers || !providers->is_array())
+        return nullptr;
+    for (const Json &entry : *providers)
+    {
+        if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string())
+            continue;
+        if (entry["id"].get<std::string>() != provider)
+            continue;
+        const auto found = entry.find(field);
+        return found == entry.end() ? nullptr : &*found;
+    }
+    return nullptr;
+}
+} // namespace
+
+std::wstring AiProviderLabel(const std::string &provider, const Json *providers)
+{
+    if (const Json *name = FindEntry(providers, provider, "name"); name && name->is_string())
+    {
+        const std::string text = name->get<std::string>();
+        // 内置项的 name 是 id 本身，不算显示名。
+        if (!text.empty() && text != provider)
+            return Widen(text);
+    }
+    const auto known = BuiltinAiNames().find(provider);
+    return known != BuiltinAiNames().end() ? known->second : Widen(provider);
+}
+
+std::vector<std::pair<std::string, std::wstring>> AiProviderChoices(const Json *providers, const std::string &mode)
+{
+    std::vector<std::pair<std::string, std::wstring>> choices;
+    const auto skip = [&mode](const std::string &id) {
+        // Jev 是另一种联想模式，不参与生成式服务商列表。
+        return id == "jev" && mode == "generate";
+    };
+    for (const auto &[id, name] : BuiltinAiNames())
+    {
+        if (skip(id))
+            continue;
+        choices.emplace_back(id, name);
+    }
+    if (providers && providers->is_array())
+    {
+        for (const Json &entry : *providers)
+        {
+            if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string())
+                continue;
+            const std::string id = entry["id"].get<std::string>();
+            if (id.empty() || skip(id) || BuiltinAiNames().count(id) != 0)
+                continue;
+            choices.emplace_back(id, AiProviderLabel(id, providers));
+        }
+    }
+    return choices;
+}
+
+bool AiProviderIsJev(const std::string &provider)
+{
+    return provider == "jev";
+}
+
+ActiveAiConfig ReadActiveAiConfig(const SettingsModel &model)
+{
+    ActiveAiConfig config;
+    const Json *providers = model.Find("ai_assistant.providers");
+    // 翻译复用的是 Chat Completions 服务商。AI 联想处在选择器模式时，取生成式上次用的那家，
+    // 与 PublishTranslationConfig 的取值口径保持一致。
+    const std::string active = model.GetString("ai_assistant.provider", "deepseek");
+    config.provider = AiTranslationProvider(model, active);
+
+    const auto readSlot = [&](const std::string &base) {
+        const Json *map = model.Find("ai_assistant." + base + "s");
+        std::string value;
+        if (map && map->is_object())
+        {
+            const auto found = map->find(config.provider);
+            if (found != map->end() && found->is_string())
+                value = found->get<std::string>();
+        }
+        if (value.empty())
+        {
+            // 用户自建的服务商把地址与模型放在注册表里。
+            if (const Json *entry = FindEntry(providers, config.provider, base.c_str()); entry && entry->is_string())
+                value = entry->get<std::string>();
+        }
+        if (value.empty() && active == config.provider)
+            value = model.GetString("ai_assistant." + base);
+        return TrimAscii(value);
+    };
+
+    config.endpoint = readSlot("endpoint");
+    config.model = readSlot("model");
+    if (config.endpoint.empty())
+        config.endpoint = AiAssistant::ProviderStore::BuiltinDefaultEndpoint(config.provider);
+    if (config.model.empty())
+        config.model = AiAssistant::ProviderStore::BuiltinDefaultModel(config.provider);
+
+    const Json *tokens = model.Find("ai_assistant.tokens");
+    if (tokens && tokens->is_object())
+    {
+        const auto found = tokens->find(config.provider);
+        if (found != tokens->end() && found->is_string())
+            config.token = TrimAscii(found->get<std::string>());
+    }
+    // 与 ime_config.cpp 的加载顺序一致：单值 token 只给当前服务商兜底。别家的槽位空着就是没填，
+    // 否则翻译页会把「实际发空 token」的配置判成可用。
+    if (config.token.empty() && active == config.provider)
+        config.token = TrimAscii(model.GetString("ai_assistant.token"));
+    config.tokenSet = !IsPlaceholderToken(config.token);
+
+    const bool scheme = config.endpoint.rfind("https://", 0) == 0 || config.endpoint.rfind("http://", 0) == 0;
+    // 不用 Token 的服务商（Ollama 的本机服务）存没存、存的是什么都不影响它可不可用。
+    const bool tokenOk = !AiAssistant::ProviderUsesToken(config.provider) || config.tokenSet;
+    config.usable = config.provider != "jev" && tokenOk && !config.model.empty() && scheme;
+    return config;
 }
 } // namespace native_settings::voice_fields

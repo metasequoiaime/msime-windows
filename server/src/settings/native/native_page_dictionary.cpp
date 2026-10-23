@@ -69,7 +69,10 @@ class DictTabs : public msimeui::Visual
             selected_ = hit;
             InvalidateVisual();
             if (onSelect_)
-                onSelect_(hit);
+            {
+                const auto handler = onSelect_;
+                handler(hit);
+            }
         }
         return true;
     }

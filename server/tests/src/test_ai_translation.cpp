@@ -148,3 +148,25 @@ TEST_CASE(AiTranslationParsesJsonResponses)
     REQUIRE(r_empty[0].empty());
     REQUIRE(r_empty[1].empty());
 }
+
+TEST_CASE(AiTranslationUsesOllamaWithoutToken)
+{
+    AiTranslation::Config ollama;
+    ollama.provider = "ollama";
+    ollama.endpoint = "http://localhost:11434/v1/chat/completions";
+    ollama.model = "qwen3:8b";
+    REQUIRE(AiTranslation::IsUsableConfig(ollama));
+
+    // 配置里残留的旧 Token 不随 Ollama 的请求发出去。
+    TranslationConfig snapshot;
+    snapshot.ai = {"ollama", "http://localhost:11434/v1/chat/completions", "sk-left-over", "qwen3:8b"};
+    const auto config = AiTranslation::FromConfiguredTranslation(snapshot);
+    REQUIRE(config.token.empty());
+    REQUIRE(AiTranslation::IsUsableConfig(config));
+
+    // 其他服务商仍然要 Token。
+    AiTranslation::Config deepseek = ollama;
+    deepseek.provider = "deepseek";
+    deepseek.endpoint = "https://api.deepseek.com/chat/completions";
+    REQUIRE(!AiTranslation::IsUsableConfig(deepseek));
+}

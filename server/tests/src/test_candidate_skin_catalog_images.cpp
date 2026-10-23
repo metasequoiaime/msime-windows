@@ -1,4 +1,5 @@
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 
 #include "skin/candidate_skin_catalog.h"
 
@@ -29,7 +30,7 @@ std::filesystem::path WriteSkin(const std::wstring &leaf, const std::string &can
 {
     namespace fs = std::filesystem;
     const fs::path skins_root =
-        fs::temp_directory_path() / (L"msime-skin-images-" + std::to_wstring(GetCurrentProcessId())) / leaf / L"skins";
+        test::TempRoot() / (L"msime-skin-images-" + std::to_wstring(GetCurrentProcessId())) / leaf / L"skins";
     std::error_code ec;
     fs::remove_all(skins_root, ec);
     fs::create_directories(skins_root / L"art" / L"assets", ec);
@@ -199,7 +200,7 @@ TEST_CASE(candidate_skin_catalog_reads_v2_features)
 {
     namespace fs = std::filesystem;
     const fs::path skins_root =
-        fs::temp_directory_path() / (L"msime-skin-v2-" + std::to_wstring(GetCurrentProcessId())) / L"skins";
+        test::TempRoot() / (L"msime-skin-v2-" + std::to_wstring(GetCurrentProcessId())) / L"skins";
     std::error_code ec;
     fs::remove_all(skins_root, ec);
     fs::create_directories(skins_root / L"art" / L"assets", ec);
@@ -291,7 +292,7 @@ TEST_CASE(candidate_skin_catalog_defaults_optional_decoration_keys)
 {
     namespace fs = std::filesystem;
     const fs::path skins_root =
-        fs::temp_directory_path() / (L"msime-skin-v2-decor-" + std::to_wstring(GetCurrentProcessId())) / L"skins";
+        test::TempRoot() / (L"msime-skin-v2-decor-" + std::to_wstring(GetCurrentProcessId())) / L"skins";
     std::error_code ec;
     fs::remove_all(skins_root, ec);
     fs::create_directories(skins_root / L"art" / L"assets", ec);
@@ -340,7 +341,7 @@ std::filesystem::path WriteV2Skin(const std::wstring &leaf, const std::string &b
 {
     namespace fs = std::filesystem;
     const fs::path skins_root =
-        fs::temp_directory_path() / (L"msime-skin-canvas-" + std::to_wstring(GetCurrentProcessId())) / leaf / L"skins";
+        test::TempRoot() / (L"msime-skin-canvas-" + std::to_wstring(GetCurrentProcessId())) / leaf / L"skins";
     std::error_code ec;
     fs::remove_all(skins_root, ec);
     fs::create_directories(skins_root / L"art" / L"assets", ec);
@@ -409,13 +410,18 @@ TEST_CASE(candidate_skin_catalog_v1_cannot_use_the_canvas_base)
     const auto catalog = CandidateSkinCatalog::Scan(root);
     REQUIRE(catalog.packages.empty());
     REQUIRE_EQ(catalog.issues.size(), size_t{1});
+    REQUIRE(catalog.issues.front().kind == CandidateSkinCatalog::Issue::Kind::LoadFailed);
     RemoveSkin(root);
 }
 
 TEST_CASE(candidate_skin_catalog_v2_without_canvas_loads_as_v1_and_reports_an_issue)
 {
     // Even invalid v2 tables do not matter: they are not read at all.
-    const std::string window = std::string(kPanel) + R"toml(line_gap_dip = 6
+    const std::string window = R"toml(line_gap_dip = 6
+
+[candidate_window.border_image]
+source = "assets/mascot.apng"
+slice_dip = [12]
 
 [candidate_window.outer_insets_dip]
 top = 20
@@ -435,6 +441,12 @@ z_index = "high"
         REQUIRE(package.has_value());
         REQUIRE_EQ(package->schemaVersion, 1);
         REQUIRE_EQ(package->notices.size(), size_t{1});
+        // Every canvas-only key the manifest writes is named, in the loader's key order; line_gap_dip is one of the
+        // window's own keys and a v1 skin would not read it either, so it is reported too.
+        REQUIRE_EQ(package->notices.front(),
+                   std::string("candidate_window.border_image、candidate_window.outer_insets_dip、"
+                               "candidate_window.line_gap_dip、candidate_window.decorations 只在 base = \"canvas\" "
+                               "时生效，已忽略"));
         REQUIRE(!package->borderImage.has_value());
         REQUIRE(!package->lineGapDip.has_value());
         REQUIRE(!package->outerInsetsDip.has_value());
@@ -445,6 +457,46 @@ z_index = "high"
         REQUIRE_EQ(catalog.issues.size(), size_t{1});
         REQUIRE_EQ(catalog.issues.front().folder, std::string("art"));
         REQUIRE_EQ(catalog.issues.front().reason, package->notices.front());
+        // The skin still loads: the settings page must count it under "notices", not as an invalid folder.
+        REQUIRE(catalog.issues.front().kind == CandidateSkinCatalog::Issue::Kind::Noticed);
+        RemoveSkin(root);
+    }
+}
+
+TEST_CASE(candidate_skin_catalog_v2_motion_without_canvas_loads_static_without_an_issue)
+{
+    // [animation] and decoration motion are valid on any base in the shared schema; Windows draws such a skin still.
+    const std::string window = R"toml(min_width_dip = 176
+
+[candidate_window.decoration]
+image = "assets/photo.jpg"
+top_inset_dip = 40
+width_dip = 40
+align = "right"
+motion = "float"
+motion_period_ms = 3000
+
+[animation]
+enter = "slide_up"
+exit = "fade"
+selection = "spring"
+duration_ms = 200
+stagger_ms = 14
+)toml";
+    for (const char *base : {"fluent", "system", "paper"})
+    {
+        const auto root = WriteV2Skin(L"v2-motion", base, window);
+        std::string error;
+        const auto package = CandidateSkinCatalog::Load(root, "art", &error);
+        REQUIRE(error.empty());
+        REQUIRE(package.has_value());
+        REQUIRE_EQ(package->schemaVersion, 1);
+        REQUIRE(package->notices.empty());
+        REQUIRE_EQ(package->decorationImage, std::string("assets/photo.jpg"));
+
+        const auto catalog = CandidateSkinCatalog::Scan(root);
+        REQUIRE_EQ(catalog.packages.size(), size_t{1});
+        REQUIRE(catalog.issues.empty());
         RemoveSkin(root);
     }
 }

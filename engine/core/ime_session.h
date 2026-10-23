@@ -116,6 +116,11 @@ class ImeSession
     // 只判断还能不能展开首字母候选，不查库也不改候选；候选窗据此决定满页末页的下一页箭头。
     bool can_expand_initial_candidates() const;
     bool expand_initial_candidates();
+    // 容错仲裁选中读音后的分段显示（大小写原样）；空表示当前串没有容错布局。
+    const std::string &fault_segmentation_with_cases() const
+    {
+        return provider_registry_.fault_segmentation_with_cases();
+    }
 
     void set_helpcode_keymap(HelpcodeUtils::SharedKeymap table)
     {

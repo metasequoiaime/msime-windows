@@ -11,7 +11,12 @@
 // The choice is machine-wide and lives in HKLM, so changing it needs elevation. The settings process relaunches
 // itself elevated with --apply-game-compat-name; that instance records the name for the TSF DLL's registration
 // (windows/src/Register/Register.cpp reads it so installs and upgrades keep it) and rewrites the profile Description
-// that games read. The game only reads the name when it starts.
+// that games and the language bar read. The game only reads the name when it starts.
+//
+// Description alone was not enough before: the profile was enabled by default in HKLM but never installed into the
+// user's keyboard list, so the name the user saw stayed at the old cached one. The installer now installs it as the
+// original user (input_method_install.h), and an existing install that predates that is brought up to date the first
+// time the switch is applied.
 
 #include <Windows.h>
 

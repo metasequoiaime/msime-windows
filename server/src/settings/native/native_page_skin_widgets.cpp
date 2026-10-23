@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <iterator>
 
 using Microsoft::WRL::ComPtr;
 
@@ -64,6 +66,24 @@ const ToolbarIcon kToolbarIcons[] = {
     {0xE982, L"中", -1}, {0xEC46, L"半", 0}, {0xF111, L"。", 1}, {0xE88D, L"简", 2},
     {0xE76E, L"表", 3},  {0xE765, L"键", 4}, {0xE713, L"设", 5},
 };
+
+// The skin's button keys for kToolbarIcons, in the same order, with the state each icon shows:
+// Chinese input, half width, Chinese punctuation, simplified.
+const ToolbarImageButtonRequest kToolbarButtons[] = {
+    {"status", "cn"}, {"fullwidth", "half"},   {"punctuation", "cn"}, {"character_set", "simplified"},
+    {"emoji", ""},    {"screen_keyboard", ""}, {"settings", ""},
+};
+static_assert(std::size(kToolbarButtons) == std::size(kToolbarIcons));
+
+size_t ToolbarIconIndex(const std::string &key)
+{
+    for (size_t i = 0; i < std::size(kToolbarButtons); ++i)
+    {
+        if (kToolbarButtons[i].key == key)
+            return i;
+    }
+    return 0;
+}
 } // namespace
 
 // ---------------------------------------------------------------------------------
@@ -73,8 +93,31 @@ void ToolbarPreview::Set(const ToolbarLook &look, const Options &options)
 {
     look_ = look;
     options_ = options;
+    slots_.clear();
+    if (look_.imageMode && look_.package)
+    {
+        // The buttons the toolbar would show, placed by the same rules as the toolbar itself.
+        std::vector<ToolbarImageButtonRequest> shown;
+        for (size_t i = 0; i < std::size(kToolbarIcons); ++i)
+        {
+            if (kToolbarIcons[i].item < 0 || options_.items[kToolbarIcons[i].item])
+                shown.push_back(kToolbarButtons[i]);
+        }
+        slots_ = LayoutToolbarImageButtons(*look_.package, shown);
+    }
     InvalidateMeasure();
     InvalidateVisual();
+}
+
+SizeF ToolbarPreview::ImageExtent() const
+{
+    SizeF extent = look_.imageSize;
+    for (const auto &slot : slots_)
+    {
+        extent.width = std::max(extent.width, static_cast<float>(slot.xDip + slot.widthDip));
+        extent.height = std::max(extent.height, static_cast<float>(slot.yDip + slot.heightDip));
+    }
+    return extent;
 }
 
 float ToolbarPreview::BarWidth() const
@@ -89,8 +132,20 @@ float ToolbarPreview::BarWidth() const
            std::max(count - 1, 0) * 6.0f * s + 4.0f * s + b;
 }
 
+float ToolbarPreview::ImageScale() const
+{
+    return options_.scale * options_.iconSize / 24.0f;
+}
+
 SizeF ToolbarPreview::Measure(const SizeF &availableSize)
 {
+    if (look_.imageMode)
+    {
+        const float s = ImageScale();
+        const SizeF extent = ImageExtent();
+        return {options_.centered ? availableSize.width : std::min(extent.width * s, availableSize.width),
+                extent.height * s};
+    }
     const float height = 35.0f * options_.scale;
     return {options_.centered ? availableSize.width : std::min(BarWidth(), availableSize.width), height};
 }
@@ -105,6 +160,11 @@ void ToolbarPreview::Render(msimeui::DeviceResources &dr)
     ID2D1RenderTarget *target = dr.GetRenderTarget();
     if (!target)
         return;
+    if (look_.imageMode)
+    {
+        RenderImage(dr);
+        return;
+    }
     const float s = options_.scale;
     const float width = BarWidth();
     const float height = 35.0f * s;
@@ -160,6 +220,69 @@ void ToolbarPreview::Render(msimeui::DeviceResources &dr)
     }
 }
 
+void ToolbarPreview::RenderImage(msimeui::DeviceResources &dr)
+{
+    ID2D1RenderTarget *target = dr.GetRenderTarget();
+    ComPtr<ID2D1DeviceContext> context;
+    target->QueryInterface(IID_PPV_ARGS(context.GetAddressOf()));
+    const auto draw = [&](ID2D1Bitmap *bitmap, const RectF &box) {
+        if (context)
+            context->DrawBitmap(bitmap, ToD2D(box), 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+        else
+            target->DrawBitmap(bitmap, ToD2D(box));
+    };
+
+    // The background stretched to its declared size and the buttons LayoutToolbarImageButtons placed
+    // for the shown ones, as on the real toolbar; the whole is centered by its full extent.
+    const float s = ImageScale();
+    const float width = ImageExtent().width * s;
+    const float x = options_.centered ? std::round(bounds_.x + (bounds_.width - width) * 0.5f) : bounds_.x;
+    const float y = bounds_.y;
+    const auto path = [&](const std::string &relative) {
+        return (look_.directory / std::filesystem::u8path(relative)).lexically_normal().wstring();
+    };
+    if (ID2D1Bitmap *background = PreviewFrame(dr, look_.image, look_.animated))
+        draw(background, {x, y, look_.imageSize.width * s, look_.imageSize.height * s});
+    for (const auto &slot : slots_)
+    {
+        const ToolbarIcon &entry = kToolbarIcons[ToolbarIconIndex(slot.key)];
+        const RectF box = {x + static_cast<float>(slot.xDip) * s, y + static_cast<float>(slot.yDip) * s,
+                           static_cast<float>(slot.widthDip) * s, static_cast<float>(slot.heightDip) * s};
+        if (!slot.background.empty())
+        {
+            if (ID2D1Bitmap *plate = PreviewFrame(dr, path(slot.background), look_.animated))
+                draw(plate, box);
+        }
+        if (!slot.image.empty())
+        {
+            // Fitted into the box keeping its aspect, as the toolbar's Uniform stretch does.
+            D2D1_SIZE_F size{};
+            ID2D1Bitmap *bitmap = PreviewFrame(dr, path(slot.image), look_.animated, &size);
+            if (bitmap && size.width > 0.0f && size.height > 0.0f)
+            {
+                const float fit = std::min(box.width / size.width, box.height / size.height);
+                const SizeF fitted = {size.width * fit, size.height * fit};
+                draw(bitmap, {box.x + (box.width - fitted.width) * 0.5f, box.y + (box.height - fitted.height) * 0.5f,
+                              fitted.width, fitted.height});
+            }
+            continue;
+        }
+        const float shorter = std::min(box.width, box.height);
+        const msimeui::IconGlyph glyph = msimeui::ResolveIconGlyph(entry.codepoint);
+        TextStyle style;
+        style.lineHeight = 1.0f;
+        style.size = slot.iconSizeDip > 0.0 ? static_cast<float>(slot.iconSizeDip) * s : shorter * 0.82f;
+        if (glyph.family)
+        {
+            style.family = glyph.family;
+            DrawCentered(dr, std::wstring(1, glyph.codepoint), style, box, look_.icon);
+        }
+        else
+        {
+            DrawCentered(dr, entry.fallback, style, box, look_.icon);
+        }
+    }
+}
 // ---------------------------------------------------------------------------------
 // CaretStatePreview
 // ---------------------------------------------------------------------------------
@@ -471,7 +594,11 @@ bool PillButton::OnMouseUp(const POINT &point, WPARAM)
         return false;
     pressed_ = false;
     if (HitSelf(window_, *this, point) && onClick_)
-        onClick_();
+    {
+        // A handler may tear down the visual that owns onClick_ while it runs.
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 
@@ -566,7 +693,11 @@ bool AccentButton::OnMouseUp(const POINT &point, WPARAM)
     pressed_ = false;
     InvalidateVisual();
     if (HitSelf(window_, *this, point) && onClick_)
-        onClick_();
+    {
+        // A handler may tear down the visual that owns onClick_ while it runs.
+        const auto handler = onClick_;
+        handler();
+    }
     return true;
 }
 

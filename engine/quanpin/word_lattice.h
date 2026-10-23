@@ -190,6 +190,28 @@ size_t generated_sentence_insert_position(const std::vector<WordItem> &candidate
 std::vector<LatticePath> decode_word_lattice(const Segments &syllables, const WordLatticeLookup &lookup,
                                              const WordLatticeOptions &options = {});
 
+// 容错槽位词格的一条边：覆盖槽区间 [start, end)，读音与词条由调用方查好——key 是覆盖
+// 区间的完整合法读音（可展开槽已代入具体音节），penalty 是该读音相对字面槽的手误代价
+// （log10，单位与该区间相同：纠错表目标按 kAutocorrectWeightToLog 折算，句中简拼展开
+// 按常数 kJianpinExpandPenaltyLog 折算——它是意图不是手误，折算系数刻意更小）。
+struct FaultLatticeEdge
+{
+    size_t start = 0;
+    size_t end = 0;
+    std::string word;
+    std::string key;
+    std::int64_t weight = 0;
+    double penalty = 0.0;
+};
+
+// 容错槽位词格解码：edges_by_start[pos] 是从槽 pos 出发的全部边。与 decode_word_lattice
+// 同一套 Viterbi（kenlm 打分、beam、n-best 去重），但边由调用方按容错槽位预先查出，
+// 手误代价已折进边分。刻意不装配搭配 scorer（octagram 禁令：这条解码只用于切分/纠错
+// 仲裁，裁决只看 kenlm）；无语言模型时退回普通词格的启发式。
+std::vector<LatticePath> decode_fault_lattice(size_t slot_count,
+                                              const std::vector<std::vector<FaultLatticeEdge>> &edges_by_start,
+                                              const WordLatticeOptions &options = {});
+
 // `rerank_source` is the source stamped on the reranker's pick, so the candidate list can say which
 // component chose that row. The lattice's own pick is stamped CandidateSource::Generated when
 // options.include_lattice_best is true, or CandidateSource::Collocation when

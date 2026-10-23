@@ -1,4 +1,5 @@
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 
 #include "skin/candidate_skin_catalog.h"
 
@@ -12,7 +13,7 @@ namespace
 struct SkinFixture
 {
     std::filesystem::path root =
-        std::filesystem::temp_directory_path() /
+        test::TempRoot() /
         ("msime-shared-bases-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 
     ~SkinFixture()
@@ -87,9 +88,9 @@ TEST_CASE(candidate_skin_shared_fixed_bases_inherit_candidate_menu_and_toolbar_c
             const auto package = CandidateSkinCatalog::Load(fixture.root, "sample");
             REQUIRE(package.has_value());
             REQUIRE_EQ(package->base, std::string("fluent"));
-            // schema_version 2 needs the canvas base; on a shared base it loads as 1 with a notice.
+            // schema_version 2 on a shared base loads as 1; without canvas-only keys there is nothing to report.
             REQUIRE_EQ(package->schemaVersion, 1);
-            REQUIRE_EQ(package->notices.size(), size_t(schema == 2 ? 1 : 0));
+            REQUIRE(package->notices.empty());
             REQUIRE_EQ(package->themes, std::vector<std::string>({entry.theme}));
             const bool light = std::string(entry.theme) == "light";
             const auto &colors = light ? package->light : package->dark;

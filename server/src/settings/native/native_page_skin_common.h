@@ -3,6 +3,7 @@
 #include "settings/native/native_settings_pages.h"
 
 #include "window/candidate_skin_scene.h"
+#include "window/floating_toolbar_image_layout.h"
 
 #include <d2d1.h>
 #include <dwrite.h>
@@ -76,6 +77,18 @@ struct ToolbarLook
         float x, y, blur, alpha;
     };
     std::vector<Shadow> shadows;
+
+    // A skin's image mode ([toolbar] mode = "image"): one background image with the buttons
+    // placed on it, as FloatingToolbarPresenter draws it. Sizes are in DIPs before scaling.
+    bool imageMode = false;
+    // Only schema_version 2 skins play their animated images.
+    bool animated = false;
+    std::wstring image;
+    SizeF imageSize{};
+    // The skin's manifest and folder: which buttons show, and so where they go, depends on the
+    // preview's options (LayoutToolbarImageButtons).
+    std::shared_ptr<const CandidateSkinCatalog::Package> package;
+    std::filesystem::path directory;
 };
 ToolbarLook ResolveToolbarLook(const SettingsModel &model, const std::string &skinId, bool light);
 
@@ -146,8 +159,15 @@ class ToolbarPreview : public msimeui::Visual
 
   private:
     float BarWidth() const;
+    // The image mode's own scale: the toolbar multiplies the skin's DIPs by scale * iconSize / 24.
+    float ImageScale() const;
+    // The image mode's extent in DIPs before scaling: the background and every placed button.
+    SizeF ImageExtent() const;
+    void RenderImage(msimeui::DeviceResources &dr);
 
     ToolbarLook look_;
+    // The image mode's buttons for the current options, from LayoutToolbarImageButtons.
+    std::vector<ToolbarImageButtonSlot> slots_;
     Options options_;
     msimeui::ShadowCache shadows_[2];
 };

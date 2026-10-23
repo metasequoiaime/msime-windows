@@ -7,6 +7,7 @@
 #include "KeyFocusRecovery.h"
 #include "KeyRepeatGuard.h"
 #include "CapsLockInputPolicy.h"
+#include "PinyinCommitShortcutPolicy.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -297,8 +298,9 @@ bool IsTranslationDigitShortcut(UINT code, UINT modifiers)
 
 bool IsPinyinCommitShortcut(UINT code, UINT modifiers)
 {
-    return code == VK_RETURN && (modifiers & 0b00000111u) == 0b00000001u && (GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 &&
-           (GetAsyncKeyState(VK_RWIN) & 0x8000) == 0;
+    const bool windowsKeyDown = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 || (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+    return ShouldCommitPinyinOnShiftEnter(FanyUtils::ReadConfiguredSwitchLanguageHotkeys().commit_pinyin_shift_enter,
+                                          code, modifiers, windowsKeyDown);
 }
 
 bool IsCharacterSetInputModeToggle(UINT code, UINT modifiers)
@@ -523,7 +525,8 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
 
         // Ctrl+Enter commits the translation shown next to the highlighted candidate, Ctrl+1..9
         // the translation of the candidate at that position. Shift+Enter commits the Server's
-        // converted spelling, including compositions without candidates.
+        // converted spelling, including compositions without candidates, unless the user turned
+        // that chord off in settings -- then it must fall through to the plain Enter path.
         if (!freshCompositionState &&
             ((_candidateMode != CANDIDATE_NONE && (IsTranslationCommitShortcut(*pCodeOut, shortcutModifiers) ||
                                                    IsTranslationDigitShortcut(*pCodeOut, shortcutModifiers))) ||

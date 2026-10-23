@@ -98,11 +98,17 @@ STDAPI CMetasequoiaIME::OnSetFocus(_In_ ITfDocumentMgr *pDocMgrFocus, _In_ ITfDo
         SendHideCaretStateEventToUIProcessViaNamedPipe();
     }
 
-    if (pDocMgrFocus && _pContext && _IsComposing() && !_localSessionResetPending.load(std::memory_order_acquire))
+    const bool windowsTextInputHostTransition =
+        _focusLostToWindowsTextInputHost || _CaptureWindowsTextInputHostFocusLoss();
+    // Voice previews must also be cancelled on their old context when focus
+    // leaves for a desktop/button with no document. Preserve transient-NULL
+    // behavior for ordinary IME compositions and the existing Win+. exception.
+    if ((pDocMgrFocus || (_voiceCompositionActive && !windowsTextInputHostTransition)) && _pContext && _IsComposing() &&
+        !_localSessionResetPending.load(std::memory_order_acquire))
     {
         ITfDocumentMgr *compositionDocumentMgr = nullptr;
         const HRESULT ownerHr = _pContext->GetDocumentMgr(&compositionDocumentMgr);
-        if (FAILED(ownerHr) || compositionDocumentMgr == nullptr ||
+        if (!pDocMgrFocus || FAILED(ownerHr) || compositionDocumentMgr == nullptr ||
             !_IsSameComObject(compositionDocumentMgr, pDocMgrFocus))
         {
             _DebugCompositionRecovery(L"focus-document-mismatch", ownerHr);
@@ -120,9 +126,6 @@ STDAPI CMetasequoiaIME::OnSetFocus(_In_ ITfDocumentMgr *pDocMgrFocus, _In_ ITfDo
     // unequal. Resetting smart-punctuation there drops a just-armed ASCII
     // rejection before the user can retype. The reject spot is already keyed by
     // (punct key + preceding char); other keys / caret moves clear it instead.
-    const bool windowsTextInputHostTransition =
-        _focusLostToWindowsTextInputHost || _CaptureWindowsTextInputHostFocusLoss();
-
     // Decided before the reconnect below flips g_connected. Returning from
     // TextInputHost (Win+.) lands back in the same field, so it never counts
     // as moving to another one, however focus was routed meanwhile.

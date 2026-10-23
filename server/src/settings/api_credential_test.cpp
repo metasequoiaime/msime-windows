@@ -3,10 +3,12 @@
 #include "api_credential_test_request.h"
 
 #include "cloud/ai_translation.h"
+#include "cloud/aliyun_mt.h"
 #include "cloud/custom_translation.h"
 #include "cloud/niutrans_translation.h"
 #include "cloud/tencent_tmt.h"
 #include "cloud/translation_gloss.h"
+#include "config/ai_provider.h"
 #include "config/ime_config.h"
 #include "voice-input/doubao_asr_client.h"
 #include "voice-input/voice_providers.h"
@@ -103,8 +105,9 @@ HttpResponse PerformJsonRequest(const std::string &endpoint, const std::string &
     char error[CURL_ERROR_SIZE] = {};
     curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, payload ? "Content-Type: application/json" : "Accept: application/json");
-    const std::string authorization = "Authorization: Bearer " + token;
-    headers = curl_slist_append(headers, authorization.c_str());
+    const std::string authorization = AiAssistant::AuthorizationHeader(token);
+    if (!authorization.empty())
+        headers = curl_slist_append(headers, authorization.c_str());
     curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
     NetworkProxy::ApplyToCurl(curl);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -159,14 +162,14 @@ std::string ModelListEndpoint(const std::string &endpoint)
 
 ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
 {
-    const std::string token = Value(request, "token");
+    const std::string provider = Value(request, "provider");
+    const std::string token = AiAssistant::RequestToken(provider, Value(request, "token"));
     const std::string endpoint = Value(request, "endpoint");
     const std::string model = Value(request, "model");
-    if (!CloudTranslation::IsUsableSecret(token))
+    if (AiAssistant::ProviderUsesToken(provider) && !CloudTranslation::IsUsableSecret(token))
         return {false, "请先填写有效的 API Key。"};
     if (!IsHttpEndpoint(endpoint) || model.empty())
         return {false, "请填写有效的 HTTPS 接口地址和模型名。"};
-    const std::string provider = Value(request, "provider");
     const std::string payload = ApiCredentialTest::detail::BuildChatProbeRequestBody(provider, model, endpoint).dump();
     const HttpResponse response = PerformJsonRequest(endpoint, token, &payload);
     if (response.code == CURLE_OK && response.status >= 200 && response.status < 300)
@@ -264,10 +267,20 @@ ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &requ
     std::vector<std::string> translated;
     if (request.service == "translation.ai")
     {
-        // 复用 AI 辅助当前服务商的配置，页面上没有独立的地址与密钥输入框。
-        const auto config = AiTranslation::FromConfiguredTranslation(*GetConfiguredTranslation());
+        // 页面把当前生效的服务商、地址、Token 与模型原样传上来，测的就是用户眼前这一份。
+        // 字段全空说明是只发 service 的旧客户端，才回落到已保存的配置。
+        const auto configured = GetConfiguredTranslation();
+        const auto config = Value(request, "provider").empty() && Value(request, "endpoint").empty() &&
+                                    Value(request, "token").empty() && Value(request, "model").empty()
+                                ? AiTranslation::FromConfiguredTranslation(*configured)
+                                : AiTranslation::FromFields(Value(request, "provider"), Value(request, "endpoint"),
+                                                            Value(request, "token"), Value(request, "model"));
         if (!AiTranslation::IsUsableConfig(config))
-            return {false, "请先在「AI 与云联想」页面填写有效的接口地址、Token 和模型。"};
+        {
+            if (config.provider == "jev")
+                return {false, "Jev 只能从已有候选中挑选，不能用于翻译；请在「AI 与云联想」页换成生成式服务商。"};
+            return {false, "请先在「AI 与云联想」页面填写有效的接口地址、Token（Ollama 不需要）和模型。"};
+        }
         translated = AiTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en");
     }
     else if (request.service == "translation.tencent")
@@ -278,6 +291,13 @@ ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &requ
             !CloudTranslation::IsUsableSecret(credentials.secret_key))
             return {false, "请先填写有效的 SecretId 和 SecretKey。"};
         translated = TencentTmt::TextTranslateBatch(credentials, {"测试"}, "zh", "en");
+    }
+    else if (request.service == "translation.aliyun")
+    {
+        const AliyunMt::Credentials credentials{Value(request, "accessKeyId"), Value(request, "accessKeySecret")};
+        if (!AliyunMt::IsUsableCredentials(credentials))
+            return {false, "请先填写有效的 AccessKey ID 和 AccessKey Secret。"};
+        translated = AliyunMt::TextTranslateBatch(credentials, {"测试"}, "zh", "en");
     }
     else if (request.service == "translation.niutrans")
     {
@@ -305,14 +325,20 @@ Result Run(const Request &request)
 {
     if (request.service == "ai.assistant" && Value(request, "provider") == "jev")
     {
+        // 与真实请求路径保持一致：模型为空时 ai_assistant.cpp 根本不发请求，这里如果放过就会
+        // 给出「连接成功」的假阳性。Token 可以留空（免 Key 的自建或转发服务），官方端点缺 Key
+        // 时由 Jev::Fetch 拒绝；填了就必须是可用的值。
+        const std::string token = Value(request, "token");
+        if ((!token.empty() && !CloudTranslation::IsUsableSecret(token)) || Value(request, "model").empty())
+            return {false, "请先填写有效的模型名；Token 留空或填写有效值。"};
         InitCurl();
         const std::vector<std::string> candidates{"实施", "事实"};
         const auto body =
             Jev::BuildRequest(Value(request, "model"), "方案已经通过，明天开始", {"shi", "shi"}, candidates);
-        const auto response = Jev::Fetch(Value(request, "endpoint"), Value(request, "token"), body.dump());
+        const auto response = Jev::Fetch(Value(request, "endpoint"), token, body.dump());
         if (response && !Jev::ParseChoice(*response, candidates).empty())
-            return {true, "连接成功，Jev 已返回有效候选选择。"};
-        return {false, "Jev 未返回有效选择，请检查 Key、模型、官方接口地址和网络。"};
+            return {true, "连接成功，选择器已返回有效的候选选择。"};
+        return {false, "选择器未返回有效选择，请检查地址、Token、模型名和网络。"};
     }
     if (request.service.rfind("translation.", 0) == 0)
         return TestTranslation(request);
@@ -342,9 +368,10 @@ ModelListResult FetchModels(const Request &request)
     // 与服务类型无关。
     if (request.service != "ai.assistant" && request.service != "voice.asr" && request.service != "voice.polish")
         return {false, "不支持的模型列表类型。", {}};
-    const std::string token = Value(request, "token");
+    const std::string provider = Value(request, "provider");
+    const std::string token = AiAssistant::RequestToken(provider, Value(request, "token"));
     const std::string endpoint = Value(request, "endpoint");
-    if (!CloudTranslation::IsUsableSecret(token))
+    if (AiAssistant::ProviderUsesToken(provider) && !CloudTranslation::IsUsableSecret(token))
         return {false, "请先填写有效的 API Key。", {}};
     if (!IsHttpEndpoint(endpoint))
         return {false, "请先填写以 http:// 或 https:// 开头的接口地址。", {}};

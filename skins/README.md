@@ -10,6 +10,7 @@
 | [`sakura-night`](sakura-night/) | 夜樱 | v2 全贴图皮肤（`canvas`，取自 `examples/skin-examples`）：紫夜玻璃九宫格面板、面板后的月亮、APNG 飘落花瓣与 GIF 闪烁星星 |
 | [`acrylic`](acrylic/) | 亚克力 Acrylic | 候选卡片背后垫系统亚克力，模糊后面的窗口 |
 | [`mica`](mica/) | 云母 Mica | 候选卡片背后垫系统云母，取样桌面壁纸（Windows 11；更早的系统按亚克力画） |
+| [`brown-desk`](brown-desk/) | 布朗熊上班 Demo | 奶油棕浅色 / 可可棕深色候选窗，布朗熊敲电脑动图与按开关自动排列的圆底工具按钮；素材授权未核实，仅演示，不随安装包分发 |
 | [`niya-demo`](niya-demo/) | Niya Demo | 官方外部皮肤样例：候选框上方的人物装饰图、星点背景图、12dip 圆角，以及配套的悬浮工具栏配色 |
 | [`bigfish`](bigfish/) | 蓝色大肥鱼 | 鲸鱼女仆角色装饰、海底气泡背景，深海蓝配色搭配金色序号 |
 | [`bigfish-national-day`](bigfish-national-day/) | 大肥鱼·国庆 | 红裙敬礼的大肥鱼站在卡片右上方、金色星星背景，中国红高亮搭配金色序号 |
@@ -19,7 +20,7 @@
 | [`sogou-classic`](sogou-classic/) | 搜狗经典·石墨 | 基于石墨，仿经典搜狗：白底浅蓝边框、蓝字候选、首选红字不铺底色、拼音下方浅蓝分隔线 |
 | [`wechat_glass`](wechat_glass/) | 微信玻璃 | 移植自 rime-wechat-glass 的微信绿配色与紧凑几何，磨砂玻璃用自绘噪点底图近似 |
 
-除 `sogou-classic` 基于 `graphite`、`shoudao-blue` 基于 `willow_green`、`green_leaf` 与 `sakura-night` 基于 `canvas` 外，其余皮肤均基于 `fluent`；全部支持横排 / 竖排布局以及深色 / 浅色主题。
+除 `sogou-classic` 基于 `graphite`、`shoudao-blue` 基于 `willow_green`、`green_leaf`、`sakura-night` 与 `brown-desk` 基于 `canvas` 外，其余皮肤均基于 `fluent`；全部支持横排 / 竖排布局以及深色 / 浅色主题。
 
 官方皮肤包的名单在 Server 的 `CandidateSkinCatalog::OfficialPackageIds()`（目前只有 `green_leaf`）。它们和其他随包皮肤一样装到 `skins\<id>`、照外部皮肤加载，只是设置页的展示位置不同；用户删掉目录后设置页就不再列出。
 
@@ -46,7 +47,7 @@
 
 ## 安装
 
-除 `niya-demo`（素材授权未核实）外，这里的皮肤都随安装包装到数据目录的 `skins\<id>`。用户那边已有同名皮肤且内容和随包的不一样（改过、多了或少了文件）时，安装器先把它改名成 `<id>.bak` 保留下来（已有 `.bak` 则用 `<id>.2.bak`……），再装新版本；输入法不会把 `.bak` 目录列成皮肤。
+除 `niya-demo` 与 `brown-desk`（素材授权未核实）外，这里的皮肤都随安装包装到数据目录的 `skins\<id>`。用户那边已有同名皮肤且内容和随包的不一样（改过、多了或少了文件）时，安装器先把它改名成 `<id>.bak` 保留下来（已有 `.bak` 则用 `<id>.2.bak`……），再装新版本；输入法不会把 `.bak` 目录列成皮肤。
 
 手动安装时，把想用的皮肤目录整个复制到：
 
@@ -72,19 +73,19 @@ my-skin/
 
 | 表 / 键 | 说明 |
 | --- | --- |
-| `schema_version` | 皮肤格式版本，`1` 或 `2`；`2` 是全贴图皮肤，必须以 `canvas` 为 base |
+| `schema_version` | 皮肤格式版本，`1` 或 `2`，也是 msime 各平台共用的清单版本；`2` 配 `base = "canvas"` 才是全贴图皮肤，配别的基底时按 `1` 加载，皮肤照常可用，只是用不上九宫格面板与自由挂件 |
 | `id` / `name` / `version` / `author` / `description` | 基本信息，`id` 建议与目录名一致 |
 | `base` | 继承的内置皮肤，如 `fluent`；未写的键沿用 base。`canvas` 是只给 v2 皮肤用的全贴图基底（透明面板，外观来自九宫格面板图与挂件），不能单独选用，见 [schema 说明](../examples/skin-examples/schema/README.md) |
 | `[supports]` | `layouts`（`horizontal` / `vertical`）、`themes`（`dark` / `light`） |
 | `[candidate_window]` | `min_width_dip`、`corner_radius_dip`（0–32）、`border_width_dip`（0–4）、`item_corner_radius_dip`（高亮圆角，0–16）、`shadow`（`none` / `soft` / `strong`）、`font_family`（排在用户字体前面）、`page_arrows`（翻页箭头：横排在候选右侧，竖排在最后一行下方、与序号左对齐；不写时沿用 base 的[内置清单](#内置皮肤default)，出厂关闭）、`fit_content`（卡片严格按文字宽度收紧，`min_width_dip` 与装饰图宽度仍然生效；不写时沿用 base 的内置清单，出厂关闭）、`expand_panel`（横排卷轴展开，见[卷轴展开](#卷轴展开expand_panel)；不写时沿用 base 的内置清单，出厂关闭）、`expand_rows`（展开后一屏的网格行数，2–8，缺省 4） |
 | `[candidate_window]` 版式 | 长度可以写 DIP 数值，也可以写 `"0.3em"` 按候选字号缩放（换算后取整）：`padding`（卡片内边距）、`item_gap`（候选项间距）、`item_extra_height`（候选项比 1.35 倍字号多出的高度）、`number_inset`（高亮左缘到序号的距离，不小于 5）、`item_padding_right`（候选文字后的留白）、`item_min_width`（横排每项最小宽度）、`number_gap`（序号与候选的间距）、`selected_bar_width`（选中竖条宽）；以及 `number_scale`（序号字号比例）、`selected_bar_height_em`（选中竖条高，按字号倍数）、`selected_bar_inside`、`item_corners_follow_card`（落在卡片四角上的高亮角跟卡片同圆角）、`justify_rows`（横排时高亮铺满到卡片右边）、`trim_hidden_preedit_gap`、`page_arrow_style`（`chevron` / `triangle`）、`preedit_margin_dip`（预编辑行外边距，上右下左） |
 | `[candidate_window.horizontal]` / `[candidate_window.vertical]` | 同上的版式键，只对横排 / 竖排生效，并且优先于 `[candidate_window]` 里写的 |
-| `[candidate_window.decoration]` | 卡片上方的装饰图：`image`、`top_inset_dip`、`width_dip`、`align`（`left` / `center` / `right`） |
+| `[candidate_window.decoration]` | 卡片上方的装饰图：`image`、`top_inset_dip`、`width_dip`、`align`（`left` / `center` / `right`）；`candidate_overlay = true` 时把一个候选词叠加在装饰图上，字号、颜色、对齐、偏移等见 [schema 说明](../examples/skin-examples/schema/README.md#candidate_windowdecoration可选) |
 | `[candidate_window.background]` | 卡片背景图：`image`、`fit`（`cover` / `contain` / `stretch`）、`opacity`（0–1） |
 | `[candidate.dark]` / `[candidate.light]` | 候选配色：`accent`、`selected`、`hover`、`surface`、`border`、`text`、`number`、`translation`、`show_selected_bar`；细分配色 `candidate_text`、`preedit_text`、`preedit_caret`、`selected_text`、`selected_number`、`selected_translation`、`translation_pos`、`translation_separator`、`selected_translation_pos`、`selected_translation_separator`、`selected_bar`、`preedit_background`、`preedit_divider`、`page_arrow_divider`（三角翻页箭头前的分隔线） |
 | `[candidate.dark.menu]` / `[candidate.light.menu]` | 候选窗右键菜单：`background`、`border`、`text`、`hover` |
 | `[candidate_window.border_image]` | v2 九宫格面板图：`source`、`light_source`（浅色主题换用的面板图，几何与 `source` 相同）、`slice_dip`、`stretch_dip`、`width_dip`、`fill`，见 [schema 说明](../examples/skin-examples/schema/README.md) |
-| `[toolbar]` / `[toolbar.dark]` / `[toolbar.light]` | 悬浮工具栏：`corner_radius_dip`、`icon_corner_radius_dip`（图标悬停底色的圆角，0–16），以及 `background`、`border`、`handle`（不写时取同主题的 `accent`）、`divider`、`icon`、`hover` |
+| `[toolbar]` / `[toolbar.dark]` / `[toolbar.light]` | 悬浮工具栏：`corner_radius_dip`、`icon_corner_radius_dip`（图标悬停底色的圆角，0–16），以及 `background`、`border`、`handle`（不写时取同主题的 `accent`）、`divider`、`icon`、`hover`；`mode = "image"` 时整个工具栏换成一张背景图（`image`、`image_width_dip`、`image_height_dip`），窗口按图片透明区域裁成异形，按钮用 `[toolbar.buttons.<按钮>]` 的 `x_dip`、`y_dip`、`width_dip`、`height_dip`、`icon_size_dip`、`visible`、`background`（按钮底图）、`image` 与按状态的 `[images]` 摆放；`[toolbar.button_defaults]` 给所有按钮设默认值，`[toolbar.button_flow]` 让没写坐标的按钮自动排成一行或一列，用户开关按钮时跟着增减，见 [schema 说明](../examples/skin-examples/schema/README.md#图片模式mode--image) |
 | `[license]` | `code`、`assets`、`source`：代码与素材的授权信息 |
 
 所有颜色键（`[candidate.*]` 里除 `show_selected_bar` 外的键、`[candidate.*.menu]` 与 `[toolbar.*]` 的全部键）都支持十六进制 `#RGB`、`#RGBA`、`#RRGGBB`、`#RRGGBBAA`，以及 `rgb(r, g, b)`、`rgba(r, g, b, a)` 和 `transparent`。十六进制必须带 `#`（清单格式的约定，与 CSS 写法一致；渲染器对不带 `#` 的写法有容错，但不要依赖它），不透明度在末尾（`#RRGGBBAA`，不是 `#AARRGGBB`），例如 `rgba(224, 138, 168, 0.28)` 与 `#e08aa847` 等价。图片路径相对于皮肤目录，且不能指向目录之外。完整的带注释示例见 [`niya-demo/skin.toml`](niya-demo/skin.toml)。
@@ -105,4 +106,4 @@ my-skin/
 
 本仓库以 [GNU General Public License v3.0](LICENSE) 开源。单个皮肤如在 `skin.toml` 的 `[license]` 中另有声明，以该声明为准。
 
-`niya-demo` 中的图片素材授权尚未核实（`assets = "UNVERIFIED-DEMO-ONLY"`），仅作演示用途，请勿直接用于再分发的皮肤。
+`niya-demo` 与 `brown-desk` 中的图片素材授权尚未核实（`assets = "UNVERIFIED-DEMO-ONLY"`），仅作演示用途，请勿直接用于再分发的皮肤。

@@ -3,6 +3,7 @@
 #include "../../english/english_dictionary.h"
 #include "../../japanese/romaji_converter.h"
 #include "../../neural/neural_decoder.h"
+#include "../../quanpin/quanpin_query.h"
 #include "../../quanpin/word_lattice.h"
 #include "../../user_dictionary/user_dictionary_journal.h"
 #include "test_directory_cleanup.h"
@@ -86,6 +87,55 @@ int run_test()
     if (japanese::HiraganaToKatakana("かな") != "カナ" || japanese::HiraganaToRomaji("カナ") != "kana")
     {
         throw std::runtime_error("Kana conversion changed during the platform port.");
+    }
+
+    {
+        // 多音字的生僻读音：大 读 tai 只占 大 全部权重的 0.14%，单字行要在 penalty 上扣分，
+        // 否则 tai'zhuan'qian'le 会被语言模型带成「大赚钱了」。太/台 只有这一个读音，不扣；
+        // 长 读 chang 占四成，是常见读音，也不扣。权重取自出厂词库。
+        sqlite3 *db = nullptr;
+        if (sqlite3_open(":memory:", &db) != SQLITE_OK)
+            throw std::runtime_error("Failed to open the in-memory dictionary.");
+        const char *fixture = "CREATE TABLE tbl_1_d(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                              "CREATE TABLE tbl_1_t(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                              "CREATE TABLE tbl_1_c(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                              "CREATE TABLE tbl_1_z(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                              "INSERT INTO tbl_1_d VALUES('da','d','大',3273479),('dai','d','大',4993);"
+                              "INSERT INTO tbl_1_t VALUES('tai','t','太',768757),('tai','t','台',51622),"
+                              "('tai','t','大',4719);"
+                              "INSERT INTO tbl_1_c VALUES('chang','c','长',340269);"
+                              "INSERT INTO tbl_1_z VALUES('zhang','z','长',462258);";
+        if (sqlite3_exec(db, fixture, nullptr, nullptr, nullptr) != SQLITE_OK)
+            throw std::runtime_error("Failed to build the polyphone fixture.");
+
+        const auto totals = quanpin::load_char_reading_totals(db);
+        if (totals->size() != 2 || totals->count("大") != 1 || totals->count("长") != 1)
+            throw std::runtime_error("Reading totals must keep exactly the polyphonic characters.");
+
+        std::unordered_map<std::string, sqlite3_stmt *> statements;
+        const auto penalty_of = [&](const std::string &syllable, const std::string &word) {
+            const auto lookup = quanpin::make_lattice_db_lookup(db, statements, 32, {}, totals);
+            for (const auto &row : lookup({syllable}))
+            {
+                if (row.value == word)
+                    return row.penalty;
+            }
+            throw std::runtime_error("Polyphone fixture row missing: " + word);
+        };
+        const double rare = penalty_of("tai", "大");
+        if (rare < 1.5 || penalty_of("tai", "太") != 0.0 || penalty_of("tai", "台") != 0.0 ||
+            penalty_of("chang", "长") != 0.0 || penalty_of("da", "大") != 0.0)
+            throw std::runtime_error("Rare polyphone readings must be penalized, common ones must not: " +
+                                     std::to_string(rare));
+        // 不给 totals 时保持旧行为，一分不扣。
+        for (const auto &row : quanpin::make_lattice_db_lookup(db, statements, 32)({"tai"}))
+        {
+            if (row.penalty != 0.0)
+                throw std::runtime_error("Lookup without reading totals must not penalize.");
+        }
+        for (auto &[sql, statement] : statements)
+            sqlite3_finalize(statement);
+        sqlite3_close(db);
     }
 
     {

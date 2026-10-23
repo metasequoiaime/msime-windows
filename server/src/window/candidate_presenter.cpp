@@ -113,18 +113,6 @@ float StickyCardExtent(float kept, float natural)
 // 候选窗 HWND 上的动图帧定时器。宿主自己的定时器编号见 ime_windows_internal.h（2–14），这里避开它们。
 constexpr UINT_PTR kCandidateAnimationTimerId = 0x0A11;
 
-// 系统「显示动画」关闭（设置 → 辅助功能 → 视觉效果 → 动画效果）时只显示动图首帧，与浏览器的
-// prefers-reduced-motion 同一个开关。读不到时按开启处理。
-bool SystemAnimationsEnabled()
-{
-    BOOL enabled = TRUE;
-    if (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0))
-    {
-        return true;
-    }
-    return enabled != FALSE;
-}
-
 // 系统「透明效果」（设置 → 个性化 → 颜色）。关掉时系统材质一律退回纯色，皮肤的亚克力也跟着退回不透明底色。
 // 读不到时按开启处理。
 bool SystemTransparencyEnabled()
@@ -354,12 +342,15 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
     const bool translationsEnabled = GetConfiguredCandidateTranslationsEnabled();
     std::vector<msimeui::CandidateList::Item> items;
     items.reserve(page->page_views.size());
+    std::vector<CandidateSkinScene::PageWord> words;
+    words.reserve(page->page_views.size());
     for (size_t i = 0; i < page->page_views.size(); ++i)
     {
         const auto &view = page->page_views[i];
+        words.push_back({string_to_wstring(view.text), string_to_wstring(view.badge)});
         msimeui::CandidateList::Item item;
         item.label = std::to_wstring(i + 1);
-        item.text = string_to_wstring(view.text + view.badge);
+        item.text = words.back().text + words.back().badge;
         item.annotation = string_to_wstring(view.annotation);
         if (translationsEnabled)
         {
@@ -384,6 +375,7 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
     impl_->list->SetItems(std::move(items));
     impl_->list->SetSelectedIndex(static_cast<size_t>((std::max)(0, page->selected_index_in_page)));
     ignoreSelectionCallback_ = false;
+    impl_->scene.SetDecorationCandidates(words, static_cast<size_t>((std::max)(0, page->selected_index_in_page)));
     if (impl_->pager)
     {
         impl_->pager->SetEnabled(page->has_previous_page, page->has_next_page);

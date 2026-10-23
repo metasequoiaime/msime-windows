@@ -15,6 +15,12 @@
 // 状态以磁盘为准（模型文件存在 = ready，落位发生在格式校验之后），下载态是各进程内存里的
 // runtime 状态：独立设置进程与 Server 各自能看到自己的下载进度。同一时刻至多一个下载在飞
 // （单网络槽），忙碌时对新 id 的下载请求直接拒绝，页面在下载态禁用其余下载按钮。
+//
+// 更新检测只对目录里 track_updates 的条目生效（本期仅万象）：安装成功时把远端身份记进
+// models/<id>/.remote，设置进程打开时做一次 HEAD 探测比较。已就绪不重下只在「没有已确认
+// 更新」时成立；确认有更新后允许 StartDownload 覆盖 .gram。目标被输入法进程映射、无法原子
+// 替换时，校验过的新文件落成 <id>.gram.new（身份落 .remote.new），由下一次 Server 启动或
+// 设置进程启动的 ApplyPendingUpdates() 完成落位。
 
 #include <Windows.h>
 
@@ -43,6 +49,9 @@ struct CatalogEntry
     const char *size_hint;
     const char *license;
     const char *license_note; // 可为空串：无补充说明
+    // 是否参与「打开设置时探测远端更新」。只有上游会原地重传、且地址稳定的条目才置 true；
+    // 八股文固定 tag、白霜 raw master 保持默认 false，后续启用只改这一行。
+    bool track_updates = false;
 };
 
 // 编译期内置目录，首条目是推荐包。
@@ -58,13 +67,49 @@ const char *BadgeForModel(const std::string &model_id);
 
 struct ModelStatus
 {
-    std::string state; // "absent" | "downloading" | "importing" | "ready" | "error"
-    int progress = 0;  // 下载中 0-100；其余状态无意义
-    std::string error; // state == "error" 时的人类可读原因
+    std::string state;             // "absent" | "downloading" | "importing" | "ready" | "error"
+    int progress = 0;              // 下载中 0-100；其余状态无意义
+    std::string error;             // state == "error" 时的人类可读原因
+    bool update_available = false; // 远端身份与本地记录不同，可以更新
+    bool update_pending = false;   // 新版本已下载并通过校验，等输入法进程重启落位
 };
 
-// 磁盘现状 + 本进程下载态，按目录条目逐 id 给出。轻量，可随配置快照频繁调用。
+// models/<id>/.remote 的内容：一行一个 key=value（etag / last-modified / length）。ETag 与
+// Last-Modified 可能为空，length 始终记录。写入先落 .tmp 再原子 rename。
+struct RemoteIdentity
+{
+    std::string etag;
+    std::string last_modified;
+    long long length = 0; // 0 = 未知
+};
+
+enum class UpdateVerdict
+{
+    Current, // 与本地记录一致
+    Update,  // 远端重传过
+    Unknown, // 远端没有可用信号，无法判断
+};
+
+// 纯判定：installed 为空结构表示旧安装（没有 .remote），此时按 local_bytes 与远端长度比较。
+// 不联网、不读盘，供 CheckForUpdates 与测试共用。
+UpdateVerdict CompareRemoteIdentity(const RemoteIdentity &installed, long long local_bytes,
+                                    const RemoteIdentity &remote);
+
+// .remote 的读写。model_directory 是该模型的目录；文件不存在或解析失败都返回空结构，
+// 写入失败返回 false，不抛异常（下载线程不能因旁路文件失败而崩）。
+RemoteIdentity ReadRemoteIdentity(const std::filesystem::path &model_directory);
+bool WriteRemoteIdentity(const std::filesystem::path &model_directory, const RemoteIdentity &identity);
+
+// 磁盘现状 + 本进程下载态，按目录条目逐 id 给出。轻量，可随配置快照频繁调用；绝不联网。
 std::map<std::string, ModelStatus> GetModelStatuses();
+
+// 对 track_updates 且已就绪的条目做一次 HEAD 探测并把结论记进本进程内存。一个进程只探一轮，
+// 重复调用直接返回；失败静默放弃，不改变已有结论。
+void CheckForUpdates();
+
+// 把校验通过、等待落位的 <id>.gram.new 换到 <id>.gram（及 .remote.new → .remote）。
+// Server 启动与设置进程初始 worker 各调一次，谁先拿到文件谁完成；旧文件仍被映射时保留待更新。
+void ApplyPendingUpdates();
 
 // 幂等启动指定模型的下载：该 id 已在下载或已就绪时返回 true 不重复启动；同一时刻至多一个
 // 下载在飞，其他 id 忙碌时返回 false。目录里没有的 id、无法创建目录等同步失败也返回

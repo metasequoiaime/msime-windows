@@ -131,6 +131,15 @@ region = "ap-guangzhou"
 target_language = "en"
 
 #
+# 阿里云机器翻译（通用版）。secret_id / secret_key 填 AccessKey ID 与 AccessKey Secret。
+# enabled 仅为旧版兼容保留，实际生效方由 [translation].provider 决定。
+#
+[aliyun_mt]
+enabled = false
+secret_id = "<YOUR_ALIYUN_ACCESS_KEY_ID>"
+secret_key = "<YOUR_ALIYUN_ACCESS_KEY_SECRET>"
+
+#
 # 自定义 DeepLX 兼容翻译服务。endpoint 必须填写完整的 POST 接口地址。
 # api_key 留空时不发送 Authorization 请求头。
 #
@@ -149,9 +158,9 @@ app_id = ""
 apikey = ""
 
 #
-# 候选词翻译当前生效的在线提供方：tencent | niutrans | custom | ai。
+# 候选词翻译当前生效的在线提供方：tencent | aliyun | niutrans | custom | ai。
 # ai 表示复用 AI 辅助当前服务商的接口地址、Token 与模型。
-# 留空表示按 [tencent_tmt]/[custom_translation]/[niutrans] 的旧 enabled 布尔自动推导，
+# 留空表示按 [tencent_tmt]/[aliyun_mt]/[custom_translation]/[niutrans] 的旧 enabled 布尔自动推导，
 # 在设置页选择过一次后会写入具体值。
 #
 [translation]
@@ -185,6 +194,9 @@ theme_mode = "system"
 settings_window_linger = "off"
 # 打开设置窗口时先显示居中的齿轮启动画面，再淡入主界面
 settings_launch_animation = true
+# 发现新版本时由后台自动下载安装包并校验 SHA256。关闭后只在关于页提示新版本。
+# 后台只在输入法进程运行时工作，且只对正式版生效，nightly 与 dev 构建不参与。
+auto_download_update = false
 # 分表面主题，可选："follow", "dark", "light"（follow = 跟随 theme_mode）
 theme_settings = "follow"
 theme_cand = "follow"
@@ -405,12 +417,17 @@ show_qp_helpcode_in_candidate_window = false
 #
 [quanpin]
 # 全拼自动纠错：遇到按键窜乱时自动按最接近的正确拼音查询候选。
-# 仅当输入串不是合法拼音组合时触发，不影响正常输入；两个类型默认关闭，
-# 可在设置页分别开启。旧的单键 autocorrect 已废弃，不再读取。
+# 仅当输入串不是合法拼音组合时触发，不影响正常输入；四种类型默认全部关闭，
+# 可在设置页分别开启。四个开关各管一类手误、互不联动：只开哪个就只纠哪种。
+# 旧的单键 autocorrect 已废弃，不再读取；漏字 / 多字两个键是新增的，缺失时按关闭处理。
 # 相邻字母顺序打错时纠正（如 sahng → shang）。
 autocorrect_transposition = false
 # 误触相邻按键时纠正（如 shabg → shang）。
 autocorrect_neighbor = false
+# 漏敲一个字母时纠正（如 shng → shang）。
+autocorrect_deletion = false
+# 多敲一个相邻按键时纠正（如 sjhang → shang）。
+autocorrect_insertion = false
 # 纠错得到的候选在末尾显示 * 标记，便于和正常候选区分；只影响显示，不影响上屏文字。
 autocorrect_marker = true
 
@@ -428,6 +445,8 @@ toggle_english_candidates = "Ctrl+Shift+KeyE"
 toggle_full_width = "Ctrl+Shift+Space"
 toggle_punctuation = "Ctrl+Period"
 toggle_character_set_ctrl_shift_f = true
+# 双拼方案下 Shift + Enter 提交转换后的全拼；关闭后 Shift + Enter 按 Enter 处理（提交原始输入）
+commit_pinyin_shift_enter = true
 # 中日英循环切换：开启后上面的中英文切换快捷键按中文、日文、英文依次切换，有输入时先上屏原始字母
 trilingual_cycle = false
 
@@ -606,6 +625,8 @@ endpoint_dashscope = ""
 endpoint_volcengine = ""
 endpoint_openrouter = ""
 endpoint_jev = ""
+# Ollama 连本机服务，不需要 Token，所以没有 token_ollama
+endpoint_ollama = ""
 model_deepseek = ""
 model_openai = ""
 model_siliconflow = ""
@@ -618,9 +639,13 @@ model_dashscope = ""
 model_volcengine = ""
 model_openrouter = ""
 model_jev = ""
+model_ollama = ""
 candidate_limit = 3
 # DeepSeek 思考强度: disabled | low | high | max，仅 DeepSeek 生效。开启后联想明显变慢。
 thinking = "disabled"
+# 生成式模式下最后选过的服务商。provider 切到 jev 时它保持不变，切回生成式时据此恢复；
+# 旧配置没有这个键时跟随 provider。jev 不能填在这里。
+generate_provider = "deepseek"
 prompt_id = "custom_1"
 prompt = """你是一个中文全拼输入法联想引擎。输入为已经切分好的拼音数组、前文上下文和候选数量。
 

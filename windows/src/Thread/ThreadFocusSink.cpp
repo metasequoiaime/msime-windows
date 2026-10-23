@@ -160,6 +160,22 @@ STDAPI CMetasequoiaIME::OnKillThreadFocus()
     _backspaceHoldArmed = false;
     _focusLostToWindowsTextInputHost = false;
     (void)_CaptureWindowsTextInputHostFocusLoss();
+    // Some hosts report only thread-focus loss on an application switch.
+    // Same-process auxiliary windows and TextInputHost do not end the preview.
+    if (_voiceCompositionActive && _IsComposing() && !_focusLostToWindowsTextInputHost &&
+        !_localSessionResetPending.load(std::memory_order_acquire))
+    {
+        DWORD foregroundProcessId = 0;
+        const HWND foreground = GetForegroundWindow();
+        if (foreground)
+            GetWindowThreadProcessId(foreground, &foregroundProcessId);
+        if (foregroundProcessId != 0 && foregroundProcessId != GetCurrentProcessId())
+        {
+            // Queued keys belong to the preview being discarded. Use the
+            // existing local cancellation, without rotating the pipe session.
+            _ResetSessionAfterFailure(DeferredKeyFailureKind::Resync);
+        }
+    }
     _threadFocusLostForAnnouncement = true;
     if (_msgWndHandle && IsWindow(_msgWndHandle))
     {
@@ -170,8 +186,9 @@ STDAPI CMetasequoiaIME::OnKillThreadFocus()
     // as real application focus changes. The known-good implementation did
     // not use this callback as an IPC/session boundary: document/top-context
     // changes are already handled by ITfThreadMgrEventSink, and TIP switching
-    // is handled by Deactivate. Keep the current composition and pipe epoch
-    // intact here, especially for TextInputHost.exe / Win+..
+    // is handled by Deactivate. Ordinary compositions remain intact here,
+    // especially for TextInputHost.exe / Win+.. Voice previews are cancelled
+    // above only when another application has actually become foreground.
     if (_pCandidateListUIPresenter)
     {
         ITfDocumentMgr *pCandidateListDocumentMgr = nullptr;

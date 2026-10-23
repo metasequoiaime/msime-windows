@@ -52,10 +52,14 @@ struct QueryRequest
     // 直接辅助码在句中用什么结束四码：补 /（uiab/），或第二位辅码大写（uiaB），见 direct_helpcode/spelling_graph.h。
     bool direct_helpcode_slash_marker = true;
     bool direct_helpcode_uppercase_marker = false;
-    // Autocorrection is type-gated (bit0 transposition, bit1 neighbor in the session-level
-    // mask); both default off, so a fresh install never rewrites the user's spelling.
+    // Autocorrection is type-gated (bit0 transposition, bit1 neighbor, bit2 deletion,
+    // bit3 insertion in the session-level mask). One bool per switch, no linkage
+    // between them; all default off, so a fresh install never rewrites the user's
+    // spelling.
     bool enable_quanpin_autocorrect_transposition = false;
     bool enable_quanpin_autocorrect_neighbor = false;
+    bool enable_quanpin_autocorrect_deletion = false;
+    bool enable_quanpin_autocorrect_insertion = false;
     std::vector<KeyStroke> key_strokes;
     metasequoia::FuzzyPinyinOptions fuzzy_pinyin;
     // 整句候选来源与去重补位选项，默认全关。

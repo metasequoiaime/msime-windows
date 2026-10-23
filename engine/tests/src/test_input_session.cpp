@@ -776,6 +776,46 @@ void run_literal_mixed_pinyin_tests(const std::filesystem::path &data_directory)
     }
 }
 
+// 单字母输入不做字面整词提升：一个字母任何单字都能整串吃下，提升只会把「嗯」这类
+// 单字母读音的语气词顶到词频更高的常用字前面（打 n 的首位从「你」变成「嗯」）。
+// 字面整词提升的用途是让「nbn」这类整词读法领衔，那需要至少两个字母才谈得上整词。
+void run_single_letter_candidate_order_tests(const std::filesystem::path &data_directory)
+{
+    const auto directory = data_directory / "single-letter-candidate-order";
+    std::filesystem::create_directories(directory);
+    {
+        Database database(directory / "msime.db");
+        database.execute("CREATE TABLE tbl_1_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_n VALUES('ni','n','你',1000000);"
+                         "INSERT INTO tbl_1_n VALUES('nian','n','年',900000);"
+                         "INSERT INTO tbl_1_n VALUES('na','n','呐',800000);"
+                         "INSERT INTO tbl_1_n VALUES('na','n','那',700000);"
+                         "INSERT INTO tbl_1_n VALUES('na','n','拿',600000);"
+                         "INSERT INTO tbl_1_n VALUES('ne','n','呢',500000);"
+                         "INSERT INTO tbl_1_n VALUES('neng','n','能',400000);"
+                         "INSERT INTO tbl_1_n VALUES('n','n','嗯',300000);"
+                         "INSERT INTO tbl_1_n VALUES('ng','n','嗯',200000);");
+    }
+
+    QuanpinDictionary dictionary(metasequoia::path_to_utf8(directory / "msime.db"));
+
+    const auto candidates = dictionary.query("n");
+    require(!candidates.empty(), "A single-letter query must return candidates.");
+    require(candidates.front().word == "你",
+            "A single letter must keep dictionary frequency order; 嗯 (pinyin n) must not lead the page.");
+    const auto index_of = [&candidates](const char *word) {
+        const auto found =
+            std::find_if(candidates.begin(), candidates.end(), [word](const auto &item) { return item.word == word; });
+        return static_cast<std::size_t>(std::distance(candidates.begin(), found));
+    };
+    require(index_of("嗯") > index_of("能"), "A single-letter query must not lift 嗯 above higher-frequency words.");
+
+    // 回归：两字母输入照常按词频排序，提升开关对它没有影响。
+    const auto two_letter = dictionary.query("ne");
+    require(!two_letter.empty() && two_letter.front().word == "呢",
+            "A two-letter query must keep its dictionary head.");
+}
+
 // 光标驱动的前缀解码（PRD R2–R7，Stage 1）：候选与量化边界按「光标之前的完整音节
 // 单元前缀」重算。自建隔离词库，不与主 fixture 互相污染；Server（Stage 2）将以
 // set_caret + recompute_candidates 的同一方式消费这些入口。
@@ -806,6 +846,10 @@ void run_autocorrect_context_ranking_tests(const std::filesystem::path &data_dir
     paths.cache = directory;
     paths.dictionaries = directory;
     const unsigned both = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor;
+    // "banzhng" drops the "e" of zheng (a deletion-shaped typo), so the full product
+    // mask -- all four independent switches on -- is what this context-ranking case
+    // needs. The two legacy bits alone no longer carry the deletion bit.
+    const unsigned all_types = both | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
     SentenceAssociationOptions lattice_only;
     lattice_only.word_lattice = true;
 
@@ -820,7 +864,7 @@ void run_autocorrect_context_ranking_tests(const std::filesystem::path &data_dir
 
     // 关联关闭 = 现状静态路径：合并池按权重排序，办证系与班长系交错。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "banzhng");
         const auto words = candidate_words(session);
         require(words.size() == 4 && words[0] == "办证" && words[1] == "班长" && words[2] == "搬账" &&
@@ -831,7 +875,7 @@ void run_autocorrect_context_ranking_tests(const std::filesystem::path &data_dir
     // 关联开启：zheng 切分上下文胜出接管领衔——办证系整体前移，辩证从末位
     // 升到第 2 位，班长系整体后移。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         session.set_sentence_association(lattice_only);
         type(session, "banzhng");
         const auto words = candidate_words(session);
@@ -842,9 +886,9 @@ void run_autocorrect_context_ranking_tests(const std::filesystem::path &data_dir
 
     // 单音节纠错无词格可搭（词格要求 >=2 完整音节）：两种状态必须逐位一致。
     {
-        metasequoia::InputSession off(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession off(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(off, "shng");
-        metasequoia::InputSession on(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession on(SchemeType::Quanpin, all_types, true, true, true, paths);
         on.set_sentence_association(lattice_only);
         type(on, "shng");
         require(same_candidate_words(off, on),
@@ -884,10 +928,12 @@ void run_autocorrect_context_layering_tests(const std::filesystem::path &data_di
     paths.cache = directory;
     paths.dictionaries = directory;
     const unsigned both = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor;
+    // "banzhng" 是漏字形状（zheng 掉了 e）：这里要的是产品全开语义，四个开关都开。
+    const unsigned all_types = both | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
     SentenceAssociationOptions lattice_only;
     lattice_only.word_lattice = true;
 
-    metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+    metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
     session.set_sentence_association(lattice_only);
     type(session, "banzhng");
 
@@ -979,10 +1025,12 @@ void run_autocorrect_context_user_choice_tests(const std::filesystem::path &data
         return paths;
     };
     const unsigned both = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor;
+    // "banzhng" 是漏字形状：这里要的是产品全开语义，四个开关都开。
+    const unsigned all_types = both | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
     SentenceAssociationOptions lattice_only;
     lattice_only.word_lattice = true;
-    const auto first_word = [both, &lattice_only](const metasequoia::RuntimePaths &paths) {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+    const auto first_word = [all_types, &lattice_only](const metasequoia::RuntimePaths &paths) {
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         session.set_sentence_association(lattice_only);
         type(session, "banzhng");
         require(!session.candidates().empty(), "The user-choice fixture produced no candidates.");
@@ -1114,6 +1162,8 @@ void run_legal_input_correction_tests(const std::filesystem::path &data_director
     paths.cache = directory;
     paths.dictionaries = directory;
     const unsigned both = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor;
+    // 本函数里出现漏字 / 多字形状的输入（banzhng、zaiozheli、shue），都要产品全开语义。
+    const unsigned all_types = both | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
     SentenceAssociationOptions lattice_only;
     lattice_only.word_lattice = true;
 
@@ -1162,8 +1212,9 @@ void run_legal_input_correction_tests(const std::filesystem::path &data_director
     // 多打一个邻键元音（o 是 i 的邻键）：zaiozheli 字面切成 zai'o'zhe'li 全合法，
     // 纠错读法 zai'zhe'li 命中「在这里」并带 corrected_from（双击重复键已不算多字
     // 纠错，见 test_pinyin 的 shangg 断言；这里改用邻键插入验长度改变读法的会话链路）。
+    // 多字位独立后要显式打开，不再随两个 legacy 开关联动。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "zaiozheli");
         const auto found = find_candidate_index(session, "在这里");
         require(found < session.candidates().size() && session.candidates()[found].corrected_from == "zaiozheli",
@@ -1175,9 +1226,10 @@ void run_legal_input_correction_tests(const std::filesystem::path &data_director
 
     // 字面切分是真词（数额）时不认改变字母数的读法：shue 按多一个 u 读成 she 的「社」
     // 不出现——少一个音节的句子在真实语言模型里常常分更高，会稳定挂在第 2 位。候选里
-    // 不应有任何纠错标记（社 作为 shu 的前缀单字以外不该出现）。
+    // 不应有任何纠错标记（社 作为 shu 的前缀单字以外不该出现）。多字位独立后要显式打开，
+    // 否则这一条断言的是「没开纠错」，失去意义。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "shue");
         require(session.candidates().front().word == "数额" &&
                     std::none_of(session.candidates().begin(), session.candidates().end(),
@@ -1187,7 +1239,7 @@ void run_legal_input_correction_tests(const std::filesystem::path &data_director
     // 被裁掉的纠错读法不能波及原读法：xiee 按多一个 e 读成 xie 被丢掉之后，邪恶 后面的
     // 前缀单字 写/些 读音也是 xie，曾因此全被标成纠错。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "xiee");
         require(!session.candidates().empty() && session.candidates().front().word == "邪恶" &&
                     find_candidate_index(session, "写") < session.candidates().size() &&
@@ -1548,9 +1600,9 @@ void run_autocorrect_selection_consumption_tests(const std::filesystem::path &da
     paths.cache = directory;
     paths.dictionaries = directory;
 
-    // 多打一个 u：整词上屏后不能剩下 i。
+    // 多打一个 u：整词上屏后不能剩下 i。多字位独立后要显式打开。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "buuhui");
         const auto committed = session.select_candidate(candidate_index(session, "不会"));
         require(committed.commit == "不会" && !session.has_composition(),
@@ -1558,16 +1610,16 @@ void run_autocorrect_selection_consumption_tests(const std::filesystem::path &da
     }
     // 只选前缀「不」：剩下的部分（hui 或 uhui）仍要能出「会」。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "buuhui");
         (void)session.select_candidate(candidate_index(session, "不"));
         require(session.has_composition() && (session.preedit() == "hui" || session.preedit() == "uhui") &&
                     find_candidate_index(session, "会") < session.candidates().size(),
                 "After a corrected prefix the rest must still read as hui.");
     }
-    // 漏打一个 a：选「张」只消耗 zhng，剩下 guo。
+    // 漏打一个 a：选「张」只消耗 zhng，剩下 guo。漏字位独立后要显式打开。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "zhngguo");
         (void)session.select_candidate(candidate_index(session, "张"));
         require(session.has_composition() && session.preedit() == "guo",
@@ -1662,6 +1714,8 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
     paths.cache = directory;
     paths.dictionaries = directory;
     const unsigned both = quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor;
+    // chng 是漏字形状（chang 掉了 a）：这一条要产品全开语义，四个开关都开。
+    const unsigned all_types = both | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
 
     // 远键替换：shatg → shang（生成对，贵档 15）。
     {
@@ -1687,8 +1741,9 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
     // 静态优先语义：chng = chang 漏 a。读法竞争——chng→chang（静态漏字 11）与
     // chng→cang（生成远键替换 h→a，15）。最优切分为纯静态时生成切分整体丢弃：
     // 仓不出现（混表加权仲裁依赖训练权重，方向阶段 3），长照常领衔。
+    // 漏字位独立后要显式打开，否则这一条断言的是「没开漏字纠错」。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "chng");
         require(candidate_index(session, "长") == 0, "The in-table cheaper deletion reading must lead for chng.");
         require(
@@ -1700,8 +1755,9 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
     // 完整音节），走 head 重试。head shatng 的读法是 sha+tng→tang（静态漏字 11）。
     // 生成式插入已随本任务移除，shang 读法（旧生成插入 15）不再存在。静态读法的
     // 沙汤扎（sha'tang'zh 精确键）在场，上周（shang+zh）不得出现。
+    // 漏字位独立后要显式打开，否则 head 没有读法，组合路径根本进不去。
     {
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, all_types, true, true, true, paths);
         type(session, "shatngzh");
         require(find_candidate_index(session, "沙汤扎") < session.candidates().size(),
                 "The head-composition path must still correct shatng to sha+tang.");
@@ -1811,20 +1867,21 @@ void run_autocorrect_generated_space_tests(const std::filesystem::path &data_dir
         }
     }
 
-    // 不变项、正例护栏与回归集（掩码取产品可达的 0x0/0xd/0xe/0xf；0xd = 换位+漏字+多字，
-    // 0xe = 邻键+漏字+多字）：
-    // - shabgz：0xd（无邻键位，head shabg 无读法）不组合，0xe/0xf（含邻键位）组合出 shang'z ——
+    // 不变项、正例护栏与回归集（掩码取四个独立开关的组合；下文的 0xd 读作
+    // 「换位 + 漏字 + 多字」、0xe 读作「邻键 + 漏字 + 多字」，它们现在是掩码空间里的
+    // 三个位组合，不再是产品的全部可达集合）：
+    // - shabgz：无邻键位（head shabg 无读法）不组合，含邻键位时组合出 shang'z ——
     //   本任务的正面目标，必须仍成立（防规则 3 误杀）。
-    // - hauzh/hauz：结构性手误的组合不受规则 1/2/3 影响，0xd/0xf 仍是 hua'zh/hua'z；0xe
-    //   （只开邻键开关、没有换位读法）下 head "hau" 走邻键 u→i 读成 hai，组合出 hai'zh/hai'z ——
-    //   规则 1 在 0xe 上的新增面（0xd 无邻键位、0xf 换位读法更便宜，都不走这条）。
-    // - huazh/guazh/bazh：「完整音节 + zh 尾」由规则 3 回到明文。改动前这三条在 0xd/0xe/0xf
-    //   上都是 hua'h/gua'h/ba'h（head "huaz" 这类被多字位读成 hua），与邻键位无关——所以
-    //   0xd 这一档也能判别规则 3，是自洽明文类里唯一在无邻键掩码下有信号的样本。
+    // - hauzh/hauz：结构性手误的组合不受规则 1/2/3 影响，换位+漏字+多字下仍是 hua'zh/hua'z；只开
+    //   邻键（没有换位读法）时 head "hau" 走邻键 u→i 读成 hai，组合出 hai'zh/hai'z ——
+    //   规则 1 在纯邻键掩码上的新增面（换位读法更便宜时都不走这条）。
+    // - huazh/guazh/bazh：「完整音节 + zh 尾」由规则 3 回到明文。改动前这三条在含多字 /
+    //   漏字位的掩码上都是 hua'h/gua'h/ba'h（head "huaz" 这类被多字位读成 hua），与邻键位无关
+    //   ——所以纯多字这一档也能判别规则 3，是自洽明文类里唯一在无邻键掩码下有信号的样本。
     // - xibd/tamd/zhemd：「完整音节 + 两个简拼声母」，head（xib = xi + b）本身过简拼形状门，
-    //   组合让位。不挡的话 0xe/0xf 下最短尾 d 留下 head xib，静态邻键 b->n 把它读成 xin，
+    //   组合让位。不挡的话含邻键位的掩码下最短尾 d 留下 head xib，静态邻键 b->n 把它读成 xin，
     //   组合出 xin'd 顶掉明文（旧的邻键掩码挡的就是这一类）。
-    // - 到不了组合路径的整串输入（sahng/shng/keneng/nbn）四掩码与改动前逐位一致。
+    // - 到不了组合路径的整串输入（sahng/shng/keneng/nbn）四组合掩码与改动前逐位一致。
     {
         const unsigned transposition_product =
             quanpin::kAutocorrectTransposition | quanpin::kAutocorrectDeletion | quanpin::kAutocorrectInsertion;
@@ -3132,6 +3189,7 @@ int run_test()
     run_caret_prefix_session_tests(data_directory);
     run_autocorrect_mixed_jianpin_tests(data_directory);
     run_literal_mixed_pinyin_tests(data_directory);
+    run_single_letter_candidate_order_tests(data_directory);
     run_autocorrect_context_ranking_tests(data_directory);
     run_autocorrect_context_layering_tests(data_directory);
     run_autocorrect_context_user_choice_tests(data_directory);
@@ -3146,6 +3204,36 @@ int run_test()
 #endif
 
 #ifndef METASEQUOIA_SKIP_FREQUENCY_TESTS
+    for (const unsigned autocorrect : {0u, quanpin::kAutocorrectTransposition | quanpin::kAutocorrectNeighbor})
+    {
+        const auto directory = data_directory / ("frequency-ng-" + std::to_string(autocorrect));
+        std::filesystem::create_directories(directory);
+        {
+            Database database(directory / "msime.db");
+            database.execute("CREATE TABLE tbl_1_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                             "INSERT INTO tbl_1_n VALUES('ng','n','嗯',0);"
+                             "CREATE TABLE tbl_2_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                             "INSERT INTO tbl_2_n VALUES('neng''gou','ng','能够',501639);"
+                             "INSERT INTO tbl_2_n VALUES('na''ge','ng','那个',501011);");
+        }
+        const metasequoia::RuntimePaths paths{directory, directory, directory, directory};
+        metasequoia::InputSession session(SchemeType::Quanpin, autocorrect, true, true, false, paths);
+        type(session, "ng");
+        const auto &prefix = session.candidates()[candidate_index(session, "嗯")];
+        require(prefix.pinyin == "n" && prefix.canonical_pinyin == "ng",
+                "The ng fixture must expose the nasal reading as a prefix candidate.");
+        const auto pinned = session.pin_candidate(candidate_index(session, "那个"));
+        require(pinned.handled && !pinned.commit && !pinned.diagnostic && session.candidates().front().word == "那个",
+                "A prefix candidate whose reading matches the full input displaced the manually pinned word.");
+        session.handle_command(metasequoia::Command::Cancel);
+        type(session, "ng");
+        require(session.candidates().front().word == "那个", "Retyping ng lost the manually pinned order.");
+        metasequoia::InputSession reopened(SchemeType::Quanpin, autocorrect, true, true, false, paths);
+        type(reopened, "ng");
+        require(reopened.candidates().front().word == "那个",
+                "Reopening the session lost the manually pinned ng word.");
+    }
+
     struct FrequencyCase
     {
         metasequoia::FrequencyAdjustmentMode mode;

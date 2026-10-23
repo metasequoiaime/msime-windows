@@ -284,6 +284,8 @@ VisualPtr BuildHelpPage(PageContext &context)
                                 L"把游戏踢出全屏（黑屏）。开启后水杉在系统里登记为下面的名称，游戏会自己画候选。"));
         column->Add(Description(L"代价：语言栏和 Windows 设置里也会显示这个名称；需要管理员权限（会弹一次 "
                                 L"UAC）；要重启游戏才生效；已知上屏后的第一下退格会被游戏吞掉（游戏那边的行为）。"));
+        column->Add(Description(L"任务栏的输入指示和 Win+Space 的切换列表要到重启资源管理器或重新登录后才更新，"
+                                L"系统设置和语言栏会立即变化。"));
         state->compatEnabled = std::make_shared<CheckOption>(L"启用游戏兼容名称");
         state->compatEnabled->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         state->compatEnabled->SetHorizontalAlignment(msimeui::HorizontalAlignment::Leading);
@@ -365,9 +367,12 @@ VisualPtr BuildHelpPage(PageContext &context)
             {
                 if (!ok)
                     SetStatus(*locked->compatStatus, message.empty() ? L"应用失败，请重试" : message, "error");
-                else
-                    SetStatus(*locked->compatStatus, message.empty() ? DescribeGameCompat(response) : message,
+                else if (!message.empty())
+                    SetStatus(*locked->compatStatus,
+                              message + L" 任务栏和 Win+Space 仍然显示旧名称时，重启资源管理器或重新登录即可",
                               "success");
+                else
+                    SetStatus(*locked->compatStatus, DescribeGameCompat(response), "success");
                 return;
             }
             if (!ok)

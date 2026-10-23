@@ -6,6 +6,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include "config/ai_provider.h"
 #include "voice-input/voice_providers.h"
 
 using namespace ime_config_detail;
@@ -324,6 +325,30 @@ bool SetConfiguredCustomTranslationString(const std::string &key, const std::str
     return true;
 }
 
+const AliyunMtConfig &GetConfiguredAliyunMt()
+{
+    return g_aliyun_mt;
+}
+
+bool SetConfiguredAliyunMtBool(const std::string &key, bool value)
+{
+    return key == "enabled" && SetTranslationProviderFromLegacyBool("aliyun", value);
+}
+
+bool SetConfiguredAliyunMtString(const std::string &key, const std::string &value)
+{
+    std::string *target = nullptr;
+    if (key == "secret_id")
+        target = &g_aliyun_mt.secret_id;
+    else if (key == "secret_key")
+        target = &g_aliyun_mt.secret_key;
+    if (!target || !WriteConfiguredValue("aliyun_mt", key, EscapeTomlBasicString(value)))
+        return false;
+    *target = value;
+    PublishTranslationConfig();
+    return true;
+}
+
 const NiuTransConfig &GetConfiguredNiuTrans()
 {
     return g_niutrans;
@@ -350,7 +375,8 @@ bool SetConfiguredNiuTransString(const std::string &key, const std::string &valu
 
 bool IsValidTranslationProvider(const std::string &provider)
 {
-    return provider == "tencent" || provider == "niutrans" || provider == "custom" || provider == "ai";
+    return provider == "tencent" || provider == "aliyun" || provider == "niutrans" || provider == "custom" ||
+           provider == "ai";
 }
 
 namespace
@@ -364,9 +390,24 @@ void ime_config_detail::PublishTranslationConfig()
     auto snapshot = std::make_shared<TranslationConfig>();
     snapshot->provider = g_translation_provider;
     snapshot->tencent = g_tencent_tmt;
+    snapshot->aliyun = g_aliyun_mt;
     snapshot->custom = g_custom_translation;
     snapshot->niutrans = g_niutrans;
-    snapshot->ai = {g_ai_assistant.provider, g_ai_assistant.endpoint, g_ai_assistant.token, g_ai_assistant.model};
+    // 候选词翻译只走 Chat Completions，选择器（jev）没有 chat 接口。AI 联想处在选择器模式时，
+    // 复用「生成式上次用的那家」，这样选了排序也不会把翻译一起关掉。
+    const std::string &translation_provider =
+        g_ai_assistant.provider == "jev" ? g_ai_assistant.generate_provider : g_ai_assistant.provider;
+    const auto slot_value = [&translation_provider](const std::map<std::string, std::string> &slots,
+                                                    const std::string &fallback) {
+        const auto found = slots.find(translation_provider);
+        return found == slots.end() || found->second.empty() ? fallback : found->second;
+    };
+    const auto token = g_ai_assistant.tokens.find(translation_provider);
+    snapshot->ai = {
+        translation_provider,
+        slot_value(g_ai_assistant.endpoints, AiAssistant::ProviderStore::BuiltinDefaultEndpoint(translation_provider)),
+        token == g_ai_assistant.tokens.end() ? std::string() : token->second,
+        slot_value(g_ai_assistant.models, AiAssistant::ProviderStore::BuiltinDefaultModel(translation_provider))};
     std::lock_guard<std::mutex> lock(g_translation_snapshot_mutex);
     g_translation_snapshot = std::move(snapshot);
 }
@@ -381,18 +422,20 @@ bool SetConfiguredTranslationString(const std::string &key, const std::string &v
 {
     if (key != "provider" || !IsValidTranslationProvider(value))
         return false;
-    // 旧布尔与 provider 一次写入，保证降级到旧版时选择不丢；旧版不认识 ai，三个布尔都关，
-    // 不会把候选词发给用户没选的服务。
+    // 旧布尔与 provider 一次写入；旧版不认识的提供方对应布尔保持 false。
     const bool tencent = value == "tencent";
+    const bool aliyun = value == "aliyun";
     const bool niutrans = value == "niutrans";
     const bool custom = value == "custom";
     if (!WriteConfiguredValues({{"translation", key, EscapeTomlBasicString(value)},
                                 {"tencent_tmt", "enabled", tencent ? "true" : "false"},
+                                {"aliyun_mt", "enabled", aliyun ? "true" : "false"},
                                 {"niutrans", "enabled", niutrans ? "true" : "false"},
                                 {"custom_translation", "enabled", custom ? "true" : "false"}}))
         return false;
     g_translation_provider = value;
     g_tencent_tmt.enabled = tencent;
+    g_aliyun_mt.enabled = aliyun;
     g_niutrans.enabled = niutrans;
     g_custom_translation.enabled = custom;
     PublishTranslationConfig();
@@ -475,10 +518,9 @@ bool SetConfiguredNetworkString(const std::string &key, const std::string &value
 // 这样以后调整默认值，没改过的用户能跟着更新，而不是被切换提供商时顺手写进去的旧默认值钉住。
 static std::string AiAssistantDefaultValue(const std::string &key, const std::string &provider)
 {
-    static const AiAssistantConfig defaults;
-    const auto &slots = key == "endpoint" ? defaults.endpoints : defaults.models;
-    const auto found = slots.find(provider);
-    return found != slots.end() ? found->second : std::string();
+    // 唯一来源在 ai_provider_store.cpp 的 BuiltinDefaults()；设置页的占位符也读同一份。
+    return key == "endpoint" ? AiAssistant::ProviderStore::BuiltinDefaultEndpoint(provider)
+                             : AiAssistant::ProviderStore::BuiltinDefaultModel(provider);
 }
 
 static std::string AiAssistantStoredValue(const std::string &key, const std::string &provider, const std::string &value)
@@ -496,6 +538,22 @@ static bool ApplyAiAssistantString(const std::string &key, const std::string &va
 {
     if (key == "prompt_id" && value != "custom_1" && value != "custom_2" && value != "custom_3")
         return false;
+    // 生成式模式下最后选过的服务商。切到 Jev 之前把当前服务商记在这里，切回来时用它，
+    // 否则 provider 被 jev 覆盖，用户每次切回生成式都得重新挑一遍。
+    if (key == "generate_provider")
+    {
+        const std::string provider = VoiceInput::NormalizeProviderId(value);
+        const auto registered =
+            std::find_if(g_ai_assistant.providers.begin(), g_ai_assistant.providers.end(),
+                         [&provider](const AiAssistant::AiProvider &entry) { return entry.id == provider; });
+        if (provider == "jev" ||
+            (AiAssistantTokenSlotKey(provider).empty() && registered == g_ai_assistant.providers.end()))
+            return false;
+        if (!WriteConfiguredValue("ai_assistant", key, EscapeTomlBasicString(provider)))
+            return false;
+        g_ai_assistant.generate_provider = provider;
+        return true;
+    }
     if (key == "thinking" && !VoiceInput::IsValidThinkingLevel(value))
         return false;
     if (key == "provider")
@@ -525,11 +583,17 @@ static bool ApplyAiAssistantString(const std::string &key, const std::string &va
                 {{"ai_assistant", "endpoint_" + previous, stored("endpoint", previous, g_ai_assistant.endpoint)},
                  {"ai_assistant", "model_" + previous, stored("model", previous, g_ai_assistant.model)},
                  {"ai_assistant", "provider", EscapeTomlBasicString(provider)},
+                 // 离开生成式的那一刻把「上次用的服务商」记下来。记 previous 而不是 provider：
+                 // 这样任何直接写 provider 的调用方都能得到正确结果，规则只在这里一处。
+                 {"ai_assistant", "generate_provider",
+                  EscapeTomlBasicString(previous == "jev" ? g_ai_assistant.generate_provider : previous)},
                  {"ai_assistant", "token", EscapeTomlBasicString(token)},
                  {"ai_assistant", "endpoint", stored("endpoint", provider, endpoint)},
                  {"ai_assistant", "model", stored("model", provider, model)}}))
             return false;
         g_ai_assistant.provider = provider;
+        if (previous != "jev")
+            g_ai_assistant.generate_provider = previous;
         g_ai_assistant.token = token;
         g_ai_assistant.endpoint = endpoint;
         g_ai_assistant.model = model;
@@ -573,6 +637,9 @@ static bool ApplyAiAssistantString(const std::string &key, const std::string &va
     {
         const std::string provider = key.substr(std::string("token_").size());
         const std::string id = VoiceInput::NormalizeProviderId(provider);
+        // 不用 Token 的服务商（Ollama 的本机服务）没有槽位：拒绝写入，免得 config.toml 里多一个谁都不读的空值。
+        if (!AiAssistant::ProviderUsesToken(id))
+            return false;
         // Every provider's token is a config.toml credential (token_<id>, DPAPI-protected), the
         // registry ones included; the store never holds tokens.
         const auto registered = std::find_if(g_ai_assistant.providers.begin(), g_ai_assistant.providers.end(),
@@ -632,6 +699,46 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
     // 候选词翻译选了 AI 辅助时复用这里的服务商、地址、Token 与模型。
     PublishTranslationConfig();
     return true;
+}
+
+bool SetConfiguredAiAssistantProviderValue(std::string_view provider, std::string_view field, const std::string &value)
+{
+    const std::string id = VoiceInput::NormalizeProviderId(provider);
+    if (field != "endpoint" && field != "model")
+        return false;
+    const bool builtin = !AiAssistantTokenSlotKey(id).empty();
+    const auto registered = std::find_if(g_ai_assistant.providers.begin(), g_ai_assistant.providers.end(),
+                                         [&id](const AiAssistant::AiProvider &entry) { return entry.id == id; });
+    if (!builtin && registered == g_ai_assistant.providers.end())
+        return false;
+    const std::string key(field);
+    // 空值与默认值都存空串，读回时再补默认值；这样以后调整默认值，没改过的用户能跟着更新。
+    const std::string escaped = EscapeTomlBasicString(AiAssistantStoredValue(key, id, value));
+    std::vector<ConfigValueUpdate> writes{{"ai_assistant", key + "_" + id, escaped}};
+    const bool active = g_ai_assistant.provider == id;
+    if (active)
+        writes.push_back({"ai_assistant", key, escaped});
+    if (!WriteConfiguredValues(writes))
+        return false;
+    auto &slots = key == "endpoint" ? g_ai_assistant.endpoints : g_ai_assistant.models;
+    slots[id] = value.empty() ? AiAssistantDefaultValue(key, id) : value;
+    if (active)
+        (key == "endpoint" ? g_ai_assistant.endpoint : g_ai_assistant.model) = slots[id];
+    // 自定义服务商的槽位键活不过模板合并，值以注册表为准，这里同步改回去。
+    if (!builtin)
+    {
+        if (key == "endpoint")
+            registered->endpoint = slots[id];
+        else
+            registered->model = slots[id];
+    }
+    // 与 ApplyAiAssistantString 的 endpoint/model 分支保持一致：active 与单值键都跟随注册表解析。
+    AiAssistant::ProviderStore::ResolveActive(g_ai_assistant.active, g_ai_assistant.endpoint, g_ai_assistant.model,
+                                              g_ai_assistant.provider, g_ai_assistant.providers);
+    // 注册表写失败时内存与 config.toml 已经改过，翻译快照仍要跟着更新，否则两边各说各话。
+    const bool saved = builtin || SaveAiProviderStore();
+    PublishTranslationConfig();
+    return saved;
 }
 
 bool SetConfiguredAiAssistantBool(const std::string &key, bool value)

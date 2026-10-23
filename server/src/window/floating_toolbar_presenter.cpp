@@ -11,23 +11,28 @@
 #include "utils/common_utils.h"
 #include "utils/window_utils.h"
 #include "window/small_windows.h"
+#include "window/floating_toolbar_image_layout.h"
 #include "window/floating_toolbar_skin.h"
 
 #include "msimeui/Controls.h"
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Fonts.h"
+#include "msimeui/ImageMask.h"
 #include "msimeui/Layout.h"
 #include "msimeui/Scene.h"
 #include "msimeui/Window.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <d2d1.h>
 #include <dwrite.h>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
+#include <vector>
 #include <windowsx.h>
 #include <wrl/client.h>
 
@@ -56,6 +61,8 @@ constexpr float kNoShadowPad = 1.0f;
 static_assert(kNoShadowPad >= kToolbarStrokeWidth * 0.5f);
 constexpr float kToolbarGlyphFontSizeFactor = 0.82f;
 constexpr float kToolbarUnderlinedTextFontSizeFactor = 0.58f;
+// 工具栏 HWND 上的动图帧定时器。宿主自己的定时器编号见 ime_windows_internal.h（2–14），这里避开它们。
+constexpr UINT_PTR kToolbarAnimationTimerId = 0x0A12;
 // Every toolbar icon carries a text fallback: "Segoe Fluent Icons" ships with
 // Windows 11 only, and the Windows 10 build of "Segoe MDL2 Assets" may predate
 // some of the IME-specific codepoints below. DirectWrite substitutes a font
@@ -93,11 +100,43 @@ class ToolbarIconButton : public msimeui::Visual
   public:
     using ClickHandler = std::function<void()>;
 
-    ToolbarIconButton(wchar_t glyph, std::wstring glyphFamily, std::wstring text, float size)
-        : glyph_(glyph), glyphFamily_(std::move(glyphFamily)), text_(std::move(text)), size_(size)
+    ToolbarIconButton(wchar_t glyph, std::wstring glyphFamily, std::wstring text, float width, float height)
+        : glyph_(glyph), glyphFamily_(std::move(glyphFamily)), text_(std::move(text)), width_(width), height_(height),
+          size_((std::min)(width, height)), glyphSize_(size_ * kToolbarGlyphFontSizeFactor)
     {
-        SetWidth(size_);
-        SetHeight(size_);
+        SetWidth(width_);
+        SetHeight(height_);
+    }
+
+    // 皮肤单独指定的图标字号，不跟按钮框走。
+    void SetGlyphSize(float size)
+    {
+        glyphSize_ = size;
+        InvalidateVisual();
+    }
+
+    // 皮肤给的按钮图，铺在按钮框里（等比）；空路径画回矢量图标。
+    void SetImage(const std::wstring &path)
+    {
+        image_.reset();
+        if (!path.empty())
+        {
+            image_ = std::make_shared<msimeui::Image>(path);
+            image_->SetStretch(msimeui::ImageStretch::Uniform);
+        }
+        InvalidateVisual();
+    }
+
+    // 皮肤给的按钮底图（如圆底），拉满按钮框，画在按钮图或图标下面；空路径不画。
+    void SetBackground(const std::wstring &path)
+    {
+        background_.reset();
+        if (!path.empty())
+        {
+            background_ = std::make_shared<msimeui::Image>(path);
+            background_->SetStretch(msimeui::ImageStretch::Fill);
+        }
+        InvalidateVisual();
     }
 
     void SetOnClick(ClickHandler handler)
@@ -122,12 +161,19 @@ class ToolbarIconButton : public msimeui::Visual
     SizeF Measure(const SizeF &availableSize) override
     {
         (void)availableSize;
-        return {size_, size_};
+        return {width_, height_};
     }
 
     void Arrange(const msimeui::RectF &finalRect) override
     {
         bounds_ = finalRect;
+        for (const auto &layer : {background_, image_})
+        {
+            if (layer)
+            {
+                layer->Arrange(finalRect);
+            }
+        }
     }
 
     void Render(msimeui::DeviceResources &deviceResources) override
@@ -137,17 +183,18 @@ class ToolbarIconButton : public msimeui::Visual
         {
             return;
         }
-        if (hovered_ || pressed_)
+        if (background_)
         {
-            if (ID2D1SolidColorBrush *hover = deviceResources.GetSolidColorBrush(hoverFill_))
-            {
-                const float radius = std::min(hoverRadius_, size_ * 0.5f);
-                const auto rounded = D2D1::RoundedRect(
-                    D2D1::RectF(bounds_.x, bounds_.y, bounds_.x + bounds_.width, bounds_.y + bounds_.height), radius,
-                    radius);
-                target->FillRoundedRectangle(rounded, hover);
-            }
+            background_->Render(deviceResources);
         }
+        if (image_)
+        {
+            // 贴图按钮的悬停底色盖在图上：图通常不透明，垫在下面就看不见了。
+            image_->Render(deviceResources);
+            FillHover(deviceResources, target);
+            return;
+        }
+        FillHover(deviceResources, target);
 
         IDWriteFactory *factory = deviceResources.GetDWriteFactory();
         ID2D1SolidColorBrush *brush = deviceResources.GetSolidColorBrush(glyphColor_);
@@ -158,8 +205,9 @@ class ToolbarIconButton : public msimeui::Visual
 
         const bool useGlyph = glyph_ != 0 && !glyphFamily_.empty();
         const std::wstring family = useGlyph ? glyphFamily_ : std::wstring(msimeui::UiFontFamily());
+        // 带下划线的 "En" 比图标字形小一号，比例跟着图标字号走。
         const float fontSize =
-            size_ * (underline_ ? kToolbarUnderlinedTextFontSizeFactor : kToolbarGlyphFontSizeFactor);
+            underline_ ? glyphSize_ * (kToolbarUnderlinedTextFontSizeFactor / kToolbarGlyphFontSizeFactor) : glyphSize_;
         IDWriteTextFormat *format =
             deviceResources.GetTextFormat(family, fontSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER,
                                           DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -217,7 +265,9 @@ class ToolbarIconButton : public msimeui::Visual
         InvalidateVisual();
         if (shouldClick && onClick_)
         {
-            onClick_();
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
         }
         return true;
     }
@@ -236,10 +286,30 @@ class ToolbarIconButton : public msimeui::Visual
     }
 
   private:
+    void FillHover(msimeui::DeviceResources &deviceResources, ID2D1RenderTarget *target)
+    {
+        if (!hovered_ && !pressed_)
+        {
+            return;
+        }
+        if (ID2D1SolidColorBrush *hover = deviceResources.GetSolidColorBrush(hoverFill_))
+        {
+            const float radius = std::min(hoverRadius_, size_ * 0.5f);
+            const auto rounded = D2D1::RoundedRect(
+                D2D1::RectF(bounds_.x, bounds_.y, bounds_.x + bounds_.width, bounds_.y + bounds_.height), radius,
+                radius);
+            target->FillRoundedRectangle(rounded, hover);
+        }
+    }
+
     wchar_t glyph_ = 0;
     std::wstring glyphFamily_;
     std::wstring text_;
+    float width_ = 24.0f;
+    float height_ = 24.0f;
+    // 按钮框的短边；悬停底色的圆角与下划线粗细按它算。
     float size_ = 24.0f;
+    float glyphSize_ = 24.0f * kToolbarGlyphFontSizeFactor;
     bool underline_ = false;
     bool hovered_ = false;
     bool pressed_ = false;
@@ -247,6 +317,8 @@ class ToolbarIconButton : public msimeui::Visual
     D2D1_COLOR_F hoverFill_ = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f);
     float hoverRadius_ = 6.0f;
     ClickHandler onClick_;
+    std::shared_ptr<msimeui::Image> image_;
+    std::shared_ptr<msimeui::Image> background_;
 };
 
 class ToolbarDragHandle : public msimeui::Visual
@@ -345,13 +417,54 @@ void SendWorker(UINT type)
 {
     SendToTsfWorkerThreadViaNamedpipe(type, L"");
 }
+
+// 工具栏上的一个按钮：皮肤里的按钮键与当前状态名（见 CandidateSkinCatalog::ToolbarButtonStates），
+// 以及没有贴图时画的图标。条形模式按顺序排成一行，图片模式按皮肤给的坐标摆。
+struct ToolbarButtonSpec
+{
+    std::string key;
+    std::string state;
+    // 图标字体里的字形；为 0 时画 text。
+    wchar_t codepoint = 0;
+    std::wstring text;
+    bool underline = false;
+    ToolbarIconButton::ClickHandler click;
+};
+
+ToolbarButtonSpec GlyphSpec(std::string key, std::string state, const ToolbarIcon &icon,
+                            ToolbarIconButton::ClickHandler click)
+{
+    return {std::move(key), std::move(state), icon.codepoint, icon.fallbackText, false, std::move(click)};
+}
+
+ToolbarButtonSpec TextSpec(std::string key, std::string state, std::wstring text, bool underline,
+                           ToolbarIconButton::ClickHandler click)
+{
+    return {std::move(key), std::move(state), 0, std::move(text), underline, std::move(click)};
+}
+
+// 图标字体缺字时退回文字（见 ToolbarIcon）。
+std::shared_ptr<ToolbarIconButton> MakeToolbarButton(const ToolbarButtonSpec &spec, float width, float height)
+{
+    if (spec.codepoint != 0)
+    {
+        const msimeui::IconGlyph resolved = msimeui::ResolveIconGlyph(spec.codepoint);
+        if (resolved.family)
+        {
+            return std::make_shared<ToolbarIconButton>(resolved.codepoint, resolved.family, L"", width, height);
+        }
+    }
+    auto button = std::make_shared<ToolbarIconButton>(0, L"", spec.text, width, height);
+    button->SetUnderline(spec.underline);
+    return button;
+}
 } // namespace
 
 struct FloatingToolbarPresenter::Impl
 {
     msimeui::DeviceResources resources;
     std::unique_ptr<msimeui::Window> window;
-    std::shared_ptr<msimeui::StackPanel> root;
+    std::shared_ptr<msimeui::Visual> root;
     std::shared_ptr<msimeui::Card> card;
     std::shared_ptr<msimeui::Container> frame;
     std::shared_ptr<msimeui::Visual> dragLimit;
@@ -374,6 +487,39 @@ struct FloatingToolbarPresenter::Impl
     int englishInputMode = 0;
     int capsLock = 0;
     int japaneseInputMode = 0;
+    // 皮肤的图片模式（[toolbar] mode = "image"）：一整张背景图，按钮按皮肤的坐标摆在上面，
+    // 不画底色、描边、阴影、把手与分隔线，窗口裁成背景图不透明部分的形状。
+    bool imageMode = false;
+    std::wstring packageRoot;
+    std::wstring imagePath;
+    float imageWidthDip = 0.0f;
+    float imageHeightDip = 0.0f;
+    // 皮肤清单，按钮怎么摆由 LayoutToolbarImageButtons 按它算。
+    CandidateSkinCatalog::Package imagePackage;
+    // 图片模式下摆出来的按钮：落在它们上面的点不算拖动区。
+    std::vector<std::shared_ptr<ToolbarIconButton>> imageButtons;
+    // v2 皮肤的动图才播放，与候选窗一致。
+    bool skinAnimates = false;
+    // 换了皮肤图或强制重载过，图片缓存与形状都要重读。
+    std::wstring imageKey;
+    // 背景图不透明部分的区域（窗口像素），以及它是按哪张图、多大算的；解码整张动图不便宜，只在这几项变了时重算。
+    HRGN imageShape = nullptr;
+    std::wstring shapePath;
+    int shapeWidthPx = 0;
+    int shapeHeightPx = 0;
+    // 窗口形状：imageShape 再并上每个按钮的框。
+    HRGN shape = nullptr;
+
+    ~Impl()
+    {
+        for (HRGN region : {imageShape, shape})
+        {
+            if (region)
+            {
+                DeleteObject(region);
+            }
+        }
+    }
 };
 
 FloatingToolbarPresenter::FloatingToolbarPresenter() = default;
@@ -425,6 +571,148 @@ void FloatingToolbarPresenter::RebuildScene()
     const float radius = impl_->radius * s;
     const float iconRadius = impl_->iconRadius * s;
 
+    // 当前要显示的按钮，按工具栏上的顺序：中/英状态总在，其余跟设置页的开关走。
+    std::vector<ToolbarButtonSpec> specs;
+    if (impl_->capsLock == 1)
+    {
+        specs.push_back(TextSpec("status", "caps", L"A", false, [this]() {
+            if (impl_->englishInputMode == 1)
+            {
+                FanyNamedPipe::EnqueueExitEnglishInputModeTask();
+            }
+            else
+            {
+                FanyNamedPipe::EnqueueToolbarLanguageToggleTask(impl_->cnEn == 1);
+            }
+        }));
+    }
+    else if (impl_->cnEn != 1)
+    {
+        specs.push_back(
+            GlyphSpec("status", "en", kIconEn, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(false); }));
+    }
+    else if (impl_->englishInputMode == 1)
+    {
+        specs.push_back(TextSpec("status", "en-candidate", L"En", true,
+                                 []() { FanyNamedPipe::EnqueueExitEnglishInputModeTask(); }));
+    }
+    else if (impl_->japaneseInputMode == 1)
+    {
+        specs.push_back(
+            GlyphSpec("status", "ja", kIconJa, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(true); }));
+    }
+    else
+    {
+        specs.push_back(
+            GlyphSpec("status", "cn", kIconCn, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(true); }));
+    }
+
+    const FloatingToolbarItemsConfig &items = GetConfiguredFloatingToolbarItems();
+    if (items.fullwidth)
+    {
+        if (impl_->doubleSingleByte == 1)
+        {
+            specs.push_back(GlyphSpec("fullwidth", "full", kIconFullWidth, []() {
+                SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToHalfwidth);
+            }));
+        }
+        else
+        {
+            specs.push_back(GlyphSpec("fullwidth", "half", kIconHalfWidth, []() {
+                SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToFullwidth);
+            }));
+        }
+    }
+    if (items.punctuation)
+    {
+        if (impl_->punctuation == 1)
+        {
+            specs.push_back(GlyphSpec("punctuation", "cn", kIconPuncCn, []() {
+                SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToPuncEn);
+            }));
+        }
+        else
+        {
+            specs.push_back(GlyphSpec("punctuation", "en", kIconPuncEn, []() {
+                SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToPuncCn);
+            }));
+        }
+    }
+    if (items.character_set)
+    {
+        const bool traditional = GetConfiguredCharacterSet() == "traditional";
+        specs.push_back(GlyphSpec("character_set", traditional ? "traditional" : "simplified",
+                                  traditional ? kIconTraditional : kIconSimplified, []() {
+                                      const std::string next =
+                                          GetConfiguredCharacterSet() == "traditional" ? "simplified" : "traditional";
+                                      SetConfiguredCharacterSet(next);
+                                  }));
+    }
+    if (items.emoji)
+    {
+        specs.push_back(GlyphSpec("emoji", "", kIconEmoji, []() { OpenEmojiPanelApplication(); }));
+    }
+    if (items.screen_keyboard)
+    {
+        specs.push_back(GlyphSpec("screen_keyboard", "", kIconKeyboard, []() { OpenKeyboardPanelApplication(); }));
+    }
+    if (items.settings)
+    {
+        specs.push_back(GlyphSpec("settings", "", kIconSettings, []() { OpenSettingsApplication(); }));
+    }
+
+    impl_->imageButtons.clear();
+    if (impl_->imageMode)
+    {
+        // 背景图铺满，按钮按 LayoutToolbarImageButtons 摆在上面（与设置页的预览同一份规则）。窗口按背景图与
+        // 按钮合起来的范围开，按钮排到图外也不会被裁掉。
+        auto root = std::make_shared<msimeui::OverlayPanel>();
+        auto background = std::make_shared<msimeui::Image>(impl_->imagePath);
+        background->SetStretch(msimeui::ImageStretch::Fill);
+        background->SetWidth(impl_->imageWidthDip * s);
+        background->SetHeight(impl_->imageHeightDip * s);
+        root->AddChildAt(background, 0.0f, 0.0f);
+        std::vector<ToolbarImageButtonRequest> shown;
+        shown.reserve(specs.size());
+        for (const ToolbarButtonSpec &spec : specs)
+        {
+            shown.push_back({spec.key, spec.state});
+        }
+        for (const ToolbarImageButtonSlot &slot : LayoutToolbarImageButtons(impl_->imagePackage, shown))
+        {
+            const auto spec = std::find_if(specs.begin(), specs.end(), [&](const ToolbarButtonSpec &candidate) {
+                return candidate.key == slot.key;
+            });
+            auto button =
+                MakeToolbarButton(*spec, static_cast<float>(slot.widthDip) * s, static_cast<float>(slot.heightDip) * s);
+            button->SetColors(impl_->glyph, impl_->hover, iconRadius);
+            button->SetOnClick(std::move(spec->click));
+            if (slot.iconSizeDip > 0.0)
+            {
+                button->SetGlyphSize(static_cast<float>(slot.iconSizeDip) * s);
+            }
+            if (!slot.background.empty())
+            {
+                button->SetBackground(impl_->packageRoot + string_to_wstring(slot.background));
+            }
+            if (!slot.image.empty())
+            {
+                button->SetImage(impl_->packageRoot + string_to_wstring(slot.image));
+            }
+            root->AddChildAt(button, static_cast<float>(slot.xDip) * s, static_cast<float>(slot.yDip) * s);
+            impl_->imageButtons.push_back(button);
+        }
+        impl_->card.reset();
+        impl_->frame.reset();
+        impl_->dragLimit.reset();
+        impl_->shadow = false;
+        impl_->root = root;
+        auto scene = std::make_unique<msimeui::Scene>();
+        scene->SetRoot(impl_->root);
+        impl_->window->SetScene(std::move(scene));
+        return;
+    }
+
     auto row = std::make_shared<msimeui::HorizontalStackPanel>(gap);
     row->SetVerticalContentAlignment(msimeui::VerticalAlignment::Center);
     row->SetPadding({0.0f, 0.0f, padRight, 0.0f});
@@ -441,101 +729,12 @@ void FloatingToolbarPresenter::RebuildScene()
     auto icons = std::make_shared<msimeui::HorizontalStackPanel>(gap);
     icons->SetVerticalContentAlignment(msimeui::VerticalAlignment::Center);
 
-    auto addText = [&](std::wstring text, bool underline, ToolbarIconButton::ClickHandler click) {
-        auto button = std::make_shared<ToolbarIconButton>(0, L"", std::move(text), iconSize);
-        button->SetUnderline(underline);
+    for (ToolbarButtonSpec &spec : specs)
+    {
+        auto button = MakeToolbarButton(spec, iconSize, iconSize);
         button->SetColors(impl_->glyph, impl_->hover, iconRadius);
-        button->SetOnClick(std::move(click));
+        button->SetOnClick(std::move(spec.click));
         icons->AddChild(button);
-        return button;
-    };
-    auto addGlyph = [&](const ToolbarIcon &icon, ToolbarIconButton::ClickHandler click) {
-        const msimeui::IconGlyph resolved = msimeui::ResolveIconGlyph(icon.codepoint);
-        if (!resolved.family)
-        {
-            return addText(icon.fallbackText, false, std::move(click));
-        }
-        auto button = std::make_shared<ToolbarIconButton>(resolved.codepoint, resolved.family, L"", iconSize);
-        button->SetColors(impl_->glyph, impl_->hover, iconRadius);
-        button->SetOnClick(std::move(click));
-        icons->AddChild(button);
-        return button;
-    };
-
-    if (impl_->capsLock == 1)
-    {
-        addText(L"A", false, [this]() {
-            if (impl_->englishInputMode == 1)
-            {
-                FanyNamedPipe::EnqueueExitEnglishInputModeTask();
-            }
-            else
-            {
-                FanyNamedPipe::EnqueueToolbarLanguageToggleTask(impl_->cnEn == 1);
-            }
-        });
-    }
-    else if (impl_->cnEn != 1)
-    {
-        addGlyph(kIconEn, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(false); });
-    }
-    else if (impl_->englishInputMode == 1)
-    {
-        addText(L"En", true, []() { FanyNamedPipe::EnqueueExitEnglishInputModeTask(); });
-    }
-    else if (impl_->japaneseInputMode == 1)
-    {
-        addGlyph(kIconJa, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(true); });
-    }
-    else
-    {
-        addGlyph(kIconCn, []() { FanyNamedPipe::EnqueueToolbarLanguageToggleTask(true); });
-    }
-
-    const FloatingToolbarItemsConfig &items = GetConfiguredFloatingToolbarItems();
-    if (items.fullwidth)
-    {
-        if (impl_->doubleSingleByte == 1)
-        {
-            addGlyph(kIconFullWidth,
-                     []() { SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToHalfwidth); });
-        }
-        else
-        {
-            addGlyph(kIconHalfWidth,
-                     []() { SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToFullwidth); });
-        }
-    }
-    if (items.punctuation)
-    {
-        if (impl_->punctuation == 1)
-        {
-            addGlyph(kIconPuncCn, []() { SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToPuncEn); });
-        }
-        else
-        {
-            addGlyph(kIconPuncEn, []() { SendWorker(Global::DataFromServerMsgTypeToTsfWorkerThread::SwitchToPuncCn); });
-        }
-    }
-    if (items.character_set)
-    {
-        const bool traditional = GetConfiguredCharacterSet() == "traditional";
-        addGlyph(traditional ? kIconTraditional : kIconSimplified, []() {
-            const std::string next = GetConfiguredCharacterSet() == "traditional" ? "simplified" : "traditional";
-            SetConfiguredCharacterSet(next);
-        });
-    }
-    if (items.emoji)
-    {
-        addGlyph(kIconEmoji, []() { OpenEmojiPanelApplication(); });
-    }
-    if (items.screen_keyboard)
-    {
-        addGlyph(kIconKeyboard, []() { OpenKeyboardPanelApplication(); });
-    }
-    if (items.settings)
-    {
-        addGlyph(kIconSettings, []() { OpenSettingsApplication(); });
     }
 
     row->AddChild(leading);
@@ -572,8 +771,9 @@ void FloatingToolbarPresenter::RebuildScene()
         impl_->frame->SetPadding(kNoShadowPad);
     }
     impl_->frame->SetChild(impl_->card);
-    impl_->root = std::make_shared<msimeui::StackPanel>(0.0f);
-    impl_->root->AddChild(impl_->frame);
+    auto root = std::make_shared<msimeui::StackPanel>(0.0f);
+    root->AddChild(impl_->frame);
+    impl_->root = root;
     auto scene = std::make_unique<msimeui::Scene>();
     scene->SetRoot(impl_->root);
     impl_->window->SetScene(std::move(scene));
@@ -604,6 +804,28 @@ void FloatingToolbarPresenter::ApplyTheme()
     {
         ApplyFloatingToolbarSkinOverrides(skin, *package, light);
     }
+    impl_->imageMode = package && package->toolbarMode == "image";
+    impl_->skinAnimates = impl_->imageMode && package->schemaVersion >= 2;
+    impl_->imagePackage = {};
+    std::wstring imageKey;
+    if (impl_->imageMode)
+    {
+        impl_->packageRoot = (skinsRoot / std::filesystem::u8path(package->id)).wstring() + L"\\";
+        impl_->imagePath = impl_->packageRoot + string_to_wstring(package->toolbarImage);
+        impl_->imageWidthDip = static_cast<float>(package->toolbarImageWidthDip);
+        impl_->imageHeightDip = static_cast<float>(package->toolbarImageHeightDip);
+        impl_->imagePackage = *package;
+        imageKey = impl_->imagePath + L"|" + std::to_wstring(GetCandidateSkinReloadRevision());
+    }
+    if (imageKey != impl_->imageKey)
+    {
+        // 换了皮肤图或强制重载过（设置页改了皮肤文件）：丢掉解码过的图片与形状，动画重新起算。
+        impl_->imageKey = imageKey;
+        StopAnimationFrames();
+        impl_->resources.ClearImageCaches();
+        impl_->resources.SetAnimationEpoch(msimeui::DeviceResources::AnimationClock::now());
+        impl_->shapePath.clear();
+    }
     impl_->fill = skin.fill;
     impl_->border = skin.border;
     impl_->glyph = skin.glyph;
@@ -629,7 +851,8 @@ void FloatingToolbarPresenter::RelayoutHost(FLOAT scaleOverride, const RECT *sug
         return;
     }
     impl_->root->InvalidateMeasure();
-    const SizeF measured = impl_->root->MeasureInLayout({2000.0f, 240.0f});
+    // 条形高不过 240；图片模式按皮肤的图开窗口，上限与 image_height_dip 相同。
+    const SizeF measured = impl_->root->MeasureInLayout({2000.0f, impl_->imageMode ? 2000.0f : 240.0f});
     impl_->root->InvalidateArrange();
     impl_->root->ArrangeInLayout({0.0f, 0.0f, measured.width, measured.height});
     ::FTB_CONTENT_WIDTH_DIP = measured.width;
@@ -666,9 +889,19 @@ void FloatingToolbarPresenter::RelayoutHost(FLOAT scaleOverride, const RECT *sug
     SetWindowPos(hwnd_, nullptr, pos.x, pos.y, widthPx, heightPx, SWP_NOZORDER | SWP_NOACTIVATE);
     ::FTB_HOST_INSETS_PX = insets;
     ::FTB_HOST_INSETS_VALID = true;
-    ClipWindowToVisibleScreens(hwnd_, ScreenArea::WorkArea);
+    // 背景图画在 (0, 0) 起、皮肤声明的大小上（窗口可能因按钮排到图外而更大）；形状要和它在屏幕上的像素一一对上。
+    const float userScale = ToolbarUserScale();
+    UpdateShape(static_cast<int>(std::lround(impl_->imageWidthDip * userScale * scale)),
+                static_cast<int>(std::lround(impl_->imageHeightDip * userScale * scale)), scale);
+    ClipWindowToVisibleScreens(hwnd_, ScreenArea::WorkArea, ShapeRegion());
     impl_->resources.EnsureForComposition(hwnd_);
-    if (impl_->card && impl_->dragLimit)
+    impl_->captionRect = {};
+    if (impl_->imageMode)
+    {
+        // 整张图都能拖，按钮除外（见 HitCaptionDrag）。
+        impl_->captionRect = {0.0f, 0.0f, measured.width, measured.height};
+    }
+    else if (impl_->card && impl_->dragLimit)
     {
         const RectF card = impl_->card->GetBounds();
         const RectF limit = impl_->dragLimit->GetBounds();
@@ -684,13 +917,74 @@ bool FloatingToolbarPresenter::HitCaptionDrag(POINT clientPoint) const
         return false;
     }
     const PointF dip = impl_->window->ClientPixelsToDips(clientPoint);
+    // 按钮上的点要留给按钮自己：答成 HTCAPTION 的话按下就进了系统的拖动循环，按钮收不到点击。
+    for (const auto &button : impl_->imageButtons)
+    {
+        if (button->HitTest(dip))
+        {
+            return false;
+        }
+    }
     return dip.x >= impl_->captionRect.x && dip.x < impl_->captionRect.x + impl_->captionRect.width &&
            dip.y >= impl_->captionRect.y && dip.y < impl_->captionRect.y + impl_->captionRect.height;
 }
 
+HRGN FloatingToolbarPresenter::ShapeRegion() const
+{
+    return bound_ && impl_ && impl_->imageMode ? impl_->shape : nullptr;
+}
+
+void FloatingToolbarPresenter::UpdateShape(int imageWidthPx, int imageHeightPx, float scale)
+{
+    if (!impl_->imageMode || imageWidthPx <= 0 || imageHeightPx <= 0)
+    {
+        return;
+    }
+    if (impl_->shapePath != impl_->imagePath || impl_->shapeWidthPx != imageWidthPx ||
+        impl_->shapeHeightPx != imageHeightPx)
+    {
+        if (impl_->imageShape)
+        {
+            DeleteObject(impl_->imageShape);
+        }
+        // 窗口区域连画面一起裁，所以动图按所有帧合起来的轮廓裁，哪一帧画到的地方都留在窗口里。
+        // 半透明的抗锯齿边缘也算在窗口里，边缘才不会被裁出锯齿。
+        impl_->imageShape = msimeui::CreateAlphaMaskRegion(impl_->imagePath, static_cast<UINT>(imageWidthPx),
+                                                           static_cast<UINT>(imageHeightPx));
+        impl_->shapePath = impl_->imagePath;
+        impl_->shapeWidthPx = imageWidthPx;
+        impl_->shapeHeightPx = imageHeightPx;
+        FTB_DIAG_LOGF(L"ftb-d2d image shape {}x{} region={}", imageWidthPx, imageHeightPx, impl_->imageShape ? 1 : 0);
+    }
+    if (impl_->shape)
+    {
+        DeleteObject(impl_->shape);
+        impl_->shape = nullptr;
+    }
+    // 读不出图时就是矩形窗口。
+    if (!impl_->imageShape)
+    {
+        return;
+    }
+    // 皮肤摆出来的按钮整个算在窗口里：落在背景图透明处的按钮也不会被裁掉、点不到。
+    impl_->shape = CreateRectRgn(0, 0, 0, 0);
+    CombineRgn(impl_->shape, impl_->imageShape, nullptr, RGN_COPY);
+    for (const auto &button : impl_->imageButtons)
+    {
+        const RectF box = button->GetBounds();
+        HRGN rect =
+            CreateRectRgn(static_cast<int>(std::floor(box.x * scale)), static_cast<int>(std::floor(box.y * scale)),
+                          static_cast<int>(std::ceil((box.x + box.width) * scale)),
+                          static_cast<int>(std::ceil((box.y + box.height) * scale)));
+        CombineRgn(impl_->shape, impl_->shape, rect, RGN_OR);
+        DeleteObject(rect);
+    }
+}
+
 RECT FloatingToolbarPresenter::ShadowInsetsPx(int hostWidthPx, int hostHeightPx, FLOAT scale) const
 {
-    if (!impl_ || scale <= 0.0f)
+    // 图片模式没有阴影与描边；图里的透明边由窗口形状处理，不当成可以伸出屏幕的边距。
+    if (!impl_ || scale <= 0.0f || impl_->imageMode)
     {
         return {};
     }
@@ -751,6 +1045,10 @@ void FloatingToolbarPresenter::Present()
         return;
     }
     impl_->resources.Resize(width, height);
+    // 系统的「动画效果」开关随时可能改，每帧都重读；bar 与 v1 皮肤从不播放。
+    impl_->resources.SetAnimationsEnabled(impl_->skinAnimates && SystemAnimationsEnabled());
+    // Samples the animation clock for this frame and starts the next-frame deadline over.
+    impl_->resources.BeginFrame();
     ID2D1RenderTarget *target = impl_->resources.GetRenderTarget();
     if (!target)
     {
@@ -786,6 +1084,37 @@ void FloatingToolbarPresenter::Present()
         return;
     }
     impl_->resources.Present();
+    ScheduleAnimationFrame();
+}
+
+void FloatingToolbarPresenter::ScheduleAnimationFrame()
+{
+    if (!hwnd_ || !impl_ || !impl_->window)
+    {
+        return;
+    }
+    const msimeui::Scene *scene = impl_->window->GetScene();
+    const auto deadline = scene ? scene->GetNextFrameDeadline() : std::nullopt;
+    // 工具栏常驻：隐藏或淡出到看不见时不画，免得一直占着 CPU 和 GPU。再显示时的 Present 会接着排。
+    if (!deadline || impl_->opacity <= 0.0f || !IsWindowVisible(hwnd_))
+    {
+        StopAnimationFrames();
+        return;
+    }
+    const auto wait =
+        std::chrono::ceil<std::chrono::milliseconds>(*deadline - msimeui::DeviceResources::AnimationClock::now());
+    const UINT delay = static_cast<UINT>((std::clamp)(wait.count(), static_cast<long long>(USER_TIMER_MINIMUM),
+                                                      static_cast<long long>(USER_TIMER_MAXIMUM)));
+    // One shot per frame, replacing any pending one; the slack lets Windows batch the wake-up.
+    SetCoalescableTimer(hwnd_, kToolbarAnimationTimerId, delay, nullptr, (std::min)(delay / 10U, 8U));
+}
+
+void FloatingToolbarPresenter::StopAnimationFrames()
+{
+    if (hwnd_)
+    {
+        KillTimer(hwnd_, kToolbarAnimationTimerId);
+    }
 }
 
 void FloatingToolbarPresenter::SetOpacity(float opacity)
@@ -812,6 +1141,18 @@ bool FloatingToolbarPresenter::HandleMessage(UINT message, WPARAM wParam, LPARAM
     switch (message)
     {
     case WM_ERASEBKGND:
+        return true;
+    case WM_TIMER:
+        if (wParam != kToolbarAnimationTimerId)
+        {
+            return false;
+        }
+        // One-shot: the Present below schedules the next frame if anything still animates.
+        StopAnimationFrames();
+        if (IsWindowVisible(hwnd_))
+        {
+            Present();
+        }
         return true;
     case WM_PAINT: {
         PAINTSTRUCT ps{};

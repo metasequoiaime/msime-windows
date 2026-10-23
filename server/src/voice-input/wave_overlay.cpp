@@ -16,6 +16,8 @@ constexpr wchar_t kClassName[] = L"MviWaveOverlayWindow";
 constexpr UINT_PTR kTimerId = 1;
 constexpr UINT kTimerMs = 16;
 constexpr UINT kTranscriptChangedMessage = WM_APP + 186;
+constexpr UINT kAnchorChangedMessage = WM_APP + 192;
+constexpr UINT kVisibilityChangedMessage = WM_APP + 193;
 constexpr int kCompactWidth = 78;
 constexpr int kCompactHeight = 32;
 constexpr int kProcessingWidth = 112;
@@ -24,7 +26,7 @@ constexpr int kActionWidth = 142;
 constexpr int kActionHeight = 40;
 constexpr float kActionCenterInset = 18.0f;
 constexpr float kActionRadius = 12.0f;
-constexpr int kTranscriptWidth = 420;
+constexpr int kTranscriptWidth = kVoiceOverlayPreferredWidthDip;
 constexpr int kTranscriptHeight = 112;
 constexpr float kTranscriptHorizontalPadding = 14.0f;
 constexpr float kTranscriptTextTop = 33.0f;
@@ -131,6 +133,8 @@ bool WaveOverlay::init(HINSTANCE instance, std::function<void(Action)> action_ha
         return false;
     }
 
+    post_hwnd_.store(hwnd_, std::memory_order_release);
+
     // 设置窗口透明
     SetLayeredWindowAttributes(hwnd_, 0, 255, LWA_ALPHA);
     MARGINS mar = {-1};
@@ -141,6 +145,8 @@ bool WaveOverlay::init(HINSTANCE instance, std::function<void(Action)> action_ha
 
 void WaveOverlay::shutdown()
 {
+    post_hwnd_.store(nullptr, std::memory_order_release);
+    visibility_requested_.store(false);
     if (hwnd_)
     {
         DestroyWindow(hwnd_);
@@ -157,8 +163,29 @@ void WaveOverlay::shutdown()
 
 void WaveOverlay::show()
 {
+    visibility_requested_.store(true);
+    if (HWND hwnd = post_hwnd_.load(std::memory_order_acquire))
+        PostMessageW(hwnd, kVisibilityChangedMessage, 0, 0);
+}
+
+void WaveOverlay::hide()
+{
+    visibility_requested_.store(false);
+    if (HWND hwnd = post_hwnd_.load(std::memory_order_acquire))
+        PostMessageW(hwnd, kVisibilityChangedMessage, 0, 0);
+}
+
+void WaveOverlay::apply_visibility()
+{
     if (hwnd_)
     {
+        // UI-thread only: these window calls can synchronously dispatch messages. Background
+        // callers may hold the voice send mutex, which is also needed by UI cancel callbacks.
+        if (!visibility_requested_.load())
+        {
+            ShowWindow(hwnd_, SW_HIDE);
+            return;
+        }
         ReloadImeConfigIfChanged();
         const bool light_theme = ResolveConfiguredTheme(GetConfiguredThemeVoice()) == "light";
         if (light_theme != light_theme_)
@@ -174,12 +201,14 @@ void WaveOverlay::show()
     }
 }
 
-void WaveOverlay::hide()
+void WaveOverlay::set_anchor(const VoiceOverlayAnchor &anchor)
 {
-    if (hwnd_)
     {
-        ShowWindow(hwnd_, SW_HIDE);
+        std::lock_guard<std::mutex> lock(anchor_mutex_);
+        anchor_ = anchor;
     }
+    if (HWND hwnd = post_hwnd_.load(std::memory_order_acquire))
+        PostMessageW(hwnd, kAnchorChangedMessage, 0, 0);
 }
 
 void WaveOverlay::set_listening(bool listening)
@@ -201,8 +230,8 @@ void WaveOverlay::set_transcript(const std::wstring &text)
             return;
         transcript_ = text;
     }
-    if (hwnd_ && show_transcript_.load())
-        PostMessageW(hwnd_, kTranscriptChangedMessage, 0, 0);
+    if (HWND hwnd = post_hwnd_.load(std::memory_order_acquire); hwnd && show_transcript_.load())
+        PostMessageW(hwnd, kTranscriptChangedMessage, 0, 0);
 }
 
 void WaveOverlay::set_show_transcript(bool show)
@@ -215,8 +244,8 @@ void WaveOverlay::set_show_transcript(bool show)
         std::lock_guard<std::mutex> lock(transcript_mutex_);
         transcript_.clear();
     }
-    if (hwnd_)
-        PostMessageW(hwnd_, kTranscriptChangedMessage, 0, 0);
+    if (HWND hwnd = post_hwnd_.load(std::memory_order_acquire))
+        PostMessageW(hwnd, kTranscriptChangedMessage, 0, 0);
 }
 
 void WaveOverlay::set_compact_status(CompactStatus status)
@@ -224,8 +253,8 @@ void WaveOverlay::set_compact_status(CompactStatus status)
     const CompactStatus previous = compact_status_.exchange(status);
     if (previous == status)
         return;
-    if (hwnd_)
-        PostMessageW(hwnd_, kTranscriptChangedMessage, 0, 0);
+    if (HWND hwnd = post_hwnd_.load(std::memory_order_acquire))
+        PostMessageW(hwnd, kTranscriptChangedMessage, 0, 0);
 }
 
 void WaveOverlay::set_actions_visible(bool visible)
@@ -233,8 +262,8 @@ void WaveOverlay::set_actions_visible(bool visible)
     const bool previous = actions_visible_.exchange(visible);
     if (previous == visible)
         return;
-    if (hwnd_)
-        PostMessageW(hwnd_, kTranscriptChangedMessage, 0, 0);
+    if (HWND hwnd = post_hwnd_.load(std::memory_order_acquire))
+        PostMessageW(hwnd, kTranscriptChangedMessage, 0, 0);
 }
 
 LRESULT CALLBACK WaveOverlay::wnd_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -275,18 +304,33 @@ LRESULT WaveOverlay::handle_message(HWND hwnd, UINT message, WPARAM wParam, LPAR
         {
             render_target_->Resize(D2D1::SizeU(LOWORD(lParam), HIWORD(lParam)));
         }
-        update_dpi_scale();
+        update_dpi_scale(resolve_anchor());
         return 0;
     case WM_DPICHANGED:
-        // update_window_bounds 内部会刷新缩放，DPI 变化时重新计算位置/尺寸。
-        update_window_bounds();
-        return 0;
-    case WM_DISPLAYCHANGE:
-        // 分辨率切换时重新按当前显示器计算 DPI 缩放与窗口位置/尺寸，
-        // 与候选框一致地适配分辨率变化（SetWindowPos 触发的 WM_SIZE 会同步渲染目标尺寸）。
+        // A saved anchor is refreshed only for system layout changes. Ordinary foreground changes
+        // during recognition never reach this path.
+        refresh_anchor_for_display_change();
         update_window_bounds();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    case WM_DISPLAYCHANGE:
+        // Re-resolve the saved monitor after a display/DPI layout change, then keep growing from
+        // the same saved monitor. Foreground focus is deliberately not consulted.
+        refresh_anchor_for_display_change();
+        update_window_bounds();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_SETTINGCHANGE:
+        // Taskbar position/autohide changes resize rcWork without necessarily changing the monitor
+        // or DPI. Refresh the saved anchor for that layout change only.
+        if (wParam == SPI_SETWORKAREA)
+        {
+            refresh_anchor_for_display_change();
+            update_window_bounds();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        break;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_SETCURSOR: {
@@ -335,6 +379,13 @@ LRESULT WaveOverlay::handle_message(HWND hwnd, UINT message, WPARAM wParam, LPAR
         if (action_handler_)
             action_handler_(Action::Cancel);
         return 0;
+    case kVisibilityChangedMessage:
+        apply_visibility();
+        return 0;
+    case kAnchorChangedMessage:
+        update_window_bounds();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
     case kTranscriptChangedMessage:
         if (!actions_visible_.load())
             action_pressed_ = false;
@@ -351,6 +402,7 @@ LRESULT WaveOverlay::handle_message(HWND hwnd, UINT message, WPARAM wParam, LPAR
     }
     case WM_DESTROY:
         KillTimer(hwnd, kTimerId);
+        post_hwnd_.store(nullptr, std::memory_order_release);
         release_render_target();
         return 0;
     default:
@@ -412,7 +464,7 @@ bool WaveOverlay::ensure_render_target()
         return false;
     }
 
-    update_dpi_scale();
+    update_dpi_scale(resolve_anchor());
     return true;
 }
 
@@ -479,30 +531,37 @@ bool WaveOverlay::ensure_text_layout(const std::wstring &transcript, float width
     return true;
 }
 
-void WaveOverlay::update_dpi_scale()
+VoiceOverlayAnchor WaveOverlay::resolve_anchor() const
+{
+    {
+        std::lock_guard<std::mutex> lock(anchor_mutex_);
+        if (anchor_.valid)
+            return anchor_;
+    }
+    return CaptureVoiceOverlayAnchor();
+}
+
+void WaveOverlay::refresh_anchor_for_display_change()
+{
+    std::lock_guard<std::mutex> lock(anchor_mutex_);
+    if (anchor_.valid)
+        anchor_ = RefreshVoiceOverlayAnchorForDisplayChange(anchor_);
+}
+
+void WaveOverlay::update_dpi_scale(const VoiceOverlayAnchor &anchor)
 {
     if (!hwnd_)
-    {
         return;
-    }
 
-    // 与候选框一致：按目标显示器（前台窗口所在显示器，与 update_window_bounds 里
-    // GetForegroundMonitorMetrics 同源）的有效 DPI 计算缩放，而不是用 GetDpiForWindow(hwnd_)。
-    // 后者在切换分辨率时可能返回陈旧值，且当提示条与前台窗口分处不同显示器时会取错
-    // DPI，导致尺寸/缩放错误。
-    const float scale = mvi_utils::GetForegroundMonitorScale();
+    // The anchor captured at recording start owns the scale for this session. Only a fixture that
+    // never called set_anchor falls back to the foreground monitor.
+    const float scale = anchor.valid ? anchor.scale() : mvi_utils::GetForegroundMonitorScale();
     scale_x_ = scale;
     scale_y_ = scale;
     dpi_ = static_cast<UINT>(std::lround(scale * USER_DEFAULT_SCREEN_DPI));
 
-    // 渲染目标的 DPI 决定 draw() 里逻辑坐标（px / scale_）到像素的映射。它只在
-    // CreateHwndRenderTarget 时按创建时的系统 DPI 定过一次，切换分辨率/DPI 后不会自动
-    // 更新，导致逻辑坐标映射到错误的像素尺寸（尺寸/缩放错乱）。这里同步刷新，等价于
-    // 候选框把新 DPI 推进 D2D 设备（SetDpiOverride/SetDpi）的做法。
     if (render_target_)
-    {
         render_target_->SetDpi(static_cast<float>(dpi_), static_cast<float>(dpi_));
-    }
 }
 
 void WaveOverlay::update_window_bounds()
@@ -511,7 +570,8 @@ void WaveOverlay::update_window_bounds()
         return;
     // 每次重新定位都按当前目标显示器刷新缩放，使 show()、状态切换、分辨率/DPI 变化
     // 走到的尺寸计算始终基于最新的显示器 DPI（与候选框每次显示都重算的行为一致）。
-    update_dpi_scale();
+    const VoiceOverlayAnchor anchor = resolve_anchor();
+    update_dpi_scale(anchor);
     bool has_transcript = false;
     if (show_transcript_.load())
     {
@@ -528,11 +588,18 @@ void WaveOverlay::update_window_bounds()
                     : (has_compact_status ? kProcessingHeight : (has_transcript ? kTranscriptHeight : kCompactHeight));
     const int width = static_cast<int>(std::lround(logical_width * scale_x_));
     const int height = static_cast<int>(std::lround(logical_height * scale_y_));
-    // 无论任务栏在哪条边，都让语音条位于“屏幕水平正中、偏底部”：
-    //  - 水平按整屏矩形（rcMonitor）居中，不受左/右任务栏挤压工作区的影响；
-    //  - 垂直贴工作区（rcWork）底部上方 10px，自动避开底部任务栏（任务栏在其它边时
-    //    rcWork.bottom 即整屏底部）。
-    const mvi_utils::MonitorMetrics metrics = mvi_utils::GetForegroundMonitorMetrics();
+    // Preserve the recording bar's existing full-monitor centering and 10 physical-pixel
+    // work-area bottom gap. Only the monitor/DPI source is pinned to recording start.
+    mvi_utils::MonitorMetrics metrics;
+    if (anchor.valid)
+    {
+        metrics.full = anchor.full;
+        metrics.work = anchor.work;
+    }
+    else
+    {
+        metrics = mvi_utils::GetForegroundMonitorMetrics();
+    }
     const int x = (metrics.full.right + metrics.full.left) / 2 - width / 2;
     const int y = metrics.work.bottom - height - 10;
     SetWindowPos(hwnd_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);

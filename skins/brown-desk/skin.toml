@@ -1,0 +1,117 @@
+schema_version = 2
+
+id = "brown-desk"
+name = "布朗熊上班 Demo"
+version = "0.1.1"
+description = "奶油棕浅色 / 可可棕深色候选窗，布朗熊敲电脑动图与圆底工具按钮。仅供学习使用，形象版权归 LINE FRIENDS。"
+base = "canvas"
+
+[supports]
+layouts = ["horizontal", "vertical"]
+themes = ["dark", "light"]
+
+# 面板用原生圆角底色，随主题切换；不再让一张奶油色贴图覆盖两套配色。
+# 原面板边宽 10 DIP + canvas 内边距 5 DIP，合为 15 DIP，保持横竖排的内容留白。
+[candidate_window]
+shadow = "soft"
+corner_radius_dip = 8
+border_width_dip = 1
+padding = 15
+item_corner_radius_dip = 4
+
+[candidate.dark]
+surface = "#2E241F"
+border = "#8C6A50"
+accent = "#F2AD68"
+text = "#F9EBDD"
+candidate_text = "#F9EBDD"
+preedit_text = "#F9EBDD"
+preedit_caret = "#F2AD68"
+number = "#C9AB91"
+selected = "#64442F"
+hover = "#463328"
+translation = "#D7B99C"
+translation_pos = "#C9AB91"
+translation_separator = "#A98A70"
+selected_text = "#FFF4E8"
+selected_number = "#FFD09C"
+selected_translation = "#FFE0BC"
+selected_translation_pos = "#FFD09C"
+selected_translation_separator = "#DBBA98"
+selected_bar = "#F2AD68"
+show_selected_bar = true
+preedit_background = "transparent"
+preedit_divider = "transparent"
+page_arrow_divider = "#8C6A50"
+
+[candidate.dark.menu]
+background = "#2E241F"
+border = "#8C6A50"
+text = "#F9EBDD"
+hover = "#463328"
+
+[candidate.light]
+surface = "#FCF3E3"
+border = "#9A7855"
+accent = "#BD641E"
+text = "#5A3A22"
+candidate_text = "#5A3A22"
+preedit_text = "#5A3A22"
+preedit_caret = "#BD641E"
+number = "#88603E"
+selected = "#F7DAB7"
+hover = "#F0E3D1"
+translation = "#88603E"
+translation_pos = "#88603E"
+translation_separator = "#956A45"
+selected_text = "#5A3A22"
+selected_number = "#704726"
+selected_translation = "#704726"
+selected_translation_pos = "#704726"
+selected_translation_separator = "#88603E"
+selected_bar = "#BD641E"
+show_selected_bar = true
+preedit_background = "transparent"
+preedit_divider = "transparent"
+page_arrow_divider = "#9A7855"
+
+[candidate.light.menu]
+background = "#FCF3E3"
+border = "#9A7855"
+text = "#5A3A22"
+hover = "#F0E3D1"
+
+# 240x272 px 的 APNG 按 0.7 显示：168 x 190.4 DIP，布朗熊竖直居中。按钮不画进背景图：圆底是每个按钮自己的
+# background（button_defaults），按 button_flow 在熊右边竖排，设置页关掉哪个按钮，它连同圆底一起消失、后面的往上补。
+[toolbar]
+mode = "image"
+image = "assets/toolbar.apng"
+image_width_dip = 168
+image_height_dip = 190.4
+icon_corner_radius_dip = 15
+
+[toolbar.dark]
+hover = "rgba(90,58,34,.18)"
+icon = "#5A3A22"
+
+[toolbar.light]
+hover = "rgba(90,58,34,.18)"
+icon = "#5A3A22"
+
+[toolbar.button_defaults]
+width_dip = 30
+height_dip = 30
+icon_size_dip = 20
+background = "assets/plate.png"
+
+[toolbar.button_flow]
+x_dip = 170
+y_dip = 0
+direction = "vertical"
+gap_dip = 2
+
+# 素材授权未核实，仅作仓库演示；打包脚本按 UNVERIFIED 标记排除，不随安装包分发。
+[license]
+code = "MIT"
+assets = "UNVERIFIED-DEMO-ONLY"
+source = "布朗熊动图来自网络（LINE FRIENDS），按钮圆底与候选窗面板由 Metasequoia IME contributors 程序生成。"

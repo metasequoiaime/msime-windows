@@ -392,6 +392,106 @@ std::vector<LatticePath> decode_word_lattice(const Segments &syllables, const Wo
     return paths;
 }
 
+std::vector<LatticePath> decode_fault_lattice(const size_t slot_count,
+                                              const std::vector<std::vector<FaultLatticeEdge>> &edges_by_start,
+                                              const WordLatticeOptions &options)
+{
+    if (slot_count == 0)
+        return {};
+    const ngram::LanguageModel *model = active_model(options);
+
+    // 与 decode_word_lattice 同一套 Viterbi：边由调用方按容错槽位预先查出并已折进
+    // 手误代价，这里只负责 kenlm 打分、beam 剪枝与 n-best 去重。裁决用的解码刻意
+    // 不装配搭配 scorer（octagram 禁令），量纲与词格主分同域（log10）。
+    std::vector<std::vector<Hyp>> columns(slot_count + 1);
+    Hyp start;
+    start.score = 0.0;
+    // 同 decode_word_lattice：shipped sc.lm 无 <s>/</s>，从空上下文起步。
+    if (model)
+        start.state = model->null_state();
+    columns[0].push_back(std::move(start));
+
+    for (size_t pos = 0; pos < slot_count; ++pos)
+    {
+        keep_beam(columns[pos], options.beam);
+        if (columns[pos].empty())
+            continue;
+        for (int hi = 0; hi < static_cast<int>(columns[pos].size()); ++hi)
+        {
+            const Hyp &hyp = columns[pos][static_cast<size_t>(hi)];
+            if (pos >= edges_by_start.size())
+                continue;
+            for (const auto &edge : edges_by_start[pos])
+            {
+                if (edge.start != pos || edge.end <= pos || edge.end > slot_count)
+                    continue;
+                Hyp next;
+                // penalty 是手误代价（正数，log10），从路径分里扣；与 decode_word_lattice
+                // 的 base_score -= row.penalty 同向。
+                next.score = hyp.score - edge.penalty;
+                if (model)
+                {
+                    next.score += dictionary_tiebreak(edge.weight, options);
+                    const ngram::WordIndex index = model->index(edge.word);
+                    next.score += model->score(hyp.state, index, next.state);
+                }
+                else
+                {
+                    // 无模型时按覆盖槽位数近似短语长度（同 heuristic_log_prob 的长度奖励）；
+                    // 手误代价已在上面扣过，权重只剩一个很小的对数项。
+                    next.score += std::log(edge.weight > 0 ? static_cast<double>(edge.weight) : 1.0) +
+                                  options.phrase_length_bonus * static_cast<double>(edge.end - pos);
+                }
+                next.prev_pos = static_cast<int>(pos);
+                next.prev_idx = static_cast<int>(hi);
+                next.word = edge.word;
+                next.key = edge.key;
+                columns[edge.end].push_back(std::move(next));
+            }
+        }
+    }
+
+    auto &final_col = columns[slot_count];
+    if (final_col.empty())
+        return {};
+    std::sort(final_col.begin(), final_col.end(), [](const Hyp &a, const Hyp &b) { return a.score > b.score; });
+    const int take = (std::min)(options.nbest, static_cast<int>(final_col.size()));
+
+    std::vector<LatticePath> paths;
+    paths.reserve(static_cast<size_t>(take));
+    std::unordered_set<std::string> seen;
+    for (int i = 0; i < static_cast<int>(final_col.size()) && static_cast<int>(paths.size()) < take; ++i)
+    {
+        LatticePath path;
+        path.log_prob = final_col[static_cast<size_t>(i)].score;
+        int pos = static_cast<int>(slot_count);
+        int idx = i;
+        std::vector<std::string> keys;
+        while (pos > 0 && idx >= 0)
+        {
+            const Hyp &h = columns[static_cast<size_t>(pos)][static_cast<size_t>(idx)];
+            path.words.push_back(h.word);
+            keys.push_back(h.key);
+            pos = h.prev_pos;
+            idx = h.prev_idx;
+        }
+        std::reverse(path.words.begin(), path.words.end());
+        std::reverse(keys.begin(), keys.end());
+        for (const auto &w : path.words)
+            path.sentence += w;
+        for (size_t k = 0; k < keys.size(); ++k)
+        {
+            if (k)
+                path.key.push_back('\'');
+            path.key += keys[k];
+        }
+        if (path.sentence.empty() || !seen.insert(path.sentence).second)
+            continue;
+        paths.push_back(std::move(path));
+    }
+    return paths;
+}
+
 void merge_lattice_candidates(std::vector<WordItem> &candidates, const Segments &syllables,
                               const WordLatticeLookup &lookup, const std::string &typed_pinyin,
                               const WordLatticeOptions &options, const std::vector<SourcedLatticeReranker> &rerankers)

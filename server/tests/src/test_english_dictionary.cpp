@@ -18,7 +18,7 @@ class TemporaryEnglishDatabase
     TemporaryEnglishDatabase()
     {
         const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-        directory_ = std::filesystem::temp_directory_path() / ("metasequoia_english_test_" + suffix);
+        directory_ = test::TempRoot() / ("metasequoia_english_test_" + suffix);
         std::filesystem::create_directories(directory_);
         path_ = directory_ / "english.db";
 

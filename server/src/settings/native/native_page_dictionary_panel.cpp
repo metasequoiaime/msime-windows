@@ -521,7 +521,10 @@ bool DictTableBody::OnMouseUp(const POINT &point, WPARAM)
     const auto pressed = pressed_;
     pressed_ = {kNone, false};
     if (hit == pressed && onAction_)
-        onAction_(pressed.first, pressed.second);
+    {
+        const auto handler = onAction_;
+        handler(pressed.first, pressed.second);
+    }
     return true;
 }
 
@@ -821,7 +824,11 @@ void DictionaryPanel::SetDictionary(const std::string &dictionary)
     rows_.clear();
     body_->SetEmpty(L"输入查询条件后查看词条");
     if (onModeChanged_)
-        onModeChanged_();
+    {
+        // A handler may tear down the panel that owns onModeChanged_ while it runs.
+        const auto handler = onModeChanged_;
+        handler();
+    }
 }
 
 void DictionaryPanel::SetOnModeChanged(std::function<void()> handler)

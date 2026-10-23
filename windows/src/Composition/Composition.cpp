@@ -1171,10 +1171,13 @@ STDAPI CMetasequoiaIME::OnCompositionTerminated(TfEditCookie ecWrite, _In_ ITfCo
     ITfComposition *terminatedComposition = pComposition;
     terminatedComposition->AddRef();
 
-    // The host-forced termination keeps the text in the document (see the
-    // Do NOT SetText(empty) note below), so this is a real commit and must be
-    // counted before any teardown runs.
-    _CaptureCompositionStats(ecWrite, terminatedComposition);
+    // A host can end a preview before the document-focus callback runs. Voice
+    // finals clear this flag before committing; an active preview is temporary.
+    const bool discardVoicePreview = _voiceCompositionActive;
+    if (!discardVoicePreview)
+    {
+        _CaptureCompositionStats(ecWrite, terminatedComposition);
+    }
 
     _pComposition->Release();
     _pComposition = nullptr;
@@ -1208,10 +1211,20 @@ STDAPI CMetasequoiaIME::OnCompositionTerminated(TfEditCookie ecWrite, _In_ ITfCo
         SendHideCandidateWndEventToUIProcess();
     }
 
-    // Do NOT SetText(empty) here. Cancel paths already wipe via
-    // _HandleCancel → _RemoveDummyCompositionForComposing. Wiping again after
-    // a normal commit/EndComposition can delete the just-committed text and
-    // destabilize fragile hosts (notably QQ).
+    // Only the terminated voice preview owns disposable text. Never wipe an
+    // ordinary or finalized composition: that would delete committed text.
+    // Ownership was detached above before these potentially re-entrant calls.
+    if (discardVoicePreview)
+    {
+        ITfRange *previewRange = nullptr;
+        if (SUCCEEDED(terminatedComposition->GetRange(&previewRange)) && previewRange)
+        {
+            const HRESULT removeHr = SafeRangeSetText(previewRange, ecWrite, 0, L"", 0);
+            if (FAILED(removeHr))
+                _DebugCompositionRecovery(L"host-terminated-voice-preview", removeHr);
+            previewRange->Release();
+        }
+    }
     if (ownerContext)
     {
         _ClearCompositionDisplayAttributes(ecWrite, ownerContext, terminatedComposition);
@@ -1364,8 +1377,11 @@ bool CMetasequoiaIME::_CaptureCompositionStats(TfEditCookie ec, _In_ ITfComposit
 //----------------------------------------------------------------------------
 
 HRESULT CMetasequoiaIME::_AddComposingAndChar(TfEditCookie ec, _In_ ITfContext *pContext,
-                                              _In_ CStringRange *pstrAddString)
+                                              _In_ CStringRange *pstrAddString, bool voicePreview)
 {
+    // Keyboard text takes ownership before SetText: a host may terminate the composition
+    // reentrantly while applying it. Only streaming voice updates retain the preview marker.
+    _voiceCompositionActive = voicePreview;
     HRESULT hr = S_OK;
 
     if (_pComposition != nullptr)
@@ -1442,6 +1458,7 @@ HRESULT CMetasequoiaIME::_AddComposingAndChar(TfEditCookie ec, _In_ ITfContext *
 HRESULT CMetasequoiaIME::_AddCharAndFinalize(TfEditCookie ec, _In_ ITfContext *pContext,
                                              _In_ CStringRange *pstrAddString, bool requireSelection)
 {
+    _voiceCompositionActive = false;
     HRESULT hr = E_FAIL;
 
     if (_pComposition != nullptr)
@@ -1487,6 +1504,7 @@ HRESULT CMetasequoiaIME::_AddCharAndFinalize(TfEditCookie ec, _In_ ITfContext *p
 HRESULT CMetasequoiaIME::_InsertTextToComposition(TfEditCookie ec, _In_ ITfContext *pContext,
                                                   _In_ CStringRange *pstrAddString)
 {
+    _voiceCompositionActive = false;
     if (_pComposition == nullptr)
     {
         return E_FAIL;
@@ -1523,6 +1541,7 @@ HRESULT CMetasequoiaIME::_InsertTextToComposition(TfEditCookie ec, _In_ ITfConte
 HRESULT CMetasequoiaIME::_SetCompositionTextAndSelection(TfEditCookie ec, _In_ ITfContext *pContext,
                                                          _In_ CStringRange *pstrAddString)
 {
+    _voiceCompositionActive = false;
     if (_pComposition == nullptr)
     {
         return E_FAIL;

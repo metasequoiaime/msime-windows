@@ -456,6 +456,10 @@ SwitchLanguageHotkeys ParseSwitchLanguageHotkeys(const std::filesystem::path &co
         {
             result.character_set_ctrl_shift_f = ParseTomlBool(raw, true);
         }
+        else if (key == "commit_pinyin_shift_enter")
+        {
+            result.commit_pinyin_shift_enter = ParseTomlBool(raw, true);
+        }
         else if (key == "switch_language" && !sawShift && !sawCtrlAltSpace)
         {
             // Legacy array: switch_language = ["Ctrl+Space", "Shift"]

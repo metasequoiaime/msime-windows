@@ -130,7 +130,8 @@ void CandidateList::SetSelectedIndex(size_t index)
     selectedIndex_ = clamped;
     if (onSelectionChanged_)
     {
-        onSelectionChanged_(selectedIndex_);
+        const auto handler = onSelectionChanged_;
+        handler(selectedIndex_);
     }
     InvalidateVisual();
 }
@@ -746,7 +747,8 @@ bool CandidateList::OnMouseUp(const POINT &point, WPARAM keyState)
         SetSelectedIndex(hit);
         if (onItemActivated_)
         {
-            onItemActivated_(hit);
+            const auto handler = onItemActivated_;
+            handler(hit);
         }
     }
 
@@ -773,7 +775,8 @@ bool CandidateList::OnContextMenu(const POINT &point, WPARAM keyState)
     InvalidateVisual();
     if (onContextMenu_)
     {
-        onContextMenu_(hit, point);
+        const auto handler = onContextMenu_;
+        handler(hit, point);
     }
     return true;
 }

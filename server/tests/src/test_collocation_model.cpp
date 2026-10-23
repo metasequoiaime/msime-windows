@@ -2,6 +2,7 @@
 // 激活写入与「空激活 = 未选择任何模型」的解析语义。消息 schema 的形状（collocationModel
 // Download/Delete 带 modelId）由 webview_contract 的 fixtures 覆盖，这里钉 Server 侧行为。
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 #include "src/config/ime_config.h"
 #include "src/session/engine_input_session.h"
 #include "src/settings/collocation_model.h"
@@ -70,8 +71,7 @@ class ScopedCollocationEnvironment
 {
   public:
     ScopedCollocationEnvironment()
-        : root_(std::filesystem::temp_directory_path() /
-                (L"msime-collocation-model-test-" + std::to_wstring(GetCurrentProcessId()))),
+        : root_(test::TempRoot() / (L"msime-collocation-model-test-" + std::to_wstring(GetCurrentProcessId()))),
           local_app_data_(L"LOCALAPPDATA", root_.wstring()),
           config_dir_(L"METASEQUOIA_IME_CONFIG_DIR", (root_ / L"metasequoiaime").wstring()),
           data_dir_(L"METASEQUOIA_IME_DATA_DIR", (root_ / L"metasequoiaime").wstring())
@@ -120,6 +120,23 @@ void SeedModelFile(const std::filesystem::path &models_dir, const std::wstring &
     std::ofstream output(models_dir / id / (id + L".gram"), std::ios::binary | std::ios::trunc);
     REQUIRE(static_cast<bool>(output));
     output << "gram";
+}
+
+void WriteTextFile(const std::filesystem::path &file, const std::string &text)
+{
+    std::ofstream output(file, std::ios::binary | std::ios::trunc);
+    REQUIRE(static_cast<bool>(output));
+    output << text;
+}
+
+// 最小的合法 octagram 头：魔数 + 空双数组（44 字节，边界检查恰好落在文件内）。
+// 导入链路会真的跑 GramDb::open 的格式校验，随便几个字节过不了。
+void WriteMinimalGramFile(const std::filesystem::path &file)
+{
+    std::string bytes(44, '\0');
+    const std::string magic = "Rime::Grammar/";
+    bytes.replace(0, magic.size(), magic);
+    WriteTextFile(file, bytes);
 }
 } // namespace
 
@@ -276,4 +293,206 @@ TEST_CASE(collocation_import_rejects_bad_ids_and_sources_and_validates_format)
     REQUIRE(collocation::ImportModel(collocation::kRecommendedModelId, source));
     REQUIRE_EQ(std::filesystem::file_size(env.models_dir() / L"wanxiang-lts-zh-hans" / L"wanxiang-lts-zh-hans.gram"),
                static_cast<std::uintmax_t>(4));
+}
+
+TEST_CASE(collocation_remote_identity_verdicts_follow_etag_modified_length)
+{
+    const collocation::RemoteIdentity installed{"\"0x8DF2D93621D626A\"", "Mon, 19 Oct 2026 03:45:13 GMT", 398497836LL};
+    collocation::RemoteIdentity remote = installed;
+    REQUIRE(collocation::CompareRemoteIdentity(installed, 398497836LL, remote) == collocation::UpdateVerdict::Current);
+
+    // 三个判据任一变化都算上游重传过。
+    remote.etag = "\"0xOTHER\"";
+    REQUIRE(collocation::CompareRemoteIdentity(installed, 398497836LL, remote) == collocation::UpdateVerdict::Update);
+    remote = installed;
+    remote.last_modified = "Tue, 20 Oct 2026 03:45:13 GMT";
+    REQUIRE(collocation::CompareRemoteIdentity(installed, 398497836LL, remote) == collocation::UpdateVerdict::Update);
+    remote = installed;
+    remote.length = 398497837LL;
+    REQUIRE(collocation::CompareRemoteIdentity(installed, 398497836LL, remote) == collocation::UpdateVerdict::Update);
+
+    // 旧安装没有 .remote：长度相等按最新处理（同时补记录），不等才提示更新。
+    const collocation::RemoteIdentity empty;
+    REQUIRE(collocation::CompareRemoteIdentity(empty, 398497836LL, installed) == collocation::UpdateVerdict::Current);
+    REQUIRE(collocation::CompareRemoteIdentity(empty, 398497835LL, installed) == collocation::UpdateVerdict::Update);
+    // 远端一个信号都没有（离线 / 代理剥掉头）：不误报。
+    REQUIRE(collocation::CompareRemoteIdentity(installed, 398497836LL, empty) == collocation::UpdateVerdict::Unknown);
+    REQUIRE(collocation::CompareRemoteIdentity(empty, 398497836LL, empty) == collocation::UpdateVerdict::Unknown);
+}
+
+TEST_CASE(collocation_remote_identity_tolerates_missing_and_malformed_files)
+{
+    ScopedCollocationEnvironment env;
+    const std::filesystem::path directory = env.models_dir() / L"wanxiang-lts-zh-hans";
+    std::error_code ec;
+    std::filesystem::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    // 文件不存在：空结构，不抛异常。
+    const collocation::RemoteIdentity missing = collocation::ReadRemoteIdentity(directory);
+    REQUIRE(missing.etag.empty());
+    REQUIRE(missing.last_modified.empty());
+    REQUIRE_EQ(missing.length, static_cast<long long>(0));
+
+    const collocation::RemoteIdentity identity{"\"0x8DF2D93621D626A\"", "Mon, 19 Oct 2026 03:45:13 GMT", 398497836LL};
+    REQUIRE(collocation::WriteRemoteIdentity(directory, identity));
+    const collocation::RemoteIdentity read = collocation::ReadRemoteIdentity(directory);
+    REQUIRE_EQ(read.etag, identity.etag);
+    REQUIRE_EQ(read.last_modified, identity.last_modified);
+    REQUIRE_EQ(read.length, identity.length);
+
+    // CRLF、空值、未知键、坏长度都容错：能读的读，坏的当未知。
+    WriteTextFile(directory / L".remote", "etag=\r\nlast-modified=Tue, 20 Oct 2026 00:00:00 GMT\r\n"
+                                          "length=not-a-number\r\nfuture-key=whatever\r\n\r\n");
+    const collocation::RemoteIdentity tolerant = collocation::ReadRemoteIdentity(directory);
+    REQUIRE(tolerant.etag.empty());
+    REQUIRE_EQ(tolerant.last_modified, std::string("Tue, 20 Oct 2026 00:00:00 GMT"));
+    REQUIRE_EQ(tolerant.length, static_cast<long long>(0));
+}
+
+TEST_CASE(collocation_apply_pending_updates_swaps_model_and_remote_identity)
+{
+    ScopedCollocationEnvironment env;
+    const std::wstring id = L"wanxiang-lts-zh-hans";
+    const std::filesystem::path directory = env.models_dir() / id;
+    SeedModelFile(env.models_dir(), id);                                           // 旧模型，4 字节
+    WriteTextFile(directory / L"wanxiang-lts-zh-hans.gram.new", "new-gram-model"); // 14 字节
+    REQUIRE(collocation::WriteRemoteIdentity(directory, {"\"old\"", "old-time", 4}));
+    WriteTextFile(directory / L".remote.new", "etag=\"new\"\nlast-modified=new-time\nlength=14\n");
+
+    collocation::ApplyPendingUpdates();
+
+    REQUIRE(!std::filesystem::exists(directory / L"wanxiang-lts-zh-hans.gram.new"));
+    REQUIRE(!std::filesystem::exists(directory / L".remote.new"));
+    REQUIRE_EQ(std::filesystem::file_size(directory / L"wanxiang-lts-zh-hans.gram"), static_cast<std::uintmax_t>(14));
+    const collocation::RemoteIdentity applied = collocation::ReadRemoteIdentity(directory);
+    REQUIRE_EQ(applied.etag, std::string("\"new\""));
+    REQUIRE_EQ(applied.last_modified, std::string("new-time"));
+    REQUIRE_EQ(applied.length, static_cast<long long>(14));
+
+    // 只有 .gram.new、没有旧 .gram：直接落位；没有 .remote.new 时删掉旧记录，
+    // 下一次探测按「旧安装」口径用长度补记录。
+    std::filesystem::remove(directory / L"wanxiang-lts-zh-hans.gram");
+    WriteTextFile(directory / L"wanxiang-lts-zh-hans.gram.new", "fresh");
+    collocation::ApplyPendingUpdates();
+    REQUIRE_EQ(std::filesystem::file_size(directory / L"wanxiang-lts-zh-hans.gram"), static_cast<std::uintmax_t>(5));
+    REQUIRE(!std::filesystem::exists(directory / L".remote"));
+}
+
+TEST_CASE(collocation_status_exposes_pending_update_without_reporting_available)
+{
+    ScopedCollocationEnvironment env;
+    const std::wstring id = L"wanxiang-lts-zh-hans";
+    SeedModelFile(env.models_dir(), id);
+    auto statuses = collocation::GetModelStatuses();
+    REQUIRE_EQ(statuses["wanxiang-lts-zh-hans"].state, std::string("ready"));
+    REQUIRE(!statuses["wanxiang-lts-zh-hans"].update_available);
+    REQUIRE(!statuses["wanxiang-lts-zh-hans"].update_pending);
+
+    // .gram.new 存在即「已下载、等重启」，不再同时提示可更新。
+    WriteTextFile(env.models_dir() / id / L"wanxiang-lts-zh-hans.gram.new", "pending");
+    statuses = collocation::GetModelStatuses();
+    REQUIRE_EQ(statuses["wanxiang-lts-zh-hans"].state, std::string("ready"));
+    REQUIRE(!statuses["wanxiang-lts-zh-hans"].update_available);
+    REQUIRE(statuses["wanxiang-lts-zh-hans"].update_pending);
+}
+
+TEST_CASE(collocation_delete_removes_update_sidecars)
+{
+    ScopedCollocationEnvironment env;
+    const std::wstring id = L"wanxiang-lts-zh-hans";
+    const std::filesystem::path directory = env.models_dir() / id;
+    SeedModelFile(env.models_dir(), id);
+    WriteTextFile(directory / L"wanxiang-lts-zh-hans.gram.new", "pending");
+    REQUIRE(collocation::WriteRemoteIdentity(directory, {"\"etag\"", "time", 4}));
+    WriteTextFile(directory / L".remote.new", "etag=\"next\"\n");
+
+    REQUIRE(collocation::DeleteModel(collocation::kRecommendedModelId));
+    REQUIRE(!std::filesystem::exists(directory / L"wanxiang-lts-zh-hans.gram"));
+    REQUIRE(!std::filesystem::exists(directory / L"wanxiang-lts-zh-hans.gram.new"));
+    REQUIRE(!std::filesystem::exists(directory / L".remote"));
+    REQUIRE(!std::filesystem::exists(directory / L".remote.new"));
+    auto statuses = collocation::GetModelStatuses();
+    REQUIRE_EQ(statuses["wanxiang-lts-zh-hans"].state, std::string("absent"));
+    REQUIRE(!statuses["wanxiang-lts-zh-hans"].update_pending);
+}
+
+TEST_CASE(collocation_apply_pending_updates_keeps_both_files_while_old_model_is_mapped)
+{
+    ScopedCollocationEnvironment env;
+    const std::wstring id = L"wanxiang-lts-zh-hans";
+    const std::filesystem::path directory = env.models_dir() / id;
+    const std::filesystem::path target = directory / L"wanxiang-lts-zh-hans.gram";
+    const std::filesystem::path pending = directory / L"wanxiang-lts-zh-hans.gram.new";
+    SeedModelFile(env.models_dir(), id);      // 旧模型，4 字节
+    WriteTextFile(pending, "new-gram-model"); // 新版本，14 字节
+
+    // 模拟输入法进程的映射：引擎只用 FILE_SHARE_READ 打开 .gram（没有 FILE_SHARE_DELETE），
+    // 这正是「待重启」存在的理由。
+    HANDLE mapped = CreateFileW(target.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(mapped != INVALID_HANDLE_VALUE);
+    collocation::ApplyPendingUpdates();
+    // 先读结果再断言：断言抛异常时句柄必须已经关上，否则临时目录删不掉、后面的用例跟着挂。
+    std::error_code size_error;
+    const std::uintmax_t locked_bytes = std::filesystem::file_size(target, size_error);
+    const bool locked_pending_exists = std::filesystem::exists(pending);
+    CloseHandle(mapped);
+
+    // 落不了位不是错误：旧模型一个字节都没动，新文件留着等下次启动。不允许「先删旧的再改名」
+    // 那样中间留下没有模型的窗口。
+    REQUIRE(!size_error);
+    REQUIRE_EQ(locked_bytes, static_cast<std::uintmax_t>(4));
+    REQUIRE(locked_pending_exists);
+
+    // 映射释放后，下一次启动的 ApplyPendingUpdates 收敛到新版本。
+    collocation::ApplyPendingUpdates();
+    REQUIRE_EQ(std::filesystem::file_size(target), static_cast<std::uintmax_t>(14));
+    REQUIRE(!std::filesystem::exists(pending));
+    auto statuses = collocation::GetModelStatuses();
+    REQUIRE_EQ(statuses["wanxiang-lts-zh-hans"].state, std::string("ready"));
+    REQUIRE(!statuses["wanxiang-lts-zh-hans"].update_pending);
+}
+
+TEST_CASE(collocation_apply_pending_updates_skips_logically_deleted_model)
+{
+    ScopedCollocationEnvironment env;
+    const std::wstring id = L"wanxiang-lts-zh-hans";
+    const std::filesystem::path directory = env.models_dir() / id;
+    SeedModelFile(env.models_dir(), id);
+    WriteTextFile(directory / L"wanxiang-lts-zh-hans.gram.new", "new-gram-model");
+    // .trash 在、旧 .gram 还没能物理删除（映射未释放）：删除意愿优先，待更新不得抢先落位。
+    WriteTextFile(directory / L".trash", "");
+
+    collocation::ApplyPendingUpdates();
+
+    REQUIRE_EQ(std::filesystem::file_size(directory / L"wanxiang-lts-zh-hans.gram"), static_cast<std::uintmax_t>(4));
+    REQUIRE(std::filesystem::exists(directory / L"wanxiang-lts-zh-hans.gram.new"));
+}
+
+TEST_CASE(collocation_import_does_not_fabricate_remote_identity)
+{
+    ScopedCollocationEnvironment env;
+    const std::wstring id = L"wanxiang-lts-zh-hans";
+    const std::filesystem::path directory = env.models_dir() / id;
+    std::error_code ec;
+    std::filesystem::create_directories(directory, ec);
+    REQUIRE(!ec);
+    // 目录里残留的旧身份（例如上次安装的记录）不能被当成导入文件的身份。
+    REQUIRE(collocation::WriteRemoteIdentity(directory, {"\"stale\"", "time", 4}));
+
+    const std::filesystem::path source = env.models_dir().parent_path() / L"imported.gram";
+    WriteMinimalGramFile(source);
+    REQUIRE(collocation::ImportModel(collocation::kRecommendedModelId, source));
+    std::string state;
+    for (int attempt = 0; attempt < 200; ++attempt)
+    {
+        state = collocation::GetModelStatuses()["wanxiang-lts-zh-hans"].state;
+        if (state != "importing")
+            break;
+        Sleep(25);
+    }
+    REQUIRE_EQ(state, std::string("ready"));
+    // 导入没有响应头：落位后删掉旧记录，下一次探测按「旧安装」口径用长度补记录或提示更新。
+    REQUIRE(!std::filesystem::exists(directory / L".remote"));
 }

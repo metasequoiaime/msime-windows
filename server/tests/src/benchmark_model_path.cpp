@@ -1,5 +1,6 @@
 #include "session/engine_input_session.h"
 #include "settings/neural_model.h"
+#include "tests/includes/test_utf8_path.h"
 
 #include <Windows.h>
 
@@ -37,8 +38,8 @@ class DataRoot
             had_previous_ = true;
             std::free(previous);
         }
-        root_ = fs::temp_directory_path() / (L"msime-model-path-bench-" + std::to_wstring(GetCurrentProcessId()) +
-                                             L"-" + std::to_wstring(GetTickCount64()));
+        root_ = test::TempRoot() / (L"msime-model-path-bench-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                                    std::to_wstring(GetTickCount64()));
         fs::create_directories(root_ / "models");
         if (_wputenv_s(L"METASEQUOIA_IME_DATA_DIR", root_.c_str()) != 0 || metasequoia::data_directory() != root_)
         {

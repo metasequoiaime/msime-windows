@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <string>
 #include <utility>
 
 namespace msimeui
@@ -166,7 +167,8 @@ class ComboBoxPopupContent : public Visual
 
         if (pressedIndex == hoveredIndex_ && onSelect_)
         {
-            onSelect_(pressedIndex);
+            const auto handler = onSelect_;
+            handler(pressedIndex);
         }
         return true;
     }
@@ -481,7 +483,11 @@ void ComboBox::NotifySelectionChanged()
 {
     if (onSelectionChanged_ && selectedIndex_ < items_.size())
     {
-        onSelectionChanged_(selectedIndex_, items_[selectedIndex_]);
+        // Copy the arguments first: the handler may replace items_ or destroy this control.
+        const size_t index = selectedIndex_;
+        const std::wstring value = items_[index];
+        const auto handler = onSelectionChanged_;
+        handler(index, value);
     }
 }
 

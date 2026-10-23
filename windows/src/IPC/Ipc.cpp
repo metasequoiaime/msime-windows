@@ -10,6 +10,7 @@
 #include <mutex>
 #include <minwindef.h>
 #include <utility>
+#include <vector>
 #include <winnt.h>
 #include <winuser.h>
 #include "Globals.h"
@@ -1642,6 +1643,46 @@ static struct FanyImeNamedpipeDataToTsf *TryReadDataFromServerPipeWithDeadline(u
     ClosePipeHandleIfValid(hFromServerPipe);
     RequestNamedpipeReconnect();
     return transportUnavailable();
+}
+
+/**
+ * @brief 询问用户是否安装已下好并校验通过的版本。只弹窗，不联网、不读文件、不启动程序。
+ *
+ * 载荷三段：版本号、安装包绝对路径、安装包文件名。缺任何一段都不弹窗：那说明服务端
+ * 状态坏了，静默跳过比弹一个点不动的窗口好。路径在这里只用于展示，不参与任何判断；
+ * 回给 Server 的只有文件名，真正的路径由它从自己的状态里推。
+ */
+bool PromptUpdateInstaller(const std::wstring &payload)
+{
+    std::vector<std::wstring> fields;
+    size_t start = 0;
+    while (start <= payload.size())
+    {
+        const size_t tab = payload.find(L'\t', start);
+        const size_t end = tab == std::wstring::npos ? payload.size() : tab;
+        fields.push_back(payload.substr(start, end - start));
+        if (tab == std::wstring::npos)
+            break;
+        start = tab + 1;
+    }
+    if (fields.size() != 3 || fields[0].empty() || fields[2].empty())
+    {
+        return false;
+    }
+
+    const std::wstring &version = fields[0];
+    const std::wstring &installer = fields[2];
+    std::wstring text = L"新版本 v" + version + L" 已经下载完成并通过校验。\n\n现在安装吗？\n\n";
+    text += L"安装会先退出输入法后台进程，随后打开安装程序；在安装界面里点完成即可。";
+    const int answer =
+        MessageBoxW(nullptr, text.c_str(), L"水杉输入法", MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST);
+    if (answer != IDYES)
+    {
+        // 用户点了「否」：什么都不发。服务端不会在这次的包上再问一遍，等下一个版本再说。
+        return true;
+    }
+    SendToAuxNamedpipe(L"InstallUpdate|" + installer);
+    return true;
 }
 
 /**

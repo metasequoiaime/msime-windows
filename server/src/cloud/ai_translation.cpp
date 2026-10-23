@@ -2,6 +2,7 @@
 
 #include "ai/chat_completions.h"
 #include "ai/chat_request_params.h"
+#include "config/ai_provider.h"
 #include "translation_gloss.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -163,13 +164,27 @@ std::vector<std::string> ParseTranslations(const std::string &content, size_t ex
 Config FromConfiguredTranslation(const TranslationConfig &config)
 {
     return {config.ai.provider, CloudTranslation::TrimSecret(config.ai.endpoint),
-            CloudTranslation::TrimSecret(config.ai.token), CloudTranslation::TrimSecret(config.ai.model)};
+            AiAssistant::RequestToken(config.ai.provider, CloudTranslation::TrimSecret(config.ai.token)),
+            CloudTranslation::TrimSecret(config.ai.model)};
 }
 
 bool IsUsableConfig(const Config &config)
 {
-    return config.provider != "jev" && CloudTranslation::IsUsableSecret(config.token) && !config.model.empty() &&
+    return config.provider != "jev" &&
+           (!AiAssistant::ProviderUsesToken(config.provider) || CloudTranslation::IsUsableSecret(config.token)) &&
+           !config.model.empty() &&
            (config.endpoint.rfind("https://", 0) == 0 || config.endpoint.rfind("http://", 0) == 0);
+}
+
+Config FromFields(const std::string &provider, const std::string &endpoint, const std::string &token,
+                  const std::string &model)
+{
+    std::string url = CloudTranslation::TrimSecret(endpoint);
+    // 设置页输入框里允许只写主机名：补 https，其余原样交给 IsUsableConfig 判断。
+    if (!url.empty() && url.find("://") == std::string::npos)
+        url = "https://" + url;
+    return {CloudTranslation::TrimSecret(provider), std::move(url), CloudTranslation::TrimSecret(token),
+            CloudTranslation::TrimSecret(model)};
 }
 
 namespace detail

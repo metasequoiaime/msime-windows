@@ -39,6 +39,10 @@ Server 当前仍使用引擎的兼容 `InputSession`，尚未迁移公共 `Sessi
 
 ## 构建
 
+**用户想编译验证但没装工具链时，优先用 dev-build workflow 而不是让用户装 vcpkg**：特性分支 push 自动触发，PR 会自动跑一次，或 `gh workflow run dev-build.yml --ref <分支> -f component=all` 手动触发，然后 `gh run watch` 等它，`gh run download <runId> -n dev-installer` 拿安装包与证书，安装步骤见 [CONTRIBUTING.md](CONTRIBUTING.md#没有本地工具链时dev-build-workflow)。develop 和 main 不触发；版本号带 `-dev.<日期>.<commit>`，与正式发布隔离。推送 `win7*` 分支不触发，win7有[专门的仓库](https://github.com/metasequoiaime/msime-win7)。
+
+**三条对外通道的签名方式完全不同，改签名相关代码前先看清是哪一条。** 正式发布用真实证书或 SignPath；`nightly.yml` 每周一、三、六从 `develop` 出包，用仓库 secret 里那张固定自签名证书，公钥是提交在仓库里的 `installer/nightly-signing.cer`；`dev-build.yml` 每次运行现场生成证书。三个 subject 互不相同，`import-dev-trust.ps1` 和 `import-nightly-trust.ps1` 各自按自己的 subject 清理，不要把它们混成一份。详见 [installer/README.md](installer/README.md#三个通道怎么选)。
+
 每个组件是独立的 CMake 工程，各自带 `vcpkg.json` 和 preset，从仓库根目录指定 `-S`：
 
 ```powershell

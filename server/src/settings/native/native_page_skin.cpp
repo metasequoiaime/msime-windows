@@ -369,14 +369,20 @@ void SkinPage::RebuildExternal()
 
     const Json *issues = model_->Find("appearance.candidate_skin_scan_issues");
     std::vector<std::wstring> entries;
+    // 加载失败的目录和能用但带提示的皮肤都进 issues，汇总里要分开数。两者由 Scan 标好，设置页不按卡片是否已列出推断。
+    size_t invalid = 0;
+    size_t noticed = 0;
     if (issues && issues->is_array())
     {
         for (const auto &issue : *issues)
         {
             if (issue.is_object() && issue.contains("folder") && issue["folder"].is_string() &&
                 issue.contains("reason") && issue["reason"].is_string())
-                entries.push_back(Widen(issue["folder"].get<std::string>()) + L"：" +
-                                  Widen(issue["reason"].get<std::string>()));
+            {
+                const std::string folder = issue["folder"].get<std::string>();
+                ++(issue.value("noticed", false) ? noticed : invalid);
+                entries.push_back(Widen(folder) + L"：" + Widen(issue["reason"].get<std::string>()));
+            }
         }
     }
     if (!entries.empty())
@@ -385,7 +391,11 @@ void SkinPage::RebuildExternal()
         auto diagnostics = std::make_shared<Column>(0.0f);
         // margin: 10px 4px 0; the top collapses into the empty card's 18px margin.
         diagnostics->SetMargin({4.0f, external_.empty() ? 0.0f : 10.0f, 4.0f, 0.0f});
-        const std::wstring summary = L"已忽略 " + std::to_wstring(entries.size()) + L" 个无效皮肤目录";
+        std::wstring summary;
+        if (invalid > 0)
+            summary = L"已忽略 " + std::to_wstring(invalid) + L" 个无效皮肤目录";
+        if (noticed > 0)
+            summary += (summary.empty() ? L"" : L"，") + std::to_wstring(noticed) + L" 个皮肤有未生效的字段";
         auto toggle =
             std::make_shared<Label>((diagnosticsOpen_ ? L"▾ " : L"▸ ") + summary, CaptionMuted(), TextRole::Muted);
         auto list = std::make_shared<Column>(0.0f);

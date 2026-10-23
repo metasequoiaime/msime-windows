@@ -230,7 +230,9 @@ bool CandidateExpandToggle::OnMouseUp(const POINT &point, WPARAM)
     InvalidateVisual();
     if (HitTest(window_->ClientPixelsToDips(point)) && onClick_)
     {
-        onClick_();
+        // A handler may tear down the visual that owns onClick_ while it runs.
+        const auto handler = onClick_;
+        handler();
     }
     return true;
 }
@@ -412,8 +414,14 @@ void CandidateSkinScene::Build(bool horizontal, bool pageArrows, bool expandPane
     expandPanel_ = expandPanel;
     root_ = std::make_shared<msimeui::StackPanel>(0.0f);
     decoration_ = std::make_shared<msimeui::Image>(L"");
-    decoration_->SetHorizontalAlignment(msimeui::HorizontalAlignment::Trailing);
     decoration_->SetStretch(msimeui::ImageStretch::Uniform);
+    decorationWord_ = std::make_shared<msimeui::TextBlock>(L"", 16.0f, D2D1::ColorF(D2D1::ColorF::White));
+    decorationWord_->SetTextLayoutPadding({0.0f, 0.0f, 0.0f, 0.0f});
+    decorationBox_ = std::make_shared<msimeui::OverlayPanel>();
+    decorationBox_->SetHorizontalAlignment(msimeui::HorizontalAlignment::Trailing);
+    decorationBox_->AddChildAt(decoration_, 0.0f, 0.0f);
+    decorationBox_->AddChildAt(decorationWord_, 0.0f, 0.0f);
+    decorationWordShown_.clear();
     preedit_ = std::make_shared<msimeui::TextBlock>(L"", 14.0f, D2D1::ColorF(0xF5F5F5));
     preedit_->SetTextLayoutPadding({0.0f, 1.0f, 0.0f, 1.0f});
     preedit_->SetHorizontalAlignment(msimeui::HorizontalAlignment::Leading);
@@ -503,7 +511,7 @@ void CandidateSkinScene::Build(bool horizontal, bool pageArrows, bool expandPane
     cardColumn_ = std::make_shared<msimeui::StackPanel>(0.0f);
     cardColumn_->SetHorizontalAlignment(msimeui::HorizontalAlignment::Leading);
     cardColumn_->SetHorizontalContentAlignment(msimeui::HorizontalAlignment::Stretch);
-    cardColumn_->AddChild(decoration_);
+    cardColumn_->AddChild(decorationBox_);
     cardColumn_->AddChild(overlayGrid_);
     frame_ = std::make_shared<msimeui::Container>();
     frame_->SetChild(cardColumn_);
@@ -815,19 +823,38 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     result.cardMinWidthDip = cardMinWidthDip;
     // 外框上方留给阴影的空白与装饰盒重叠，装饰盒高过它时不再额外留白。
     msimeui::Thickness framePad = settings.framePadding;
+    decorationCandidate_.reset();
+    decorationWordShown_.clear();
+    decorationWord_->SetText(L"");
     if (decorationPath.empty() || decorationTopDip <= 0.0f)
     {
+        decorationBoxWidthDip_ = 0.0f;
+        decorationBoxHeightDip_ = 0.0f;
+        decorationBox_->SetHeight(0.0f);
+        decorationBox_->SetWidth(0.0f);
         decoration_->SetHeight(0.0f);
         decoration_->ClearWidth();
         decoration_->SetSource(L"");
     }
     else
     {
+        decorationBoxWidthDip_ = static_cast<float>(package->decorationWidthDip);
+        decorationBoxHeightDip_ = decorationTopDip;
         decoration_->SetSource(decorationPath);
-        decoration_->SetHeight(decorationTopDip);
-        decoration_->SetWidth(static_cast<float>(package->decorationWidthDip));
-        decoration_->SetHorizontalAlignment(DecorationAlignment(package->decorationAlign));
+        decoration_->SetHeight(decorationBoxHeightDip_);
+        decoration_->SetWidth(decorationBoxWidthDip_);
+        decorationBox_->SetHeight(decorationBoxHeightDip_);
+        decorationBox_->SetWidth(decorationBoxWidthDip_);
+        decorationBox_->SetHorizontalAlignment(DecorationAlignment(package->decorationAlign));
         framePad.top = (std::max)(0.0f, framePad.top - decorationTopDip);
+        decorationCandidate_ = package->decorationCandidate;
+        if (decorationCandidate_)
+        {
+            decorationWord_->SetFontFamily(appearance.fontFamily);
+            decorationWord_->SetFallbackFontFamilies(appearance.fallbackFontFamilies);
+            decorationWord_->SetColor(
+                ParseCandidateCssColor(decorationCandidate_->color, D2D1::ColorF(D2D1::ColorF::White)));
+        }
     }
     // v2 挂件挂在卡片外沿，要按 outer_insets_dip 往四边多留出空白，否则立绘被裁掉。
     if (package && package->outerInsetsDip)
@@ -898,4 +925,54 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     result.tokens = tokens;
     result.palette = palette;
     return result;
+}
+
+void CandidateSkinScene::SetDecorationCandidates(const std::vector<PageWord> &page, size_t selectedIndex)
+{
+    if (!decorationWord_)
+        return;
+    std::wstring word;
+    if (decorationCandidate_)
+    {
+        const size_t index =
+            decorationCandidate_->index == 0 ? selectedIndex : static_cast<size_t>(decorationCandidate_->index - 1);
+        if (index < page.size())
+            word = decorationCandidate_->stripBadge ? page[index].text : page[index].text + page[index].badge;
+    }
+    if (word == decorationWordShown_)
+        return;
+    decorationWordShown_ = word;
+    decorationWord_->SetText(word);
+    if (word.empty())
+        return;
+    const CandidateSkinCatalog::DecorationCandidate &style = *decorationCandidate_;
+    // 先按皮肤字号量出一行的宽度，宽过上限就按比例缩小字号，最小到 min_font_size_dip。
+    const msimeui::SizeF unbounded = {10000.0f, 10000.0f};
+    float fontSize = static_cast<float>(style.fontSizeDip);
+    decorationWord_->ClearWidth();
+    decorationWord_->ClearHeight();
+    decorationWord_->SetFontSize(fontSize);
+    msimeui::SizeF size = decorationWord_->MeasureInLayout(unbounded);
+    const float limit = style.maxWidthDip > 0.0 ? static_cast<float>(style.maxWidthDip) : decorationBoxWidthDip_;
+    const float minFontSize = (std::min)(fontSize, static_cast<float>(style.minFontSizeDip));
+    if (size.width > limit && size.width > 0.0f && fontSize > minFontSize)
+    {
+        fontSize = (std::max)(minFontSize, fontSize * limit / size.width);
+        decorationWord_->SetFontSize(fontSize);
+        size = decorationWord_->MeasureInLayout(unbounded);
+    }
+    // 定死量出来的尺寸：装饰框比词窄时词照样画成一行（超出框的部分照画），不在框宽处折行。
+    decorationWord_->SetWidth(std::ceil(size.width));
+    decorationWord_->SetHeight(std::ceil(size.height));
+    float x = static_cast<float>(style.offsetXDip);
+    if (style.alignH == "center")
+        x += (decorationBoxWidthDip_ - size.width) * 0.5f;
+    else if (style.alignH == "right")
+        x += decorationBoxWidthDip_ - size.width;
+    float y = static_cast<float>(style.offsetYDip);
+    if (style.alignV == "center")
+        y += (decorationBoxHeightDip_ - size.height) * 0.5f;
+    else if (style.alignV == "bottom")
+        y += decorationBoxHeightDip_ - size.height;
+    decorationBox_->SetChildPosition(decorationWord_.get(), x, y);
 }

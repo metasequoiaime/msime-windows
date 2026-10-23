@@ -70,6 +70,22 @@ TEST_CASE(shortcut_config_upgrade_preserves_word_selection_and_adds_defaults)
     REQUIRE(merged.find("toggle_character_set_ctrl_shift_f = true") != std::string::npos);
 }
 
+TEST_CASE(commit_pinyin_shortcut_upgrade_adds_default_and_preserves_choice)
+{
+    std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string installed((std::istreambuf_iterator<char>(input)), {});
+    const std::string legacy = "[keybindings]\nswitch_language_shift = true\n";
+    // 升级：旧配置没有这个键，出厂模板补上默认值，否则模板缺键会让它每次升级都被丢掉。
+    const auto added = toml::parse(MergeConfigIntoTemplate(installed, legacy, legacy));
+    REQUIRE(added["keybindings"]["commit_pinyin_shift_enter"].value_or(false));
+    // 用户在设置页关掉过，升级后必须还是关的。
+    const std::string disabled = legacy + "commit_pinyin_shift_enter = false\n";
+    const auto merged = toml::parse(MergeConfigIntoTemplate(installed, disabled, legacy));
+    REQUIRE(!merged["keybindings"]["commit_pinyin_shift_enter"].value_or(true));
+    REQUIRE(merged["keybindings"]["switch_language_shift"].value_or(false));
+}
+
 TEST_CASE(input_state_shortcut_upgrade_preserves_custom_and_disabled_bindings)
 {
     std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
@@ -534,6 +550,7 @@ TEST_CASE(shipped_credentials_survive_template_upgrade)
     const std::string installed((std::istreambuf_iterator<char>(input)), {});
 
     const std::string configured = "[tencent_tmt]\nsecret_id = \"real-secret-id\"\nsecret_key = \"real-secret-key\"\n"
+                                   "[aliyun_mt]\nsecret_id = \"real-aliyun-id\"\nsecret_key = \"real-aliyun-key\"\n"
                                    "[custom_translation]\napi_key = \"real-api-key\"\n"
                                    "[niutrans]\napp_id = \"real-app-id\"\napikey = \"real-apikey\"\n"
                                    "[voice_input]\nasr_token = \"real-asr\"\nasr_token_doubao = \"real-doubao\"\n"
@@ -545,6 +562,8 @@ TEST_CASE(shipped_credentials_survive_template_upgrade)
         const auto merged = toml::parse(MergeConfigIntoTemplate(installed, configured, baseline));
         REQUIRE_EQ(merged["tencent_tmt"]["secret_id"].value_or(std::string()), std::string("real-secret-id"));
         REQUIRE_EQ(merged["tencent_tmt"]["secret_key"].value_or(std::string()), std::string("real-secret-key"));
+        REQUIRE_EQ(merged["aliyun_mt"]["secret_id"].value_or(std::string()), std::string("real-aliyun-id"));
+        REQUIRE_EQ(merged["aliyun_mt"]["secret_key"].value_or(std::string()), std::string("real-aliyun-key"));
         REQUIRE_EQ(merged["custom_translation"]["api_key"].value_or(std::string()), std::string("real-api-key"));
         REQUIRE_EQ(merged["niutrans"]["app_id"].value_or(std::string()), std::string("real-app-id"));
         REQUIRE_EQ(merged["niutrans"]["apikey"].value_or(std::string()), std::string("real-apikey"));

@@ -159,7 +159,11 @@ class CustomButton : public msimeui::Visual
         const bool clicked = pressed_ && window_ && HitTest(window_->ClientPixelsToDips(point));
         pressed_ = false;
         if (clicked && onClick_)
-            onClick_();
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
         return true;
     }
 

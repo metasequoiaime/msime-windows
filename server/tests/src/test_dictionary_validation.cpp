@@ -225,8 +225,7 @@ class ScopedTempDir
 {
   public:
     explicit ScopedTempDir(const wchar_t *name)
-        : path_(std::filesystem::temp_directory_path() /
-                (std::wstring(name) + L"-" + std::to_wstring(GetCurrentProcessId())))
+        : path_(test::TempRoot() / (std::wstring(name) + L"-" + std::to_wstring(GetCurrentProcessId())))
     {
         std::error_code error;
         std::filesystem::remove_all(path_, error);

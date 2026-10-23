@@ -1,4 +1,5 @@
 #include "tests/includes/test_framework.h"
+#include "tests/includes/test_utf8_path.h"
 
 #include "engine/core/data_path.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
@@ -57,8 +58,7 @@ std::filesystem::path SeedDataDir(const std::filesystem::path &root)
 TEST_CASE(dictionary_replay_behaves_identically_under_non_ascii_data_path)
 {
     namespace fs = std::filesystem;
-    const fs::path unique_root =
-        fs::temp_directory_path() / (L"msime-replay-test-" + std::to_wstring(GetCurrentProcessId()));
+    const fs::path unique_root = test::TempRoot() / (L"msime-replay-test-" + std::to_wstring(GetCurrentProcessId()));
 
     std::error_code ec;
     fs::remove_all(unique_root, ec);

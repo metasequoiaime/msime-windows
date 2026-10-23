@@ -754,7 +754,7 @@ bool CMetasequoiaIME::_QueueDeferredKeyDown(_In_ ITfContext *pContext, WPARAM wP
     key.modifiersDown = modifiersDown;
     key.keyState = keyState;
     key.focusGeneration = _deferredKeyFocusGeneration;
-    key.queuedAtMs = GetTickCount64();
+    key.queuedAt = std::chrono::steady_clock::now();
     _deferredKeyDowns.push_back(key);
     if (key.kind == DeferredKeyDown::Kind::KeyDown)
     {
@@ -784,7 +784,7 @@ bool CMetasequoiaIME::_QueueDeferredPreservedKey(_In_ ITfContext *pContext, REFG
     key.context = pContext;
     key.preservedKey = preservedKey;
     key.focusGeneration = _deferredKeyFocusGeneration;
-    key.queuedAtMs = GetTickCount64();
+    key.queuedAt = std::chrono::steady_clock::now();
     _deferredKeyDowns.push_back(key);
     _ApplyDeferredPreservedKeyProjection(preservedKey);
     _ScheduleDeferredKeyDownDrain();
@@ -1058,9 +1058,11 @@ void CMetasequoiaIME::_DrainOneDeferredKeyDown()
     } while (_deferredKeyReplayToken == 0);
 
     DeferredKeyDown &key = _deferredKeyInFlight;
-    if (key.queuedAtMs != 0)
+    if (key.queuedAt != std::chrono::steady_clock::time_point{})
     {
-        DebugTsfKeyLatency(L"deferred-key-queue", 0, static_cast<double>(GetTickCount64() - key.queuedAtMs), S_OK);
+        const double queuedMs =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key.queuedAt).count();
+        DebugTsfKeyLatency(L"deferred-key-queue", 0, queuedMs, S_OK);
     }
     const uint64_t replayToken = _deferredKeyReplayToken;
     const uint64_t focusToken = _CaptureFocusSessionToken();

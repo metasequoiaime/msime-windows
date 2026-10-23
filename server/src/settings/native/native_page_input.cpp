@@ -1,4 +1,7 @@
+#include "settings/native/native_page_voice_fields.h"
 #include "settings/native/native_settings_pages.h"
+
+#include "config/ai_provider.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Fonts.h"
@@ -499,7 +502,11 @@ class GhostButton : public msimeui::Visual
             return false;
         pressed_ = false;
         if (HitSelf(window_, *this, point) && onClick_)
-            onClick_();
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
         return true;
     }
 
@@ -591,7 +598,11 @@ class TestButton : public msimeui::Visual
             return false;
         pressed_ = false;
         if (HitSelf(window_, *this, point) && onClick_)
-            onClick_();
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
         return true;
     }
 
@@ -689,7 +700,10 @@ class BareRadio : public msimeui::Visual
             return false;
         pressed_ = false;
         if (HitSelf(window_, *this, point) && !checked_ && onSelected_)
-            onSelected_();
+        {
+            const auto handler = onSelected_;
+            handler();
+        }
         return true;
     }
 
@@ -941,7 +955,10 @@ class ApiField : public msimeui::Panel
             return;
         committed_ = text;
         if (onCommit_)
-            onCommit_(text);
+        {
+            const auto handler = onCommit_;
+            handler(text);
+        }
     }
 
     bool password_ = false;
@@ -1137,11 +1154,23 @@ bool IsBusy(const std::string &state)
     return state == "downloading" || state == "importing";
 }
 
+bool UpdatePending(const Json *status)
+{
+    return status && status->is_object() && status->value("updatePending", false);
+}
+
+bool UpdateAvailable(const Json *status)
+{
+    return status && status->is_object() && status->value("updateAvailable", false);
+}
+
 std::wstring StatusText(const Json *status)
 {
+    if (UpdatePending(status))
+        return L"新版本已下载，点「重启输入法」生效";
     const std::string state = status && status->is_object() ? status->value("state", std::string("absent")) : "absent";
     if (state == "ready")
-        return L"模型已就绪";
+        return UpdateAvailable(status) ? L"有新版本可用" : L"模型已就绪";
     if (state == "downloading")
     {
         const int progress =
@@ -1171,6 +1200,8 @@ struct ModelRow
     std::shared_ptr<Label> status;
     std::shared_ptr<BareRadio> radio;
     std::shared_ptr<Button> download;
+    std::function<void()> downloadAction;
+    std::function<void()> restartAction;
     std::shared_ptr<Hideable> importBox;
     std::shared_ptr<Button> import;
     std::shared_ptr<Hideable> removeBox;
@@ -1220,7 +1251,10 @@ ModelRow MakeModelRow(PageContext &context, const std::string &id, const std::ws
         actions->Add(row.radio);
     }
     row.download = std::make_shared<Button>(L"下载", ButtonKind::Secondary);
-    row.download->SetOnClick([model, downloadType, data]() { model->Post(downloadType, data); });
+    row.downloadAction = [model, downloadType, data]() { model->Post(downloadType, data); };
+    // 待重启时同一个按钮换成「重启」，直接走设置页已有的 restartServer 动作。
+    row.restartAction = [model]() { model->Post("restartServer"); };
+    row.download->SetOnClick(row.downloadAction);
     actions->Add(row.download);
     row.import = std::make_shared<Button>(L"导入", ButtonKind::Secondary);
     row.import->SetOnClick([model, importType, data]() { model->Post(importType, data); });
@@ -1294,29 +1328,11 @@ struct InputPage
     std::shared_ptr<ToggleSwitch> collocationToggle;
     UINT_PTR collocationPoll = 0;
 
-    std::map<std::string, std::string> AiState() const
+    // 与「AI 与云联想」页共用同一份解析：分槽优先、单值键只在它就是当前服务商时作数，
+    // 可用性判定与后端 AiTranslation::IsUsableConfig 同一口径。
+    voice_fields::ActiveAiConfig AiState() const
     {
-        SettingsModel &model = context->model;
-        return {{"provider", model.GetString("ai_assistant.provider")},
-                {"endpoint", model.GetString("ai_assistant.endpoint")},
-                {"model", model.GetString("ai_assistant.model")},
-                {"token", model.GetString("ai_assistant.token")}};
-    }
-
-    // isUsableAiAssistantState
-    bool AiUsable() const
-    {
-        auto state = AiState();
-        const auto trim = [](std::string text) {
-            const auto first = text.find_first_not_of(" \t\r\n");
-            const auto last = text.find_last_not_of(" \t\r\n");
-            return first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
-        };
-        const std::string t = trim(state["token"]);
-        const bool placeholder = (!t.empty() && t.front() == '<' && t.back() == '>') || t.rfind("FAKESECRET_", 0) == 0;
-        const std::string endpoint = trim(state["endpoint"]);
-        return !t.empty() && !placeholder && !trim(state["model"]).empty() &&
-               (endpoint.rfind("http://", 0) == 0 || endpoint.rfind("https://", 0) == 0);
+        return voice_fields::ReadActiveAiConfig(context->model);
     }
 
     std::string Field(const char *key) const
@@ -1334,6 +1350,8 @@ struct InputPage
     {
         if (provider == "ai")
             return {};
+        if (provider == "aliyun")
+            return {{"accessKeyId", Field("aliyunAccessKeyId")}, {"accessKeySecret", Field("aliyunAccessKeySecret")}};
         if (provider == "niutrans")
             return {{"appId", Field("niutransAppId")}, {"apiKey", Field("niutransApiKey")}};
         if (provider == "custom")
@@ -1347,14 +1365,22 @@ struct InputPage
         bool ok = false;
         if (provider == "ai")
         {
-            text = L"请先在「AI 与云联想」页面填写接口地址、Token 和模型";
-            ok = AiUsable();
+            const voice_fields::ActiveAiConfig state = AiState();
+            // 选择器模式下这里的 provider 已经解析成「生成式上次用的那家」，所以不再是 jev。
+            // AI 联想总开关与这里无关，只要凭据齐就能用。
+            text = L"请先在「AI 与云联想」页面填写当前服务商的接口地址、模型和 Token（Ollama 不需要）";
+            ok = state.usable;
         }
         else if (provider == "custom")
         {
             text = L"请填写以 http:// 或 https:// 开头的完整接口地址";
             static const std::regex url(R"(^https?://\S+$)", std::regex::icase);
             ok = std::regex_match(Field("customTranslationEndpoint"), url);
+        }
+        else if (provider == "aliyun")
+        {
+            text = L"请填写 AccessKey ID 和 AccessKey Secret 后使用阿里云翻译";
+            ok = !Field("aliyunAccessKeyId").empty() && !Field("aliyunAccessKeySecret").empty();
         }
         else if (provider == "niutrans")
         {
@@ -1374,8 +1400,14 @@ struct InputPage
     {
         for (auto &[name, box] : providerFields)
             box->SetVisible(name == provider);
-        auto state = AiState();
-        aiSummary->SetText(AiUsable() ? Widen(state["provider"] + " · " + state["model"]) : std::wstring());
+        const voice_fields::ActiveAiConfig state = AiState();
+        // 摘要用显示名而不是内部 id。
+        if (state.usable)
+            aiSummary->SetText(
+                voice_fields::AiProviderLabel(state.provider, context->model.Find("ai_assistant.providers")) + L" · " +
+                Widen(state.model));
+        else
+            aiSummary->SetText(std::wstring());
         SyncWarning();
     }
 
@@ -1674,10 +1706,14 @@ VisualPtr BuildInputPage(PageContext &context)
         Col({MakeTitleBlock(
                  L"输入纠错",
                  L"全拼输错时按误键类型给出纠正候选，默认关闭；开启后预编辑始终显示原始输入，纠正结果仅出现在候选中"),
-             ItemSetting(L"乱序纠错", L"相邻字母顺序打错时纠正，如 sahng → shang（上）",
+             ItemSetting(L"乱序纠错", L"相邻字母顺序打错时纠正，如 sahng → shang（上）；默认关闭",
                          Toggle(context, "quanpin.autocorrect_transposition"), true, false),
              ItemSetting(L"邻键纠错", L"误触相邻按键时纠正，如 shabg → shang（上）；默认关闭",
                          Toggle(context, "quanpin.autocorrect_neighbor"), false, false),
+             ItemSetting(L"漏字纠错", L"漏敲一个字母时纠正，如 shng → shang（上）；默认关闭",
+                         Toggle(context, "quanpin.autocorrect_deletion"), false, false),
+             ItemSetting(L"多字纠错", L"多敲一个相邻按键时纠正，如 sjhang → shang（上）；默认关闭",
+                         Toggle(context, "quanpin.autocorrect_insertion"), false, false),
              ItemSetting(L"显示纠错标记", L"纠错得到的候选末尾显示 * 号，便于和正常候选区分；不影响上屏文字",
                          Toggle(context, "quanpin.autocorrect_marker"), false, true)}));
 
@@ -1720,14 +1756,16 @@ VisualPtr BuildInputPage(PageContext &context)
         Dropdown::Options language;
         language.minWidth = 140.0f;
         language.menuMinWidth = 140.0f;
-        auto provider = BindDropdown(
-            context, "translation.provider",
-            Options(
-                {{"tencent", L"腾讯云"}, {"niutrans", L"小牛翻译"}, {"custom", L"自定义 DeepLX"}, {"ai", L"AI 辅助"}}),
-            language, ValueKind::String, [s](const std::string &value) {
-                s->provider = value;
-                s->SyncProviderView();
-            });
+        auto provider = BindDropdown(context, "translation.provider",
+                                     Options({{"tencent", L"腾讯云"},
+                                              {"aliyun", L"阿里云"},
+                                              {"niutrans", L"小牛翻译"},
+                                              {"custom", L"自定义 DeepLX"},
+                                              {"ai", L"AI 辅助"}}),
+                                     language, ValueKind::String, [s](const std::string &value) {
+                                         s->provider = value;
+                                         s->SyncProviderView();
+                                     });
         auto target = BindDropdown(context, "tencent_tmt.target_language",
                                    Options({{"en", L"英语"},
                                             {"fr", L"法语"},
@@ -1776,6 +1814,13 @@ VisualPtr BuildInputPage(PageContext &context)
                      {{field("tencentTmtSecretId", "tencent_tmt.secret_id", L"SecretId", L"AKID...", false), false},
                       {field("tencentTmtSecretKey", "tencent_tmt.secret_key", L"SecretKey", L"SecretKey", true),
                        false}}))});
+        auto aliyun =
+            Col({heading(L"阿里云 API 凭据", L"在阿里云控制台「AccessKey 管理」中查看，凭据仅保存在本机配置文件中"),
+                 blockInput(grid(
+                     {{field("aliyunAccessKeyId", "aliyun_mt.secret_id", L"AccessKey ID", L"LTAI...", false), false},
+                      {field("aliyunAccessKeySecret", "aliyun_mt.secret_key", L"AccessKey Secret", L"AccessKey Secret",
+                             true),
+                       false}}))});
         auto niutrans =
             Col({heading(L"小牛翻译 API 凭据", L"在“控制台—>API应用”中查看，凭据仅保存在本机配置文件中"),
                  blockInput(grid({{field("niutransAppId", "niutrans.app_id", L"APP ID", L"应用唯一标识", false), false},
@@ -1788,10 +1833,13 @@ VisualPtr BuildInputPage(PageContext &context)
                                                    L"API Key（可选，以 Bearer Token 发送）", L"留空表示不鉴权", true),
                                              true}}))});
         s->aiSummary = std::make_shared<ApiField>(L"当前服务商与模型", L"未配置", false, true);
-        auto ai = Col(
-            {heading(L"复用 AI 辅助配置", L"使用「AI 与云联想」页当前服务商的接口地址、Token 与模型，无需在此重复填写"),
-             blockInput(grid({{s->aiSummary, true}}))});
+        auto ai = Col({heading(L"复用 AI 辅助配置",
+                               L"使用「AI 与云联想」页生成式服务商的接口地址、Token 与模型，无需在此重复填写。"
+                               L"那边选了「从候选里挑」也照样能用，翻译会用生成式那一家。"
+                               L"不依赖「启用 AI 联想」开关，凭据填好就能用于翻译。"),
+                       blockInput(grid({{s->aiSummary, true}}))});
         s->providerFields["tencent"] = std::make_shared<Hideable>(tencent, true);
+        s->providerFields["aliyun"] = std::make_shared<Hideable>(aliyun, false);
         s->providerFields["niutrans"] = std::make_shared<Hideable>(niutrans, false);
         s->providerFields["custom"] = std::make_shared<Hideable>(custom, false);
         s->providerFields["ai"] = std::make_shared<Hideable>(ai, false);
@@ -1804,7 +1852,17 @@ VisualPtr BuildInputPage(PageContext &context)
         s->warningBox = std::make_shared<Hideable>(s->warning, true);
         s->credentialTest = std::make_unique<CredentialTest>(
             context, [s]() { return "translation." + s->provider; }, [s]() { return s->TestConfig(); },
-            [s]() { return s->provider == "ai" ? s->AiState() : s->TestConfig(); });
+            [s]() -> Json {
+                if (s->provider != "ai")
+                    return s->TestConfig();
+                // 把当前生效的服务商配置摊平成页面字段，凭据测试据此判断「测试期间配置是否改过」，
+                // 宿主再用同一份字段去发请求。
+                const voice_fields::ActiveAiConfig state = s->AiState();
+                return Json{{"provider", state.provider},
+                            {"endpoint", state.endpoint},
+                            {"token", state.token},
+                            {"model", state.model}};
+            });
 
         auto options = Col(
             {std::make_shared<Divider>(Divider::Kind::Option),
@@ -1814,13 +1872,13 @@ VisualPtr BuildInputPage(PageContext &context)
                                     s->singleSenseBlock)),
              std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"在线翻译服务",
-                                    L"可使用腾讯云、小牛翻译、自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置",
+                                    L"可使用腾讯云、阿里云、小牛翻译、自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置",
                                     provider)),
              std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用所选在线服务", target)),
              std::make_shared<Divider>(Divider::Kind::Option), s->providerFields["tencent"],
-             s->providerFields["niutrans"], s->providerFields["custom"], s->providerFields["ai"], s->warningBox,
-             s->credentialTest->View()});
+             s->providerFields["aliyun"], s->providerFields["niutrans"], s->providerFields["custom"],
+             s->providerFields["ai"], s->warningBox, s->credentialTest->View()});
         s->translationOptions = std::make_shared<OpacityBox>(options);
         s->translationOptions->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         master->SetOnChanged([s, model](bool on) {
@@ -1943,35 +2001,45 @@ VisualPtr BuildInputPage(PageContext &context)
         collocationBlock->SetMargin({0.0f, 0.0f, 10.0f, 0.0f});
         s->collocationToggle = BindToggle(context, "association.sentence_collocation_enabled");
 
-        auto content =
-            Col({FrequencyRow(SubBlock(L"Trigram 模型整句", L"使用三元语言模型生成整句候选"),
-                              Toggle(context, "association.sentence_wordlattice")),
-                 FrequencyRow(SubBlock(L"Unigram 模型整句", L"使用一元语言模型生成整句候选"),
-                              Toggle(context, "association.sentence_google")),
-                 Padded(neuralBlock, {0.0f, 10.0f, 0.0f, 10.0f}),
-                 FrequencyRow(
-                     SubBlock(L"神经网络模型整句（效果优先）",
-                              L"下载模型后可用：结合已上屏的前文，从内部生成的最多 12 个备选句中选择，处理时间较长"),
-                     s->neuralToggle),
-                 FrequencyRow(SubBlock(L"神经网络模型整句（速度优先）",
-                                       L"使用轻量模型从最多 12 个备选句中选择；两种模式可同时独立给出结果"),
-                              Toggle(context, "association.sentence_neural_keyboard")),
-                 FrequencyRow(
-                     SubBlock(L"去重后补充次选", L"某个模型的首选与已有候选重复时，显示该模型排名最高的下一条不同结果"),
-                     Toggle(context, "association.sentence_show_next_on_duplicate")),
-                 FrequencyRow(
-                     SubBlock(
-                         L"显示整句来源标签",
-                         L"在整句候选后显示〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕〔八股〕〔墨奇〕等来源标签"),
-                     Toggle(context, "association.sentence_source_badge")),
-                 Padded(collocationBlock, {0.0f, 10.0f, 0.0f, 10.0f}),
-                 FrequencyRow(SubBlock(L"octagram 语法整句",
-                                       L"下载模型后可用：一并接入该模型的全部能力——解码时按字级搭配分选出更准的首选，"
-                                       L"并把搭配紧密的整句提到前面，以所选模型自己的来源行显示（万象〔万象〕、八股文〔"
-                                       L"八股〕、白霜〔墨奇〕）"),
-                              s->collocationToggle)});
+        auto content = Col(
+            {FrequencyRow(SubBlock(L"Trigram 模型整句", L"本地生成，使用三元语言模型生成整句候选"),
+                          Toggle(context, "association.sentence_wordlattice")),
+             FrequencyRow(SubBlock(L"Unigram 模型整句", L"本地生成，使用一元语言模型生成整句候选"),
+                          Toggle(context, "association.sentence_google")),
+             Padded(neuralBlock, {0.0f, 10.0f, 0.0f, 10.0f}),
+             FrequencyRow(
+                 SubBlock(
+                     L"神经网络模型整句（效果优先）",
+                     L"本地生成，下载模型后可用：结合已上屏的前文，从内部生成的最多 12 个备选句中选择，处理时间较长"),
+                 s->neuralToggle),
+             FrequencyRow(SubBlock(L"神经网络模型整句（速度优先）",
+                                   L"本地生成，使用轻量模型从最多 12 个备选句中选择；两种模式可同时独立给出结果"),
+                          Toggle(context, "association.sentence_neural_keyboard")),
+             FrequencyRow(SubBlock(L"去重后补充次选",
+                                   L"本地处理，某个模型的首选与已有候选重复时，显示该模型排名最高的下一条不同结果"),
+                          Toggle(context, "association.sentence_show_next_on_duplicate")),
+             FrequencyRow(SubBlock(L"显示整句来源标签",
+                                   L"本地处理，在整句候选后显示〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕"
+                                   L"〔八股〕〔墨奇〕等来源标签"),
+                          Toggle(context, "association.sentence_source_badge")),
+             Padded(collocationBlock, {0.0f, 10.0f, 0.0f, 10.0f}),
+             FrequencyRow(
+                 SubBlock(L"octagram 语法整句",
+                          L"本地生成，下载模型后可用：一并接入该模型的全部能力——解码时按字级搭配分选出更准的首选，"
+                          L"并把搭配紧密的整句提到前面，以所选模型自己的来源行显示（万象〔万象〕、八股文〔"
+                          L"八股〕、白霜〔墨奇〕）"),
+                 s->collocationToggle),
+             // 这一节里唯一联网的一项。它跟 AI 联想无关：不要 Token，也不用选服务商，
+             // 默认还开着，所以必须留一个能点得到的地方。
+             FrequencyRow(
+                 SubBlock(L"云候选",
+                          L"联网，把当前的全拼（双拼会先还原成全拼，日文输入时是罗马字）发送到 Google 的 inputtools "
+                          L"服务换取一个候选。对方会收到拼音、你的 IP 地址和请求元数据，不会收到已上屏的文字、"
+                          L"词库或设置。默认开启，无需账号；需要走代理时在「帮助」页设置，详见 PRIVACY.md"),
+                 Toggle(context, "general.cloud_candidates"))});
         content->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
-        page.AddSection(Col({MakeTitleBlock(L"整句候选", L"输入多个拼音音节时，提供整句候选"), content}));
+        page.AddSection(
+            Col({MakeTitleBlock(L"整句与云候选", L"输入多个拼音音节时，额外提供整句或云端给出的候选"), content}));
     }
 
     // ---- 拼音方案调频 ----
@@ -2082,9 +2150,13 @@ VisualPtr BuildInputPage(PageContext &context)
             s->SetTranslationsEnabled(translations->get<bool>());
         }
         const std::string provider = model->GetString("translation.provider");
-        s->provider = provider == "niutrans" || provider == "custom" || provider == "ai" ? provider : "tencent";
+        s->provider = provider == "aliyun" || provider == "niutrans" || provider == "custom" || provider == "ai"
+                          ? provider
+                          : "tencent";
         s->fields["tencentTmtSecretId"]->SetText(Widen(model->GetString("tencent_tmt.secret_id")));
         s->fields["tencentTmtSecretKey"]->SetText(Widen(model->GetString("tencent_tmt.secret_key")));
+        s->fields["aliyunAccessKeyId"]->SetText(Widen(model->GetString("aliyun_mt.secret_id")));
+        s->fields["aliyunAccessKeySecret"]->SetText(Widen(model->GetString("aliyun_mt.secret_key")));
         s->fields["niutransAppId"]->SetText(Widen(model->GetString("niutrans.app_id")));
         s->fields["niutransApiKey"]->SetText(Widen(model->GetString("niutrans.apikey")));
         s->fields["customTranslationEndpoint"]->SetText(Widen(model->GetString("custom_translation.endpoint")));
@@ -2150,18 +2222,28 @@ VisualPtr BuildInputPage(PageContext &context)
             const Json *statuses = model->Find("association.sentence_collocation_model_status");
             const std::string active = model->GetString("association.sentence_collocation_model");
             bool anyBusy = false;
+            bool anyPending = false;
             if (statuses && statuses->is_object())
             {
                 for (const auto &item : statuses->items())
+                {
                     anyBusy = anyBusy || IsBusy(StateOf(&item.value()));
+                    anyPending = anyPending || UpdatePending(&item.value());
+                }
             }
             for (ModelRow &row : s->collocationRows)
             {
                 const Json *status =
                     statuses && statuses->is_object() && statuses->contains(row.id) ? &(*statuses)[row.id] : nullptr;
                 const std::string stateName = StateOf(status);
+                const bool pending = UpdatePending(status);
+                const bool update_available = UpdateAvailable(status);
                 row.status->SetText(StatusText(status));
-                row.download->SetDisabled(stateName == "ready" || anyBusy);
+                // 每次快照都重设按钮文本和动作，避免上一次的「更新 / 重启」残留到别的状态。
+                // 待重启时按钮直接变成可点的「重启」，点下去走设置页已有的 restartServer。
+                row.download->SetText(pending ? L"重启输入法" : (update_available ? L"更新" : L"下载"));
+                row.download->SetOnClick(pending ? row.restartAction : row.downloadAction);
+                row.download->SetDisabled(pending ? false : ((stateName == "ready" && !update_available) || anyBusy));
                 row.importBox->SetVisible(stateName != "ready");
                 row.import->SetDisabled(anyBusy);
                 row.removeBox->SetVisible(stateName == "ready");
@@ -2170,10 +2252,11 @@ VisualPtr BuildInputPage(PageContext &context)
             const Json *activeStatus =
                 statuses && statuses->is_object() && statuses->contains(active) ? &(*statuses)[active] : nullptr;
             s->collocationToggle->SetDisabled(StateOf(activeStatus) != "ready");
-            if (anyBusy && s->collocationPoll == 0)
+            // 待重启期间也轮询：点「重启」后 Server 落位完，下一份快照就能把按钮恢复成「下载」。
+            if ((anyBusy || anyPending) && s->collocationPoll == 0)
                 s->collocationPoll = PageTimers::Start(host->Hwnd(), 2000, true,
                                                        [model]() { model->Post("collocationModelStatusRequest"); });
-            else if (!anyBusy)
+            else if (!anyBusy && !anyPending)
                 PageTimers::Stop(s->collocationPoll);
         }
     });

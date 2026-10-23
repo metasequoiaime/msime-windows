@@ -38,10 +38,7 @@ input state.
 
 ## v2 skins
 
-`schema_version = 2` skins must use `base = "canvas"` (see `skin/candidate_skin_catalog.h`);
-the fields are documented in `examples/skin-examples/schema/README.md`. `canvas` is the
-full-texture base: transparent panel, no stroke, square corners, no shadow by default. It is
-only usable as a base and is not part of `BuiltInIds()`.
+The v2 nine-slice panel, free widgets and canvas insets only apply to `schema_version = 2` skins with `base = "canvas"` (see `skin/candidate_skin_catalog.h`); a v2 skin on another base loads as v1, and the settings page lists the canvas-only keys it ignored. `[animation]` and decoration `motion` are valid v2 keys on any base in the cross-platform schema; Windows does not play them yet and draws the skin still, without a notice. The fields are documented in `examples/skin-examples/schema/README.md`. `canvas` is the full-texture base: transparent panel, no stroke, square corners, no shadow by default. It is only usable as a base and is not part of `BuiltInIds()`.
 
 - Geometry lives in `window/candidate_skin_layers.*` (pure arithmetic, no rendering) and is
   shared by the candidate window and the settings preview: `ResolveNineSlice` follows CSS

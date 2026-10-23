@@ -9,6 +9,7 @@
 #include "settings/neural_model.h"
 #include "settings/default_input_method.h"
 #include "settings/game_compat_name.h"
+#include "settings/input_method_install.h"
 #include "settings/dictionary_manager.h"
 #include "settings/native/native_settings_window.h"
 
@@ -21,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include "skin/candidate_skin_catalog.h"
 #include "window/candidate_skin_layers.h"
 #include "utils/common_utils.h"
@@ -59,9 +61,14 @@ constexpr UINT kScanSkinCatalog = WM_APP + 3;
 constexpr UINT kWorkerCompleted = WM_APP + 4;
 // Sent by settings_launcher.cpp (the Server exiting) and by the installer: close for real.
 constexpr UINT kQuitSettings = WM_APP + 5;
+// 模型更新探测线程完成：UI 线程重新取一份快照，探测线程不碰 g_worker。
+constexpr UINT kModelUpdateChecked = WM_APP + 6;
 // Timer 1 is msimeui's caret blink in the Direct2D window, so ours start elsewhere.
 constexpr UINT_PTR kConfigReloadTimer = 0x5301;
 constexpr UINT_PTR kLingerTimer = 0x5302;
+// Server 重启后主动刷新快照的短时定时器；不重启设置进程。
+constexpr UINT_PTR kRestartRefreshTimer = 0x5303;
+constexpr int kRestartRefreshTicks = 10; // 500ms × 10 = 5s，覆盖 Watchdog 拉起 Server 的时间
 
 // The Direct2D settings window (msimeui). Null until wWinMain builds it.
 std::unique_ptr<native_settings::SettingsWindow> g_native;
@@ -77,6 +84,10 @@ bool g_lingering = false;
 bool g_reload_pending = false;
 bool g_theme_refresh_pending = false;
 bool g_settings_light = false;
+// 第一份快照真正下发给页面之后才启动更新探测；一个设置进程只探一轮。
+bool g_model_update_check_started = false;
+// restartServer 之后主动刷新的剩余次数；Server 落位 .gram.new 后提前结束。
+int g_restart_refresh_remaining = 0;
 // appearance.settings_window_linger 的 UI 线程副本，由 ConfigCompletion 更新。
 std::string g_settings_window_linger = "off";
 std::wstring g_last_config_message;
@@ -97,6 +108,23 @@ bool PostToPage(const std::wstring &message)
         return false;
     g_native->OnHostMessage(message);
     return true;
+}
+
+// 给页面回一条只在宿主侧产生的消息。契约里的 server 段是穷举的，新类型必须同时写进
+// engine/contracts/webview/messages.json，否则 Validate 会拒。
+void PostToSettingsPage(const json::value &message)
+{
+    if (!g_native)
+        return;
+    PostToPage(string_to_wstring(json::serialize(message)));
+}
+
+// restartServer 的回执。页面那个「3 秒后恢复按钮」的定时器挂在设置窗口上，窗口一隐藏
+// 就随之失效，按钮会永远停在「重启中…」，所以由宿主在重启流程里统一发这一条。
+void PostRestartServerDone(bool ok)
+{
+    PostToSettingsPage(
+        json::value{{"type", "restartServerDone"}, {"protocolVersion", metasequoia::webview::Version}, {"ok", ok}});
 }
 
 // 冷启动打点：设置 METASEQUOIA_IME_SETTINGS_TRACE=1 后，各阶段距进程启动的毫秒数追加到
@@ -260,6 +288,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
     const AiAssistantConfig &ai = GetConfiguredAiAssistant();
     const TencentTmtConfig &tencent_tmt = GetConfiguredTencentTmt();
     const CustomTranslationConfig &custom_translation = GetConfiguredCustomTranslation();
+    const AliyunMtConfig &aliyun_mt = GetConfiguredAliyunMt();
     const NiuTransConfig &niutrans = GetConfiguredNiuTrans();
     const auto translation = GetConfiguredTranslation();
     const NetworkProxyConfig network_proxy = GetConfiguredNetworkProxy();
@@ -296,7 +325,9 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
     if (g_candidate_skin_catalog)
     {
         for (const auto &issue : g_candidate_skin_catalog->issues)
-            skin_issues.push_back({{"folder", issue.folder}, {"reason", issue.reason}});
+            skin_issues.push_back({{"folder", issue.folder},
+                                   {"reason", issue.reason},
+                                   {"noticed", issue.kind == CandidateSkinCatalog::Issue::Kind::Noticed}});
     }
     nlohmann::json polish_presets = nlohmann::json::array();
     for (const auto &preset : VoiceInput::BuiltinPolishPromptPresets())
@@ -403,8 +434,11 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"sentence_collocation_model_status", [] {
                  nlohmann::json statuses = nlohmann::json::object();
                  for (const auto &[model_id, status] : collocation::GetModelStatuses())
-                     statuses[model_id] = nlohmann::json{{"state", status.state}, {"progress", status.progress},
-                                                         {"error", status.error}};
+                     statuses[model_id] = nlohmann::json{{"state", status.state},
+                                                         {"progress", status.progress},
+                                                         {"error", status.error},
+                                                         {"updateAvailable", status.update_available},
+                                                         {"updatePending", status.update_pending}};
                  return statuses;
              }()},
             {"sentence_collocation_model", GetConfiguredAssocSentenceCollocationModel()},
@@ -426,6 +460,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"switch_language_ctrl", GetConfiguredSwitchLanguageCtrlEnabled()},
             {"switch_language_ctrl_alt_space", GetConfiguredSwitchLanguageCtrlAltSpaceEnabled()},
             {"toggle_character_set_ctrl_shift_f", GetConfiguredCharacterSetShortcutEnabled()},
+            {"commit_pinyin_shift_enter", GetConfiguredPinyinCommitShortcutEnabled()},
             {"input_state_shortcuts", BuildInputStateShortcutMetadata()},
             {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()}}},
           {"frequency_adjustment",
@@ -457,6 +492,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"appearance",
            {{"settings_window_linger", GetConfiguredSettingsWindowLinger()},
             {"settings_launch_animation", GetConfiguredSettingsLaunchAnimation()},
+            {"auto_download_update", GetConfiguredAutoDownloadUpdate()},
             {"candidate_window_layout", GetConfiguredCandidateWindowLayout()},
             {"candidate_window_follow_cursor", GetConfiguredCandidateWindowFollowCursor()},
             {"candidate_window_fit_content", GetConfiguredCandidateWindowFitContent()},
@@ -537,6 +573,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"ai_assistant",
            {{"enabled", ai.enabled},
             {"provider", ai.provider},
+            {"generate_provider", ai.generate_provider},
             {"token", ai.token},
             {"tokens", ai.tokens},
             {"endpoint", ai.endpoint},
@@ -556,6 +593,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"secret_key", tencent_tmt.secret_key},
             {"region", tencent_tmt.region},
             {"target_language", tencent_tmt.target_language}}},
+          {"aliyun_mt", {{"enabled", aliyun_mt.enabled}, {"secret_id", aliyun_mt.secret_id},
+                         {"secret_key", aliyun_mt.secret_key}}},
           {"custom_translation",
            {{"enabled", custom_translation.enabled},
             {"endpoint", custom_translation.endpoint},
@@ -584,6 +623,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"quanpin",
            {{"autocorrect_transposition", GetConfiguredQuanpinAutocorrectTransposition()},
             {"autocorrect_neighbor", GetConfiguredQuanpinAutocorrectNeighbor()},
+            {"autocorrect_deletion", GetConfiguredQuanpinAutocorrectDeletion()},
+            {"autocorrect_insertion", GetConfiguredQuanpinAutocorrectInsertion()},
             {"autocorrect_marker", GetConfiguredQuanpinAutocorrectMarker()}}},
           {"statistics",
            {{"enabled", GetConfiguredStatisticsEnabled()}, {"retention", GetConfiguredStatisticsRetention()}}}}}};
@@ -702,6 +743,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredSettingsWindowLinger(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.settings_launch_animation")
         return SetConfiguredSettingsLaunchAnimation(json::value_to<bool>(data.at("value")));
+    if (path == "appearance.auto_download_update")
+        return SetConfiguredAutoDownloadUpdate(json::value_to<bool>(data.at("value")));
     if (path == "appearance.candidate_window_layout")
         return SetConfiguredCandidateWindowLayout(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.candidate_window_follow_cursor")
@@ -890,6 +933,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredSwitchLanguageCtrlAltSpaceEnabled(json::value_to<bool>(data.at("value")));
     if (path == "keybindings.toggle_character_set_ctrl_shift_f")
         return SetConfiguredCharacterSetShortcutEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "keybindings.commit_pinyin_shift_enter")
+        return SetConfiguredPinyinCommitShortcutEnabled(json::value_to<bool>(data.at("value")));
     if (path == "keybindings.trilingual_cycle")
         return SetConfiguredTrilingualCycleEnabled(json::value_to<bool>(data.at("value")));
     if (const std::size_t index = InputStateShortcutIndex(path); index < FanyImeInputStateShortcuts::Definitions.size())
@@ -919,8 +964,20 @@ bool ApplyConfigUpdate(const json::object &data)
     }
     if (path.rfind("ai_assistant.", 0) == 0)
     {
-        const std::string key = path.substr(13);
+        std::string key = path.substr(13);
         const json::value &value = data.at("value");
+        // `endpoint@<id>` / `model@<id>`：设置页按服务商写槽位。@ 不会出现在任何配置键名里，
+        // 用它在一条 configUpdate 里指明目标服务商，宿主据此判断单值键要不要跟着改，
+        // 不必拿后端此刻的活动服务商去猜页面在说哪一家。
+        const size_t at = key.find('@');
+        if (at != std::string::npos)
+        {
+            const std::string field = key.substr(0, at);
+            const std::string provider = key.substr(at + 1);
+            if ((field != "endpoint" && field != "model") || provider.empty() || !value.is_string())
+                return false;
+            return SetConfiguredAiAssistantProviderValue(provider, field, json::value_to<std::string>(value));
+        }
         if (value.is_bool())
             return SetConfiguredAiAssistantBool(key, json::value_to<bool>(value));
         if (value.is_string())
@@ -934,6 +991,14 @@ bool ApplyConfigUpdate(const json::object &data)
         const json::value &value = data.at("value");
         return value.is_string() && SetConfiguredTencentTmtString(path.substr(std::string("tencent_tmt.").size()),
                                                                   json::value_to<std::string>(value));
+    }
+    if (path == "aliyun_mt.enabled")
+        return SetConfiguredAliyunMtBool("enabled", json::value_to<bool>(data.at("value")));
+    if (path.rfind("aliyun_mt.", 0) == 0)
+    {
+        const json::value &value = data.at("value");
+        return value.is_string() && SetConfiguredAliyunMtString(path.substr(std::string("aliyun_mt.").size()),
+                                                                json::value_to<std::string>(value));
     }
     if (path == "custom_translation.enabled")
         return SetConfiguredCustomTranslationBool("enabled", json::value_to<bool>(data.at("value")));
@@ -1001,6 +1066,10 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredQuanpinAutocorrectTransposition(json::value_to<bool>(data.at("value")));
     if (path == "quanpin.autocorrect_neighbor")
         return SetConfiguredQuanpinAutocorrectNeighbor(json::value_to<bool>(data.at("value")));
+    if (path == "quanpin.autocorrect_deletion")
+        return SetConfiguredQuanpinAutocorrectDeletion(json::value_to<bool>(data.at("value")));
+    if (path == "quanpin.autocorrect_insertion")
+        return SetConfiguredQuanpinAutocorrectInsertion(json::value_to<bool>(data.at("value")));
     if (path == "quanpin.autocorrect_marker")
         return SetConfiguredQuanpinAutocorrectMarker(json::value_to<bool>(data.at("value")));
     return false;
@@ -1457,6 +1526,16 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             {
                 MessageBoxW(g_settings_hwnd, L"未能重启输入法进程，请稍后重试。", L"水杉输入法",
                             MB_OK | MB_ICONWARNING);
+                PostRestartServerDone(false);
+            }
+            else if (g_worker && !g_closing)
+            {
+                // Watchdog 拉起新 Server 后才会落位 .gram.new；设置进程不会因为这次重启
+                // 收到配置变化，所以在接下来几秒主动拉快照，待更新清掉或次数用完就停。
+                // 不重启设置进程：避免单实例/重开时序问题和窗口闪现。
+                g_restart_refresh_remaining = kRestartRefreshTicks;
+                SetTimer(hwnd, kRestartRefreshTimer, 500, nullptr);
+                PostRestartServerDone(true);
             }
         }
         else if (type == "openExternalUrl")
@@ -1693,6 +1772,7 @@ void CloseSettings(HWND hwnd)
     g_lingering = false;
     KillTimer(hwnd, kLingerTimer);
     KillTimer(hwnd, kConfigReloadTimer);
+    KillTimer(hwnd, kRestartRefreshTimer);
     ReleaseMouseCapture(hwnd);
     ShowWindow(hwnd, SW_HIDE);
     if (g_worker)
@@ -1785,6 +1865,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
             CloseSettings(hwnd);
             return 0;
         }
+        if (w_param == kRestartRefreshTimer)
+        {
+            if (g_restart_refresh_remaining > 0)
+                --g_restart_refresh_remaining;
+            bool pending = false;
+            for (const auto &entry : collocation::GetModelStatuses())
+                pending = pending || entry.second.update_pending;
+            // 待更新已经被新 Server 落位，或兜底次数用完，就停；仍刷新一次让页面恢复。
+            if (!pending || g_restart_refresh_remaining <= 0)
+                KillTimer(hwnd, kRestartRefreshTimer);
+            if (g_worker && !g_closing)
+                PostConfig(false);
+            return 0;
+        }
         if (w_param == kConfigReloadTimer && g_worker && !g_closing && !g_reload_pending)
         {
             g_reload_pending = true;
@@ -1810,6 +1904,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
         if (g_worker)
         {
             g_worker->Drain(!g_closing);
+            // 第一份快照真正下发之后才探测：此时页面已经有模型列表，探测结果回来只需刷新
+            // 快照。线程不碰 g_worker，避免进程退出时的生命周期竞争；窗口先关掉时消息自然丢弃。
+            if (!g_model_update_check_started && !g_closing && !g_last_config_message.empty())
+            {
+                g_model_update_check_started = true;
+                const HWND target = hwnd;
+                std::thread([target] {
+                    collocation::CheckForUpdates();
+                    PostMessageW(target, kModelUpdateChecked, 0, 0);
+                }).detach();
+            }
             if (g_closing && g_worker->Stopped())
             {
                 // The settings window leaves without destroying its window: see the
@@ -1817,6 +1922,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
                 PostQuitMessage(0);
             }
         }
+        return 0;
+    case kModelUpdateChecked:
+        // 探测线程只回一条消息，刷新快照仍在 worker 队列上做，UI 线程不被网络阻塞。
+        PostConfig(false);
         return 0;
     case WM_CLOSE:
         HideSettings(hwnd);
@@ -1831,6 +1940,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
             g_worker->Stop();
         KillTimer(hwnd, kLingerTimer);
         KillTimer(hwnd, kConfigReloadTimer);
+        KillTimer(hwnd, kRestartRefreshTimer);
         g_native.reset();
         PostQuitMessage(0);
         return 0;
@@ -1842,6 +1952,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_command)
 {
     TraceStartup("wWinMain");
+    // Per-user keyboard list entry, started by the installer as the original user; no window, no single-instance
+    // check. Must come before the elevated half below: that one writes HKLM and must not touch HKCU.
+    if (const int profile_result = input_method_install::RunRegisterProfileIfRequested(command_line);
+        profile_result >= 0)
+        return profile_result;
     // The elevated half of the game-compat switch: write HKLM and exit, no window, no single-instance check.
     if (const int elevated_result = game_compat_name::RunElevatedApplyIfRequested(command_line); elevated_result >= 0)
         return elevated_result;
@@ -1913,6 +2028,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
         TraceStartup("worker: InitImeConfig begin");
         InitImeConfig();
         TraceStartup("worker: InitImeConfig end");
+        // 上一次退出时没能落位的新版本在这里生效：此时还没有任何会话/映射。
+        collocation::ApplyPendingUpdates();
         initial_config->set_value(ResolveConfiguredTheme(GetConfiguredThemeSettings()) == "light");
         return ConfigCompletion();
     });

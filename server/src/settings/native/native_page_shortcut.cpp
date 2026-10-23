@@ -597,7 +597,11 @@ class ActionButton : public msimeui::Visual
         const bool clicked = pressed_ && window_ && HitTest(window_->ClientPixelsToDips(point));
         pressed_ = false;
         if (clicked && onClick_ && !disabled_)
-            onClick_();
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
         return true;
     }
 
@@ -638,13 +642,20 @@ class RecordButton : public ActionButton
 
     bool OnKeyDown(WPARAM key, LPARAM lParam) override
     {
-        return onKey_ && onKey_(key, lParam);
+        if (!onKey_)
+            return false;
+        // The handler may rebuild the editor list and destroy this button.
+        const auto handler = onKey_;
+        return handler(key, lParam);
     }
 
     void OnFocusChanged(bool focused) override
     {
         if (!focused && onBlur_)
-            onBlur_();
+        {
+            const auto handler = onBlur_;
+            handler();
+        }
     }
 
   private:
@@ -1091,6 +1102,16 @@ VisualPtr BuildShortcutPage(PageContext &context)
         });
     }
 
+    // 提交
+    {
+        auto column = std::make_shared<Column>(0.0f);
+        column->Add(Heading(L"提交", L"双拼方案下，Enter 提交原始输入，Shift + Enter 提交转换后的全拼。"
+                                     L"敲大写字母时 Shift 常常没松开就按了回车，容易误触，可在此关闭"));
+        column->Add(
+            Options({BindCheck(context, L"Shift + Enter 提交转换后的全拼", "keybindings.commit_pinyin_shift_enter")}));
+        page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);
+    }
+
     // 翻页方式
     {
         auto column = std::make_shared<Column>(0.0f);
@@ -1134,7 +1155,7 @@ VisualPtr BuildShortcutPage(PageContext &context)
             {L"以词定字：上屏高亮候选的首字 / 末字（可在“输入”中改为 - / =）", Keys({L"[", L"|/", L"]"})},
             {L"上屏高亮候选的译文（需开启候选中英互译；有多条释义时再选一条）", Keys({L"Ctrl", L"|+", L"Enter"})},
             {L"提交原始输入 / 取消输入", Keys({L"Enter", L"|/", L"Esc"})},
-            {L"提交拼音（双拼方案下提交转换后的全拼）", Keys({L"Shift", L"|+", L"Enter"})},
+            {L"提交拼音（双拼方案下提交转换后的全拼，可在上方关闭）", Keys({L"Shift", L"|+", L"Enter"})},
         };
         for (size_t i = 0; i < entries.size(); ++i)
             list->Add(RuledRow(RowLabel(entries[i].label), entries[i].keys, true, i > 0));

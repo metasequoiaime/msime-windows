@@ -176,7 +176,7 @@ bool KeepRectOnVisibleScreens(RECT &rect, ScreenArea area, HMONITOR *monitor, co
     return true;
 }
 
-void ClipWindowToVisibleScreens(HWND hwnd, ScreenArea area)
+void ClipWindowToVisibleScreens(HWND hwnd, ScreenArea area, HRGN shape)
 {
     RECT rect{};
     if (!hwnd || !GetWindowRect(hwnd, &rect))
@@ -195,18 +195,28 @@ void ClipWindowToVisibleScreens(HWND hwnd, ScreenArea area)
         const bool hasRegion = GetWindowRgn(hwnd, current) != ERROR;
         // Nothing visible means the host is mid-drag between screens; the
         // clamp at the end of the drag brings it back, so leave it alone.
-        if (kind == NULLREGION || kind == ERROR || EqualRgn(clipped, whole))
+        if (kind != NULLREGION)
         {
-            if (hasRegion && kind != NULLREGION)
-            {
-                SetWindowRgn(hwnd, nullptr, TRUE);
-            }
-        }
-        else
-        {
+            const bool whollyVisible = kind == ERROR || EqualRgn(clipped, whole);
             OffsetRgn(clipped, -rect.left, -rect.top);
+            // A shaped window keeps its shape, trimmed to the visible part.
+            if (shape && whollyVisible)
+            {
+                CombineRgn(clipped, shape, nullptr, RGN_COPY);
+            }
+            else if (shape)
+            {
+                CombineRgn(clipped, clipped, shape, RGN_AND);
+            }
+            if (whollyVisible && !shape)
+            {
+                if (hasRegion)
+                {
+                    SetWindowRgn(hwnd, nullptr, TRUE);
+                }
+            }
             // SetWindowRgn repaints, and it runs on every move during a drag.
-            if (!hasRegion || !EqualRgn(current, clipped))
+            else if (!hasRegion || !EqualRgn(current, clipped))
             {
                 // The system owns the region once it is set.
                 if (SetWindowRgn(hwnd, clipped, TRUE))
@@ -223,6 +233,16 @@ void ClipWindowToVisibleScreens(HWND hwnd, ScreenArea area)
             DeleteObject(region);
         }
     }
+}
+
+bool SystemAnimationsEnabled()
+{
+    BOOL enabled = TRUE;
+    if (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0))
+    {
+        return true;
+    }
+    return enabled != FALSE;
 }
 
 bool IsWindowInMoveSizeLoop(HWND hwnd)

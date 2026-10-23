@@ -88,7 +88,15 @@ bool KeepRectOnVisibleScreens(RECT &rect, ScreenArea area, HMONITOR *monitor = n
 // Clips `hwnd` to the part of it inside the visible region, so margin hanging
 // off an edge or over the taskbar is neither drawn nor hit-tested there.
 // Clears the region again once the whole window is visible.
-void ClipWindowToVisibleScreens(HWND hwnd, ScreenArea area);
+// `shape` (window coordinates, still owned by the caller) is the window's own
+// shape, such as the opaque part of a toolbar image: the region becomes its
+// visible part, and stays the shape once the whole window is visible.
+void ClipWindowToVisibleScreens(HWND hwnd, ScreenArea area, HRGN shape = nullptr);
+// The system "Animation effects" switch (Settings > Accessibility > Visual effects), the
+// one browsers expose as prefers-reduced-motion. Off: animated images show their first
+// frame. Reads as on when the setting cannot be read.
+bool SystemAnimationsEnabled();
+
 // True while `hwnd` is inside a native move/size loop (caption drag).
 bool IsWindowInMoveSizeLoop(HWND hwnd);
 // Top-left for a host about to be resized to `width` x `height` physical px.

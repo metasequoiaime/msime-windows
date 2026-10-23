@@ -1,15 +1,96 @@
 # Metasequoia IME Installer
 
-本目录的脚本从 Windows 合仓目录收集产物、签名、用 Inno Setup 打成安装包。它服务两条流程：
+本目录的脚本从 Windows 合仓目录收集产物、签名、用 Inno Setup 打成安装包。它服务四条流程：
 
 - **正式发布**：由 `MSIME-Windows` 的 release workflow 驱动，用真实证书签名包内全部 EXE/DLL 和最终安装包；产物是挂在 Release 上的 `MetasequoiaIME_Setup_v<版本>.exe`，并携带与 Release 二进制匹配的 PDB 符号文件。见下面「CI 契约」
+- **Nightly**：由 `nightly.yml` workflow 驱动，每周一、三、六从 `develop` 的 HEAD 自动构建，用一张**固定**的自签名证书签名，发布到预发布 `nightly` tag。见下面「Nightly build」
+- **开发构建**：由 `dev-build.yml` workflow 驱动，runner 上现场生成自签名证书并签名，产物随 artifact 分发。见下面「Dev build」
 - **本地测试**：手工跑，用本机自签名证书，用来在自己机器上验证安装流程。本文其余部分讲的是这条
+
+## 三个通道怎么选
+
+产品对外有三条下载通道，签名方式、可信度和更新方式各不相同。
+
+| | 正式发布 | Nightly | Dev build |
+|---|---|---|---|
+| 谁用 | 所有用户 | 想尝鲜的测试者 | 改代码的贡献者 |
+| 从哪拿 | [Releases 的 Latest](https://github.com/metasequoiaime/msime-windows/releases/latest) | [Releases 的 `nightly` tag](https://github.com/metasequoiaime/msime-windows/releases/tag/nightly) | Actions 运行的 Artifacts |
+| 什么时候出 | 合进 `main` 时 | 每周一、三、六，或手动触发 | 每次向特性分支 push、每个开向 develop 的 PR |
+| 构建来源 | `main`，经发布流程筛选 | `develop` 的 HEAD，无人筛选 | 你的分支 |
+| 签名证书 | 真实代码签名证书或 SignPath | 固定自签名证书，私钥在仓库 secret | 每次运行现场生成 |
+| 用户要导入几次信任 | 0 | **1 次，之后不用再导** | **每换一次构建导一次** |
+| 版本号 | `0.7.1` | `0.7.1-nightly.<日期>.<commit>` | `0.7.1-dev.<日期>.<commit>` |
+| 更新检查 | 提示升级 | 不提示 | 不提示 |
+| 稳定性承诺 | 有，出问题会修 | **无**，可能损坏配置或数据 | **无**，仅供验证 |
+
+三条通道的证书 subject 互不相同，所以互不覆盖：
+
+| 通道 | Subject | 有效期 |
+|---|---|---|
+| Nightly | `CN=Metasequoia IME Windows Nightly Build Code Signing` | 3 年，到期换发 |
+| Dev build | `CN=Metasequoia IME Dev Build Code Signing` | 90 天，每次构建换新 |
+
+**Nightly 永远进不了 Latest。** GitHub 的 Latest 只指向非预发布 Release，nightly 每次都带 `--prerelease`，所以首页那个 Latest 链接始终是正式版。
 
 版本号不是固定的，由 `Prepare-PackageFiles.ps1` 的 `-TargetVersion` 决定，默认 `0.0.1`；正式发布时 CI 传入真实版本。
 
-本仓库 **不包含** 正式代码签名证书、私钥、指纹，也不包含编译好的 EXE/DLL、词库或安装包。
+本仓库 **不包含** 正式代码签名证书、私钥、指纹，也不包含编译好的 EXE/DLL、词库或安装包。唯一的公钥是 `nightly-signing.cer`，它随仓库分发，用于给用户导入 nightly 通道的信任。
 
 签名脚本会在你自己的机器上生成并复用一张自签名测试证书。
+
+## Dev build
+
+`dev-build.yml` workflow 给没有本地工具链的贡献者出可安装的包。触发见 [CONTRIBUTING.md](../CONTRIBUTING.md#没有本地工具链时dev-build-workflow)。签名证书由 `sign-dev-build.ps1` 在 runner 上现场生成，subject 固定为 `CN=Metasequoia IME Dev Build Code Signing`，私钥只在 runner 内存里存在一次构建；公钥 `.cer` 随 artifact 分发，用户用 `import-dev-trust.ps1` 导入本机受信任存储（按 subject 清旧导新，重复构建不会膨胀存储）。
+
+- `sign-dev-build.ps1` 复用同一次运行早先创建的证书，所以包内二进制和安装包总在同一签名下；复用的依据是本次运行写在 `RUNNER_TEMP` 里的指纹标记，不按 subject 猜，机器上残留的旧证书不会被误用。`DEV_CERT_PATH` 指出 `.cer` 的导出位置
+- 证书有效期 90 天：artifact 只留 7 天，但用户可能下载到本地后放很久才装，而安装器校验的是签名时刻证书是否有效；`import-dev-trust.ps1` 会打印这张 `.cer` 自带的到期时间，发现已过期就直接退出，不往受信任存储里写
+- `import-dev-trust.ps1` 也随 artifact 分发，用户解压后在管理员 PowerShell 里直接跑
+- 版本号带 `-dev.<日期>.<commit>`，由 `scripts/dev-build-version.py` 从 `version.txt` 派生；设置页的更新检查会剥掉 `-dev` 后缀做数字比较，dev 包不会提示升级
+- 不要把这两个脚本接进 release 路径：正式发布的签名在 `scripts/ci/sign-binaries.ps1` 或 SignPath，两套互不相干
+
+## Nightly build
+
+`nightly.yml` 每周一、周三、周六 UTC 20:00（北京时间次日 04:00）从 `develop` 的 HEAD 出一份安装包，发布到固定的预发布 `nightly` tag。也可以手动触发：`workflow_dispatch` 带一个 `publish` 开关，取消勾选就只编译和上传 artifact、不发 Release，适合先验证一趟改动。它和 dev build 的差别只在签名与发布方式：
+
+- **证书固定**：不是现场生成，而是仓库 secrets 里的 `NIGHTLY_CERTIFICATE_BASE64` / `NIGHTLY_CERTIFICATE_PASSWORD`，subject 为 `CN=Metasequoia IME Windows Nightly Build Code Signing`。公钥 `nightly-signing.cer` 提交在仓库里，同时随 Release 和 artifact 分发。用户跑一次 `import-nightly-trust.ps1` 即可长期验证后续所有 nightly 构建
+- **签名走 `scripts/ci/sign-binaries.ps1`**，与正式发布同一套，只是证书不同；缺少 secret 时直接失败，不会降级成未签名包
+- **发布前逐个核对签名**：用仓库里的 `.cer` 作为信任锚验证包内每个 EXE/DLL 和安装包，签错证书会被拦下
+- **tag 固定为字面量 `nightly` 且标为 prerelease**，所以永远进不了 GitHub 的 Latest，设置页的更新检查也不会指向它；每次运行用 `--clobber` 覆盖同名附件，Release 上始终只有一份
+- **版本号带 `-nightly.<日期>.<commit>`**，与 `-dev.` 区分
+- **正文列出相较上一次构建的提交**：用 `git log --no-merges <上次 sha>..HEAD` 生成，最多展示 25 条，超出部分给完整对比链接。上次的 sha 记在正文末尾 `<!-- nightly-sha: ... -->` 这个隐藏注释里，而不是从 tag 读——tag 永远指向第一次构建的 commit，用它比较会一直拿今天的 HEAD 对第一次 nightly
+- 失败时 `notify` job 会开一个 `bug` + `nightly-failure` 标签的 issue；已有未关闭的就追加评论，不重复开。成功不自动关 issue，由人确认后手动关
+
+### 用户怎么装 nightly
+
+打开 [Releases 的 nightly 页面](https://github.com/metasequoiaime/msime-windows/releases/tag/nightly)，下载三个附件：
+
+- `MetasequoiaIME_Setup_v<版本>-nightly.<日期>.<commit>.exe`
+- `nightly-signing.cer`
+- `import-nightly-trust.ps1`
+
+解压到同一个目录，然后在**管理员** PowerShell 里跑一次：
+
+```powershell
+cd <解压目录>
+pwsh -File .\import-nightly-trust.ps1
+```
+
+看到 `有效期至：<日期>` 就说明导入成功，之后双击安装包。**这个脚本只需要跑一次**，后续新的 nightly 构建直接装就行，不会因为换了构建而失效——这正是 nightly 相对 dev build 的价值所在。脚本重复运行时按指纹跳过，不会重复导入。
+
+**不导入就直接装会怎样：** 程序能启动、能打字，但在以管理员身份运行的窗口（管理员 PowerShell、以管理员打开的记事本或终端）里候选窗不会出现，看起来像输入法坏了。原因是 Server 带 `uiAccess="true"` 清单，好让候选窗浮在被 UIPI 保护的高权限窗口之上；Windows 只对「有可信签名、且装在受信任位置」的程序承认这个权限，没签名的 uiAccess 程序会被静默降权。
+
+`nightly-signing.cer` 也提交在仓库里（`installer/nightly-signing.cer`），脚本默认从同目录找它；想直接用仓库那份可以加 `-CertificatePath`。
+
+### 维护者换发证书
+
+`nightly-signing.cer` 有效期 3 年，到期前：
+
+1. 跑 `pwsh -File ./scripts/ci/new-nightly-certificate.ps1`，按输出更新仓库的 `NIGHTLY_CERTIFICATE_BASE64` 与 `NIGHTLY_CERTIFICATE_PASSWORD` 两个 secret
+2. 用新生成的 `nightly-signing.cer` 覆盖 `installer/nightly-signing.cer` 并提交
+3. 删掉本机含私钥的 `.pfx` 和 `secret-base64.txt`
+4. 手动触发一次 nightly 验证
+
+旧证书残留在用户机器上不会造成问题：`import-nightly-trust.ps1` 导入新证书时会警告同 subject 下还留着旧证书。
 
 ## CI 契约
 
@@ -71,7 +152,7 @@ Windows CI 运行 `installer/tests/cloud-choice.ps1`，用 Inno Setup 跑八个�
 安装包不携带 VC 运行库，它是系统级共享组件。缺了它 Server 起不来，而这个故障出现在安装结束之后，用户看不到任何解释。所以 `msime_setup.iss` 的 `InitializeSetup` 在安装开始前先查一遍，缺了就当场说清楚，并给出下载地址。界面全部由 `msimeui` 以 Direct2D 绘制，不再依赖 WebView2 Runtime；旧版本留下的 WebView2 用户数据（`ProgramData\metasequoiaime\webview2`、`webview2-settings`，以及 `%LOCALAPPDATA%\metasequoiaime` 下的同名回退目录）由安装器在升级和卸载时清掉。
 
 - **Visual C++ 2015–2022 可再发行组件包（x64）**：读 `Software\Microsoft\VisualStudio\14.0\VC\Runtimes\x64` 的 `Installed` / `Major` / `Minor`，`HKLM32` 和 `HKLM64` 两个视图都查。要求 **14.40 以上**（常量 `VCRuntimeMinMinor`）：`server_exe\` 里的 exe 用 MSVC 14.40+（VS 2022 17.10 起）编译并导入 `msvcp140.dll`，这一版起 `std::mutex` 的构造函数是 constexpr，配上更旧的 `msvcp140.dll` 会在第一次加锁时访问冲突、无声闪退——设置页「点了没反应」就是这个现象。装了 2019 / 早期 2022 运行库的机器同样有 `Installed=1`，所以必须比版本号。构建工具链升级到要求更高 redist 时同步调高这个常量。32 位 TSF DLL 用静态 CRT（`windows/CMakeLists.txt` 的 `CMAKE_MSVC_RUNTIME_LIBRARY`），所以不检查 x86 redist
-- **不要改成查 `System32` 里的 DLL。** Setup.exe 是 32 位进程，Pascal Script 的 `FileExists` 会被 WOW64 重定向到 `SysWOW64`，查到的是 x86 运行库；只装了 x64 redist 的机器会被误判成缺少 x64 运行库。绕开重定向的办法不可移植：`EnableFsRedirection` 在 Inno Setup 7 里已被移除，而它的替代品在 CI 用的 6.x 里还不存在
+- **不要改成查 `System32` 里的 DLL，也不要在 Pascal Script 里用 `ApplyPathRedirRulesForCurrentProcess`。** 那是 Inno Setup 7 的 support function，CI 的 6.7.1 没有它，ISCC 会报 `Unknown identifier`（#925 引入后第一次在 hosted runner 上编安装包就炸了，#55e1127a 改回直接展开 `{sys}`）。Setup 在 x64/ARM64 上是 64 位进程，`{sys}` 本来就不经重定向；需要 32 位视图时用 `{syswow64}`
 - 缺组件或版本过旧时弹一次对话框，区分「没装」和「已装 x.y 但过旧」，列出直接下载链接（`https://aka.ms/vc14/vc_redist.x64.exe`）和说明页：选「是」直接下载安装包并结束安装，选「否」继续装。**不阻断安装**——用户可能马上就要去补组件，也可能只是在准备环境。静默安装（CI、批量部署）用 `SuppressibleMsgBox` 默认「否」直接继续，缺什么已经写进安装日志（`/LOG=`）
 
 ## 依赖

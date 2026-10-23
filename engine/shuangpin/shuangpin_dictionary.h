@@ -145,6 +145,8 @@ class ShuangpinDictionary
     bool direct_span_cache_enabled_ = false;
     metasequoia::FuzzyPinyinOptions fuzzy_pinyin_;
     std::unordered_map<std::string, std::vector<quanpin::LatticeLexeme>> direct_span_cache_;
+    // 见 QuanpinDictionary::char_reading_totals_。
+    std::shared_ptr<const quanpin::CharReadingTotals> char_reading_totals_;
     void reset_cache_if_database_changed();
     // 这个字能不能落在 helpcode 约束的音节上。
     bool accepts_syllable_char(const SyllableHelpcode &helpcode, const std::string &hanzi) const;

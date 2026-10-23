@@ -35,6 +35,18 @@ namespace
 {
 namespace fs = std::filesystem;
 
+// 系统临时目录在加固过的机器上会拒绝新建文件（TEMP 的 ACL），所有造库的用例都会因为与
+// 被测代码无关的原因失败。METASEQUOIA_IME_TEST_TEMP 把回归目录改到可写位置；CI 不设它。
+fs::path regression_temp_root()
+{
+    if (const auto override_dir = metasequoia::detail::wide_environment_variable(L"METASEQUOIA_IME_TEST_TEMP");
+        override_dir && !override_dir->empty())
+    {
+        return fs::path(*override_dir);
+    }
+    return fs::temp_directory_path();
+}
+
 class ScopedLocalAppDataOverride
 {
   public:
@@ -48,7 +60,7 @@ class ScopedLocalAppDataOverride
         const auto current = metasequoia::detail::wide_environment_variable(kDataDirectoryVariable);
         original_ = current.value_or(L"");
 
-        root_ = fs::temp_directory_path() / "msime-regression" / suffix;
+        root_ = regression_temp_root() / "msime-regression" / suffix;
         app_dir_ = root_ / "metasequoiaime";
         fs::remove_all(root_);
         fs::create_directories(app_dir_);
@@ -910,7 +922,7 @@ namespace
 // corrected key 'shang', so a leading 上 proves the corrected path actually ran.
 std::filesystem::path create_autocorrect_probe_database()
 {
-    const fs::path path = fs::temp_directory_path() / "msime-quanpin-autocorrect-mask-test.db";
+    const fs::path path = regression_temp_root() / "msime-quanpin-autocorrect-mask-test.db";
     std::error_code ec;
     fs::remove(path, ec);
     sqlite3 *db = nullptr;
@@ -959,15 +971,12 @@ void test_quanpin_autocorrect_switches_and_guard()
     // fix (AC1-AC4). Since the generated correction space was added, the neighbour
     // bit also carries out-of-table substitutions, so a bit no longer maps onto
     // exactly one table and the 'must NOT correct' rows had to give up their empty
-    // expectation for the input's widened reading. The bare bits used here
-    // (neighbour alone, T|N) are unreachable in the product: engine.cpp always
-    // pairs the deletion and insertion bits with the legacy switches, so only
-    // 0xd/0xe/0xf ever occur. That does NOT make the generated space unreachable
-    // -- 0xe/0xf still carry the neighbour bit and all three carry the insertion
-    // bit -- it only means these particular one-bit rows cannot be triggered by a
-    // user. The space itself is reachable and is covered by the session-level
-    // cases below plus test_input_session.cpp.
-    expect(quanpin::autocorrect_cut("sahng", none).empty(), "Both switches off must disable the correction cut.");
+    // expectation for the input's widened reading. Every single-switch mask below is
+    // product reachable (four independent switches, see
+    // autocorrect_types_from_switches), so these rows are live user states, not
+    // probes of an unreachable bit. The generated space is covered by the
+    // session-level cases below plus test_input_session.cpp.
+    expect(quanpin::autocorrect_cut("sahng", none).empty(), "All switches off must disable the correction cut.");
     expect(quanpin::join_segments(quanpin::autocorrect_cut("sahng", transposition_only)) == "shang",
            "Transposition-only must correct 'sahng'.");
     expect(quanpin::join_segments(quanpin::autocorrect_cut("sahng", neighbor_only)) == "sa'ang",
@@ -1011,15 +1020,15 @@ void test_quanpin_autocorrect_switches_and_guard()
     // "zheg" is jianpin intent (zhe + g). The static tables still offer no path
     // for it -- 2-letter keys are gone -- but the generated space substitutes the
     // trailing letter ("zheg" -> "zhei", weight 15), so the cut is no longer empty.
-    // Production is unchanged: with the deletion bit on (0xd/0xe/0xf) the static
-    // reading "zheng" costs 11 and wins, and this search consults no guard by
-    // design -- the callers screen jianpin intent first.
+    // Production is unchanged: with the deletion switch on the static reading
+    // "zheng" costs 11 and wins, and this search consults no guard by design --
+    // the callers screen jianpin intent first.
     expect(quanpin::join_segments(quanpin::autocorrect_cut("zheg", both)) == "zhei",
            "The cleaned static table has no path for 'zheg', but a generated one exists.");
 
     // Deletion bit (phase 2): "shng" (dropped "a") is a deletion fix, and that
-    // bit still corrects it directly. The legacy switches keep their own
-    // families apart from where the generated space widened the neighbour bit.
+    // bit still corrects it directly. The other switches keep their own families
+    // apart from where the generated space widened the neighbour bit.
     const unsigned deletion_only = quanpin::kAutocorrectDeletion;
     const unsigned all = transposition_only | neighbor_only | deletion_only;
     expect(quanpin::join_segments(quanpin::autocorrect_cut("shng", deletion_only)) == "shang",
@@ -1210,9 +1219,9 @@ void test_quanpin_autocorrect_switches_and_guard()
             expect(dictionary.get_pinyin_segmentation() == test.segmentation,
                    (std::string("A self-consistent plain reading must survive the tail path: ") + test.input).c_str());
         }
-        // huazh（完整音节 hua + 尾 zh）同样走自洽明文：改动前 0xd/0xe/0xf 上都是 hua'h
-        // （多字位让 head "huaz" 读作 hua；这条与邻键位无关，0xd 也中），规则 3 后回到
-        // hua'zh。0xd 的三条同族断言给这条规则一个不依赖邻键位的判别面。
+        // huazh（完整音节 hua + 尾 zh）同样走自洽明文：改动前含多字 / 漏字位的掩码上都是
+        // hua'h（多字位让 head "huaz" 读作 hua；这条与邻键位无关），规则 3 后回到
+        // hua'zh。只开多字时没有邻键位，这组断言给规则 3 一个不依赖邻键的判别面。
         (void)dictionary.query("huazh", "", all_four);
         expect(dictionary.get_pinyin_segmentation() == "hua'zh",
                "A correctly spelled head plus a jianpin tail keeps its plain segmentation (huazh -> hua'zh).");
@@ -1333,7 +1342,7 @@ namespace
 { // 显示/标记用例的独立探针库：shang、shang'hao、ke'neng、nv、sa'huang'na'ge 最小键集。
 std::filesystem::path create_autocorrect_display_probe_database()
 {
-    const fs::path path = fs::temp_directory_path() / "msime-quanpin-autocorrect-display-test.db";
+    const fs::path path = regression_temp_root() / "msime-quanpin-autocorrect-display-test.db";
     std::error_code ec;
     fs::remove(path, ec);
     sqlite3 *db = nullptr;
@@ -1550,7 +1559,7 @@ void test_quanpin_autocorrect_display()
     }
 
     // 会话级 preedit：get_pinyin_segmentation_with_cases 必须画原始字母。
-    const fs::path session_dir = fs::temp_directory_path() / "msime-quanpin-autocorrect-display-session";
+    const fs::path session_dir = regression_temp_root() / "msime-quanpin-autocorrect-display-session";
     std::error_code cleanup_ec;
     fs::remove_all(session_dir, cleanup_ec);
     fs::create_directories(session_dir / "helpcodes");
@@ -1695,8 +1704,8 @@ void test_quanpin_autocorrect_display()
                "The u-umlaut candidate must stay unmarked.");
     }
     {
-        // 阶段 3：deletion 位随既有开关联动（design D2）后，显式三位 mask 下
-        // zheg 的 preedit 必须仍走简拼守卫，不被漏字表重排为 zheng。
+        // 阶段 3：deletion 位改由自己的开关控制；显式四位 mask 下 zheg 的 preedit
+        // 必须仍走简拼守卫，不被漏字表重排为 zheng。
         const unsigned all_three = transposition_only | neighbor_only | quanpin::kAutocorrectDeletion;
         metasequoia::InputSession session(SchemeType::Quanpin, all_three, true, true, true, paths);
         type_display_session(session, "zheg");
@@ -1708,23 +1717,23 @@ void test_quanpin_autocorrect_display()
     {
         // 阶段 3：漏字输入的 display —— 切分段携带不等长 raw span，rebuild 后
         // preedit 显示原始字母（无分隔，单段纠错）。
-        metasequoia::InputSession session(SchemeType::Quanpin, both, true, true, true, paths);
+        metasequoia::InputSession session(SchemeType::Quanpin, both | quanpin::kAutocorrectDeletion, true, true, true,
+                                          paths);
         type_display_session(session, "shng");
         expect(session.get_pinyin_segmentation_with_cases() == "shng",
                "A deletion-corrected input must show its typed letters in the preedit.");
         expect(!session.candidates().empty() && session.candidates().front().word == "上" &&
                    session.candidates().front().corrected_from == "shng",
-               "The deletion reading must reach the candidates end to end with the linked bit.");
+               "The deletion reading must reach the candidates end to end with the deletion bit on.");
     }
     {
-        // 阶段 3（design D2）：仅开 transposition 时请求布尔映射也带上 deletion
-        // 位 —— "shng" 必须可纠（端到端行为断言：mask 是会话内部状态，以纠错
-        // 生效为准）。
+        // 开关拆分后：仅开 transposition 不再带出 deletion 位 —— "shng" 只由邻键位
+        // 读成 sang，不能出现 shng -> shang 的漏字纠错（D2 联动已废除）。
         metasequoia::InputSession session(SchemeType::Quanpin, transposition_only, true, true, true, paths);
         type_display_session(session, "shng");
-        expect(std::any_of(session.candidates().begin(), session.candidates().end(),
-                           [](const WordItem &item) { return item.word == "上"; }),
-               "Transposition-only must still enable the deletion reading of 'shng' (D2 linkage).");
+        expect(std::none_of(session.candidates().begin(), session.candidates().end(),
+                            [](const WordItem &item) { return item.corrected_from == "shng"; }),
+               "Transposition-only must not enable the deletion reading of 'shng' (no linkage).");
     }
     {
         metasequoia::InputSession session(SchemeType::Quanpin, none, true, true, true, paths);
@@ -1749,13 +1758,13 @@ void test_quanpin_autocorrect_display()
                "The insertion reading must reach the candidates end to end.");
     }
     {
-        // 阶段 4（design D4）：仅开 transposition 时请求布尔映射也带上 insertion
-        // 位 —— "sghang" 必须可纠（端到端行为断言）
+        // 阶段 4：插入开关独立后，仅开 transposition 不再带出 insertion 位 ——
+        // "sghang" 不得出现 sghang -> shang 的多字纠错（D4 联动已废除）。
         metasequoia::InputSession session(SchemeType::Quanpin, transposition_only, true, true, true, paths);
         type_display_session(session, "sghang");
-        expect(std::any_of(session.candidates().begin(), session.candidates().end(),
-                           [](const WordItem &item) { return item.word == "上"; }),
-               "Transposition-only must still enable the insertion reading of 'sghang' (D4 linkage).");
+        expect(std::none_of(session.candidates().begin(), session.candidates().end(),
+                            [](const WordItem &item) { return item.corrected_from == "sghang"; }),
+               "Transposition-only must not enable the insertion reading of 'sghang' (no linkage).");
     }
     {
         // 阶段 4：'zher' 是 insertion 键（r 是 e 的邻键）但属简拼守卫形状，

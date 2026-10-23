@@ -176,9 +176,19 @@ class CandidateSkinScene
         float expandRowStepDip = 30.0f;
     };
 
+    // 当前页的一个候选：词本身与后面的标注（如整句模型名）。
+    struct PageWord
+    {
+        std::wstring text;
+        std::wstring badge;
+    };
+
     explicit CandidateSkinScene(Callbacks callbacks = {});
 
     Result Apply(const Settings &settings);
+    // 皮肤开了 candidate_overlay 时，按它指定的第几个候选从当前页取词画到装饰图上，太宽就缩字号；
+    // 其余皮肤什么也不画。selectedIndex 是当前页高亮的候选。
+    void SetDecorationCandidates(const std::vector<PageWord> &page, size_t selectedIndex);
 
     // 场景的根（外框所在的竖排面板）；第一次 Apply 之前为空。
     const std::shared_ptr<msimeui::StackPanel> &Root() const
@@ -231,7 +241,16 @@ class CandidateSkinScene
     bool pageArrows_ = false;
     bool expandPanel_ = false;
     std::shared_ptr<msimeui::StackPanel> root_;
+    // 装饰框：装饰图铺满，叠加的候选词按皮肤的对齐与偏移摆在上面。
+    std::shared_ptr<msimeui::OverlayPanel> decorationBox_;
     std::shared_ptr<msimeui::Image> decoration_;
+    std::shared_ptr<msimeui::TextBlock> decorationWord_;
+    // 当前皮肤的叠加设置；皮肤没装饰图或没开 candidate_overlay 时为空。
+    std::optional<CandidateSkinCatalog::DecorationCandidate> decorationCandidate_;
+    float decorationBoxWidthDip_ = 0.0f;
+    float decorationBoxHeightDip_ = 0.0f;
+    // 正画着的词：同一个词不再重新量字号。
+    std::wstring decorationWordShown_;
     std::shared_ptr<msimeui::Card> card_;
     // 卡片与 v2 挂件层放在同一格里：挂件层测量为 0，格子仍由卡片决定，挂件按 anchor 画到卡片外沿。
     // 网格按子元素顺序绘制：下层挂件、卡片、上层挂件。

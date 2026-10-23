@@ -55,6 +55,7 @@ bool g_switch_language_shift_enabled = true;
 bool g_switch_language_ctrl_enabled = false;
 bool g_switch_language_ctrl_alt_space_enabled = true;
 bool g_character_set_shortcut_enabled = true;
+bool g_commit_pinyin_shift_enter_enabled = true;
 InputStateShortcutValues g_input_state_shortcuts = [] {
     InputStateShortcutValues values;
     const auto defaults = FanyImeInputStateShortcuts::Defaults();
@@ -115,9 +116,13 @@ std::string g_quanpin_helpcode_schema = "lantian";
 bool g_show_shuangpin_helpcode_in_candidate_window = true;
 bool g_show_quanpin_helpcode_in_candidate_window = true;
 // The legacy single "quanpin.autocorrect" key is deliberately not read anymore:
-// both correction types default to off and users opt in from the settings page.
+// all four correction types default to off and users opt in from the settings page.
+// The two legacy switches may still be set by users who had them on; the deletion and
+// insertion keys are new and get no inheritance from them (upgrade default: off).
 bool g_quanpin_autocorrect_transposition = false;
 bool g_quanpin_autocorrect_neighbor = false;
+bool g_quanpin_autocorrect_deletion = false;
+bool g_quanpin_autocorrect_insertion = false;
 // Whether correction-sourced candidates show the trailing "*" marker. On by default.
 bool g_quanpin_autocorrect_marker = true;
 // Bitmask of FuzzyPinyinRule bits. All off by default so upgrades never change behavior.
@@ -220,6 +225,9 @@ std::string g_candidate_fixed_badge_style = "paperclip";
 std::string g_candidate_ai_badge_style = "robot";
 std::string g_settings_window_linger = "off";
 bool g_settings_launch_animation = true;
+// 发现新版本时由后台自动下载安装包并校验。出厂关闭：自动下载会占带宽和磁盘，
+// 属于要用户主动打开的行为。
+bool g_auto_download_update = false;
 std::string g_theme_mode = "system";
 std::string g_theme_settings = "follow";
 std::string g_theme_cand = "follow";
@@ -246,6 +254,7 @@ namespace ime_config_detail
 {
 AiAssistantConfig g_ai_assistant;
 TencentTmtConfig g_tencent_tmt;
+AliyunMtConfig g_aliyun_mt;
 CustomTranslationConfig g_custom_translation;
 NiuTransConfig g_niutrans;
 std::string g_translation_provider = "tencent";
@@ -258,6 +267,11 @@ std::filesystem::path g_config_path;
 namespace
 {
 std::optional<std::filesystem::file_time_type> g_config_last_write_time;
+// 最后一次读到的 config.toml 大小与内容摘要。修改时间只在秒以下精度的粒度上可信，
+// 连续两次写入可能落在同一个时间刻度上（尤其写入走的是临时文件 + MoveFileEx 替换），
+// 那时 last_write_time 相等但内容已经变了。只在时间戳没变时用它补一次判定。
+std::optional<std::uintmax_t> g_config_last_size;
+std::optional<uint64_t> g_config_last_content_hash;
 // ai_providers.json 的修改时间。服务商注册表不在 config.toml 里，只看 config.toml 的修改时间会漏掉它的变化。
 std::optional<std::filesystem::file_time_type> g_provider_store_last_write_time;
 bool g_provider_store_seen = false;
@@ -371,6 +385,19 @@ template <typename Node> bool TomlFlexibleBool(const Node &node, bool fallback)
 
 namespace ime_config_detail
 {
+uint64_t HashFileContents(const std::filesystem::path &path)
+{
+    // FNV-1a：只为判断「内容有没有变」，不做安全用途。ReadFileText 在文件缺失时返回空串。
+    const std::string text = ReadFileText(path);
+    uint64_t hash = 1469598103934665603ull;
+    for (const unsigned char byte : text)
+    {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
 void RememberConfigWriteTime()
 {
     std::error_code error;
@@ -378,6 +405,19 @@ void RememberConfigWriteTime()
     if (!error)
     {
         g_config_last_write_time = write_time;
+    }
+    // 与时间戳同时记下大小和内容摘要，供 ReloadImeConfigIfChanged 在时间戳没变时复核。
+    std::error_code size_error;
+    const auto size = std::filesystem::file_size(g_config_path, size_error);
+    if (!size_error)
+    {
+        g_config_last_size = size;
+        g_config_last_content_hash = ime_config_detail::HashFileContents(g_config_path);
+    }
+    else
+    {
+        g_config_last_size.reset();
+        g_config_last_content_hash.reset();
     }
 }
 
@@ -541,6 +581,8 @@ bool LoadImeConfig()
             tbl["helpcode"]["show_qp_helpcode_in_candidate_window"].value_or(true);
         g_quanpin_autocorrect_transposition = tbl["quanpin"]["autocorrect_transposition"].value_or(false);
         g_quanpin_autocorrect_neighbor = tbl["quanpin"]["autocorrect_neighbor"].value_or(false);
+        g_quanpin_autocorrect_deletion = tbl["quanpin"]["autocorrect_deletion"].value_or(false);
+        g_quanpin_autocorrect_insertion = tbl["quanpin"]["autocorrect_insertion"].value_or(false);
         g_quanpin_autocorrect_marker = tbl["quanpin"]["autocorrect_marker"].value_or(true);
         g_fuzzy_pinyin_enabled = tbl["input"]["fuzzy_pinyin"].value_or(false);
         g_fuzzy_seeded = tbl["input"]["fuzzy_seeded"].value_or(false);
@@ -736,6 +778,7 @@ bool LoadImeConfig()
             g_switch_language_ctrl_alt_space_enabled =
                 tbl["keybindings"]["switch_language_ctrl_alt_space"].value_or(legacy_ctrl_alt_space);
             g_character_set_shortcut_enabled = tbl["keybindings"]["toggle_character_set_ctrl_shift_f"].value_or(true);
+            g_commit_pinyin_shift_enter_enabled = tbl["keybindings"]["commit_pinyin_shift_enter"].value_or(true);
             for (std::size_t i = 0; i < g_input_state_shortcuts.size(); ++i)
             {
                 const auto &definition = FanyImeInputStateShortcuts::Definitions[i];
@@ -787,6 +830,7 @@ bool LoadImeConfig()
             g_settings_window_linger = IsValidSettingsWindowLinger(linger) ? linger : "off";
         }
         g_settings_launch_animation = tbl["appearance"]["settings_launch_animation"].value_or(true);
+        g_auto_download_update = tbl["appearance"]["auto_download_update"].value_or(false);
         {
             const std::string theme_mode = tbl["appearance"]["theme_mode"].value_or(std::string("system"));
             if (theme_mode == "light" || theme_mode == "system" || theme_mode == "auto")
@@ -935,6 +979,17 @@ bool LoadImeConfig()
         };
         if (AiAssistantTokenSlotKey(g_ai_assistant.provider).empty() && !registered(g_ai_assistant.provider))
             g_ai_assistant.provider = "deepseek";
+        // 生成式记的上次服务商只在它是合法 id 时才算数，旧配置里没有这个键时跟随当前 provider。
+        g_ai_assistant.generate_provider =
+            VoiceInput::NormalizeProviderId(tbl["ai_assistant"]["generate_provider"].value_or(std::string()));
+        const bool generate_known = AiAssistantTokenSlotKey(g_ai_assistant.generate_provider) != "" ||
+                                    std::any_of(g_ai_assistant.providers.begin(), g_ai_assistant.providers.end(),
+                                                [](const AiAssistant::AiProvider &entry) {
+                                                    return entry.id == g_ai_assistant.generate_provider;
+                                                });
+        if (!generate_known || g_ai_assistant.generate_provider == "jev")
+            g_ai_assistant.generate_provider =
+                g_ai_assistant.provider == "jev" ? std::string("deepseek") : g_ai_assistant.provider;
         g_ai_assistant.token = tbl["ai_assistant"]["token"].value_or(std::string());
         g_ai_assistant.tokens.clear();
         for (const auto provider : AiAssistantProviders())
@@ -1013,13 +1068,16 @@ bool LoadImeConfig()
         g_tencent_tmt.target_language = tbl["tencent_tmt"]["target_language"].value_or(std::string("en"));
         if (!IsValidTranslationTargetLanguage(g_tencent_tmt.target_language))
             g_tencent_tmt.target_language = "en";
+        g_aliyun_mt.enabled = tbl["aliyun_mt"]["enabled"].value_or(false);
+        g_aliyun_mt.secret_id = tbl["aliyun_mt"]["secret_id"].value_or(std::string());
+        g_aliyun_mt.secret_key = tbl["aliyun_mt"]["secret_key"].value_or(std::string());
         g_custom_translation.enabled = tbl["custom_translation"]["enabled"].value_or(false);
         g_custom_translation.endpoint = tbl["custom_translation"]["endpoint"].value_or(std::string());
         g_custom_translation.api_key = tbl["custom_translation"]["api_key"].value_or(std::string());
         g_niutrans.enabled = tbl["niutrans"]["enabled"].value_or(false);
         g_niutrans.app_id = tbl["niutrans"]["app_id"].value_or(std::string());
         g_niutrans.apikey = tbl["niutrans"]["apikey"].value_or(std::string());
-        // [translation].provider 是唯一来源；旧配置缺这个键时从三个 enabled 布尔推导，
+        // [translation].provider 是唯一来源；旧配置缺这个键时从各提供方的 enabled 布尔推导，
         // 再把布尔按 provider 归一，保证旧版读回时选择不丢。
         g_translation_provider = tbl["translation"]["provider"].value_or(std::string());
         if (IsValidTranslationProvider(g_translation_provider))
@@ -1033,12 +1091,15 @@ bool LoadImeConfig()
             // 升级不能替用户把候选词发给腾讯云。
             if (g_niutrans.enabled)
                 g_translation_provider = "niutrans";
+            else if (g_aliyun_mt.enabled)
+                g_translation_provider = "aliyun";
             else if (g_custom_translation.enabled)
                 g_translation_provider = "custom";
             else
                 g_translation_provider = "tencent";
         }
         g_niutrans.enabled = g_translation_provider == "niutrans";
+        g_aliyun_mt.enabled = g_translation_provider == "aliyun";
         g_custom_translation.enabled = g_translation_provider == "custom";
         PublishTranslationConfig();
         {
@@ -1216,7 +1277,27 @@ bool ReloadImeConfigIfChanged()
 {
     std::error_code error;
     const auto write_time = std::filesystem::last_write_time(g_config_path, error);
-    const bool config_changed = !error && !(g_config_last_write_time && write_time == *g_config_last_write_time);
+    bool config_changed = !error && !(g_config_last_write_time && write_time == *g_config_last_write_time);
+    if (!error && !config_changed)
+    {
+        // 修改时间没变不等于内容没变：写入是「临时文件 + MoveFileEx 替换」，连续两次写入可能落在
+        // 同一个时间刻度上。用大小和内容摘要复核一次，避免切换方案这类紧跟在另一次写入之后
+        // 的配置变更被当成「没动」而跳过，表现出来就是要重启才生效。
+        std::error_code size_error;
+        const auto size = std::filesystem::file_size(g_config_path, size_error);
+        if (!size_error && g_config_last_size && size != *g_config_last_size)
+        {
+            // 大小变了就一定变了，不必再算摘要。
+            config_changed = true;
+        }
+        else if (!size_error && g_config_last_content_hash && g_config_last_size && size == *g_config_last_size &&
+                 HashFileContents(g_config_path) != *g_config_last_content_hash)
+        {
+            // 大小没变再看内容；读不到大小或从没记过摘要时不据此判定变化，
+            // 否则会退化成每次轮询都全量重载。
+            config_changed = true;
+        }
+    }
     bool store_changed = false;
     if (!error && !config_changed && g_provider_store_seen)
     {

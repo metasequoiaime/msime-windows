@@ -19,6 +19,8 @@ Registrar::Registrar(const char *name, std::function<void()> fn)
 
 int main()
 {
+    // Unbuffered, so a test that crashes the process still leaves the results before it.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     const auto &tests = test::registry();
 
     // A suite that registers nothing would otherwise exit successfully and look

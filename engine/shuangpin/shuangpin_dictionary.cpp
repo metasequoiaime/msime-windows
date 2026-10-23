@@ -1205,7 +1205,12 @@ void ShuangpinDictionary::set_fuzzy_pinyin(metasequoia::FuzzyPinyinOptions optio
 
 quanpin::WordLatticeLookup ShuangpinDictionary::lattice_lookup(int limit)
 {
-    auto lookup = quanpin::make_lattice_db_lookup(quanpin_db_, quanpin_statement_cache_, limit, fuzzy_pinyin_);
+    if (!char_reading_totals_)
+    {
+        char_reading_totals_ = quanpin::load_char_reading_totals(quanpin_db_);
+    }
+    auto lookup = quanpin::make_lattice_db_lookup(quanpin_db_, quanpin_statement_cache_, limit, fuzzy_pinyin_,
+                                                  char_reading_totals_);
     if (!direct_span_cache_enabled_)
     {
         return lookup;

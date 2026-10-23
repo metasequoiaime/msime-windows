@@ -1,0 +1,405 @@
+name: Dev build
+
+# Development builds for contributors. The point is that a newcomer does not install vcpkg,
+# Boost, Inno Setup and the Windows SDK to try a change; the runner builds, packages and signs,
+# and the artifact is a full installer with a fresh self-signed certificate plus the public key
+# to trust it.
+#
+# Three ways in. A feature-branch push builds automatically, so the artifact is ready when the
+# push finishes. A pull_request run gives reviewers and fork contributors an installer for real
+# device testing -- it uses pull_request, not pull_request_target, deliberately: building the
+# PR's code runs scripts from that code, and pull_request_target would hand those scripts a
+# writable token. workflow_dispatch stays for picking a single component or rebuilding without
+# a push. develop and main never trigger this; they have ci.yml and release.yml.
+#
+# This is a test channel, not a release: the version always carries -dev.<date>.<hash>, the
+# certificate is minted per run, and nothing here creates a release or touches the update
+# manifest. ci.yml remains the merge gate; this workflow deliberately skips the suite the CI
+# already runs and only builds what an installable artifact needs.
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Which component to build (all = full signed installer)
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - tip
+          - server
+  push:
+    branches-ignore:
+      - develop
+      - main
+      - 'release-please--*'
+      # The Windows 7 port lives in its own repository with dev-build-win7.yml; branches named for
+      # it are pushed here from that work and would only rebuild an artifact nobody asked for.
+      - 'win7*'
+    tags-ignore:
+      - '**'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches:
+      - develop
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+# push and pull_request have no inputs; both build everything, since those events exist to
+# produce an installable artifact and a component filter nobody can set would only mislead.
+
+# Artifacts carry a working installer plus its signing certificate. The default 90-day retention
+# would pile up hundreds of megabytes per push on an active branch, so every upload below passes
+# retention-days: 7 -- enough to notice a build and install it, and the next push replaces it.
+env:
+  DEV_ARTIFACT_RETENTION: 7
+
+# Same ref, newer run wins; an older run keeps burning a runner for nothing.
+concurrency:
+  group: dev-build-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tip:
+    name: TSF ${{ matrix.name }}
+    if: ${{ (inputs.component || 'all') == 'all' || (inputs.component || 'all') == 'tip' }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64
+            architecture: x64
+            triplet: x64-windows-static
+            build_dir: windows/build64-release
+          - name: Win32
+            architecture: Win32
+            triplet: x86-windows-static
+            build_dir: windows/build32-release
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Stamp the dev version into the resource
+        shell: pwsh
+        run: |
+          # YYMMDD in the fourth VERSIONINFO slot: the quad must stay four 16-bit fields, and a
+          # date-compressed value sorts a dev DLL above its own base and below the next release.
+          $base = python scripts/dev-build-version.py --base
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $date = python scripts/dev-build-version.py --date
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/apply_version.py --version "$base.$date"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Restore dependency binaries
+        id: vcpkg-cache
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          scope: tip-${{ matrix.triplet }}
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: windows
+        run: vcpkg install --triplet ${{ matrix.triplet }}
+      - name: Save dependency binaries before compiling
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S windows -B ${{ matrix.build_dir }} -A ${{ matrix.architecture }}
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+      - name: Build
+        shell: pwsh
+        run: cmake --build ${{ matrix.build_dir }} --config Release --parallel
+      - name: Check the Release binary and symbols
+        shell: pwsh
+        run: ./scripts/ci/check-tsf-dll.ps1 -BuildDir '${{ matrix.build_dir }}'
+      - name: Upload the TSF binary and symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-tsf-${{ matrix.name }}
+          retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
+          # Same layout convention as the release workflow: download-artifact restores the
+          # directory contents where Prepare-PackageFiles.ps1 expects them.
+          path: ${{ matrix.build_dir }}/Release
+          if-no-files-found: error
+
+  server:
+    name: Server
+    if: ${{ (inputs.component || 'all') == 'all' || (inputs.component || 'all') == 'server' }}
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Stamp the dev version into the resource
+        # The TSF DLL carries the product's VERSIONINFO even in a server-only build, because the
+        # resource is stamped before configure; keep every build of this run on one version.
+        shell: pwsh
+        run: |
+          $base = python scripts/dev-build-version.py --base
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $date = python scripts/dev-build-version.py --date
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/apply_version.py --version "$base.$date"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Restore dependency binaries
+        id: vcpkg-cache
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          scope: server-x64-windows-and-static-md
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Set up sccache
+        id: sccache
+        continue-on-error: true
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - name: Install Boost
+        shell: pwsh
+        run: ./scripts/ci/install-boost.ps1
+      - name: Save Boost binaries before configuring
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key) && steps.vcpkg-cache.outputs.matched-key != format('{0}-boost', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-boost
+      # Ninja Multi-Config so sccache plugs in through CMAKE_<LANG>_COMPILER_LAUNCHER, mirroring
+      # ci.yml's Server job; the bin/Release layout is what every later step reads. The override
+      # embeds the full dev version string into the native settings page; server/CMakeLists.txt
+      # accepts a semver prerelease suffix, and the about page's ParseVersion strips it for the
+      # update check while displaying it verbatim.
+      - name: Configure
+        shell: pwsh
+        run: |
+          $display = python scripts/dev-build-version.py --display
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cmakeArgs = @(
+            '-S', 'server', '-B', 'server/build-release', '-G', 'Ninja Multi-Config',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            '-DVCPKG_TARGET_TRIPLET=x64-windows',
+            "-DMSIME_PRODUCT_VERSION_OVERRIDE=$display"
+          )
+          $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
+          cmake @cmakeArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save dependency binaries before compiling
+        if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache.outputs.path }}
+          key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+      - name: Build
+        shell: pwsh
+        run: cmake --build server/build-release --config Release --parallel
+      - name: Check the Release binaries and symbols
+        shell: pwsh
+        run: ./scripts/ci/check-server-binaries.ps1 -BuildDir server/build-release/bin/Release
+      - name: Test with the product's exact data
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/ci/test-server.ps1 -ServerRoot server -StagingRoot "$env:RUNNER_TEMP/product-data" -BuildDir build-release
+      # uiAccess=true is ignored without a signature, so the manifest goes in before upload and
+      # the whole payload gets signed in the package job.
+      - name: Embed the Server uiAccess manifest
+        shell: pwsh
+        run: ./scripts/ci/embed-server-manifest.ps1 -BuildDir server/build-release/bin/Release
+      # component=server uploads this directory as an installable artifact with no package job to
+      # sign it. Windows ignores uiAccess=true without a trusted signature, so the binary would
+      # install and then silently lose the privilege. component=all leaves it unsigned on purpose:
+      # Prepare-PackageFiles.ps1 copies these files into the payload and sign-dev-build.ps1 signs
+      # the copies, so signing here would only add a second signing pass over the same bytes.
+      - name: Sign the Server build for the standalone artifact
+        if: ${{ (inputs.component || 'all') == 'server' }}
+        shell: pwsh
+        env:
+          DEV_CERT_PATH: ${{ runner.temp }}/dev-server-certificate.cer
+        run: |
+          # -Include 只有在 -Path 带通配符或同时给 -Recurse 时才生效，这里显式计算再交给参数，
+          # 免得把一条空列表传进脚本后它才在内部报错。
+          $targets = @(
+            Get-ChildItem -LiteralPath 'server/build-release/bin/Release' -Recurse -File |
+              Where-Object { $_.Extension -in @('.exe', '.dll') } |
+              ForEach-Object FullName
+          )
+          if ($targets.Count -eq 0) { throw 'No EXE or DLL found to sign under server/build-release/bin/Release.' }
+          ./installer/sign-dev-build.ps1 -FilePath $targets
+      - name: Upload the Server build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-server
+          retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
+          path: server/build-release/bin/Release
+          if-no-files-found: error
+      # The certificate has to travel with the standalone Server artifact too, or nobody can import
+      # the trust that the signature above depends on.
+      - name: Upload the signing certificate
+        if: ${{ (inputs.component || 'all') == 'server' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-server-certificate
+          retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
+          path: ${{ runner.temp }}/dev-server-certificate.cer
+          if-no-files-found: error
+
+  package:
+    name: Package installer
+    needs: [tip, server]
+    # Only component=all produces an installer: packaging needs both TSF architectures and the
+    # Server, so there is no meaningful way to package a single-component run.
+    if: ${{ !cancelled() && needs.tip.result == 'success' && needs.server.result == 'success' && (inputs.component || 'all') == 'all' }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Read the dev version
+        id: version
+        shell: pwsh
+        run: |
+          $display = python scripts/dev-build-version.py --display
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "display=$display" >> $env:GITHUB_OUTPUT
+          "installer=installer/Output/MetasequoiaIME_Setup_v$display.exe" >> $env:GITHUB_OUTPUT
+      - name: Download the x64 TSF binary and symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-tsf-x64
+          path: windows/build64-release/Release
+      - name: Download the 32-bit TSF binary and symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-tsf-Win32
+          path: windows/build32-release/Release
+      - name: Download the Server build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-server
+          path: server/build-release/bin/Release
+      - name: Download the dictionaries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STAGING_ROOT: .
+        run: bash scripts/ci/download-dictionaries.sh
+      - name: Build the word-lattice language model
+        shell: pwsh
+        run: ./scripts/build-language-model.ps1
+      - name: Download the neural sentence models
+        shell: pwsh
+        run: ./scripts/fetch-neural-model.ps1
+      - name: Collect the installer payload
+        shell: pwsh
+        working-directory: installer
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+        run: >
+          pwsh -File ./Prepare-PackageFiles.ps1 -TargetVersion $env:TARGET_VERSION
+          -RepoRoot (Resolve-Path '..').Path
+          -TsfDirectory windows -ServerDirectory server -NoticesDirectory .
+          -HelpCodeDirectory engine/helpcode
+      - name: Sign the payload binaries
+        shell: pwsh
+        working-directory: installer
+        env:
+          DEV_CERT_PATH: ${{ runner.temp }}/dev-build.cer
+        run: ./sign-dev-build.ps1
+      - name: Install the Chinese language file for Inno Setup
+        shell: pwsh
+        run: ./scripts/ci/install-inno-language.ps1
+      - name: Compile the installer
+        shell: pwsh
+        working-directory: installer
+        run: pwsh -File ./Compile-Installer.ps1
+      - name: Sign the installer
+        shell: pwsh
+        working-directory: installer
+        env:
+          DEV_CERT_PATH: ${{ runner.temp }}/dev-build.cer
+        run: ./sign-dev-build.ps1 -Installer
+      - name: Name the artifact and record its checksum
+        id: asset
+        shell: pwsh
+        working-directory: installer
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+        run: |
+          $built = "Output/MetasequoiaIME_Setup_v$env:TARGET_VERSION.exe"
+          if (-not (Test-Path $built)) { throw "Inno Setup did not produce $built" }
+          $hash = (Get-FileHash $built -Algorithm SHA256).Hash.ToLower()
+          $size = [math]::Round((Get-Item $built).Length / 1MB, 1)
+          Write-Host "$built ($size MB, sha256 $hash)"
+          "installer_path=$((Resolve-Path $built).Path)" >> $env:GITHUB_OUTPUT
+          "installer_sha256=$hash" >> $env:GITHUB_OUTPUT
+      - name: Upload the installer and the signing certificate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-installer
+          retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
+          path: |
+            ${{ steps.asset.outputs.installer_path }}
+            ${{ runner.temp }}/dev-build.cer
+            installer/import-dev-trust.ps1
+          if-no-files-found: error
+      # 免安装包与安装包共用同一次 Prepare-PackageFiles 产物，额外只花一次复制加压缩的工夫。
+      # 它解决的问题是「只想看一眼设置窗口」：安装包要管理员权限、装 TSF、导入证书，看界面
+      # 一样都用不上。两个产物各管一件事，谁也不替代谁。
+      - name: Package the settings window for a portable preview
+        id: portable
+        shell: pwsh
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+        run: >-
+          ./scripts/ci/make-portable-settings.ps1
+          -StagingRoot installer
+          -TargetVersion $env:TARGET_VERSION
+          -OutputDirectory "${{ runner.temp }}/portable"
+      - name: Upload the portable settings window
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-settings-portable
+          retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
+          path: ${{ steps.portable.outputs.portable_path }}
+          if-no-files-found: error
+      - name: Summarise the build
+        shell: pwsh
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+          INSTALLER_SHA256: ${{ steps.asset.outputs.installer_sha256 }}
+          PORTABLE_SIZE: ${{ steps.portable.outputs.portable_size }}
+        run: |
+          @(
+            '### Dev build'
+            ''
+            "| Field | Value |"
+            "| --- | --- |"
+            "| Version | $env:TARGET_VERSION |"
+            "| Installer SHA256 | ``$env:INSTALLER_SHA256`` |"
+            ''
+            'To install: download the artifact, unzip, then in an **admin** PowerShell run'
+            '`import-dev-trust.ps1` and launch the installer. Re-run the trust import for every'
+            'new build; the certificate is minted per run and the script replaces the old one.'
+            ''
+            "To just look at the settings window: download `dev-settings-portable` ($env:PORTABLE_SIZE MB),"
+            'unzip anywhere and double-click `run-settings.cmd`. No admin rights, no certificate, no'
+            'registry writes, and deleting the folder removes it.'
+          ) >> $env:GITHUB_STEP_SUMMARY

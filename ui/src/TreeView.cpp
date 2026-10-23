@@ -8,6 +8,7 @@
 #include "ControlsInternal.h"
 
 #include <algorithm>
+#include <string>
 #include <utility>
 
 namespace msimeui
@@ -337,7 +338,10 @@ void TreeView::SelectNode(Node *node)
     selectedNode_ = node;
     if (onSelectionChanged_)
     {
-        onSelectionChanged_(selectedNode_->title);
+        // Read everything the call needs first: the handler may destroy this view.
+        const std::wstring title = selectedNode_->title;
+        const auto handler = onSelectionChanged_;
+        handler(title);
     }
 }
 } // namespace msimeui

@@ -80,6 +80,7 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
         MakeTomlAssignmentId("voice_input", "doubao_enable_ddc"),
         MakeTomlAssignmentId("ai_assistant", "enabled"),
         MakeTomlAssignmentId("tencent_tmt", "enabled"),
+        MakeTomlAssignmentId("aliyun_mt", "enabled"),
         MakeTomlAssignmentId("niutrans", "enabled"),
     };
     return kIds.count(assignment_id) != 0;
