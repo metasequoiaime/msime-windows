@@ -20,6 +20,8 @@
 
 安装后用 `Win + 空格` 切换到水杉输入法。如果切换不过去、Server 反复退出或设置窗口一闪即关，多半是缺少 Visual C++ 2015–2022 Redistributable（**x64**），处理办法见安装文档的常见问题。
 
+匿名使用统计只在你同意后发送：安装或升级时只要还没记下选择，安装向导就会显示「匿名使用统计」页，说明发送的内容（每天一条只含随机安装 id、平台和版本号的活跃记录，不含输入内容）并链接到 [PRIVACY.md](PRIVACY.md)，勾选框默认勾上，取消勾选即拒绝。静默安装用 `/USAGEREPORTING=1` 或 `/USAGEREPORTING=0` 指定，不给就什么都不记、也不发送。之后随时可以在「设置 → 关于 → 匿名使用统计」里改。
+
 其他平台：[macOS 与 iOS](https://github.com/metasequoiaime/MSIME-Apple) · [Linux](https://github.com/metasequoiaime/MSIME-Linux)
 
 ## 参与贡献

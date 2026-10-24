@@ -49,7 +49,7 @@ Dictionaries are not built in CI. They are downloaded from the release pinned in
 
 ## Privacy policy
 
-Some features of the program send data over the network. Cloud candidates are on by default, and so are anonymous usage statistics: one daily record with a random install id, the platform and the version number, sent to the project's own `api.msime.app`. What each feature sends, its default, and how to turn it off are documented in [PRIVACY.md](../PRIVACY.md).
+Some features of the program send data over the network, and cloud candidates are on by default. Anonymous usage statistics (one daily record with a random install id, the platform and the version number, sent to the project's own `api.msime.app`) are sent only after a decision to allow them is recorded: the installer shows a page describing them, linking to the privacy policy and offering a checkbox to decline on every install or upgrade that has no recorded decision; silent installs record a decision only from `/USAGEREPORTING=0|1`, so without that switch nothing is sent; and Settings → About → 匿名使用统计 turns them off at any time. What each feature sends, its default, and how to turn it off are documented in [PRIVACY.md](../PRIVACY.md).
 
 ## Reporting a problem
 

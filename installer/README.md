@@ -147,6 +147,17 @@ pwsh -File ./Prepare-PackageFiles.ps1 -TargetVersion 1.2.3 -RepoRoot .. `
 运行 `python installer/tests/test_cloud_choice.py` 检查生产安装器的时序：先查冲突再停进程，数据目录页也查冲突，写回选择排在必需的安装后步骤之后。
 Windows CI 运行 `installer/tests/cloud-choice.ps1`，用 Inno Setup 跑八个隔离场景。探针复用 `cloud_choice.iss` 里的判断、冲突、去重和失败函数，并按生产顺序用同样的 `robocopy /MOVE` 搬 `config.toml`；`MigrateUserDataDir` 里搬词库、皮肤和清理旧目录的部分不在探针里，完整安装包仍按上表在测试机检查。
 
+### 匿名使用统计
+
+Server 只在 `config.toml` 的 `[general] usage_reporting` 显式为 `true` 时发送（见 [PRIVACY.md](../PRIVACY.md)）。出厂模板写的是 `"ask"`，从没选过的旧配置没有这个键，两种都算还没选。SignPath 要求收集数据的软件在安装时展示隐私说明并提供关闭选项，所以 `usage_reporting_choice.iss` 这样处理：
+
+- 交互式安装：只要还没记下 `true` / `false`，首装和升级都显示「匿名使用统计」页（说明、PRIVACY.md 链接、默认勾选的勾选框），把结果写成 `usage_reporting = true` 或 `false`。已经记下选择的升级跳过这一页并原样保留。换数据目录升级时在原目录的配置里找选择
+- 静默安装（`/SILENT`、`/VERYSILENT`）不显示向导页，不拿默认勾选当同意：只认 `/USAGEREPORTING=1` 或 `0`，没给就什么都不写。这个开关也会覆盖已有的选择，供批量部署统一设定
+- 写入替换 `[general]` 里已有的 `usage_reporting` 行；没有就插在 `[general]` 之后；连 `[general]` 都没有就追加一节。写入失败不中止安装，等于还没选，Server 不会发送
+- 选择存在 `config.toml` 里，升级保留它靠的是 `tests/preserve-user-data.ps1` 锁住的保留与迁移清单
+
+Windows CI 运行 `installer/tests/usage-reporting.ps1`，把 `usage_reporting_choice.iss` 编进探针安装器跑首装、升级、换目录升级、命令行开关和缺 `[general]` 的场景；`tests/test_cloud_choice.py` 检查生产脚本里迁移前读取选择、安装后最后写入，以及询问页不因为已有配置就跳过。
+
 ## 运行时依赖检查
 
 安装包不携带 VC 运行库，它是系统级共享组件。缺了它 Server 起不来，而这个故障出现在安装结束之后，用户看不到任何解释。所以 `msime_setup.iss` 的 `InitializeSetup` 在安装开始前先查一遍，缺了就当场说清楚，并给出下载地址。界面全部由 `msimeui` 以 Direct2D 绘制，不再依赖 WebView2 Runtime；旧版本留下的 WebView2 用户数据（`ProgramData\metasequoiaime\webview2`、`webview2-settings`，以及 `%LOCALAPPDATA%\metasequoiaime` 下的同名回退目录）由安装器在升级和卸载时清掉。

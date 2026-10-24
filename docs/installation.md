@@ -49,6 +49,19 @@ Releases 页面计划分两个频道：
 - 安装默认路径是C:\Program Files\MetasequoiaIme
 - 安装程序会把水杉输入法加入输入法列表，无须手动添加
 - 安装完成后自动启动 `MetasequoiaImeServer`
+- 还没记下过选择时（首次安装，或从没选过的旧版本升级），向导会显示「匿名使用统计」页：勾选后输入法每天向 `api.msime.app` 发送一条只含随机安装 id、平台和版本号的活跃记录，不含输入内容；取消勾选就不发送。页面上有[隐私说明](../PRIVACY.md)的链接。已经选过的升级不再询问，沿用原来的选择。之后随时可以在「设置 → 关于 → 匿名使用统计」里改
+
+### 静默安装
+
+批量部署可以用 Inno Setup 的 `/SILENT` 或 `/VERYSILENT` 静默安装，向导页都不显示，可用这些命令行开关：
+
+| 开关 | 作用 |
+|---|---|
+| `/DATADIR="D:\MetasequoiaIME"` | 指定数据目录（词库、配置、皮肤） |
+| `/USAGEREPORTING=1` | 同意发送匿名使用统计，写入 `config.toml` 的 `usage_reporting = true` |
+| `/USAGEREPORTING=0` | 拒绝匿名使用统计，写入 `usage_reporting = false` |
+
+`/USAGEREPORTING` 会覆盖之前记下的选择。静默安装不给这个开关时不记任何选择，也就不发送任何统计，直到有人在设置里打开或运行一次交互式安装。写错的值（不是 `0` / `1` / `true` / `false`）按没给处理，并记进安装日志（`/LOG=`）。
 
 ## 在Windows中启用水杉
 

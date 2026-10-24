@@ -345,6 +345,8 @@ jobs:
         run: python ./installer/tests/test_cloud_choice.py
       - name: Test cloud choice with Inno Setup
         run: ./installer/tests/cloud-choice.ps1
+      - name: Test the anonymous usage statistics choice with Inno Setup
+        run: ./installer/tests/usage-reporting.ps1
       - name: Test that bundled skins back up changed user copies before overwriting
         run: ./installer/tests/bundled-skins.ps1
       - name: Test that upgrades keep the desktop neural model shipped by 0.9.x

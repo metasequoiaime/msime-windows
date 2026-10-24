@@ -72,8 +72,9 @@ kaomoji_mixed_input = false
 symbol_mixed_input = false
 # 云候选
 cloud_candidates = true
-# 匿名使用统计：每天向 api.msime.app 发一条只含随机安装 id、平台和版本号的活跃记录，不含输入内容。设为 false 关闭，关闭后同时清空本机待发队列
-usage_reporting = true
+# 匿名使用统计：设为 true 时每天向 api.msime.app 发一条只含随机安装 id、平台和版本号的活跃记录，不含输入内容。
+# "ask" 表示还没选：不发送，安装程序会询问。只有 true 才发送；设为 false 关闭，并清空本机待发队列
+usage_reporting = "ask"
 # TODO: 极简模式。极简模式下，候选窗口使用 d2d 绘制，界面只作展示候选项，无其他功能。
 clean_mode = false
 

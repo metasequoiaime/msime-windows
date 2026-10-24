@@ -44,7 +44,7 @@ An input method sees every keystroke, so the boundaries are stated explicitly in
 
 Three things worth knowing up front. **Cloud candidates are on by default** — the composition spelling goes to Google's input-tools service, and it is the only network feature that sends input without you supplying a credential. **API tokens are stored in plain text** in `config.toml`, unlike macOS and Linux which use the Keychain and Secret Service.
 
-**Anonymous usage statistics are on by default** — once a day the Server sends a record holding only a random install id, the platform and the version number to the project's own `api.msime.app`, so the number of active installations can be counted. It carries no input, and Settings → About → 匿名使用统计 turns it off. There is no analytics SDK and no crash reporting.
+**Anonymous usage statistics are sent only after you agree** — the installer asks on every install or upgrade that has no recorded decision, with a checkbox (checked by default) and a link to PRIVACY.md. If you agree, the Server sends once a day a record holding only a random install id, the platform and the version number to the project's own `api.msime.app`, so the number of active installations can be counted. It carries no input. Clear the checkbox to decline, pass `/USAGEREPORTING=0` or `/USAGEREPORTING=1` to a silent install (without it a silent install records nothing and nothing is sent), and change it later under Settings → About → 匿名使用统计. There is no analytics SDK and no crash reporting.
 
 ## Building and contributing
 

@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -336,7 +337,7 @@ TEST_CASE(usage_reporting_maps_http_status_like_the_other_clients)
     REQUIRE(!usage_reporting::IsValidInstallId(std::string(65, 'a')));
 }
 
-TEST_CASE(usage_reporting_switch_defaults_on_and_survives_template_upgrade)
+TEST_CASE(usage_reporting_switch_ships_undecided_and_upgrades_keep_the_decision)
 {
     std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
     REQUIRE(static_cast<bool>(input));
@@ -345,22 +346,33 @@ TEST_CASE(usage_reporting_switch_defaults_on_and_survives_template_upgrade)
         std::filesystem::path(MSIME_DEFAULT_CONFIG_PATH).parent_path().parent_path().parent_path() /
         "server/assets/config/config.toml";
     const std::string working = ReadText(working_path);
-    REQUIRE(toml::parse(installed)["general"]["usage_reporting"].value_or(false));
-    REQUIRE(toml::parse(working)["general"]["usage_reporting"].value_or(false));
+    // 出厂模板不替用户做决定：写的是 "ask"，不是布尔值。安装程序据此判断要不要显示询问页。
+    REQUIRE_EQ(toml::parse(installed)["general"]["usage_reporting"].value_or(std::string()), std::string("ask"));
+    REQUIRE_EQ(toml::parse(working)["general"]["usage_reporting"].value_or(std::string()), std::string("ask"));
 
-    // 升级以模板为骨架重建配置：模板里必须有这个键，否则用户关掉的开关会在升级时丢掉、回到默认开启。
+    // 升级以模板为骨架重建配置：模板里必须有这个键，否则用户的选择会在升级时丢掉。
     const std::string old_template = "[general]\ncloud_candidates = true\n";
-    const std::string opted_out = old_template + "usage_reporting = false\n";
-    for (const auto &baseline : {std::string(), old_template, installed})
+    for (const bool decision : {false, true})
     {
-        const auto merged = toml::parse(MergeConfigIntoTemplate(installed, opted_out, baseline));
-        REQUIRE(!merged["general"]["usage_reporting"].value_or(true));
+        const std::string decided = old_template + "usage_reporting = " + (decision ? "true\n" : "false\n");
+        for (const auto &baseline : {std::string(), old_template, installed})
+        {
+            const auto merged = toml::parse(MergeConfigIntoTemplate(installed, decided, baseline));
+            REQUIRE_EQ(merged["general"]["usage_reporting"].value_exact<bool>(), std::optional<bool>(decision));
+        }
     }
-    REQUIRE(toml::parse(MergeConfigIntoTemplate(installed, old_template, old_template))["general"]["usage_reporting"]
-                .value_or(false));
+    // 从没选过的旧配置升级后仍是「还没选」，不会因为合并变成同意。
+    for (const auto &undecided : {old_template, old_template + "usage_reporting = \"ask\"\n"})
+    {
+        for (const auto &baseline : {std::string(), old_template, installed})
+        {
+            const auto merged = toml::parse(MergeConfigIntoTemplate(installed, undecided, baseline));
+            REQUIRE(!merged["general"]["usage_reporting"].value_exact<bool>().has_value());
+        }
+    }
 }
 
-TEST_CASE(usage_reporting_switch_reads_like_the_other_clients)
+TEST_CASE(usage_reporting_switch_sends_only_on_an_explicit_true)
 {
     TempDirectory root(L"msime-usage-config");
     const std::filesystem::path config_dir = root.path() / L"metasequoiaime";
@@ -374,10 +386,10 @@ TEST_CASE(usage_reporting_switch_reads_like_the_other_clients)
         const char *general;
         bool expected;
     };
-    // 缺键算开启，显式 false 关闭，不是布尔值的写法算关闭：读不懂的选择不能当成同意。
+    // 同意必须是记录下来的：缺键和 "ask" 是还没选，不是布尔值的写法读不懂，都不发送。
     const Case cases[] = {
-        {"cloud_candidates = true\n", true},     {"usage_reporting = true\n", true},
-        {"usage_reporting = false\n", false},    {"usage_reporting = \"no\"\n", false},
+        {"cloud_candidates = true\n", false},    {"usage_reporting = \"ask\"\n", false},
+        {"usage_reporting = true\n", true},      {"usage_reporting = false\n", false},
         {"usage_reporting = \"true\"\n", false}, {"usage_reporting = 1\n", false},
     };
     for (const auto &item : cases)
@@ -387,13 +399,18 @@ TEST_CASE(usage_reporting_switch_reads_like_the_other_clients)
         REQUIRE_EQ(GetConfiguredUsageReportingEnabled(), item.expected);
     }
 
-    // 设置页写入后立即生效，并落在 [general] 里。
-    WriteText(config_dir / L"config.toml", "[general]\ncloud_candidates = true\n");
+    // 设置页里打开或关闭都会把选择写进 [general]，立即生效。
+    WriteText(config_dir / L"config.toml", "[general]\nusage_reporting = \"ask\"\n");
+    InitImeConfig();
+    REQUIRE(!GetConfiguredUsageReportingEnabled());
+    REQUIRE(SetConfiguredUsageReportingEnabled(true));
+    REQUIRE(GetConfiguredUsageReportingEnabled());
     InitImeConfig();
     REQUIRE(GetConfiguredUsageReportingEnabled());
     REQUIRE(SetConfiguredUsageReportingEnabled(false));
     REQUIRE(!GetConfiguredUsageReportingEnabled());
     InitImeConfig();
     REQUIRE(!GetConfiguredUsageReportingEnabled());
-    REQUIRE(!toml::parse(ReadText(config_dir / L"config.toml"))["general"]["usage_reporting"].value_or(true));
+    REQUIRE_EQ(toml::parse(ReadText(config_dir / L"config.toml"))["general"]["usage_reporting"].value_exact<bool>(),
+               std::optional<bool>(false));
 }

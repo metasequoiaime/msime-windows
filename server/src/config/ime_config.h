@@ -531,7 +531,7 @@ bool GetConfiguredSymbolMixedInputEnabled();
 bool SetConfiguredSymbolMixedInputEnabled(bool enabled);
 bool GetConfiguredCloudCandidatesEnabled();
 bool SetConfiguredCloudCandidatesEnabled(bool enabled);
-// 匿名使用统计（[general] usage_reporting）：缺省开启，显式 false 关闭，不是布尔值的写法按关闭。
+// 匿名使用统计（[general] usage_reporting）：只有显式 true 才开启；缺键、"ask"（还没选）和其他写法都不发送。
 // 见 telemetry/usage_reporting.h。
 bool GetConfiguredUsageReportingEnabled();
 bool SetConfiguredUsageReportingEnabled(bool enabled);
