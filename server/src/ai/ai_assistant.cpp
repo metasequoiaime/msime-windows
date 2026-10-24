@@ -1,11 +1,11 @@
 #include "ai_assistant.h"
 #include "ai_assistant_cache.h"
 #include "ai_assistant_cache_key.h"
+#include "ai_assistant_reply.h"
 #include "ai_assistant_request.h"
 #include "chat_completions.h"
 #include "jev_client.h"
 
-#include <msime/voice/provider_protocol.h>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <Windows.h>
@@ -14,6 +14,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <spdlog/spdlog.h>
 #include <thread>
 
 namespace
@@ -68,30 +69,29 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
         }
     }
     const nlohmann::json body = AiAssistant::detail::BuildRequestBody(request);
-    const auto content = ChatCompletions::FetchContent(config.endpoint, token, body.dump(),
+    const auto fetched = ChatCompletions::FetchContent(config.endpoint, token, body.dump(),
                                                        AiAssistant::detail::RequestTimeoutMs(config));
-    if (!content || g_generation.load() != generation)
+    if (g_generation.load() != generation)
         return {};
+    if (!fetched.content)
+    {
+        // 联想失败不弹窗，但一定要留下可查的日志：以前这里什么都不记，用户反馈「不出候选」时
+        // 只能靠抓包猜。内容里不含 Token 和请求体。
+        spdlog::warn("AI 联想请求失败 model={} endpoint={} {}", config.model, config.endpoint,
+                     ChatCompletions::DescribeFailure(fetched.failure, fetched.detail));
+        return {};
+    }
 
-    try
+    auto reply = AiAssistant::detail::ParseSuggestion(*fetched.content);
+    if (reply.candidate.empty())
     {
-        // MiniMax M3.1 这类强制思考的模型会把思考过程混进 content（<think>…</think>），
-        // 不剥掉的话下面的 JSON 解析直接失败，联想候选就静默消失。
-        const auto result_json = nlohmann::json::parse(metasequoia::voice::strip_reasoning(*content));
-        const auto &candidates = result_json.at("candidates");
-        if (!candidates.is_array() || candidates.empty())
-        {
-            (void)0;
-            return {};
-        }
-        const std::string candidate = candidates.at(0).value("text", std::string{});
-        (void)0;
-        return candidate;
-    }
-    catch (const std::exception &)
-    {
+        // 回复格式不对和网络失败是两回事，前者要改提示词或换模型，后者要查地址和网络。
+        spdlog::warn("AI 联想回复无法解析 model={} {}", config.model, AiAssistant::detail::DescribeReplyFailure(reply));
         return {};
     }
+    if (g_generation.load() != generation)
+        return {};
+    return reply.candidate;
 }
 
 void WorkerLoop()

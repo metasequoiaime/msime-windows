@@ -218,16 +218,30 @@ long RequestTimeoutMs(const Config &config)
 }
 } // namespace detail
 
-std::vector<std::string> TextTranslateBatch(const Config &config, const std::vector<std::string> &texts,
-                                            const std::string &source, const std::string &target)
+std::vector<std::string> TextTranslateBatch(const AiTranslation::Config &config, const std::vector<std::string> &texts,
+                                            const std::string &source, const std::string &target,
+                                            std::string *failure_detail)
 {
     std::vector<std::string> results(texts.size());
+    if (failure_detail != nullptr)
+        failure_detail->clear();
     if (texts.empty() || !IsUsableConfig(config) || source.empty() || target.empty())
+    {
+        // 配置不完整时调用方早就该拦住了；这里留一句原因，免得测试按钮显示「未返回译文」这种空话。
+        if (failure_detail != nullptr && !IsUsableConfig(config))
+            *failure_detail = "接口地址、Token 或模型不完整";
         return results;
+    }
 
     const auto body = detail::BuildRequestBody(config, texts, source, target);
-    const auto content =
+    const auto fetched =
         ChatCompletions::FetchContent(config.endpoint, config.token, body.dump(), detail::RequestTimeoutMs(config));
-    return content ? ParseTranslations(*content, texts.size()) : results;
+    if (!fetched.content)
+    {
+        if (failure_detail != nullptr)
+            *failure_detail = ChatCompletions::DescribeFailure(fetched.failure, fetched.detail);
+        return results;
+    }
+    return ParseTranslations(*fetched.content, texts.size());
 }
 } // namespace AiTranslation
