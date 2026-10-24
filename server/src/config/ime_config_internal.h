@@ -195,6 +195,7 @@ extern std::atomic_bool g_candidate_translation_single_sense;
 extern int g_english_mixed_input_min_chars;
 extern int g_english_mixed_input_first_page_count;
 extern bool g_cloud_candidates_enabled;
+extern std::atomic_bool g_usage_reporting_enabled;
 extern bool g_assoc_sentence_wordlattice;
 extern bool g_assoc_sentence_google;
 extern bool g_assoc_sentence_neural_desktop;

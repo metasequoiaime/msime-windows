@@ -49,7 +49,7 @@ Dictionaries are not built in CI. They are downloaded from the release pinned in
 
 ## Privacy policy
 
-Some features of the program send data over the network, and cloud candidates are on by default. What each feature sends, its default, and how to turn it off are documented in [PRIVACY.md](../PRIVACY.md).
+Some features of the program send data over the network. Cloud candidates are on by default, and so are anonymous usage statistics: one daily record with a random install id, the platform and the version number, sent to the project's own `api.msime.app`. What each feature sends, its default, and how to turn it off are documented in [PRIVACY.md](../PRIVACY.md).
 
 ## Reporting a problem
 

@@ -589,9 +589,11 @@ begin
     DataDirPage.Values[0] := Chosen;
 end;
 
-{ 云候选是唯一一个装完就会联网的功能：输入过程中把当前拼写发给 Google 的 input-tools 服务。
+{ 云候选是唯一一个装完就会把输入内容发出设备的功能：输入过程中把当前拼写发给 Google 的 input-tools 服务。
   出厂默认开启，而安装器此前没有任何一屏提到过它，用户要读文档才会知道。这一页把它摆到安装
   过程里，选择写进首次生成的 config.toml。
+
+  匿名使用统计也是装完就生效（每天一条只含随机安装 id、平台和版本号的 active 记录），这里只在说明文字里写明它默认开启、去哪里关，和新版 Windows 客户端的安装页一致。
 
   升级时跳过：那时 config.toml 已经属于用户，安装器不该替他重新决定。}
 procedure InitializeWizard;
@@ -617,8 +619,9 @@ begin
     '联网功能',
     '选择安装后哪些功能可以联网',
     '拼音切分、候选排序和词频学习全部在本机完成，不联网。' + #13#10 +
-    '下面这一项是唯一一个装完就会生效的联网功能。AI 联想、候选翻译、语音输入都需要你自己填入 API token 之后才会发出任何请求。' + #13#10#13#10 +
-    '安装后随时可以在「设置 → 输入」里改变这个选择。',
+    '下面这一项是唯一一个装完就会把输入内容发出设备的联网功能。AI 联想、候选翻译、语音输入都需要你自己填入 API token 之后才会发出任何请求。' + #13#10 +
+    '匿名使用统计默认开启，可在「设置 → 关于」里关闭：每天向 api.msime.app 发送一条活跃记录，只带随机事件 id、本机随机生成的安装 id、平台名和版本号，不含输入内容、账号或设备信息。' + #13#10#13#10 +
+    '安装后随时可以在「设置 → 输入」里改变云候选的选择。',
     False,
     False
   );
@@ -1768,5 +1771,7 @@ begin
     { 数据目录在别处时，历史默认位置里可能只剩上面删掉的那两样；还有别的东西就删不掉，原样留着。}
     RemoveDir(ExpandConstant('{localappdata}\metasequoiaime'));
     TryDeleteTree(ExpandConstant('{commonappdata}\metasequoiaime'));
+    { 匿名使用统计的安装 id 与待发队列，按 Windows 用户放在数据目录之外，见 server/src/telemetry/usage_reporting.h。}
+    TryDeleteTree(ExpandConstant('{localappdata}\MetasequoiaImeTelemetry'));
   end;
 end;

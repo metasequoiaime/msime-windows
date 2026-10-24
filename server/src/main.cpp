@@ -29,6 +29,7 @@
 #include "settings/collocation_model.h"
 #include "settings/update_check.h"
 #include "statistics/stats_pipe.h"
+#include "telemetry/usage_reporting.h"
 #include "voice-input/voice_input_service.h"
 
 namespace
@@ -215,6 +216,10 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
             (void)HanziPinyin::Engine();
         });
     }
+
+    // 匿名使用统计：后台线程排入今天的 active 并发送，之后每 30 分钟一次；开关关着时只清本机队列。
+    // 必须在进入消息循环之前启动。--pipe-probe 在上面已经停住，不会走到这里。
+    usage_reporting::Start();
 
     int ret = CreateCandidateWindow(hInstance);
     if (radical_warmup.joinable())

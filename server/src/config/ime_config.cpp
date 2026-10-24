@@ -151,6 +151,8 @@ std::atomic_bool g_candidate_translation_single_sense{false};
 int g_english_mixed_input_min_chars = kEnglishMixedInputMinCharsDefault;
 int g_english_mixed_input_first_page_count = kEnglishMixedInputFirstPageCountDefault;
 bool g_cloud_candidates_enabled = true;
+// 匿名使用统计。读到配置之前按关闭：配置读不出来时不能当成用户同意。后台统计线程会读它，所以是 atomic。
+std::atomic_bool g_usage_reporting_enabled{false};
 // 整句候选来源与去重补位开关：词格、Google 和神经速度档默认开，神经效果档与去重补位默认关。
 bool g_assoc_sentence_wordlattice = true;
 bool g_assoc_sentence_google = true;
@@ -661,6 +663,12 @@ bool LoadImeConfig()
                     : kEnglishMixedInputFirstPageCountDefault;
         }
         g_cloud_candidates_enabled = tbl["general"]["cloud_candidates"].value_or(true);
+        {
+            // 与其他平台的 usage_reporting 规则一致：缺这个键按开启，显式 false 关闭，不是布尔值的写法按关闭。
+            const auto usage_reporting = tbl["general"]["usage_reporting"];
+            g_usage_reporting_enabled.store(!usage_reporting || usage_reporting.value_exact<bool>().value_or(false),
+                                            std::memory_order_relaxed);
+        }
         g_assoc_sentence_wordlattice = tbl["association"]["sentence_wordlattice"].value_or(true);
         g_assoc_sentence_google = tbl["association"]["sentence_google"].value_or(true);
         g_assoc_sentence_neural_desktop = tbl["association"]["sentence_neural_desktop"].value_or(false);

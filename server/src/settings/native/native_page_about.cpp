@@ -674,6 +674,17 @@ VisualPtr BuildAboutPage(PageContext &context)
         });
         links->Add(std::make_shared<AboutRow>(left, BindToggle(context, "appearance.auto_download_update"), false));
     }
+    // 匿名使用统计与其他平台「关于」里的同名开关语义相同，所有构建都显示。
+    // 关掉后 Server 不再发送并清空本机队列，见 telemetry/usage_reporting.h。
+    {
+        auto left = std::make_shared<Column>(0.0f);
+        left->Add(MakeLabel(L"匿名使用统计", DocStyle(13.0f, DWRITE_FONT_WEIGHT_MEDIUM), TextRole::Primary));
+        auto detail = MakeLabel(L"每天发送一条只含随机安装 ID、平台和版本号的活跃记录，不含输入内容", DocStyle(12.0f),
+                                TextRole::Muted);
+        detail->SetMargin({0.0f, 5.0f, 0.0f, 0.0f});
+        left->Add(detail);
+        links->Add(std::make_shared<AboutRow>(left, BindToggle(context, "general.usage_reporting"), false));
+    }
     struct Link
     {
         const wchar_t *title;

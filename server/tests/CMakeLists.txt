@@ -168,6 +168,9 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/statistics/stats_aggregate.cpp"
     "${CMAKE_SOURCE_DIR}/src/statistics/stats_overview.cpp"
     "${CMAKE_SOURCE_DIR}/src/statistics/stats_store.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_usage_reporting.cpp"
+    # usage_reporting.cpp 不进测试：它带后台线程和真实的网络请求，测试只链接不联网的 store。
+    "${CMAKE_SOURCE_DIR}/src/telemetry/usage_reporting_store.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/credential_protection.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/ai_provider_store.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config.cpp"

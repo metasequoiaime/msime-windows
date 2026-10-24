@@ -208,6 +208,21 @@ bool SetConfiguredCloudCandidatesEnabled(bool enabled)
     return true;
 }
 
+bool GetConfiguredUsageReportingEnabled()
+{
+    return g_usage_reporting_enabled.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredUsageReportingEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "usage_reporting", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_usage_reporting_enabled.store(enabled, std::memory_order_relaxed);
+    return true;
+}
+
 // 整句候选来源与去重补位开关的 getter / setter。写入 [association] 段，值域为布尔。
 bool GetConfiguredAssocSentenceWordLattice()
 {

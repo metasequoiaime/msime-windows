@@ -409,6 +409,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"kaomoji_mixed_input", GetConfiguredKaomojiMixedInputEnabled()},
             {"symbol_mixed_input", GetConfiguredSymbolMixedInputEnabled()},
             {"cloud_candidates", GetConfiguredCloudCandidatesEnabled()},
+            {"usage_reporting", GetConfiguredUsageReportingEnabled()},
             {"paging_minus_equal", GetConfiguredPagingMinusEqualEnabled()},
             {"paging_comma_period", GetConfiguredPagingCommaPeriodEnabled()},
             {"paging_brackets", GetConfiguredPagingBracketsEnabled()},
@@ -853,6 +854,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredSymbolMixedInputEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.cloud_candidates")
         return SetConfiguredCloudCandidatesEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "general.usage_reporting")
+        return SetConfiguredUsageReportingEnabled(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_wordlattice")
         return SetConfiguredAssocSentenceWordLattice(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_google")

@@ -531,6 +531,10 @@ bool GetConfiguredSymbolMixedInputEnabled();
 bool SetConfiguredSymbolMixedInputEnabled(bool enabled);
 bool GetConfiguredCloudCandidatesEnabled();
 bool SetConfiguredCloudCandidatesEnabled(bool enabled);
+// 匿名使用统计（[general] usage_reporting）：缺省开启，显式 false 关闭，不是布尔值的写法按关闭。
+// 见 telemetry/usage_reporting.h。
+bool GetConfiguredUsageReportingEnabled();
+bool SetConfiguredUsageReportingEnabled(bool enabled);
 // 整句候选来源与去重补位开关（[association] 段），默认全关。
 bool GetConfiguredAssocSentenceWordLattice();
 bool SetConfiguredAssocSentenceWordLattice(bool enabled);

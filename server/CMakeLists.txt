@@ -303,6 +303,11 @@ set(SRC_FILES
     "./src/statistics/stats_store.cpp"
     "./src/statistics/stats_store.h"
     "./src/statistics/stats_types.h"
+    # 匿名使用统计：本地状态与队列在 store，后台发送线程与 WinHTTP 请求在 usage_reporting.cpp。
+    "./src/telemetry/usage_reporting.cpp"
+    "./src/telemetry/usage_reporting.h"
+    "./src/telemetry/usage_reporting_store.cpp"
+    "./src/telemetry/usage_reporting_store.h"
     "./src/utils/candidate_size_estimator.cpp"
     "./src/utils/candidate_size_estimator.h"
     "./src/utils/common_utils.cpp"

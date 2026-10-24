@@ -42,9 +42,9 @@ You need the **Microsoft Visual C++ 2015–2022 Redistributable (x64)**. The ser
 
 An input method sees every keystroke, so the boundaries are stated explicitly in [PRIVACY.md](PRIVACY.md): which features reach the network, what each one sends, what the defaults are, and how to turn each off.
 
-Two things worth knowing up front. **Cloud candidates are on by default** — the composition spelling goes to Google's input-tools service, and it is the only network feature that works without you supplying a credential. **API tokens are stored in plain text** in `config.toml`, unlike macOS and Linux which use the Keychain and Secret Service.
+Three things worth knowing up front. **Cloud candidates are on by default** — the composition spelling goes to Google's input-tools service, and it is the only network feature that sends input without you supplying a credential. **API tokens are stored in plain text** in `config.toml`, unlike macOS and Linux which use the Keychain and Secret Service.
 
-There is no telemetry, analytics or crash reporting of any kind.
+**Anonymous usage statistics are on by default** — once a day the Server sends a record holding only a random install id, the platform and the version number to the project's own `api.msime.app`, so the number of active installations can be counted. It carries no input, and Settings → About → 匿名使用统计 turns it off. There is no analytics SDK and no crash reporting.
 
 ## Building and contributing
 
