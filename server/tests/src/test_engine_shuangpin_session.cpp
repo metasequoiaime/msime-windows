@@ -7,6 +7,8 @@
 #include "engine/quanpin/quanpin_query.h"
 #include "engine/shuangpin/shuangpin_dictionary.h"
 #include "src/ipc/candidate_selection_policy.h"
+#include "src/global/globals.h"
+#include "src/ipc/input_key_policy.h"
 #include <windows.h>
 #include <algorithm>
 #include <filesystem>
@@ -162,6 +164,69 @@ TEST_CASE(EngineShuangpinSessionContinuesCompositionWithoutHelpcode)
     REQUIRE(transition.continues_composition);
     REQUIRE_EQ(transition.consumed_raw_input_with_cases, std::string("xi"));
     REQUIRE_EQ(session.get_pinyin_sequence(), std::string("tele"));
+}
+
+TEST_CASE(EngineShuangpinTerminalHelpcodeTransitionRoundTripsThroughSelectionHistory)
+{
+    struct ReloadConfigOnExit
+    {
+        ~ReloadConfigOnExit()
+        {
+            InitImeConfig();
+        }
+    } reload;
+    ScopedConfigRoot config_root;
+    InitImeConfig();
+    REQUIRE(SetConfiguredShuangpinHelpcodeEnabled(true));
+    REQUIRE(SetConfiguredShuangpinHelpcodeSchema("xiaohe"));
+    REQUIRE(SetConfiguredShuangpinDirectHelpcodeEnabled(false));
+    REQUIRE(SetConfiguredShuangpinMidSentenceHelpcodeEnabled(false));
+    for (const bool direct : {false, true})
+    {
+        REQUIRE(SetConfiguredShuangpinHelpcodeDirect(direct));
+        for (const std::string codes : {"f", "fR"})
+        {
+            EngineInputSession session(SchemeType::Shuangpin, GetXiaoheShuangpinProfile());
+            const std::string tail = (direct ? std::string() : "|") + codes;
+            const std::string raw = "nihc" + tail;
+            session.set_pinyin_sequence(raw);
+            session.set_pinyin_sequence_with_cases(raw);
+            session.recompute_candidates();
+            const auto &items = session.get_candidates();
+            const auto found =
+                std::find_if(items.begin(), items.end(), [](const auto &item) { return item.word == "拟"; });
+            REQUIRE(found != items.end());
+            const auto picked = *found;
+            const auto transition = session.advance_composition_after_selection(picked.pinyin, picked.word,
+                                                                                picked.canonical_pinyin, picked.scheme);
+            REQUIRE(transition.continues_composition);
+            REQUIRE_EQ(transition.consumed_terminal_helpcode_with_cases, tail);
+            REQUIRE_EQ(session.get_pinyin_sequence_with_cases(), std::string("hc"));
+            REQUIRE_EQ(session.segment_raw_boundaries(), std::vector<std::size_t>({0, 2}));
+            REQUIRE(std::any_of(session.get_candidates().begin(), session.get_candidates().end(),
+                                [](const auto &item) { return item.word == "好"; }));
+
+            GlobalIme::CompositionState composition;
+            composition.push_selection_snapshot(transition.consumed_raw_input_with_cases, -1, "",
+                                                transition.consumed_terminal_helpcode_with_cases);
+            composition.raw_input_with_cases = session.get_pinyin_sequence_with_cases();
+            composition.caret_position = composition.raw_input_with_cases.size();
+            REQUIRE(composition.restore_last_selection());
+            REQUIRE_EQ(composition.raw_input_with_cases, raw);
+            REQUIRE_EQ(composition.caret_position, raw.size());
+            session.set_pinyin_sequence(composition.raw_input_with_cases);
+            session.set_pinyin_sequence_with_cases(composition.raw_input_with_cases);
+            session.set_caret(std::nullopt);
+            session.recompute_candidates();
+            REQUIRE_EQ(session.segment_raw_boundaries(), std::vector<std::size_t>({0, 2, 4, raw.size()}));
+            REQUIRE_EQ(FanyImeIpc::PreviousSegmentBoundary(session.segment_raw_boundaries(), raw.size()),
+                       std::size_t(4));
+            REQUIRE_EQ(FanyImeIpc::NextSegmentBoundary(session.segment_raw_boundaries(), 4), raw.size());
+            REQUIRE(std::any_of(session.get_candidates().begin(), session.get_candidates().end(),
+                                [](const auto &item) { return item.word == "拟"; }));
+            REQUIRE(!composition.restore_last_selection());
+        }
+    }
 }
 
 TEST_CASE(EngineShuangpinMicrosoftSemicolonFinalStaysInConsumedInput)

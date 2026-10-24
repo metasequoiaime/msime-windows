@@ -91,6 +91,8 @@ struct CreatingWordSnapshot
     // input stays editable. Caret moves deliberately do not set it -- the caret
     // may stand anywhere, retraction still wins.
     bool raw_edited_after_selection = false;
+    // Restored after the current suffix, separately from the consumed prefix.
+    std::string consumed_terminal_helpcode_with_cases;
 };
 
 // One-shot hand-off from restore_last_selection to the frame builder: the
@@ -152,14 +154,15 @@ struct CompositionState
     // selected_page_prefix is the normalized prefix that list was built for, so a
     // restore can re-highlight that item once it rebuilt the same page.
     void push_selection_snapshot(const std::string &consumed_raw_input_with_cases, int selected_absolute_index = -1,
-                                 const std::string &selected_page_prefix = std::string())
+                                 const std::string &selected_page_prefix = std::string(),
+                                 const std::string &consumed_terminal_helpcode_with_cases = std::string())
     {
         if (consumed_raw_input_with_cases.empty())
         {
             return;
         }
-        selection_history.push_back(
-            {consumed_raw_input_with_cases, creating_word, selected_absolute_index, selected_page_prefix, false});
+        selection_history.push_back({consumed_raw_input_with_cases, creating_word, selected_absolute_index,
+                                     selected_page_prefix, false, consumed_terminal_helpcode_with_cases});
     }
 
     // Typing a character after a selection locks the newest snapshot: Backspace
@@ -197,12 +200,13 @@ struct CompositionState
     // Returns false when there is nothing to retract.
     //
     // One placement rule regardless of the caret: the spelling goes back in front
-    // of the untouched suffix (raw only ever holds what follows the newest
-    // selection), and the caret shifts by the restored length, keeping its
+    // of the current suffix (raw only ever holds what follows the newest
+    // selection), and the caret shifts by the restored prefix length, keeping its
     // distance to the suffix. That is Rime's "input grows, the caret does not
     // move" translated to this shrinking-raw model: caret 0 (standing behind the
     // word) lands at the end of the restored word, caret at the end of the raw
-    // stays at the end, so the next Backspace deletes through the suffix first.
+    // stays at the end. A separately consumed terminal helpcode goes after the
+    // current suffix; only a caret at its end follows the restored helpcode.
     bool restore_last_selection()
     {
         if (selection_history.empty())
@@ -212,8 +216,18 @@ struct CompositionState
         CreatingWordSnapshot snapshot = std::move(selection_history.back());
         selection_history.pop_back();
         const std::size_t restored_length = snapshot.consumed_raw_input_with_cases.size();
+        if (!snapshot.consumed_terminal_helpcode_with_cases.empty())
+        {
+            caret_position = (std::min)(caret_position, raw_input_with_cases.size());
+        }
+        const bool caret_at_end = caret_position == raw_input_with_cases.size();
         raw_input_with_cases.insert(0, snapshot.consumed_raw_input_with_cases);
         caret_position += restored_length;
+        raw_input_with_cases += snapshot.consumed_terminal_helpcode_with_cases;
+        if (caret_at_end)
+        {
+            caret_position += snapshot.consumed_terminal_helpcode_with_cases.size();
+        }
         creating_word = std::move(snapshot.previous_creating_word);
         restored_selection_highlight = {snapshot.selected_absolute_index, std::move(snapshot.selected_page_prefix)};
         return true;

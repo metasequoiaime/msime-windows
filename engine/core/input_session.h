@@ -144,6 +144,12 @@ class InputSession
         std::string current_segmentation;
         std::string current_segmentation_with_cases;
         std::string selected_canonical_pinyin;
+        // Continuing word-final helpcode selection splits the exact typed raw
+        // into P + S + H: consumed prefix P, remaining suffix S, and consumed
+        // terminal helpcode H (the active block at the end of the entire raw).
+        // The fields below store P and H; the session retains S. Retraction uses
+        // P + current S + H so later suffix edits survive. For nihc|fR selecting
+        // 拟, P = ni, S = hc, H = |fR.
         // Raw spelling the selection consumed from the active scheme's input,
         // in the exact form the user typed it. A host that lets the user retract
         // a selected segment must replay this spelling, not the pre-selection
@@ -151,6 +157,9 @@ class InputSession
         // may have deleted since the selection. Sources that consume no input
         // (cloud, associative, whole-word commits) leave it empty.
         std::string consumed_raw_input_with_cases;
+        // A terminal helpcode consumed separately from the prefix. Retraction
+        // appends this exact spelling after the current (possibly edited) suffix.
+        std::string consumed_terminal_helpcode_with_cases;
     };
 
     struct CloudQueryState

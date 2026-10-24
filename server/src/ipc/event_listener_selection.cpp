@@ -424,6 +424,10 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             g_inputSession->recompute_candidates();
             GlobalIme::composition.caret_position = 0;
         }
+        else if (!selection_transition.consumed_terminal_helpcode_with_cases.empty())
+        {
+            GlobalIme::composition.caret_position = g_inputSession->get_pinyin_sequence_with_cases().size();
+        }
         // A cloud suggestion is an already-composed result returned for the
         // current query.  It must commit as one candidate even when the
         // returned query spelling is shorter than the raw input (for example
@@ -441,9 +445,9 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             // candidate position travels with it, together with the page prefix
             // it was recorded on, so a retraction can put that item back under
             // the highlight.
-            GlobalIme::composition.push_selection_snapshot(selection_transition.consumed_raw_input_with_cases,
-                                                           Global::candidate_ui.page_index * page_size + index,
-                                                           selection_page_prefix);
+            GlobalIme::composition.push_selection_snapshot(
+                selection_transition.consumed_raw_input_with_cases, Global::candidate_ui.page_index * page_size + index,
+                selection_page_prefix, selection_transition.consumed_terminal_helpcode_with_cases);
             /* 打开造词开关 */
             GlobalIme::composition.creating_word.active = true;
             GlobalIme::composition.creating_word.all_segments_first = first_word_hit;
