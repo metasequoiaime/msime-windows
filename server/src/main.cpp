@@ -221,13 +221,14 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     // 必须在进入消息循环之前启动。--pipe-probe 在上面已经停住，不会走到这里。
     usage_reporting::Start();
 
+    // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
+    // 这正是把下载放在 Server 而不是设置进程的原因。CreateCandidateWindow 里是消息循环，要到进程退出才返回，
+    // 所以必须在它之前启动。每一轮都先查 appearance.auto_download_update，没打开就不发任何请求。
+    update_check::StartPolling();
+
     int ret = CreateCandidateWindow(hInstance);
     if (radical_warmup.joinable())
         radical_warmup.join();
-
-    // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
-    // 这正是把下载放在 Server 而不是设置进程的原因。
-    update_check::StartPolling();
 
     FanyNamedPipe::RegisterStatusSnapshotWindow(nullptr);
 

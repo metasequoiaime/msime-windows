@@ -2,6 +2,7 @@
 #include "tests/includes/test_utf8_path.h"
 
 #include "settings/native/native_settings_update_download.h"
+#include "settings/update_channel.h"
 
 #include <filesystem>
 #include <fstream>
@@ -190,4 +191,39 @@ TEST_CASE(update_download_pruning_leaves_only_the_kept_installer)
     REQUIRE(!FileMatchesDigest(probe, "not-a-digest"));
 
     fs::remove_all(directory, ec);
+}
+
+TEST_CASE(update_background_check_needs_the_switch_and_a_release_build)
+{
+    using update_channel::ShouldCheckInBackground;
+    // 自动下载默认关闭：关着时任何版本都不请求清单。
+    REQUIRE(!ShouldCheckInBackground("0.11.1", false));
+    REQUIRE(ShouldCheckInBackground("0.11.1", true));
+    REQUIRE(ShouldCheckInBackground("v0.11.1", true));
+    REQUIRE(!ShouldCheckInBackground("0.11.1-nightly.20261022.abcdef123456", true));
+    REQUIRE(!ShouldCheckInBackground("0.11.1-dev.20261022.abcdef123456", true));
+    REQUIRE(!ShouldCheckInBackground("", true));
+    REQUIRE(!ShouldCheckInBackground("not a version", true));
+}
+
+TEST_CASE(server_starts_background_workers_before_its_message_loop)
+{
+    // CreateCandidateWindow 里是消息循环，要到进程退出才返回。放在它后面启动的后台线程等于从来没跑过，
+    // 自动下载更新的轮询曾经就是这样。--pipe-probe 在消息循环之前就停住，后台线程不能在它之前启动。
+    const auto main_path = std::filesystem::path(MSIME_DEFAULT_CONFIG_PATH).parent_path().parent_path().parent_path() /
+                           "server/src/main.cpp";
+    std::ifstream input(main_path, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string source((std::istreambuf_iterator<char>(input)), {});
+    const auto probe = source.find("Sleep(INFINITE);");
+    const auto loop = source.find("int ret = CreateCandidateWindow(hInstance);");
+    REQUIRE(probe != std::string::npos);
+    REQUIRE(loop != std::string::npos);
+    for (const char *start : {"update_check::StartPolling();", "usage_reporting::Start();"})
+    {
+        const auto position = source.find(start);
+        REQUIRE(position != std::string::npos);
+        REQUIRE(position > probe);
+        REQUIRE(position < loop);
+    }
 }

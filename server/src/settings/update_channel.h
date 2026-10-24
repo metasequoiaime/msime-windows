@@ -50,6 +50,10 @@ int Compare(const Version &left, const Version &right);
 // nightly 跟上 nightly，dev 构建永远不参与。
 bool SupportsAutoUpdate(const Version &current);
 
+// Server 后台这一轮要不要去请求更新清单：用户打开了自动下载（appearance.auto_download_update，默认关），
+// 并且本机是正式版。任何一条不满足都不发请求。
+bool ShouldCheckInBackground(const std::string &current_version, bool auto_download_enabled);
+
 // 判定结果对应的通道名，供界面判断要不要渲染自动下载的勾选框：
 // "release" | "nightly" | ""（dev 或无法识别，不参与自动更新）。
 const char *ChannelNameOf(const std::string &version);

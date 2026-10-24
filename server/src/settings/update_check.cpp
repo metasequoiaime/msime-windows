@@ -261,15 +261,10 @@ void CheckOnce()
         Running() = false;
     };
 
-    // 只有正式版参与。dev 与 nightly 的清单不由官网提供，版本比较也没有意义。
+    // 只有用户打开了自动下载、并且是正式版才发请求。dev 与 nightly 的清单不由官网提供，版本比较也没有意义。
     update_channel::Version current;
-    if (!update_channel::Parse(CurrentVersion(), current) || !current.valid ||
-        !update_channel::SupportsAutoUpdate(current) || current.kind != update_channel::Kind::Release)
-    {
-        done(std::string());
-        return;
-    }
-    if (!GetConfiguredAutoDownloadUpdate())
+    if (!update_channel::ShouldCheckInBackground(CurrentVersion(), GetConfiguredAutoDownloadUpdate()) ||
+        !update_channel::Parse(CurrentVersion(), current))
     {
         done(std::string());
         return;

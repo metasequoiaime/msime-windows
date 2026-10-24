@@ -192,6 +192,15 @@ bool SupportsAutoUpdate(const Version &current)
     return current.valid && current.kind != Kind::Dev;
 }
 
+bool ShouldCheckInBackground(const std::string &current_version, bool auto_download_enabled)
+{
+    if (!auto_download_enabled)
+        return false;
+    Version current;
+    return Parse(current_version, current) && current.valid && SupportsAutoUpdate(current) &&
+           current.kind == Kind::Release;
+}
+
 const char *ChannelNameOf(const std::string &version)
 {
     Version parsed;
