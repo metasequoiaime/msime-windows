@@ -122,7 +122,7 @@ QuickPhraseQueryResult query_quick_phrases_by_code(const std::string &code, cons
 
 bool counts_toward_quick_phrase_slot(const WordItem &item)
 {
-    if (item.fixed_position > 0)
+    if (item.fixed_position > 0 || item.variant_rank > 0)
     {
         return false;
     }

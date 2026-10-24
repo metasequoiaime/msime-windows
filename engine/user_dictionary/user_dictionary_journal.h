@@ -124,6 +124,24 @@ bool pin_date_time_format(const std::string &user_db_path, const std::string &ca
 // 固定位置写进 fixed_candidate_positions 用的 context_key，entry_key 与 value 都写格式 ID。
 std::string date_time_fixed_position_context(const std::string &category);
 
+// 繁体模式下用户选过的写法：同一个（全拼键 key, 简体底词 base_word）只留最后一次选的写法 spelling。
+// 存在日志库自己的表里，不进操作日志：replay 不读它，出厂词库与完整状态导出里都没有它。
+struct TraditionalVariantChoice
+{
+    std::string key;
+    std::string base_word;
+    std::string spelling;
+};
+// 记下（key, base_word）→ spelling，覆盖原有记录。三项有一项为空时不写，返回 false。
+bool remember_traditional_variant(const std::string &user_db_path, const std::string &key, const std::string &base_word,
+                                  const std::string &spelling);
+// 删掉（key, base_word）的记录；没有这条记录也返回 true。key 或 base_word 为空时不删，返回 false。
+bool forget_traditional_variant(const std::string &user_db_path, const std::string &key, const std::string &base_word);
+// 删掉 base_word 在所有键下的记录。base_word 为空时不删，返回 false。
+bool forget_traditional_variants_of_word(const std::string &user_db_path, const std::string &base_word);
+// 整张表，顺序不定。日志库打不开或读到一半出错时返回空（std::nullopt），不返回读到的那一部分。
+std::optional<std::vector<TraditionalVariantChoice>> traditional_variant_choices(const std::string &user_db_path);
+
 struct ReplayResult
 {
     int applied = 0;

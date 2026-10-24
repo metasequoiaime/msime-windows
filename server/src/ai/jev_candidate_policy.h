@@ -3,8 +3,13 @@
 #include "engine/core/word_item.h"
 #include "engine/core/input_session_types.h"
 #include "engine/common/helpcode_utils.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "jev_client.h"
 #include <algorithm>
+#include <cstddef>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace Jev
 {
@@ -41,20 +46,49 @@ inline std::vector<std::string> CandidatePool(const std::vector<WordItem> &items
 }
 
 // Only the slots held by unpinned pool candidates are reordered, so cloud, English, date, emoji and
-// user-pinned rows keep the positions NormalizeMixedCandidateOrder gave them. Within those slots
-// the local first/second choice stay first and the choice becomes the third. Preserve the full
-// WordItem: pinyin, provenance and dictionary learning still belong to the original candidate.
+// user-pinned rows keep their place in the sequence of candidates NormalizeMixedCandidateOrder gave
+// them. Within those slots the local first/second choice stay first and the choice becomes the third.
+// In the traditional character set a candidate is a spelling group as FanyImeIpc::SpellingGroupStart
+// draws it: a group moves as a whole and takes one slot. Rows that do not move keep their place in the
+// sequence of groups; their index in items changes when the groups in front of them change size.
+// Preserve the full WordItem: pinyin, provenance and dictionary learning still belong to the original
+// candidate.
 inline bool Promote(std::vector<WordItem> &items, const std::string &word)
 {
-    std::vector<size_t> slots;
+    // [begin, end) of each spelling group; an unexpanded candidate is a group of one.
+    std::vector<std::pair<size_t, size_t>> groups;
     for (size_t i = 0; i < items.size(); ++i)
-        if (IsPoolSource(items[i]) && items[i].fixed_position == 0)
-            slots.push_back(i);
-    const auto selected = std::find_if(slots.begin(), slots.end(), [&](size_t i) { return items[i].word == word; });
+    {
+        if (FanyImeIpc::SpellingGroupStart(items, i) != i)
+            groups.back().second = i + 1;
+        else
+            groups.emplace_back(i, i + 1);
+    }
+    std::vector<size_t> slots;
+    for (size_t g = 0; g < groups.size(); ++g)
+    {
+        const WordItem &head = items[groups[g].first];
+        if (IsPoolSource(head) && head.fixed_position == 0)
+            slots.push_back(g);
+    }
+    const auto selected =
+        std::find_if(slots.begin(), slots.end(), [&](size_t g) { return items[groups[g].first].word == word; });
     if (selected == slots.end())
         return false;
-    for (auto rank = static_cast<size_t>(selected - slots.begin()); rank > 2; --rank)
-        std::swap(items[slots[rank]], items[slots[rank - 1]]);
+    auto rank = static_cast<size_t>(selected - slots.begin());
+    if (rank <= 2)
+        return true;
+    std::vector<size_t> order(groups.size());
+    for (size_t g = 0; g < groups.size(); ++g)
+        order[g] = g;
+    for (; rank > 2; --rank)
+        std::swap(order[slots[rank]], order[slots[rank - 1]]);
+    std::vector<WordItem> reordered;
+    reordered.reserve(items.size());
+    for (const size_t g : order)
+        for (size_t i = groups[g].first; i < groups[g].second; ++i)
+            reordered.push_back(std::move(items[i]));
+    items = std::move(reordered);
     return true;
 }
 } // namespace Jev

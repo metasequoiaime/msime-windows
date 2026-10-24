@@ -54,6 +54,15 @@ struct CreatingWordState
     std::string preedit;
     std::string pinyin;
     std::string word;
+    // 已选各段选中时实际显示的文字拼起来的串。与 word 同处累积；不做简转繁时与 word 相同。
+    // word 仍是简体底词，造词落库用它。
+    std::string output_text;
+    // 已选的每一段显示的都是它底词的整词第一写法（判定见 FanyImeIpc::ChosenTextOf）。与 output_text 同处更新。
+    bool all_first_spellings = true;
+    // 前缀的输出文字（规则见 FanyImeIpc::ChosenTextForOutput）。工作线程在每段选中后写（ProcessSelectionKey），
+    // 撤回快照恢复时随整个结构一起回来。读方：工作线程上的造词中间态管道载荷、三语循环键与 TSF 行内预编辑
+    // （GetTsfPreedit），界面线程上的候选窗预编辑（GetPreedit）。界面线程不碰会话与转换器，所以算好存成字段。
+    std::string prefix_text;
     bool active = false;
     // 已选的每一段都是第 1 页第 1 位。首词命中率按整次上屏记账，任一段没选首位就不算命中。
     bool all_segments_first = true;
@@ -63,6 +72,9 @@ struct CreatingWordState
         preedit.clear();
         pinyin.clear();
         word.clear();
+        output_text.clear();
+        all_first_spellings = true;
+        prefix_text.clear();
         active = false;
         all_segments_first = true;
     }

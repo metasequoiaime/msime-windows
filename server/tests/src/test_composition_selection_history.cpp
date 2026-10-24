@@ -179,3 +179,28 @@ TEST_CASE(composition_clear_drops_history_while_clear_creating_word_keeps_it)
     REQUIRE(composition.selection_history.empty());
     REQUIRE(!composition.restore_last_selection());
 }
+
+// 繁体写法的造词状态（显示文字、第一写法标记、前缀文字）随撤回快照一起恢复，清空时回到初值。
+TEST_CASE(composition_selection_snapshots_restore_the_traditional_spelling_state)
+{
+    GlobalIme::CompositionState composition;
+    composition.creating_word = MakeCreatingWord("gan", "干");
+    composition.creating_word.output_text = "乾";
+    composition.creating_word.all_first_spellings = false;
+    composition.creating_word.prefix_text = "乾";
+    composition.push_selection_snapshot("zao");
+
+    composition.creating_word.word = "干燥";
+    composition.creating_word.output_text = "乾燥";
+    composition.creating_word.all_first_spellings = true;
+    composition.creating_word.prefix_text = "乾燥";
+    REQUIRE(composition.restore_last_selection());
+    REQUIRE_EQ(composition.creating_word.output_text, std::string("乾"));
+    REQUIRE(!composition.creating_word.all_first_spellings);
+    REQUIRE_EQ(composition.creating_word.prefix_text, std::string("乾"));
+
+    composition.clear_creating_word();
+    REQUIRE(composition.creating_word.output_text.empty());
+    REQUIRE(composition.creating_word.all_first_spellings);
+    REQUIRE(composition.creating_word.prefix_text.empty());
+}

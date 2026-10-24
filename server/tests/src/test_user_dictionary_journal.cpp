@@ -1,7 +1,10 @@
+#include "tests/includes/fake_traditional_spelling_index.h"
 #include "tests/includes/test_framework.h"
 #include "tests/includes/test_utf8_path.h"
 #include "engine/local_modes/date_time_query.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
+#include "ipc/persistent_traditional_variant_choices.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 
 #include <sqlite3.h>
 #include <algorithm>
@@ -9,7 +12,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <optional>
+#include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include <windows.h>
@@ -49,6 +56,32 @@ class TestDatabase
 
   private:
     sqlite3 *db_ = nullptr;
+};
+
+// TempRoot 下的一个临时目录：构造时清空重建，析构时删掉，断言失败抛异常时也删。
+class ScopedTempDirectory
+{
+  public:
+    explicit ScopedTempDirectory(const std::string &name)
+        : path_(test::TempRoot() / (name + std::to_string(GetCurrentProcessId())))
+    {
+        std::filesystem::remove_all(path_);
+        std::filesystem::create_directories(path_);
+    }
+    ~ScopedTempDirectory()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+    ScopedTempDirectory(const ScopedTempDirectory &) = delete;
+    ScopedTempDirectory &operator=(const ScopedTempDirectory &) = delete;
+    const std::filesystem::path &path() const
+    {
+        return path_;
+    }
+
+  private:
+    std::filesystem::path path_;
 };
 } // namespace
 
@@ -882,6 +915,39 @@ TEST_CASE(UserDictionaryRankingDoesNotJournalRowsMissingFromTheDictionary)
     std::filesystem::remove_all(directory);
 }
 
+// 固定位置作用在已展开的列表上（混输英文回来后重新应用固定位置）：真实的 apply_fixed_positions 经
+// ReorderAsOneItemPerWord 只看到每组一项，固定词的每种写法都留着，插回的位置按组算，不切开别的组。
+TEST_CASE(UserDictionaryFixedPositionsOnAnExpandedListKeepEverySpellingGroupWhole)
+{
+    const ScopedTempDirectory directory("msime-fixed-positions-spellings-");
+    const std::string user_path = test::Utf8(directory.path() / "msime_user.db");
+    const test::FakeTraditionalSpellingIndex index({{"台", {"臺", "台", "檯", "颱"}}, {"为", {"為", "爲"}}});
+    const auto expand = [&](std::vector<WordItem> items) {
+        return FanyImeIpc::ExpandTraditionalVariants(std::move(items), index, FanyImeIpc::TraditionalRegion::Taiwan);
+    };
+    const auto apply_fixed = [&](std::vector<WordItem> &items) {
+        user_dictionary::apply_fixed_positions(user_path, "ni", items, false);
+    };
+    const auto display = [](const std::vector<WordItem> &items) {
+        std::vector<std::string> texts;
+        for (const auto &item : items)
+            texts.push_back(item.output_text);
+        return texts;
+    };
+
+    REQUIRE(user_dictionary::set_fixed_position(user_path, "ni", "ni", "为", 1));
+    const auto to_front = FanyImeIpc::ReorderAsOneItemPerWord(
+        expand({{"ni", "你", 9}, {"tai", "台", 8}, {"wei", "为", 7}}), apply_fixed, expand);
+    REQUIRE_EQ(display(to_front), (std::vector<std::string>{"為", "爲", "你", "臺", "台", "檯", "颱"}));
+    REQUIRE_EQ(to_front[0].fixed_position, 1);
+    REQUIRE_EQ(to_front[1].fixed_position, 1);
+
+    REQUIRE(user_dictionary::set_fixed_position(user_path, "ni", "ni", "为", 3));
+    const auto third = FanyImeIpc::ReorderAsOneItemPerWord(
+        expand({{"ni", "你", 9}, {"wei", "为", 8}, {"tai", "台", 7}}), apply_fixed, expand);
+    REQUIRE_EQ(display(third), (std::vector<std::string>{"你", "臺", "台", "檯", "颱", "為", "爲"}));
+}
+
 // 已经写进日志的那些残留：升级回放要跳过，打开日志时清掉；用户在设置页手动加的带假名词不能动。
 TEST_CASE(UserDictionaryReplaySkipsLearnedKanaPinyinUpserts)
 {
@@ -1112,4 +1178,296 @@ TEST_CASE(DateTimeFormatOrderIsLearnedPinnedAndFixedByFormatId)
     items = ordered("rq");
     REQUIRE_EQ(items[0].fixed_position, 0);
     std::filesystem::remove_all(directory);
+}
+namespace
+{
+using VariantChoices = std::vector<user_dictionary::TraditionalVariantChoice>;
+
+// 表里的全部记录，按（键, 底词）排好，便于整份比较。
+VariantChoices SortedVariantChoices(const std::string &user_path)
+{
+    auto rows = user_dictionary::traditional_variant_choices(user_path);
+    REQUIRE(rows.has_value());
+    std::sort(rows->begin(), rows->end(), [](const auto &left, const auto &right) {
+        return std::tie(left.key, left.base_word) < std::tie(right.key, right.base_word);
+    });
+    return *rows;
+}
+
+bool SameVariantChoices(const VariantChoices &actual, const VariantChoices &expected)
+{
+    return actual.size() == expected.size() &&
+           std::equal(actual.begin(), actual.end(), expected.begin(), [](const auto &left, const auto &right) {
+               return left.key == right.key && left.base_word == right.base_word && left.spelling == right.spelling;
+           });
+}
+} // namespace
+
+// 繁体写法记录的表随日志库的 schema 建立：已有的旧日志库（没有这张表）打开时补建，
+// 反复打开不重建、不丢记录。
+TEST_CASE(TraditionalVariantChoiceTableIsCreatedOnceAndKeepsItsRows)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-schema-");
+    const auto user_path = directory.path() / "msime_user.db";
+    {
+        TestDatabase old_journal(user_path);
+        old_journal.exec("CREATE TABLE user_dictionary_operations(dictionary TEXT NOT NULL,key TEXT NOT NULL,"
+                         "value TEXT NOT NULL,operation TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+                         "display TEXT NOT NULL DEFAULT '',PRIMARY KEY(dictionary,key,value));");
+    }
+    const std::string user = test::Utf8(user_path);
+    const auto initial = user_dictionary::traditional_variant_choices(user);
+    REQUIRE(initial.has_value() && initial->empty());
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(user_dictionary::ensure_user_database(user));
+    REQUIRE(user_dictionary::ensure_user_database(user));
+    REQUIRE(SameVariantChoices(SortedVariantChoices(user), {{"tai'wan", "台湾", "台灣"}}));
+    TestDatabase journal(user_path);
+    REQUIRE_EQ(journal.scalar_int("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND "
+                                  "name='traditional_variant_choices'"),
+               1);
+}
+
+// 同一个（键, 底词）只留最后一次选择；键或底词不同就是另一条。
+TEST_CASE(TraditionalVariantChoiceKeepsOnlyTheLatestSpellingPerKeyAndWord)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-upsert-");
+    const std::string user = test::Utf8(directory.path() / "msime_user.db");
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "檯"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "颱"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "太", "太"));
+    REQUIRE(SameVariantChoices(SortedVariantChoices(user),
+                               {{"tai", "台", "颱"}, {"tai", "太", "太"}, {"tai'wan", "台湾", "台灣"}}));
+}
+
+// 删一条只删那个（键, 底词）：同一底词在别的键下、同一键下的别的底词都留着；删不存在的记录不算失败。
+TEST_CASE(TraditionalVariantChoiceForgetsOneKeyAndWord)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-forget-");
+    const std::string user = test::Utf8(directory.path() / "msime_user.db");
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台弯", "臺彎"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan'", "台湾", "台灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "颱"));
+    REQUIRE(user_dictionary::forget_traditional_variant(user, "tai'wan", "台湾"));
+    REQUIRE(user_dictionary::forget_traditional_variant(user, "hou'tai", "后台"));
+    REQUIRE(SameVariantChoices(SortedVariantChoices(user),
+                               {{"tai", "台", "颱"}, {"tai'wan", "台弯", "臺彎"}, {"tai'wan'", "台湾", "台灣"}}));
+}
+
+// 安装升级时的回放只读操作日志：写法记录原样留在日志库里，词库里也不会多出繁体词。
+TEST_CASE(TraditionalVariantChoicesSurviveReplayAndNeverReachTheDictionary)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-replay-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const auto main_path = directory.path() / "msime.db";
+    const auto english_path = directory.path() / "english.db";
+    {
+        TestDatabase main_db(main_path);
+        main_db.exec("CREATE TABLE tbl_1_t(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                     "CREATE TABLE tbl_2_t(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                     "INSERT INTO tbl_1_t VALUES('tai','t','台',100);"
+                     "INSERT INTO tbl_2_t VALUES('tai''wan','tw','台湾',100);");
+        TestDatabase english_db(english_path);
+        english_db.exec("CREATE TABLE english_words(word TEXT PRIMARY KEY,display TEXT);");
+    }
+    const std::string user = test::Utf8(user_path);
+    REQUIRE(user_dictionary::record_upsert(user, user_dictionary::DictionaryKind::Pinyin, "tai'wan", "台湾", 500));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "颱"));
+    const VariantChoices before = SortedVariantChoices(user);
+
+    const auto replay = user_dictionary::replay(user, test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(replay.error.empty());
+    REQUIRE_EQ(replay.failed, 0);
+    REQUIRE_EQ(replay.applied, 1);
+
+    REQUIRE(SameVariantChoices(SortedVariantChoices(user), before));
+    REQUIRE_EQ(before.size(), static_cast<size_t>(2));
+    TestDatabase main_db(main_path);
+    REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM tbl_2_t WHERE value='台灣'"), 0);
+    REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM tbl_1_t WHERE value='颱'"), 0);
+    REQUIRE_EQ(main_db.scalar_int("SELECT weight FROM tbl_2_t WHERE value='台湾'"), 500);
+    REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM tbl_2_t"), 1);
+    REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM tbl_1_t"), 1);
+}
+
+namespace
+{
+using FanyImeIpc::PersistentTraditionalVariantChoices;
+using FanyImeIpc::VariantChoiceAction;
+using FanyImeIpc::VariantChoiceChange;
+
+// 词库写线程的替身：投递的任务先排着，由测试决定什么时候按投递顺序执行。任务抛出的异常照
+// SerialTaskRunner 的做法吞掉，后面的任务照常执行。
+class QueuedWriter
+{
+  public:
+    PersistentTraditionalVariantChoices::PostToWriter Poster()
+    {
+        return [this](std::function<void()> task) { tasks_.push_back(std::move(task)); };
+    }
+    size_t pending() const
+    {
+        return tasks_.size();
+    }
+    void RunAll()
+    {
+        while (!tasks_.empty())
+        {
+            auto task = std::move(tasks_.front());
+            tasks_.erase(tasks_.begin());
+            try
+            {
+                task();
+            }
+            catch (...)
+            {
+            }
+        }
+    }
+
+  private:
+    std::vector<std::function<void()>> tasks_;
+};
+
+VariantChoiceChange RememberChange(const std::string &key, const std::string &word, const std::string &spelling)
+{
+    return {VariantChoiceAction::Remember, key, word, spelling};
+}
+
+VariantChoiceChange ForgetChange(const std::string &key, const std::string &word)
+{
+    return {VariantChoiceAction::Forget, key, word, {}};
+}
+} // namespace
+
+// 每次改动都排一个写库任务：记住的写进表，删掉的从表里删，按底词删的删掉它在所有键下的行。
+// 字段不全的改动什么都不排。
+TEST_CASE(PersistentVariantChoicesWriteEveryChangeToTheJournal)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-persist-write-");
+    const std::string user = test::Utf8(directory.path() / "msime_user.db");
+    QueuedWriter writer;
+    PersistentTraditionalVariantChoices choices(writer.Poster(), [&] { return user; });
+
+    choices.Change(RememberChange("tai'wan", "台湾", "台灣"));
+    choices.Change(RememberChange("tai", "台", "颱"));
+    choices.Change(RememberChange("hou'tai", "后台", "後台"));
+    choices.Change(RememberChange("hou'tai'", "后台", "後臺"));
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(4));
+    writer.RunAll();
+    REQUIRE(SameVariantChoices(
+        SortedVariantChoices(user),
+        {{"hou'tai", "后台", "後台"}, {"hou'tai'", "后台", "後臺"}, {"tai", "台", "颱"}, {"tai'wan", "台湾", "台灣"}}));
+
+    choices.Change(ForgetChange("tai'wan", "台湾"));
+    choices.ForgetWord("后台");
+    // 内存副本立即生效，不等写库。
+    REQUIRE(!choices.RememberedSpelling("tai'wan", "台湾").has_value());
+    REQUIRE(!choices.RememberedSpelling("hou'tai", "后台").has_value());
+    REQUIRE(!choices.RememberedSpelling("hou'tai'", "后台").has_value());
+    REQUIRE_EQ(choices.RememberedSpelling("tai", "台").value_or(""), std::string("颱"));
+    writer.RunAll();
+    REQUIRE(SameVariantChoices(SortedVariantChoices(user), {{"tai", "台", "颱"}}));
+
+    choices.Change(RememberChange("", "台", "檯"));
+    choices.Change(ForgetChange("tai", ""));
+    choices.ForgetWord("");
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(0));
+}
+
+// 上一个进程存下的记录：第一次查的时候排一次读表，读完之前查不到；读完之后查得到，也不再读第二次。
+TEST_CASE(PersistentVariantChoicesLoadTheJournalOnFirstLookup)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-persist-load-");
+    const std::string user = test::Utf8(directory.path() / "msime_user.db");
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    QueuedWriter writer;
+    PersistentTraditionalVariantChoices choices(writer.Poster(), [&] { return user; });
+
+    REQUIRE(!choices.RememberedSpelling("tai'wan", "台湾").has_value());
+    REQUIRE(!choices.RememberedSpelling("tai", "台").has_value());
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(1));
+    writer.RunAll();
+    REQUIRE_EQ(choices.RememberedSpelling("tai'wan", "台湾").value_or(""), std::string("台灣"));
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(0));
+}
+
+// 读表之前、读表排队期间都有改动：读表之前的改动先写进库、读表读得到；读表排队期间的改动写库排在
+// 读表后面，载入时重放。两边最后都是用户最后一次做的样子。
+TEST_CASE(PersistentVariantChoicesKeepChangesMadeAroundTheLoad)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-persist-order-");
+    const std::string user = test::Utf8(directory.path() / "msime_user.db");
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "臺灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "hou'tai", "后台", "後臺"));
+    QueuedWriter writer;
+    PersistentTraditionalVariantChoices choices(writer.Poster(), [&] { return user; });
+
+    choices.Change(ForgetChange("hou'tai", "后台"));
+    REQUIRE(!choices.RememberedSpelling("tai'wan", "台湾").has_value());
+    choices.Change(RememberChange("tai'wan", "台湾", "台灣"));
+    writer.RunAll();
+
+    REQUIRE_EQ(choices.RememberedSpelling("tai'wan", "台湾").value_or(""), std::string("台灣"));
+    REQUIRE(!choices.RememberedSpelling("hou'tai", "后台").has_value());
+    REQUIRE(SameVariantChoices(SortedVariantChoices(user), {{"tai'wan", "台湾", "台灣"}}));
+}
+
+// 读表失败时不算载入，下一次查的时候重新排一次读表；排着的读表还没执行时不再排第二个。
+TEST_CASE(PersistentVariantChoicesRetryALoadThatFailed)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-persist-retry-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const std::string user = test::Utf8(user_path);
+    {
+        std::ofstream garbage(user_path, std::ios::binary);
+        garbage << std::string(4096, 'x');
+    }
+    QueuedWriter writer;
+    PersistentTraditionalVariantChoices choices(writer.Poster(), [&] { return user; });
+
+    REQUIRE(!choices.RememberedSpelling("tai'wan", "台湾").has_value());
+    REQUIRE(!choices.RememberedSpelling("tai'wan", "台湾").has_value());
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(1));
+    writer.RunAll();
+
+    std::filesystem::remove(user_path);
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(!choices.RememberedSpelling("tai'wan", "台湾").has_value());
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(1));
+    writer.RunAll();
+    REQUIRE_EQ(choices.RememberedSpelling("tai'wan", "台湾").value_or(""), std::string("台灣"));
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(0));
+}
+
+// 读表任务中途抛异常（SerialTaskRunner 会吞掉它）时按读表失败处理：副本不停在读表中，下一次查的时候
+// 重新排一次读表，读成功后照常载入。
+TEST_CASE(PersistentVariantChoicesRetryALoadThatThrew)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-persist-throw-");
+    const std::string user = test::Utf8(directory.path() / "msime_user.db");
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    QueuedWriter writer;
+    int reads = 0;
+    PersistentTraditionalVariantChoices choices(
+        writer.Poster(), [&] { return user; },
+        [&](const std::string &path) {
+            if (++reads == 1)
+                throw std::runtime_error("read failed");
+            return user_dictionary::traditional_variant_choices(path);
+        });
+
+    REQUIRE(!choices.RememberedSpelling("tai'wan", "台湾").has_value());
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(1));
+    writer.RunAll();
+    REQUIRE_EQ(reads, 1);
+
+    REQUIRE(!choices.RememberedSpelling("tai'wan", "台湾").has_value());
+    REQUIRE_EQ(writer.pending(), static_cast<size_t>(1));
+    writer.RunAll();
+    REQUIRE_EQ(reads, 2);
+    REQUIRE_EQ(choices.RememberedSpelling("tai'wan", "台湾").value_or(""), std::string("台灣"));
 }

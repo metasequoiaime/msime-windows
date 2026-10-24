@@ -3,6 +3,8 @@
 #include <Windows.h>
 #include <string>
 #include <chrono>
+#include <functional>
+#include <optional>
 #include <cstdint>
 #include <utility>
 #include "ipc.h"
@@ -21,6 +23,11 @@
 #include "window/caret_state_indicator_policy.h"
 #include "english/english_ime.h"
 #include "config/ime_config.h"
+#include "conversion/chinese_converter.h"
+#include "conversion/traditional_spelling_index.h"
+#include "ipc/persistent_traditional_variant_choices.h"
+#include "ipc/traditional_spelling_index_with_choices.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "window/window_hook.h"
 #include "session/session_factory.h"
 #include "log/candidate_diag_log.h"
@@ -533,7 +540,14 @@ void WorkerThread()
         }
 
         case TaskType::StatusSnapshot: {
-            ReloadImeConfigIfChanged();
+            // 设置页改字形只写配置文件，server 在这里重读它；切到繁体时在后台预载转换字典。组字途中改了字形，
+            // 当前候选按新字形重新组页。
+            if (ReloadImeConfigIfChanged())
+            {
+                if (GetConfiguredCharacterSet() == "traditional")
+                    ChineseConverter::PreloadInBackground();
+                RebuildCandidatesForCharacterSetChange();
+            }
             const int cn_state = task.pipe_data.keycode != 0 ? 1 : 0;
             const int fullwidth_state = task.pipe_data.modifiers_down != 0 ? 1 : 0;
             const int punctuation_state = task.pipe_data.pinyin_length != 0 ? 1 : 0;
@@ -689,6 +703,7 @@ void WorkerThread()
 
             const bool english_candidate = item.source == CandidateSource::EnglishDictionary;
             const auto ranking_keys = RankingKeysForCandidate(item);
+            const FanyImeIpc::VariantChoiceScope variant_choice_scope = CurrentVariantChoiceScope(item);
             const std::string context_key = english_candidate ? EnglishRankingContextKey() : ranking_keys.first;
             const std::string entry_key = english_candidate ? item.pinyin : ranking_keys.second;
 
@@ -707,7 +722,8 @@ void WorkerThread()
                 else
                     (void)user_dictionary::adjust_candidate_ranking(
                         CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(),
-                        context_key, Global::candidate_ui.items, entry_key, item.word, "pin", 1, 1, true, nullptr,
+                        context_key, FanyImeIpc::FirstVariantsOnly(Global::candidate_ui.items), entry_key, item.word,
+                        "pin", 1, 1, true, nullptr,
                         item.scheme == SchemeType::Wubi ? user_dictionary::DictionaryKind::Wubi
                                                         : user_dictionary::DictionaryKind::Pinyin);
             }
@@ -730,6 +746,7 @@ void WorkerThread()
                     const std::string delete_pinyin =
                         item.canonical_pinyin.empty() ? item.pinyin : item.canonical_pinyin;
                     g_inputSession->remove_candidate(delete_pinyin, item.word, item.scheme);
+                    ForgetTraditionalVariantsOfDeletedCandidate(variant_choice_scope, item);
                 }
             }
             else if (task.type == TaskType::UiFixCandidatePosition)
@@ -742,6 +759,10 @@ void WorkerThread()
                 (void)user_dictionary::clear_fixed_position(user_dictionary::default_user_db_path(), context_key,
                                                             entry_key, item.word);
             }
+            // 置顶、固定作用在整组写法上；用户点的若不是这组排第一的写法，按它改写法记录：点中的是地区默认
+            // 第一写法时删掉记录，否则记下它（见 RememberOrForgetSelectedTraditionalVariant）。
+            if (task.type == TaskType::UiPinCandidate || task.type == TaskType::UiFixCandidatePosition)
+                RememberOrForgetSelectedTraditionalVariant(variant_choice_scope, item);
             g_inputSession->reset_cache();
             g_inputSession->recompute_candidates();
             PrepareCandidateList(task.client_id, task.activation_epoch);
@@ -823,22 +844,29 @@ void WorkerThread()
         }
 
         case TaskType::ApplyCandidatePageSize: {
+            // 界面线程重读到配置变化后发来这个任务；字形也可能一起变了，那样就按新字形重新组页。
             const int pageSize = GetConfiguredCandidatePageSize();
-            if (Global::candidate_ui.page_size != pageSize)
+            const bool page_size_changed = Global::candidate_ui.page_size != pageSize;
+            if (page_size_changed)
             {
                 Global::candidate_ui.page_size = pageSize;
                 Global::candidate_ui.page_index = 0;
                 Global::candidate_ui.clear_page();
-                const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
-                if (owner && IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
-                {
-                    RefreshCandidatePageUi(true);
-                }
+            }
+            if (RebuildCandidatesForCharacterSetChange() || !page_size_changed)
+                break;
+            const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+            if (owner && IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+            {
+                RefreshCandidatePageUi(true);
             }
             break;
         }
 
         case TaskType::RefreshCandidatePage: {
+            // 悬浮工具栏切换字形后发来这个任务：组字途中换了字形就按新字形重新组页。
+            if (RebuildCandidatesForCharacterSetChange())
+                break;
             if (!Global::candidate_ui.items.empty())
             {
                 Global::candidate_ui.clear_page();
@@ -1061,7 +1089,8 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
     }
     const auto &frequency = GetConfiguredFrequencyAdjustment();
     DictionaryWriter().Post([english, wubi, context_key,
-                             candidates = ranking_candidates ? *ranking_candidates : Global::candidate_ui.items,
+                             candidates = FanyImeIpc::FirstVariantsOnly(
+                                 ranking_candidates ? *ranking_candidates : Global::candidate_ui.items),
                              entry_key, word, mode = frequency.mode, linear_step = frequency.linear_step,
                              trigger_count = frequency.trigger_count] {
         if (english)
@@ -1148,6 +1177,53 @@ void EnqueueLearnDateTimeOrderTask(const std::string &format_id, uint64_t client
         (void)user_dictionary::learn_date_time_selection(user_dictionary::default_user_db_path(), category, default_ids,
                                                          format_id, mode, linear_step, trigger_count);
     });
+}
+
+namespace
+{
+FanyImeIpc::PersistentTraditionalVariantChoices &TraditionalVariantChoices()
+{
+    static FanyImeIpc::PersistentTraditionalVariantChoices choices(
+        [](std::function<void()> task) { DictionaryWriter().Post(std::move(task)); },
+        [] { return user_dictionary::default_user_db_path(); });
+    return choices;
+}
+} // namespace
+
+const ChineseConverter::TraditionalSpellingIndex &TraditionalSpellingIndexWithUserChoices()
+{
+    static const FanyImeIpc::TraditionalSpellingIndexWithChoices index(
+        ChineseConverter::OpenCcTraditionalSpellingIndex(), TraditionalVariantChoices());
+    return index;
+}
+
+// 默认写法不读字形设置，在 scope 判定要读写记录之后才算：同一次判定里字形只在 scope 里读一次。
+void RememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
+{
+    if (!FanyImeIpc::RemembersVariantChoices(scope))
+        return;
+    const auto change = FanyImeIpc::VariantChoiceForSelection(scope, item, FanyImeIpc::VariantChoiceKeyOf(item),
+                                                              RegionalFirstSpellingOfText(item.word));
+    if (change)
+        TraditionalVariantChoices().Change(*change);
+}
+
+void RememberOrForgetComposedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope, bool all_first_spellings,
+                                                const std::string &key, const std::string &word,
+                                                const std::string &committed_text)
+{
+    if (!FanyImeIpc::RemembersVariantChoices(scope))
+        return;
+    const auto change = FanyImeIpc::VariantChoiceForComposedWord(scope, all_first_spellings, key, word, committed_text,
+                                                                 RegionalFirstSpellingOfText(word));
+    if (change)
+        TraditionalVariantChoices().Change(*change);
+}
+
+void ForgetTraditionalVariantsOfDeletedCandidate(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
+{
+    if (const auto word = FanyImeIpc::VariantChoiceWordToForgetOnDelete(scope, item))
+        TraditionalVariantChoices().ForgetWord(*word);
 }
 
 void EnqueueLearnEnteredEnglishWordTask(const std::string &word)
