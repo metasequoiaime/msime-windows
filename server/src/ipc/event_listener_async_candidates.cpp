@@ -11,6 +11,7 @@
 #include "ipc.h"
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/candidate_ui_owner.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "global/globals.h"
 #include "engine/japanese/romaji_converter.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
@@ -95,11 +96,10 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
         return;
 
     auto &items = Global::candidate_ui.items;
-    // Same word already visible (dict / prior cloud): keep page and skip re-cache.
-    if (std::any_of(items.begin(), items.end(), [&](const WordItem &item) { return item.word == candidate; }))
-    {
+    // 同一底词或同一种写法已经显示（词库、上一条云候选）：不动页面，也不让引擎再缓存一次。
+    if (!FanyImeIpc::ShouldInsertAsyncCandidate(items, pinyin, candidate, CandidateSource::CloudSuggestion,
+                                                CurrentCandidateSpellingSettings()))
         return;
-    }
 
     // The engine checks the original session and composition before caching the result.
     if (!g_inputSession->apply_online_candidate(*query, candidate, CandidateSource::CloudSuggestion))
@@ -117,7 +117,7 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
                 items.end());
 
     size_t insert_index = items.size() >= 1 ? 1 : 0;
-    items.insert(items.begin() + insert_index, *accepted);
+    items.insert(items.begin() + insert_index, WithFirstTraditionalSpelling(*accepted));
     const bool preserve_single_kana_pair =
         g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji &&
         japanese::IsSingleKanaConversion(japanese::ConvertRomaji(g_inputSession->get_pinyin_sequence()));
@@ -219,12 +219,11 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
         PushUiLessCandidatesToOwner();
         return;
     }
-    // Align with cloud: if the word is already in the list, do not erase / reinsert /
-    // reset page_index / re-cache. This stops cache-hit reapply from breaking paging.
-    if (std::any_of(items.begin(), items.end(), [&](const WordItem &item) { return item.word == candidate; }))
-    {
+    // 与云候选一致：同一底词或同一种写法已经显示时，不删、不重插、不重置页码、不让引擎再缓存一次；
+    // 缓存命中后再次应用时才不会把翻页打乱。
+    if (!FanyImeIpc::ShouldInsertAsyncCandidate(items, identity, candidate, CandidateSource::AiSuggestion,
+                                                CurrentCandidateSpellingSettings()))
         return;
-    }
 
     if (!g_inputSession->apply_online_candidate(*engine_query, candidate, CandidateSource::AiSuggestion))
         return;
@@ -240,7 +239,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
                                [](const WordItem &item) { return item.source == CandidateSource::AiSuggestion; }),
                 items.end());
     const size_t insert_index = std::min<size_t>(2, items.size());
-    items.insert(items.begin() + insert_index, *accepted);
+    items.insert(items.begin() + insert_index, WithFirstTraditionalSpelling(*accepted));
     FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, CurrentEnglishPlacement(items));
     (void)0;
     Global::ai_candidate = {true, candidate, query.committed_pinyin};
@@ -447,8 +446,12 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
                                                    english, false);
             const size_t insert_index = std::min<size_t>(1, items.size());
             items.insert(items.begin() + static_cast<std::ptrdiff_t>(insert_index), std::move(english.front()));
-            user_dictionary::apply_fixed_positions(user_dictionary::default_user_db_path(), CurrentRankingContextKey(),
-                                                   items, false, {}, g_inputSession->has_active_helpcode());
+            // items 已按写法展开过，固定位置要作用在每组一项的列表上。
+            ReorderCandidatesAsOneItemPerWord(items, [](std::vector<WordItem> &collapsed) {
+                user_dictionary::apply_fixed_positions(user_dictionary::default_user_db_path(),
+                                                       CurrentRankingContextKey(), collapsed, false, {},
+                                                       g_inputSession->has_active_helpcode());
+            });
             for (size_t index = 1; index < english.size(); ++index)
                 items.push_back(std::move(english[index]));
         }

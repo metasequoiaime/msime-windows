@@ -21,6 +21,8 @@
 #include "window/caret_state_indicator_policy.h"
 #include "english/english_ime.h"
 #include "config/ime_config.h"
+#include "conversion/chinese_converter.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "window/window_hook.h"
 #include "session/session_factory.h"
 #include "log/candidate_diag_log.h"
@@ -533,7 +535,14 @@ void WorkerThread()
         }
 
         case TaskType::StatusSnapshot: {
-            ReloadImeConfigIfChanged();
+            // 设置页改字形只写配置文件，server 在这里重读它；切到繁体时在后台预载转换字典。组字途中改了字形，
+            // 当前候选按新字形重新组页。
+            if (ReloadImeConfigIfChanged())
+            {
+                if (GetConfiguredCharacterSet() == "traditional")
+                    ChineseConverter::PreloadInBackground();
+                RebuildCandidatesForCharacterSetChange();
+            }
             const int cn_state = task.pipe_data.keycode != 0 ? 1 : 0;
             const int fullwidth_state = task.pipe_data.modifiers_down != 0 ? 1 : 0;
             const int punctuation_state = task.pipe_data.pinyin_length != 0 ? 1 : 0;
@@ -707,7 +716,8 @@ void WorkerThread()
                 else
                     (void)user_dictionary::adjust_candidate_ranking(
                         CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(),
-                        context_key, Global::candidate_ui.items, entry_key, item.word, "pin", 1, 1, true, nullptr,
+                        context_key, FanyImeIpc::FirstVariantsOnly(Global::candidate_ui.items), entry_key, item.word,
+                        "pin", 1, 1, true, nullptr,
                         item.scheme == SchemeType::Wubi ? user_dictionary::DictionaryKind::Wubi
                                                         : user_dictionary::DictionaryKind::Pinyin);
             }
@@ -823,22 +833,29 @@ void WorkerThread()
         }
 
         case TaskType::ApplyCandidatePageSize: {
+            // 界面线程重读到配置变化后发来这个任务；字形也可能一起变了，那样就按新字形重新组页。
             const int pageSize = GetConfiguredCandidatePageSize();
-            if (Global::candidate_ui.page_size != pageSize)
+            const bool page_size_changed = Global::candidate_ui.page_size != pageSize;
+            if (page_size_changed)
             {
                 Global::candidate_ui.page_size = pageSize;
                 Global::candidate_ui.page_index = 0;
                 Global::candidate_ui.clear_page();
-                const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
-                if (owner && IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
-                {
-                    RefreshCandidatePageUi(true);
-                }
+            }
+            if (RebuildCandidatesForCharacterSetChange() || !page_size_changed)
+                break;
+            const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+            if (owner && IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+            {
+                RefreshCandidatePageUi(true);
             }
             break;
         }
 
         case TaskType::RefreshCandidatePage: {
+            // 悬浮工具栏切换字形后发来这个任务：组字途中换了字形就按新字形重新组页。
+            if (RebuildCandidatesForCharacterSetChange())
+                break;
             if (!Global::candidate_ui.items.empty())
             {
                 Global::candidate_ui.clear_page();
@@ -1061,7 +1078,8 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
     }
     const auto &frequency = GetConfiguredFrequencyAdjustment();
     DictionaryWriter().Post([english, wubi, context_key,
-                             candidates = ranking_candidates ? *ranking_candidates : Global::candidate_ui.items,
+                             candidates = FanyImeIpc::FirstVariantsOnly(
+                                 ranking_candidates ? *ranking_candidates : Global::candidate_ui.items),
                              entry_key, word, mode = frequency.mode, linear_step = frequency.linear_step,
                              trigger_count = frequency.trigger_count] {
         if (english)

@@ -116,7 +116,9 @@ bool IsQuickPhraseInput(const std::string &raw)
 
 // 快捷短语混进全拼/双拼的普通候选（Shift+K 模式另走
 // IsQuickPhraseInput）：按整串编码精确匹配，只在输入是纯小写字母、不在造词、光标前缀
-// 没截断时出现。整组插在第 slot 个普通候选之前，槽位由调频学出来，最多退到首页末位。
+// 没截断时出现。整组插在第 slot 个普通候选之前，槽位由调频学出来，最大是每页候选数减一：
+// 组前面最多有这么多个普通候选。放置在繁体写法展开之前，按候选个数数；前面的候选展开出多种写法时，
+// 组在显示上随之后移，可能落到第二页。
 // 不看辅助码：双拼开着辅助码时，任何「完整音节 + 一个字母」的奇数长编码（dia = di + a）
 // 都会被认成带辅助码，按辅助码拦掉就等于这类编码永远出不来。整串精确等于用户自定义的
 // 编码时，按短语处理。
@@ -275,8 +277,7 @@ std::string BuildCurrentCandidatePage()
                                GetConfiguredShowQuanpinHelpcodeInCandidateWindow()));
     // U 模式（部件拆字反查）：候选上反显该字的注音。annotation 在这个模式下专属注音，辅助码
     // 提示不在该模式出现（候选来源是 Generated，本来也不走辅助码的整句规则）。
-    const bool radical_mode =
-        !translation_page && IsRadicalCompositionActive(g_inputSession->get_pinyin_sequence_with_cases());
+    const bool radical_mode = IsRadicalCandidateListActive();
 
     // 组页时读一次徽标配置，循环内不再逐条查
     const bool show_fixed_badge = GetConfiguredCandidateFixedBadge();
@@ -303,7 +304,7 @@ std::string BuildCurrentCandidatePage()
     for (int i = 0; i < loop; i++)
     {
         const auto &item = ui.items[start + i];
-        const std::string word = CandidateTextForOutput(item.word);
+        const std::string word = CandidateOutputText(item);
 
         CandidateViewItem view;
         view.text = word;
@@ -490,7 +491,7 @@ void PublishBuiltCandidatePage(const std::wstring &candidate_string)
         const size_t end = (std::min)(ui.items.size(), start + kExpandedCandidateLimit);
         snapshot->expanded_start = static_cast<int>(start);
         for (size_t i = start; i < end; ++i)
-            snapshot->expanded_words.push_back(string_to_wstring(CandidateTextForOutput(ui.items[i].word)));
+            snapshot->expanded_words.push_back(string_to_wstring(CandidateOutputText(ui.items[i])));
     }
     // Stamp before publishing so the UI thread can echo back exactly which page it painted.
     snapshot->generation = ++Global::candidate_page_generation;
@@ -592,6 +593,9 @@ FanyImeIpc::EnglishPlacement CurrentEnglishPlacement(const std::vector<WordItem>
 
 namespace
 {
+// PrepareCandidateList 上一次组页时的字形。只在任务线程上读写。
+std::string g_candidate_list_character_set;
+
 bool CandidateListAcceptsExpansion()
 {
     // 译文页、日期页是一份固定的列表，session 里再多的候选也不属于它。
@@ -622,6 +626,7 @@ bool ExpandCandidatesKeepingPagePosition()
         [](const std::string &key, const std::string &value) { return g_inputSession->find_candidate(key, value); },
         g_inputSession->has_active_helpcode());
     PlaceQuickPhrases(expanded, g_inputSession->get_pinyin_sequence_with_cases());
+    expanded = WithTraditionalVariants(std::move(expanded));
     return FanyImeIpc::SetExpandedCandidatesKeepingPagePosition(ui, std::move(expanded),
                                                                 CurrentEnglishPlacement(ui.items));
 }
@@ -664,7 +669,7 @@ int MoveToExpandedCandidate(int absolute_index, const std::wstring &expected_tex
     if (ui.page_size <= 0 || expected_text.empty())
         return -1;
     const auto matches = [&](size_t index) {
-        return string_to_wstring(CandidateTextForOutput(ui.items[index].word)) == expected_text;
+        return string_to_wstring(CandidateOutputText(ui.items[index])) == expected_text;
     };
     // 点下去之后候选可能被异步结果插队；下标对不上时按显示文字重新定位，同字取最靠前的那个。
     size_t index = static_cast<size_t>((std::max)(absolute_index, 0));
@@ -749,6 +754,8 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     double fixedPosMs = 0;
 
     auto &ui = Global::candidate_ui;
+    // 界面线程随时可能改字形：展开与记下的字形用同一次读到的值，记下的才是列表实际用的字形。
+    const std::string character_set = GetConfiguredCharacterSet();
     // 日期页的列表是选中入口时另查的，按会话重新组页就说明已经回到了普通候选。
     if (g_date_time_page_active)
     {
@@ -807,6 +814,7 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
         user_dictionary::apply_fixed_positions(user_dictionary::default_user_db_path(), CurrentRankingContextKey(),
                                                items, false);
         fixedPosMs = segment.Split();
+        items = WithTraditionalVariantsFor(std::move(items), character_set);
     }
     else if (IsYModeInput(current_input))
     {
@@ -838,6 +846,8 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
         fixedPosMs = segment.Split();
         if (g_inputSession->get_pinyin_sequence().size() == 1 && items.size() > 24)
             items.resize(24);
+        // 单字母输入截到前 24 个候选之后再展开写法，截的仍是候选个数，不切开写法组。
+        items = WithTraditionalVariantsFor(std::move(items), character_set);
     }
 
     // R4：光标前缀为空时不造「整串假候选」——前缀为空就该没有候选（候选窗由调用方
@@ -853,6 +863,7 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     const double branchMs = segment.Split();
     const size_t itemCount = items.size();
 
+    g_candidate_list_character_set = character_set;
     ui.set_items(std::move(items));
     RefreshCandidatePageUi(false);
     PublishCandidateUiOwner(client_id, activation_epoch);
@@ -906,5 +917,23 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     CAND_DIAG_LOGF(L"candidate build total_ms={:.1f} query_ms={:.1f} fixed_pos_ms={:.1f} branch_ms={:.1f} "
                    L"ui_ms={:.1f} english_ms={:.1f} mixed_ms={:.1f} items={}",
                    segment.TotalMs(), queryMs, fixedPosMs, branchMs, uiMs, englishMs, mixedMs, itemCount);
+}
+
+bool RebuildCandidatesForCharacterSetChange()
+{
+    if (!g_inputSession || Global::candidate_ui.items.empty() || IsCandidateSubPageActive() ||
+        g_candidate_list_character_set == GetConfiguredCharacterSet())
+        return false;
+    if (!FanyImeIpc::CandidateListFollowsCharacterSet(
+            /*japanese_scheme=*/g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji,
+            /*radical_candidate_list=*/IsRadicalCandidateListActive(), /*english_input_mode=*/g_english_input_mode))
+        return false;
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+        return false;
+    PrepareCandidateList(owner.client_id, owner.activation_epoch);
+    RequestShowCandidateWindow();
+    PushUiLessCandidatesToOwner();
+    return true;
 }
 } // namespace FanyNamedPipe

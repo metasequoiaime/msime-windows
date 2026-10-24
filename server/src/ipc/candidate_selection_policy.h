@@ -84,16 +84,19 @@ inline bool ShouldStoreEarlyReturnPhrase(CandidateSource source, bool creating_w
     return !prefix_canonical_pinyin.empty();
 }
 
-// 异步候选的槽位按普通候选数，快捷短语不占槽位：越过 count 个非快捷短语候选后，再越过
-// 紧跟着的整组快捷短语，所以同一位置上快捷短语排在异步候选前面，组也不会被拆开。
+// 异步候选的槽位按普通候选数，快捷短语不占槽位，同一底词的繁体写法（variant_rank > 0 的项）
+// 也不另占槽位：越过 count 个普通候选后，先越过最后那个候选剩下的写法，再越过紧跟着的整组
+// 快捷短语，所以同一位置上快捷短语排在异步候选前面，写法组与快捷短语组都不会被拆开。
 inline size_t IndexAfterLocalCandidates(const std::vector<WordItem> &items, size_t count)
 {
     size_t index = 0;
     for (size_t counted = 0; index < items.size() && counted < count; ++index)
     {
-        if (items[index].source != CandidateSource::QuickPhrase)
+        if (items[index].source != CandidateSource::QuickPhrase && items[index].variant_rank == 0)
             ++counted;
     }
+    while (index < items.size() && items[index].variant_rank > 0)
+        ++index;
     while (index < items.size() && items[index].source == CandidateSource::QuickPhrase)
         ++index;
     return index;
@@ -211,8 +214,16 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
     }
 
     items = std::move(local_candidates);
+    // 同一底词的繁体写法（variant_rank > 0 的项跟在第一写法后面）是一组，任何插入都不落在组中间：
+    // 落点在组里时挪到这一组之后。
+    const auto outside_spelling_group = [&](size_t index) {
+        index = (std::min)(index, items.size());
+        while (index < items.size() && items[index].variant_rank > 0)
+            ++index;
+        return index;
+    };
     auto insert_at = [&](size_t index, WordItem candidate) {
-        const auto offset = static_cast<std::ptrdiff_t>((std::min)(index, items.size()));
+        const auto offset = static_cast<std::ptrdiff_t>(outside_spelling_group(index));
         items.insert(items.begin() + offset, std::move(candidate));
     };
 
@@ -255,7 +266,7 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
     std::optional<size_t> english_index;
     if (english_takes_slot)
     {
-        english_index = (std::min)(slot, items.size());
+        english_index = outside_spelling_group(slot);
         insert_at(slot++, std::move(english_candidates.front()));
         english_candidates.erase(english_candidates.begin());
     }
@@ -333,7 +344,7 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
         target = (std::min)(*target, english_slot_maximum);
         WordItem candidate = std::move(items[*english_index]);
         items.erase(items.begin() + static_cast<std::ptrdiff_t>(*english_index));
-        english_index = (std::min)(*target == 0 ? IndexAfterLocalCandidates(items, 0) : *target, items.size());
+        english_index = outside_spelling_group(*target == 0 ? IndexAfterLocalCandidates(items, 0) : *target);
         insert_at(*english_index, std::move(candidate));
     }
 

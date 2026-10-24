@@ -2,7 +2,13 @@
 #include "ai/ai_assistant_cache_key.h"
 #include "ai/ai_provider_store.h"
 #include "cloud/ai_translation.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "tests/includes/test_framework.h"
+
+#include <cstdint>
+#include <initializer_list>
+#include <string>
+#include <vector>
 
 TEST_CASE(jev_request_uses_choice_api_and_keeps_token_out_of_payload)
 {
@@ -114,6 +120,98 @@ TEST_CASE(jev_promotion_rejects_pinned_or_ineligible_choices)
     REQUIRE(!Jev::Promote(items, "戊"));
     REQUIRE_EQ(items[2].word, "丙");
     REQUIRE_EQ(items[4].word, "戊");
+}
+
+namespace
+{
+// 繁体模式下展开过的一组写法：同一个底词，variant_rank 从 0 起，紧挨着放。
+std::vector<WordItem> SpellingGroup(const std::string &word, std::int64_t weight,
+                                    std::initializer_list<const char *> spellings)
+{
+    std::vector<WordItem> group;
+    int rank = 0;
+    for (const char *spelling : spellings)
+    {
+        WordItem item("shi'shi", word, weight);
+        item.output_text = spelling;
+        item.variant_rank = rank++;
+        group.push_back(std::move(item));
+    }
+    return group;
+}
+
+void Append(std::vector<WordItem> &items, std::vector<WordItem> more)
+{
+    items.insert(items.end(), more.begin(), more.end());
+}
+
+std::vector<std::string> DisplayTexts(const std::vector<WordItem> &items)
+{
+    std::vector<std::string> texts;
+    for (const auto &item : items)
+        texts.push_back(item.output_text.empty() ? item.word : item.output_text);
+    return texts;
+}
+
+std::vector<int> Ranks(const std::vector<WordItem> &items)
+{
+    std::vector<int> ranks;
+    for (const auto &item : items)
+        ranks.push_back(item.variant_rank);
+    return ranks;
+}
+} // namespace
+
+// 展开过的列表：选中的词整组挪成第三组，前两组（本地第一、第二候选）不动，每组的写法保持相邻、顺序不变。
+TEST_CASE(jev_promotion_moves_the_whole_spelling_group_behind_the_first_two_groups)
+{
+    std::vector<WordItem> items;
+    Append(items, SpellingGroup("甲", 10, {"甲一", "甲二"}));
+    Append(items, SpellingGroup("乙", 9, {"乙一", "乙二"}));
+    Append(items, SpellingGroup("丙", 8, {"丙一"}));
+    Append(items, SpellingGroup("丁", 7, {"丁一", "丁二", "丁三"}));
+    REQUIRE(Jev::Promote(items, "丁"));
+    REQUIRE_EQ(DisplayTexts(items),
+               (std::vector<std::string>{"甲一", "甲二", "乙一", "乙二", "丁一", "丁二", "丁三", "丙一"}));
+    REQUIRE_EQ(Ranks(items), (std::vector<int>{0, 1, 0, 1, 0, 1, 2, 0}));
+    const auto promoted = items;
+    REQUIRE(Jev::Promote(items, "丁"));
+    REQUIRE_EQ(DisplayTexts(items), DisplayTexts(promoted));
+}
+
+// 不参与挪动的行（云、英文）留在它们在各组之间的原有次序上，组不被它们切开。
+TEST_CASE(jev_promotion_moves_spelling_groups_around_async_rows)
+{
+    std::vector<WordItem> items;
+    Append(items, SpellingGroup("甲", 10, {"甲一", "甲二"}));
+    items.emplace_back("shi'shi", "云", 9, CandidateSource::CloudSuggestion);
+    Append(items, SpellingGroup("乙", 8, {"乙一"}));
+    Append(items, SpellingGroup("丙", 7, {"丙一", "丙二"}));
+    items.emplace_back("shishi", "shishi", 6, CandidateSource::EnglishDictionary);
+    Append(items, SpellingGroup("丁", 5, {"丁一", "丁二"}));
+    REQUIRE(Jev::Promote(items, "丁"));
+    REQUIRE_EQ(DisplayTexts(items),
+               (std::vector<std::string>{"甲一", "甲二", "云", "乙一", "丁一", "丁二", "shishi", "丙一", "丙二"}));
+    REQUIRE_EQ(Ranks(items), (std::vector<int>{0, 1, 0, 0, 0, 1, 0, 0, 1}));
+}
+
+// 组边界与 SpellingGroupStart 同一个判定：variant_rank 大于 0 的项属于它前面最近的第一写法所在的组，
+// 不论底词是否相同。这样的项跟着那一组走，不单独占一个名次。
+TEST_CASE(jev_promotion_uses_the_spelling_group_boundary_of_the_expansion_policy)
+{
+    std::vector<WordItem> items;
+    Append(items, SpellingGroup("甲", 10, {"甲一"}));
+    WordItem follower("shi'shi", "戊", 9);
+    follower.output_text = "戊二";
+    follower.variant_rank = 1;
+    items.push_back(follower);
+    Append(items, SpellingGroup("乙", 8, {"乙一"}));
+    Append(items, SpellingGroup("丙", 7, {"丙一"}));
+    Append(items, SpellingGroup("丁", 6, {"丁一"}));
+    REQUIRE_EQ(FanyImeIpc::SpellingGroupStart(items, 1), size_t{0});
+
+    REQUIRE(Jev::Promote(items, "丁"));
+    REQUIRE_EQ(DisplayTexts(items), (std::vector<std::string>{"甲一", "戊二", "乙一", "丁一", "丙一"}));
 }
 
 TEST_CASE(jev_query_rejects_old_composition_same_text_and_different_session)

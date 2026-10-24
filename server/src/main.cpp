@@ -8,6 +8,7 @@
 #include <utility>
 #include "ipc/ipc.h"
 #include "config/ime_config.h"
+#include "conversion/chinese_converter.h"
 #include "clipboard/clipboard_history.h"
 #include <windows.h>
 #include <fmt/xchar.h>
@@ -216,9 +217,15 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
         });
     }
 
+    // 繁体模式的候选要按 s2t、t2tw、t2hk 与单字字表展开写法，几份字典第一次载入同样不该落在按键上。
+    // 运行中切到繁体时也走同一条后台线程，进程内只起一次。
+    if (GetConfiguredCharacterSet() == "traditional")
+        ChineseConverter::PreloadInBackground();
+
     int ret = CreateCandidateWindow(hInstance);
     if (radical_warmup.joinable())
         radical_warmup.join();
+    ChineseConverter::JoinBackgroundPreload();
 
     // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
     // 这正是把下载放在 Server 而不是设置进程的原因。

@@ -63,6 +63,14 @@ struct WordItem
     // Generated/Fallback 同时被原样上屏、英文、日期、拆字、假名、译文等合成候选借用，
     // 候选窗的〔Trigram〕/〔Unigram〕来源标签只认这个标记，不能单凭 source 判断。
     bool sentence_association = false;
+    // 繁体模式下这一项显示与上屏的写法，由 server 展开候选列表时填（见
+    // server/src/ipc/traditional_variant_expansion_policy.h），组页与上屏读它。空表示这一项没有
+    // 展开，输出文字由 server 按当前字形从 word 得到（简体模式、日语方案、U 模式拆字列表下就是 word）。
+    // 引擎不填也不读；word 始终是简体底词，学习与删除都按 word 走。
+    std::string output_text;
+    // 同一个底词展开出的第几项：0 是这个底词在列表里留下的第一项，大于 0 是紧跟在它后面的其余写法。
+    // 由同一处展开填，槽位计数、异步候选插入位置与调频前的过滤据此把一组写法当成一个候选。
+    int variant_rank = 0;
 
     WordItem() = default;
     WordItem(std::string pinyin_value, std::string word_value, std::int64_t weight_value,

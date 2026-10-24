@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include "Ipc.h"
 #include "ipc/ai_context_policy.h"
+#include "ipc/candidate_text_policy.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "ipc/async_request_origin.h"
 #include "ipc/candidate_ui_owner.h"
 #include "defines/defines.h"
@@ -35,6 +37,7 @@
 #include "engine/contracts/uiless_page.h"
 #include "engine/contracts/v_mode_input.h"
 #include "conversion/chinese_converter.h"
+#include "conversion/traditional_spelling_index.h"
 #include "log/candidate_diag_log.h"
 #include "ipc/event_listener_internal.h"
 #include "ai/jev_candidate_policy.h"
@@ -246,7 +249,7 @@ bool IsQuickPhraseCompositionActive(const std::string &raw)
 // 判据若要求其余全是 a-z，这种串就会掉回普通拼音路径。
 bool IsRadicalCompositionActive(const std::string &raw)
 {
-    return g_radical_mode_triggered && !raw.empty() && raw.front() == 'U';
+    return FanyImeIpc::IsRadicalComposition(g_radical_mode_triggered, raw);
 }
 
 // T 后面是小写唤醒词，或者以数字开头的指定日期时间（形状见 engine/contracts/date_time_input.h）。后者
@@ -612,11 +615,97 @@ AsyncRequestOrigin FindAiRequestOrigin(const std::string &input, uint64_t genera
     return {};
 }
 
+namespace
+{
+bool ShouldConvertCandidateTextIn(const std::string &character_set, bool radical_candidate_list)
+{
+    const bool japanese_scheme = g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji;
+    return FanyImeIpc::ShouldConvertCandidateTextToTraditional(character_set == "traditional", japanese_scheme,
+                                                               radical_candidate_list);
+}
+
+bool ShouldConvertCandidateText(bool radical_candidate_list)
+{
+    return ShouldConvertCandidateTextIn(GetConfiguredCharacterSet(), radical_candidate_list);
+}
+
+std::string ToTraditionalText(const std::string &text)
+{
+    return ChineseConverter::ToTraditional(text);
+}
+
+std::vector<std::string> TraditionalSpellingsOfText(const std::string &text)
+{
+    return FanyImeIpc::TraditionalSpellingsOf(text, ChineseConverter::OpenCcTraditionalSpellingIndex(),
+                                              ChineseConverter::UserTraditionalRegion());
+}
+} // namespace
+
 std::string CandidateTextForOutput(const std::string &text)
 {
-    if (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji)
+    if (!ShouldConvertCandidateText(/*radical_candidate_list=*/false))
         return text;
-    return GetConfiguredCharacterSet() == "traditional" ? ChineseConverter::ToTraditional(text) : text;
+    return ToTraditionalText(text);
+}
+
+bool IsRadicalCandidateListActive()
+{
+    return g_inputSession &&
+           FanyImeIpc::IsRadicalCandidateList(/*radical_mode_triggered=*/g_radical_mode_triggered,
+                                              /*translation_page_active=*/g_translation_candidates_active,
+                                              /*raw=*/g_inputSession->get_pinyin_sequence_with_cases());
+}
+
+std::string CandidateOutputText(const WordItem &item)
+{
+    return FanyImeIpc::CandidateOutputTextFor(item, ShouldConvertCandidateText(IsRadicalCandidateListActive()),
+                                              ToTraditionalText);
+}
+
+std::vector<WordItem> WithTraditionalVariantsFor(std::vector<WordItem> items, const std::string &character_set)
+{
+    if (!ShouldConvertCandidateTextIn(character_set, IsRadicalCandidateListActive()))
+        return items;
+    return FanyImeIpc::ExpandTraditionalVariants(std::move(items), ChineseConverter::OpenCcTraditionalSpellingIndex(),
+                                                 ChineseConverter::UserTraditionalRegion());
+}
+
+std::vector<WordItem> WithTraditionalVariants(std::vector<WordItem> items)
+{
+    return WithTraditionalVariantsFor(std::move(items), GetConfiguredCharacterSet());
+}
+
+void ReorderCandidatesAsOneItemPerWord(std::vector<WordItem> &items,
+                                       const std::function<void(std::vector<WordItem> &)> &reorder)
+{
+    items = FanyImeIpc::ReorderAsOneItemPerWord(std::move(items), reorder, WithTraditionalVariants);
+}
+
+std::string FirstSpellingOfText(const std::string &text)
+{
+    if (!ShouldConvertCandidateText(/*radical_candidate_list=*/false))
+        return text;
+    const auto spellings = TraditionalSpellingsOfText(text);
+    return spellings.empty() ? text : spellings.front();
+}
+
+FanyImeIpc::ChosenText CreatingWordChosenText()
+{
+    const auto &creating_word = GlobalIme::composition.creating_word;
+    return {creating_word.word, creating_word.output_text, creating_word.all_first_spellings};
+}
+
+FanyImeIpc::CandidateSpellingSettings CurrentCandidateSpellingSettings()
+{
+    return {ChineseConverter::OpenCcTraditionalSpellingIndex(), ChineseConverter::UserTraditionalRegion(),
+            GetConfiguredCharacterSet() == "traditional",
+            g_inputSession ? g_inputSession->current_scheme_type() : SchemeType::Quanpin,
+            IsRadicalCandidateListActive()};
+}
+
+WordItem WithFirstTraditionalSpelling(WordItem item)
+{
+    return FanyImeIpc::WithFirstTraditionalSpellingOf(std::move(item), CurrentCandidateSpellingSettings());
 }
 
 void NoteAiContextKeySource(uint64_t client_id, uint64_t activation_epoch, bool sensitive_field)
@@ -678,13 +767,13 @@ void SyncShuangpinPreeditForms()
 }
 
 std::wstring BuildCreateWordPipePayload(const std::string &remaining_raw_input_with_cases,
-                                        const std::string &current_word)
+                                        const std::string &current_output_text)
 {
     // remaining_raw \t committed_word \t display_preedit
     // display_preedit matches the candidate-window preedit (汉字 + 剩余分词).
     // Legacy TSF only reads the first two fields.
     const std::wstring remaining = string_to_wstring(remaining_raw_input_with_cases);
-    const std::wstring word = string_to_wstring(CandidateTextForOutput(current_word));
+    const std::wstring word = string_to_wstring(current_output_text);
     const std::wstring preedit = BuildTsfPreedit(word, remaining_raw_input_with_cases);
     return remaining + L'\t' + word + L'\t' + preedit;
 }

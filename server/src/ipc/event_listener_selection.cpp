@@ -9,6 +9,7 @@
 #include "ipc/candidate_render_sync.h"
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/input_key_policy.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "utils/common_utils.h"
 #include "global/globals.h"
 #include "config/ime_config.h"
@@ -28,9 +29,9 @@ namespace
 // 否则 DLL 按省略语义把光标镜到末尾。串尾造词流 caret 恒在末尾，不带字段。
 std::wstring BuildCreateWordPipePayloadWithCaret(bool client_supports_restore,
                                                  const std::string &remaining_raw_input_with_cases,
-                                                 const std::string &current_word)
+                                                 const std::string &current_output_text)
 {
-    std::wstring payload = BuildCreateWordPipePayload(remaining_raw_input_with_cases, current_word);
+    std::wstring payload = BuildCreateWordPipePayload(remaining_raw_input_with_cases, current_output_text);
     if (FanyImeIpc::ShouldCreateWordFrameCarryCaret(client_supports_restore, GlobalIme::composition.caret_position,
                                                     remaining_raw_input_with_cases.size()))
     {
@@ -41,6 +42,8 @@ std::wstring BuildCreateWordPipePayloadWithCaret(bool client_supports_restore,
 
 // 快捷短语组的调频：选中组里的一条让组前移，越过整组选了排在后面的普通候选让组后退。
 // 编码要在 reset_state() 之前取；列表里有快捷短语就说明当前输入就是它们的编码。
+// 名次按「每组写法算一个」数：快捷短语组在繁体写法展开之前放置（PlaceQuickPhrases），学到的槽位要和
+// 放置时的计数一致。LearnEnglishSlot 用展开后的下标，因为英文在展开之后才摆放。
 void LearnQuickPhraseOrder(const WordItem &selected, size_t absolute_index, uint64_t client_id,
                            uint64_t activation_epoch)
 {
@@ -62,17 +65,20 @@ void LearnQuickPhraseOrder(const WordItem &selected, size_t absolute_index, uint
                                                         client_id, activation_epoch);
         return;
     }
-    if (absolute_index < group_index || !metasequoia::local_modes::counts_toward_quick_phrase_slot(selected))
+    const auto ordinary_rank =
+        FanyImeIpc::QuickPhraseBypassRank(items, absolute_index, group_index, [](const WordItem &item) {
+            return metasequoia::local_modes::counts_toward_quick_phrase_slot(item);
+        });
+    if (!ordinary_rank)
         return;
-    const auto ordinary_rank = std::count_if(
-        items.begin(), items.begin() + static_cast<std::ptrdiff_t>(absolute_index),
-        [](const WordItem &item) { return metasequoia::local_modes::counts_toward_quick_phrase_slot(item); });
-    FanyNamedPipe::EnqueueLearnQuickPhraseOrderTask(code, "", false, static_cast<int>(ordinary_rank), client_id,
+    FanyNamedPipe::EnqueueLearnQuickPhraseOrderTask(code, "", false, static_cast<int>(*ordinary_rank), client_id,
                                                     activation_epoch);
 }
 
 // 混输英文槽位的调频，和快捷短语组同一套：选中占槽位的英文让它前移，越过它选了后面的候选让它后退。
 // 槽位要在 reset_state() 之前取输入。专用英文模式和 Y 模式整页都是英文，不走槽位。
+// 槽位与选中项都是展开后列表的下标：英文由 NormalizeMixedCandidateOrder 在繁体写法展开之后按显示位置
+// 摆放。LearnQuickPhraseOrder 按组计数，因为快捷短语在展开之前放置。
 void LearnEnglishSlot(const WordItem &selected, size_t absolute_index, uint64_t client_id, uint64_t activation_epoch)
 {
     const auto &items = Global::candidate_ui.items;
@@ -286,6 +292,9 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         LearnEnglishSlot(curWordItem, absolute_index, client_id, activation_epoch);
         Global::candidate_ui.selected_text = Global::candidate_ui.page_words[index];
         std::string curWord = curWordItem.word;
+        // 这一段上屏或接进造词的文字，与候选窗上显示的一致；要在推进组合、重建候选之前取。
+        const std::string curOutputText = CandidateOutputText(curWordItem);
+        const FanyImeIpc::ChosenText curChosen = FanyImeIpc::ChosenTextOf(curWord, curOutputText, FirstSpellingOfText);
         std::string curWordPinyin = curWordItem.pinyin;
         // 日语假名可能只覆盖已完成的音节，和词典候选一起推进，保留尚未转换的后缀。
         if (curWordItem.source == CandidateSource::EnglishDictionary ||
@@ -294,8 +303,8 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             curWordItem.source == CandidateSource::DateTime ||
             (curWordItem.source == CandidateSource::Generated && !japanese_candidate))
         {
-            Global::candidate_ui.selected_text =
-                string_to_wstring(CandidateTextForOutput(GlobalIme::composition.creating_word.word + curWord));
+            Global::candidate_ui.selected_text = string_to_wstring(FanyImeIpc::CommitTextAfterCreatingWordPrefix(
+                CreatingWordChosenText(), curChosen, IsRadicalCandidateListActive(), FirstSpellingOfText));
             // 整句候选走的是这条提前返回的捷径，到不了下面 creating_word 的收尾逻辑，
             // 因此造好的词必须在这里落库，否则前缀 + 整句只上屏、学不到。没有前缀时
             // 整句自己就是要落库的那条词：它在词库里没有行，下面的调频改不到它。
@@ -463,11 +472,16 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
                 selection_transition);
             GlobalIme::composition.creating_word.pinyin = creating_word_progress.pinyin;
             GlobalIme::composition.creating_word.word = creating_word_progress.word;
+            GlobalIme::composition.creating_word.output_text += curOutputText;
+            GlobalIme::composition.creating_word.all_first_spellings =
+                GlobalIme::composition.creating_word.all_first_spellings && curChosen.first_spellings;
+            GlobalIme::composition.creating_word.prefix_text =
+                FanyImeIpc::ChosenTextForOutput(CreatingWordChosenText(), FirstSpellingOfText);
             GlobalIme::composition.creating_word.preedit = creating_word_progress.preedit;
             /* 更新一下中间态的造词时 tsf 端所需的数据 */
             Global::candidate_ui.selected_text = BuildCreateWordPipePayloadWithCaret(
                 ClientNegotiatedCompositionRestore(client_id), g_inputSession->get_pinyin_sequence_with_cases(),
-                GlobalIme::composition.creating_word.word);
+                GlobalIme::composition.creating_word.prefix_text);
             if (creating_word_progress.completed)
             { /* 最终的造词 */
 #ifdef FANY_DEBUG
@@ -476,7 +490,7 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
 
                 /* 更新一下被选中的候选项 */
                 Global::candidate_ui.selected_text =
-                    string_to_wstring(CandidateTextForOutput(GlobalIme::composition.creating_word.word));
+                    string_to_wstring(GlobalIme::composition.creating_word.prefix_text);
 
                 if (creating_word_progress.can_store && !japanese_candidate)
                 {

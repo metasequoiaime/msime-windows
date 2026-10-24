@@ -6,6 +6,7 @@
 #include <Windows.h>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -15,7 +16,9 @@
 #include "ipc.h"
 #include "ipc/async_request_origin.h"
 #include "ipc/candidate_selection_policy.h"
+#include "ipc/candidate_text_policy.h"
 #include "ipc/candidate_ui_owner.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "ipc/event_listener.h"
 #include "engine/contracts/v_mode_input.h"
 #include "window/caret_state_indicator_policy.h"
@@ -92,7 +95,7 @@ void ApplyUiLessFromPacket(const FanyImeNamedpipeData &pipe_data);
 void RequestShowCandidateWindow();
 void HideCandidateWindowAndDropItems();
 bool IsQuickPhraseCompositionActive(const std::string &raw);
-// U 模式（部件拆字反查）：唤醒键 U 之后是一串小写 a-z 的部件拼音连写。
+// U 模式（部件拆字反查）：Shift+U 的唤醒标记仍在，且输入串以大写 U 开头。U 之后的字符不看。
 bool IsRadicalCompositionActive(const std::string &raw);
 bool IsDateTimeCompositionActive(const std::string &raw);
 bool IsEmojiCompositionActive(const std::string &raw);
@@ -130,12 +133,43 @@ AsyncRequestOrigin FindCloudRequestOrigin(const std::string &input, uint64_t gen
 AsyncRequestOrigin FindEnglishRequestOrigin(const std::string &input, uint64_t generation);
 AsyncRequestOrigin FindMixedRequestOrigin(const std::string &input, uint64_t generation);
 AsyncRequestOrigin FindAiRequestOrigin(const std::string &input, uint64_t generation);
+// 不属于当前候选列表的文字的输出形式：繁体字符集下做简转繁，日语方案原样输出。这类文字有只有一条译义时
+// 直接上屏的那条译义、AI 上下文、按键原串。当前候选列表里的某条候选（含译文页上列出的译义）不要用它，
+// 用 CandidateOutputText；造词前缀用 creating_word.prefix_text。
 std::string CandidateTextForOutput(const std::string &text);
+// 当前候选列表是 U 模式（部件拆字）的结果：唤醒标记仍在、输入串以大写 U 开头，且不在译文页上。
+// 组合一旦被 reset_state 或 ClearSpecialModeTriggers 清掉就回 false，要在清之前判。
+bool IsRadicalCandidateListActive();
+// 当前候选列表里一条候选的显示与上屏文字：不做简转繁时（简体、日语方案、U 模式拆字结果）是 word；
+// 繁体模式下是展开填的写法，没展开的候选按 CandidateTextForOutput 转换。同一条候选的显示文字与
+// 上屏文字都要取自这里，两者才一致。要在 reset_state 之前取，理由同 IsRadicalCandidateListActive。
+std::string CandidateOutputText(const WordItem &item);
+// 繁体模式下把候选列表展开成每种写法一项（规则见 FanyImeIpc::ExpandTraditionalVariants）；
+// 不做简转繁时原样返回。
+std::vector<WordItem> WithTraditionalVariants(std::vector<WordItem> items);
+// 同 WithTraditionalVariants，字形取 character_set（"traditional" 或 "simplified"），不读配置。
+std::vector<WordItem> WithTraditionalVariantsFor(std::vector<WordItem> items, const std::string &character_set);
+// 在每组写法只占一项的列表上做 reorder（apply_fixed_positions、place_quick_phrases 这类按 word 删插的
+// 重排），再按当前字形重新展开（规则见 FanyImeIpc::ReorderAsOneItemPerWord）。items 可以是已展开的
+// ui.items；不做简转繁时等于直接 reorder(items)。
+void ReorderCandidatesAsOneItemPerWord(std::vector<WordItem> &items,
+                                       const std::function<void(std::vector<WordItem> &)> &reorder);
+// 现在的字形设置、方案、U 模式拆字列表状态与繁体写法地区，交给 FanyImeIpc 里填写法与判定异步插入的纯函数。
+FanyImeIpc::CandidateSpellingSettings CurrentCandidateSpellingSettings();
+// 繁体模式下给一条要插进列表的云或 AI 候选填上排序后的第一写法；不做简转繁时原样返回
+// （规则见 FanyImeIpc::WithFirstTraditionalSpellingOf）。
+WordItem WithFirstTraditionalSpelling(WordItem item);
+// 一段简体文字整串的第一写法：繁体模式（非日语方案）下取排序后的第一种写法，否则原样返回。
+// 不看 U 模式：造词前缀不来自拆字结果。
+std::string FirstSpellingOfText(const std::string &text);
+// 当前造词已选部分（GlobalIme::composition.creating_word）的简体底词、显示文字与第一写法标记。
+FanyImeIpc::ChosenText CreatingWordChosenText();
 // 每个按键包到达时调用：记下它是否来自密码 / PIN 输入框，并在宿主或焦点会话变化时清空 AI 上下文。
 void NoteAiContextKeySource(uint64_t client_id, uint64_t activation_epoch, bool sensitive_field);
 void AppendAiContext(const std::string &committed_word);
+// current_output_text 是造词前缀的输出文字（creating_word.prefix_text），原样放进管道。
 std::wstring BuildCreateWordPipePayload(const std::string &remaining_raw_input_with_cases,
-                                        const std::string &current_word);
+                                        const std::string &current_output_text);
 // segmented_pinyin 定下来之后调用：双拼组合时把原串切分和全拼切分记进 GlobalIme::composition，
 // 供「双拼显示全拼」使用，其余组合清空。
 void SyncShuangpinPreeditForms();
@@ -254,6 +288,11 @@ void PushUiLessCandidatesToOwner();
 
 // 拆分前 event_listener.cpp 里的前置声明，定义分布在各个 event_listener*.cpp。
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch);
+// 当前候选列表是按另一种字形组的页（组字途中切换了简繁）时，为候选窗的属主重新组页、显示并推给
+// UI-less 宿主，返回 true；列表为空、在译文页或日期页上、列表不随字形变（见
+// FanyImeIpc::CandidateListFollowsCharacterSet）、属主已失效时什么都不做，返回 false。
+// 只在任务线程上调用。
+bool RebuildCandidatesForCharacterSetChange();
 void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id);
 void ClearState();
 // count_first_word = false 时这次上屏不进首词命中率（五笔四码唯一自动上屏：用户没有做选择）。
