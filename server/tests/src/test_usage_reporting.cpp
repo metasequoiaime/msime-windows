@@ -236,7 +236,7 @@ TEST_CASE(usage_reporting_honours_retry_after)
     RecordingSender later;
     REQUIRE_EQ(store.Flush(later.sender(), kNoon + 121s, AlwaysEnabled).sent, std::size_t{1});
 
-    // 没有可用的 Retry-After 时退避 60 秒；超过 24 小时的截止时间（时钟被调回）不再挡住发送。
+    // 没有可用的 Retry-After 时退避 60 秒。
     REQUIRE(store.RecordActive("0.11.1", kNoon + 24h));
     RecordingSender no_header;
     no_header.results = {{Delivery::RetryAfter, std::nullopt}};
@@ -245,12 +245,17 @@ TEST_CASE(usage_reporting_honours_retry_after)
     REQUIRE(store.Flush(after_default.sender(), kNoon + 24h + 59s, AlwaysEnabled).deferred);
     REQUIRE_EQ(store.Flush(after_default.sender(), kNoon + 24h + 61s, AlwaysEnabled).sent, std::size_t{1});
 
+    // Retry-After 最多按 24 小时算。
     REQUIRE(store.RecordActive("0.11.1", kNoon + 48h));
     RecordingSender huge;
     huge.results = {{Delivery::RetryAfter, std::chrono::seconds(10 * 24 * 60 * 60)}};
     store.Flush(huge.sender(), kNoon + 48h, AlwaysEnabled);
-    RecordingSender next_day;
-    REQUIRE_EQ(store.Flush(next_day.sender(), kNoon + 72h + 1s, AlwaysEnabled).sent, std::size_t{1});
+    RecordingSender capped;
+    REQUIRE(store.Flush(capped.sender(), kNoon + 72h - 1s, AlwaysEnabled).deferred);
+    REQUIRE(capped.bodies.empty());
+    // 时钟被调回之后，离现在超过 24 小时的截止时间只可能是旧时钟留下的，不再挡住发送。
+    RecordingSender rewound;
+    REQUIRE_EQ(store.Flush(rewound.sender(), kNoon + 47h, AlwaysEnabled).sent, std::size_t{1});
 }
 
 TEST_CASE(usage_reporting_sends_nothing_once_switched_off)
