@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include "Ipc.h"
 #include "ipc/ai_context_policy.h"
+#include "ipc/candidate_text_policy.h"
 #include "ipc/async_request_origin.h"
 #include "ipc/candidate_ui_owner.h"
 #include "defines/defines.h"
@@ -246,7 +247,7 @@ bool IsQuickPhraseCompositionActive(const std::string &raw)
 // 判据若要求其余全是 a-z，这种串就会掉回普通拼音路径。
 bool IsRadicalCompositionActive(const std::string &raw)
 {
-    return g_radical_mode_triggered && !raw.empty() && raw.front() == 'U';
+    return FanyImeIpc::IsRadicalComposition(g_radical_mode_triggered, raw);
 }
 
 // T 后面是小写唤醒词，或者以数字开头的指定日期时间（形状见 engine/contracts/date_time_input.h）。后者
@@ -612,11 +613,35 @@ AsyncRequestOrigin FindAiRequestOrigin(const std::string &input, uint64_t genera
     return {};
 }
 
+namespace
+{
+std::string CandidateTextForOutputIn(const std::string &text, bool radical_candidate_list)
+{
+    const bool japanese_scheme = g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji;
+    const bool traditional_character_set = GetConfiguredCharacterSet() == "traditional";
+    if (!FanyImeIpc::ShouldConvertCandidateTextToTraditional(traditional_character_set, japanese_scheme,
+                                                             radical_candidate_list))
+        return text;
+    return ChineseConverter::ToTraditional(text);
+}
+} // namespace
+
 std::string CandidateTextForOutput(const std::string &text)
 {
-    if (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji)
-        return text;
-    return GetConfiguredCharacterSet() == "traditional" ? ChineseConverter::ToTraditional(text) : text;
+    return CandidateTextForOutputIn(text, /*radical_candidate_list=*/false);
+}
+
+bool IsRadicalCandidateListActive()
+{
+    return g_inputSession &&
+           FanyImeIpc::IsRadicalCandidateList(/*radical_mode_triggered=*/g_radical_mode_triggered,
+                                              /*translation_page_active=*/g_translation_candidates_active,
+                                              /*raw=*/g_inputSession->get_pinyin_sequence_with_cases());
+}
+
+std::string ListedCandidateTextForOutput(const std::string &text)
+{
+    return CandidateTextForOutputIn(text, IsRadicalCandidateListActive());
 }
 
 void NoteAiContextKeySource(uint64_t client_id, uint64_t activation_epoch, bool sensitive_field)

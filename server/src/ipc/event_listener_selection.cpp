@@ -8,6 +8,7 @@
 #include "ipc.h"
 #include "ipc/candidate_render_sync.h"
 #include "ipc/candidate_selection_policy.h"
+#include "ipc/candidate_text_policy.h"
 #include "ipc/input_key_policy.h"
 #include "utils/common_utils.h"
 #include "global/globals.h"
@@ -294,8 +295,9 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             curWordItem.source == CandidateSource::DateTime ||
             (curWordItem.source == CandidateSource::Generated && !japanese_candidate))
         {
-            Global::candidate_ui.selected_text =
-                string_to_wstring(CandidateTextForOutput(GlobalIme::composition.creating_word.word + curWord));
+            Global::candidate_ui.selected_text = string_to_wstring(
+                FanyImeIpc::CommitTextAfterCreatingWordPrefix(GlobalIme::composition.creating_word.word, curWord,
+                                                              IsRadicalCandidateListActive(), CandidateTextForOutput));
             // 整句候选走的是这条提前返回的捷径，到不了下面 creating_word 的收尾逻辑，
             // 因此造好的词必须在这里落库，否则前缀 + 整句只上屏、学不到。没有前缀时
             // 整句自己就是要落库的那条词：它在词库里没有行，下面的调频改不到它。

@@ -275,8 +275,7 @@ std::string BuildCurrentCandidatePage()
                                GetConfiguredShowQuanpinHelpcodeInCandidateWindow()));
     // U 模式（部件拆字反查）：候选上反显该字的注音。annotation 在这个模式下专属注音，辅助码
     // 提示不在该模式出现（候选来源是 Generated，本来也不走辅助码的整句规则）。
-    const bool radical_mode =
-        !translation_page && IsRadicalCompositionActive(g_inputSession->get_pinyin_sequence_with_cases());
+    const bool radical_mode = IsRadicalCandidateListActive();
 
     // 组页时读一次徽标配置，循环内不再逐条查
     const bool show_fixed_badge = GetConfiguredCandidateFixedBadge();
@@ -303,7 +302,7 @@ std::string BuildCurrentCandidatePage()
     for (int i = 0; i < loop; i++)
     {
         const auto &item = ui.items[start + i];
-        const std::string word = CandidateTextForOutput(item.word);
+        const std::string word = ListedCandidateTextForOutput(item.word);
 
         CandidateViewItem view;
         view.text = word;
@@ -490,7 +489,7 @@ void PublishBuiltCandidatePage(const std::wstring &candidate_string)
         const size_t end = (std::min)(ui.items.size(), start + kExpandedCandidateLimit);
         snapshot->expanded_start = static_cast<int>(start);
         for (size_t i = start; i < end; ++i)
-            snapshot->expanded_words.push_back(string_to_wstring(CandidateTextForOutput(ui.items[i].word)));
+            snapshot->expanded_words.push_back(string_to_wstring(ListedCandidateTextForOutput(ui.items[i].word)));
     }
     // Stamp before publishing so the UI thread can echo back exactly which page it painted.
     snapshot->generation = ++Global::candidate_page_generation;
@@ -664,7 +663,7 @@ int MoveToExpandedCandidate(int absolute_index, const std::wstring &expected_tex
     if (ui.page_size <= 0 || expected_text.empty())
         return -1;
     const auto matches = [&](size_t index) {
-        return string_to_wstring(CandidateTextForOutput(ui.items[index].word)) == expected_text;
+        return string_to_wstring(ListedCandidateTextForOutput(ui.items[index].word)) == expected_text;
     };
     // 点下去之后候选可能被异步结果插队；下标对不上时按显示文字重新定位，同字取最靠前的那个。
     size_t index = static_cast<size_t>((std::max)(absolute_index, 0));

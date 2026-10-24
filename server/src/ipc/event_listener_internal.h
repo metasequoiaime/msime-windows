@@ -92,7 +92,7 @@ void ApplyUiLessFromPacket(const FanyImeNamedpipeData &pipe_data);
 void RequestShowCandidateWindow();
 void HideCandidateWindowAndDropItems();
 bool IsQuickPhraseCompositionActive(const std::string &raw);
-// U 模式（部件拆字反查）：唤醒键 U 之后是一串小写 a-z 的部件拼音连写。
+// U 模式（部件拆字反查）：Shift+U 的唤醒标记仍在，且输入串以大写 U 开头。U 之后的字符不看。
 bool IsRadicalCompositionActive(const std::string &raw);
 bool IsDateTimeCompositionActive(const std::string &raw);
 bool IsEmojiCompositionActive(const std::string &raw);
@@ -130,7 +130,17 @@ AsyncRequestOrigin FindCloudRequestOrigin(const std::string &input, uint64_t gen
 AsyncRequestOrigin FindEnglishRequestOrigin(const std::string &input, uint64_t generation);
 AsyncRequestOrigin FindMixedRequestOrigin(const std::string &input, uint64_t generation);
 AsyncRequestOrigin FindAiRequestOrigin(const std::string &input, uint64_t generation);
+// 不属于当前候选列表的文字的输出形式：繁体字符集下做简转繁，日语方案原样输出。这类文字有造词前缀、
+// 只有一条译义时直接上屏的那条译义、AI 上下文、按键原串。当前候选列表里的某条候选（含译文页上
+// 列出的译义）不要用它，用 ListedCandidateTextForOutput。
 std::string CandidateTextForOutput(const std::string &text);
+// 当前候选列表是 U 模式（部件拆字）的结果：唤醒标记仍在、输入串以大写 U 开头，且不在译文页上。
+// 组合一旦被 reset_state 或 ClearSpecialModeTriggers 清掉就回 false，要在清之前判。
+bool IsRadicalCandidateListActive();
+// 当前候选列表里单条候选（ui.items 的 word）的输出形式：U 模式拆字结果原样输出，其余同
+// CandidateTextForOutput。只接受单条候选，不接受拼接了造词前缀的串；前缀接候选上屏用
+// FanyImeIpc::CommitTextAfterCreatingWordPrefix。同一条候选的显示文字与上屏文字都要取自这里，两者才一致。
+std::string ListedCandidateTextForOutput(const std::string &text);
 // 每个按键包到达时调用：记下它是否来自密码 / PIN 输入框，并在宿主或焦点会话变化时清空 AI 上下文。
 void NoteAiContextKeySource(uint64_t client_id, uint64_t activation_epoch, bool sensitive_field);
 void AppendAiContext(const std::string &committed_word);

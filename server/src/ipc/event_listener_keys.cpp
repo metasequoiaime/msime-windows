@@ -1296,7 +1296,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
                     const auto edge = word_character_direction < 0 ? FanyImeIpc::HanCharacterEdge::First
                                                                    : FanyImeIpc::HanCharacterEdge::Last;
                     const auto character =
-                        FanyImeIpc::ExtractHanCharacter(CandidateTextForOutput(highlighted_item.word), edge);
+                        FanyImeIpc::ExtractHanCharacter(ListedCandidateTextForOutput(highlighted_item.word), edge);
                     if (character)
                     {
                         Global::MsgTypeToTsf = Global::DataFromServerMsgType::CommitExactText;
