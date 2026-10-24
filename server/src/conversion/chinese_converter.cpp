@@ -3,7 +3,6 @@
 #include <Windows.h>
 #include <filesystem>
 #include <memory>
-#include <mutex>
 #include <SimpleConverter.hpp>
 #include <vector>
 
@@ -21,39 +20,58 @@ std::filesystem::path ResourceDirectory()
     return std::filesystem::path(executable).parent_path() / L"assets" / L"opencc";
 }
 
-opencc::SimpleConverter *Converter()
+// Returns nullptr when the config or one of its dictionaries cannot be read.
+std::unique_ptr<opencc::SimpleConverter> LoadConverter(const char *config_file)
 {
-    static std::once_flag once;
-    static std::unique_ptr<opencc::SimpleConverter> converter;
-    std::call_once(once, [] {
-        try
-        {
-            const auto resources = ResourceDirectory();
-            if (!resources.empty())
-                converter = std::make_unique<opencc::SimpleConverter>("s2t.json",
-                                                                      std::vector<std::string>{resources.u8string()});
-        }
-        catch (...)
-        {
-            converter.reset();
-        }
-    });
+    try
+    {
+        const auto resources = ResourceDirectory();
+        if (!resources.empty())
+            return std::make_unique<opencc::SimpleConverter>(config_file,
+                                                             std::vector<std::string>{resources.u8string()});
+    }
+    catch (...)
+    {
+    }
+    return nullptr;
+}
+
+// Each converter is loaded once, on first use, and kept for the process lifetime.
+opencc::SimpleConverter *SimplifiedToTraditional()
+{
+    static const std::unique_ptr<opencc::SimpleConverter> converter = LoadConverter("s2t.json");
     return converter.get();
 }
-} // namespace
 
-std::string ToTraditional(const std::string &text)
+opencc::SimpleConverter *TraditionalToSimplified()
+{
+    static const std::unique_ptr<opencc::SimpleConverter> converter = LoadConverter("t2s.json");
+    return converter.get();
+}
+
+std::string ConvertOrKeep(opencc::SimpleConverter *(*converter)(), const std::string &text)
 {
     if (text.empty())
         return text;
     try
     {
-        if (auto *converter = Converter())
-            return converter->Convert(text);
+        if (auto *loaded = converter())
+            return loaded->Convert(text);
     }
     catch (...)
     {
     }
     return text;
+}
+} // namespace
+
+std::string ToTraditional(const std::string &text)
+{
+    return ConvertOrKeep(SimplifiedToTraditional, text);
+}
+
+std::string ToSimplified(const std::string &text)
+{
+    return ConvertOrKeep(TraditionalToSimplified, text);
 }
 } // namespace ChineseConverter

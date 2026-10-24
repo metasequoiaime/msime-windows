@@ -633,20 +633,15 @@ void NoteAiContextKeySource(uint64_t client_id, uint64_t activation_epoch, bool 
         g_inputSession->set_rescoring_context(g_ai_context);
 }
 
-// 每次提交都把上屏文本追加进 AI 联想的上下文，并按 UTF-8 边界裁剪到 1024 字节。
+// 每次提交都把上屏文本追加进 AI 联想的上下文，并按 UTF-8 边界裁剪到 kAiContextMaxBytes。
+// committed_word 是候选的内部文字，原样追加：上下文的读方按简体工作，不要传显示用的繁体。
 // 造词过程中每选中一段都会各自调用一次，因此这里只追加本次提交的那一段。
 void AppendAiContext(const std::string &committed_word)
 {
     if (g_ai_sensitive_field)
         return;
-    g_ai_context += CandidateTextForOutput(committed_word);
-    if (g_ai_context.size() > 1024)
-    {
-        size_t cut = g_ai_context.size() - 1024;
-        while (cut < g_ai_context.size() && (static_cast<unsigned char>(g_ai_context[cut]) & 0xC0) == 0x80)
-            ++cut;
-        g_ai_context.erase(0, cut);
-    }
+    g_ai_context += committed_word;
+    g_ai_context = FanyImeIpc::TrimAiContextFront(std::move(g_ai_context));
     // 同一份上屏历史也是神经整句重排的前文（青简那边叫 InputHistory）：下一次查询会随
     // QueryRequest 下发到词典层。词典层自己按 RerankOptions::context_chars 取末尾若干字。
     if (g_inputSession)

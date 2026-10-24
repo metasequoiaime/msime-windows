@@ -698,6 +698,10 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${CMAKE_BINARY_DIR}/opencc/data/STCharacters.ocd2
         ${CMAKE_BINARY_DIR}/opencc/data/STPhrases.ocd2
         ${CMAKE_BINARY_DIR}/opencc/data/STPhrases_GeneratedFromRegionalPhrases.ocd2
+        ${MSIME_VENDOR_DIR}/opencc/data/config/t2s.json
+        ${CMAKE_BINARY_DIR}/opencc/data/TSCharacters.ocd2
+        ${CMAKE_BINARY_DIR}/opencc/data/TSCharactersExt.ocd2
+        ${CMAKE_BINARY_DIR}/opencc/data/TSPhrases.ocd2
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/opencc
 )
 

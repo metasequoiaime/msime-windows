@@ -6,6 +6,8 @@
 #include <chrono>
 #include <cstdint>
 #include "ipc.h"
+#include "conversion/chinese_converter.h"
+#include "ipc/ai_context_policy.h"
 #include "ipc/candidate_render_sync.h"
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/input_key_policy.h"
@@ -511,13 +513,20 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             Global::cloud_candidate.word.clear();
             Global::cloud_candidate.pinyin.clear();
         }
+        // AI 候选可能是繁体原文；落库和 AI 上下文共用 SimplifiedAiCandidateText 的结果，
+        // 其余候选的 curWord 本来就是简体底词。
+        const std::string learnedWord =
+            curWordItem.source == CandidateSource::AiSuggestion
+                ? FanyImeIpc::SimplifiedAiCandidateText(curWord, GetConfiguredCharacterSet(),
+                                                        ChineseConverter::ToSimplified, ChineseConverter::ToTraditional)
+                : curWord;
         if (curWordItem.source == CandidateSource::AiSuggestion && !aiCommittedPinyin.empty())
         {
-            EnqueueStoreUserPhraseTask(aiCommittedPinyin, curWord, aiCommittedPinyinIsCanonical);
+            EnqueueStoreUserPhraseTask(aiCommittedPinyin, learnedWord, aiCommittedPinyinIsCanonical);
             Global::ai_candidate = {};
         }
 
-        AppendAiContext(curWord);
+        AppendAiContext(learnedWord);
 
         if (!isNeedCreateWord)
         {
