@@ -1158,6 +1158,7 @@ VisualPtr BuildShortcutPage(PageContext &context)
             {L"手动分隔拼音（如 xi'an）", Keys({L"'"})},
             {L"以词定字：上屏高亮候选的首字 / 末字（可在“输入”中改为 - / =）", Keys({L"[", L"|/", L"]"})},
             {L"上屏高亮候选的译文（需开启候选中英互译；有多条释义时再选一条）", Keys({L"Ctrl", L"|+", L"Enter"})},
+            {L"上屏指定序号候选的译文（需开启候选中英互译）", Keys({L"Ctrl", L"|+", L"1", L"|–", L"9"})},
             {L"提交原始输入 / 取消输入", Keys({L"Enter", L"|/", L"Esc"})},
             {L"提交拼音（双拼方案下提交转换后的全拼，可在上方关闭）", Keys({L"Shift", L"|+", L"Enter"})},
         };
