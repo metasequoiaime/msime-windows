@@ -28,7 +28,8 @@ nlohmann::json BuildRequestBody(const Request &request)
     if (!openai_reasoning)
         body["temperature"] = 0.2;
     // Reasoning tokens count against the output limit and can leave no room for JSON.
-    ChatCompletions::SetTokenLimit(body, config.provider, thinking || openai_reasoning ? 8192 : 512);
+    ChatCompletions::SetTokenLimit(body, ChatCompletions::UsesOpenAiOutputField(config.provider, config.endpoint),
+                                   thinking || openai_reasoning ? 8192 : 512);
     if (thinking)
     {
         body["thinking"] = {{"type", "enabled"}};

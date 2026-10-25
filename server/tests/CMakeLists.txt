@@ -135,6 +135,8 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_collocation_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_neural_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_network_proxy.cpp"
+    "${CMAKE_SOURCE_DIR}/src/utils/endpoint_host.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_endpoint_host.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_update_download.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_dictionary_replay_non_ascii_path.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_non_ascii_path.cpp"

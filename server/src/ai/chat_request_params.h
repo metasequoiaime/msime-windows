@@ -1,5 +1,6 @@
 #pragma once
 
+#include "utils/endpoint_host.h"
 #include "voice-input/voice_providers.h"
 
 #include <nlohmann/json.hpp>
@@ -43,8 +44,17 @@ inline bool IsOpenAiReasoningRequest(std::string_view provider, std::string_view
 inline constexpr const char *kOpenAiReasoningEffort = "low";
 inline constexpr long kReasoningTimeoutMs = 30000;
 
-inline void SetTokenLimit(nlohmann::json &body, std::string_view provider, int limit)
+// openai 这个槽可以填任意 OpenAI 兼容地址，但只有真 OpenAI 认 max_completion_tokens。
+// 指向本机 Ollama 时该字段会被 Go 的 encoding/json 静默丢弃，配置的输出上限随之失效。
+// 不能改用 VendorForRequest 判断：它只认 api.openai.com，会把 Azure 与中转服务降成
+// max_tokens，而 Azure 只接受 max_completion_tokens，直接 400。
+inline bool UsesOpenAiOutputField(std::string_view provider, std::string_view endpoint)
 {
-    body[IsOpenAiProvider(provider) ? "max_completion_tokens" : "max_tokens"] = limit;
+    return IsOpenAiProvider(provider) && !NetworkProxy::IsLoopbackEndpoint(endpoint);
+}
+
+inline void SetTokenLimit(nlohmann::json &body, bool use_openai_field, int limit)
+{
+    body[use_openai_field ? "max_completion_tokens" : "max_tokens"] = limit;
 }
 } // namespace ChatCompletions

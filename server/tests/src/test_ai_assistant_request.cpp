@@ -91,6 +91,26 @@ TEST_CASE(ai_request_uses_openai_completion_limit_for_older_models)
     REQUIRE_EQ(AiAssistant::detail::RequestTimeoutMs(request.config), 8000L);
 }
 
+TEST_CASE(ai_request_keys_the_output_limit_off_the_endpoint)
+{
+    // OpenAI 这个槽填本机 Ollama 时，max_completion_tokens 会被对端静默丢弃，上限失效。
+    const auto ollama = AiAssistant::detail::BuildRequestBody(
+        MakeRequest("openai", "disabled", "http://localhost:11434/v1/chat/completions"));
+    REQUIRE_EQ(ollama["max_tokens"].get<int>(), 512);
+    REQUIRE(!ollama.contains("max_completion_tokens"));
+
+    // Azure 只认 max_completion_tokens，不能因为地址不是 api.openai.com 就降级。
+    const auto azure = AiAssistant::detail::BuildRequestBody(
+        MakeRequest("openai", "disabled", "https://example.openai.azure.com/openai/deployments/d/chat/completions"));
+    REQUIRE_EQ(azure["max_completion_tokens"].get<int>(), 512);
+    REQUIRE(!azure.contains("max_tokens"));
+
+    // 中转服务同样保持原样，仍有 max_completion_tokens 的选择权由标签决定。
+    const auto relay = AiAssistant::detail::BuildRequestBody(
+        MakeRequest("openai", "disabled", "https://openrouter.ai/api/v1/chat/completions"));
+    REQUIRE_EQ(relay["max_completion_tokens"].get<int>(), 512);
+}
+
 TEST_CASE(ai_request_omits_unsupported_sampling_for_openai_reasoning_models)
 {
     for (const char *model : {"gpt-5.6-luna", "GPT-5.6-Luna", "gpt-5", "o3-mini", "O3-mini"})
@@ -140,6 +160,19 @@ TEST_CASE(credential_test_uses_openai_completion_limit)
         REQUIRE(!body.contains("temperature"));
         REQUIRE_EQ(body["messages"][0]["content"].get<std::string>(), "Reply OK");
     }
+}
+
+TEST_CASE(credential_test_keys_the_output_limit_off_the_endpoint)
+{
+    const auto ollama = ApiCredentialTest::detail::BuildChatProbeRequestBody(
+        "openai", "gpt-4o-mini", "http://127.0.0.1:11434/v1/chat/completions");
+    REQUIRE_EQ(ollama["max_tokens"].get<int>(), 1);
+    REQUIRE(!ollama.contains("max_completion_tokens"));
+
+    const auto azure = ApiCredentialTest::detail::BuildChatProbeRequestBody(
+        "openai", "gpt-4o-mini", "https://example.openai.azure.com/openai/deployments/d/chat/completions");
+    REQUIRE_EQ(azure["max_completion_tokens"].get<int>(), 1);
+    REQUIRE(!azure.contains("max_tokens"));
 }
 
 TEST_CASE(credential_test_keeps_other_provider_request_shape)
