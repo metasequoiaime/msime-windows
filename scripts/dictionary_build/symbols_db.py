@@ -4,7 +4,8 @@
     wanxiang_symbols.yaml  rime-wanxiang 的符号表，取 symbols: 下 `'/编码': [符号, ...]` 分组
     codex_sym.txt          rime-wanxiang 从 typst/codex 生成的 `名称<TAB>符号`
     wanxiang-unrenderable.txt  Windows 自带字体显示不了的符号（scripts/check-symbol-rendering.py 生成），一律不入库
-以及 custom/symbols.txt：人工维护的 `拼音<TAB>符号`（dian → ·、，shuminghao → 《》），万象只按分组码收标点。
+    symbol-names.tsv       msime 的打拼音出符号名称表：`名称<TAB>全拼<TAB>符号[<空格>符号...]`（逗号 → ，,，书名号 → 《》〈〉），
+                           万象只按分组码收标点，标点和数学符号的拼音读音从这里来
 
 万象表里不是符号的分组不收：Emoji 分类（E 模式和表情面板已有 emoji）、元素周期表（元素信息文本）、
 XCompose 合成（编码含标点，S 模式只能输入字母）。
@@ -22,7 +23,7 @@ from .others_db import Pinyin
 WANXIANG = "sources/symbols/wanxiang_symbols.yaml"
 CODEX = "sources/symbols/codex_sym.txt"
 UNRENDERABLE = "sources/symbols/wanxiang-unrenderable.txt"
-READINGS = "custom/symbols.txt"
+READINGS = "sources/symbols/symbol-names.tsv"
 
 _GROUP_LINE = re.compile(r"""^ {4}(['"])/(.*?)\1:\s*\[(.*)\]\s*(?:#.*)?$""")
 _COMMENT_LINE = re.compile(r"^ {4}#\s*(.*?)\s*$")
@@ -184,15 +185,30 @@ def parse_unrenderable(text: str) -> set[str]:
 
 
 def parse_readings(text: str) -> list[tuple[str, str]]:
-    """`编码<TAB>符号`，编码只含小写字母；同一编码的多行按文件顺序，混输时第一行紧跟首选。"""
+    """symbol-names.tsv 的 `(编码, 符号)`，按文件顺序；同一编码的多行混输时第一行紧跟首选。
+
+    中文名称的编码是全拼去掉 `'`（逗号 dou'hao → douhao），拉丁名称（拼音列是 `-`）的编码就是名称本身（gamma）。
+    单音节的中文名称（派 pai、度 du、套 tao、一 yi）不收：msime 引擎只让它们跟在那个字后面、最早排第 4 位，
+    这里的混输把第一行放在首选后面，收进来就会在打常用音节时冒出符号；数字序号仍由万象分组与 DIGIT_CODES 给出。
+    """
     entries = []
     for number, line in enumerate(textutil.universal_lines(textutil.without_bom(text)), start=1):
         if not line or line.startswith("#"):
             continue
-        code, separator, symbol = line.partition("\t")
-        if not separator or not re.fullmatch(r"[a-z]+", code) or not symbol or "\t" in symbol:
-            raise ValueError(f"{READINGS}:{number}: expected lowercase pinyin<TAB>symbol")
-        entries.append((code, symbol))
+        fields = line.split("\t")
+        if len(fields) != 3 or not fields[0] or not fields[2]:
+            raise ValueError(f"{READINGS}:{number}: expected name<TAB>pinyin<TAB>symbols")
+        name, pinyin, symbols = fields
+        if pinyin == "-":
+            code = name
+        else:
+            syllables = pinyin.split("'")
+            if len(syllables) == 1:
+                continue
+            code = "".join(syllables)
+        if not re.fullmatch(r"[a-z]+", code):
+            raise ValueError(f"{READINGS}:{number}: expected a lowercase pinyin or Latin name")
+        entries.extend((code, symbol) for symbol in symbols.split(" "))
     return entries
 
 
@@ -205,10 +221,10 @@ def input_code(code: str) -> str | None:
 
 def code_rows(groups: list[Group], readings: list[tuple[str, str]], codex: list[tuple[str, str]],
               excluded: set[str]) -> list[tuple]:
-    """symbol_code 的行：(编码, 符号, sort_order, 可混输)。万象分组在前、按文件顺序，然后是 custom/symbols.txt 的拼音读音，
+    """symbol_code 的行：(编码, 符号, sort_order, 可混输)。万象分组在前、按文件顺序，然后是 symbol-names.tsv 的拼音读音，
     codex 名称在后。
 
-    可混输：符号混输只在普通拼音候选里认整串精确匹配，所以读得成拼音的编码（dian、xi）也照样混进来，
+    可混输：符号混输只在普通拼音候选里认整串精确匹配，所以读得成拼音的编码（douhao、xi）也照样混进来，
     只有单字母编码不混（混输从两个字母起才查）。数字别名（yi、er）只混序号写法（① ⑴ ⒈ ⓪），
     一、壹、¹ 这些仍只在 S 模式里出。
     """
