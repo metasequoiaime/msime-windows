@@ -675,6 +675,7 @@ target_include_directories(${SETTINGS_EXECUTABLE_NAME}
 target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     msimeui
     MetasequoiaIme::Engine
+    MetasequoiaIme::Voice
     fmt::fmt
     Boost::locale
     Boost::json

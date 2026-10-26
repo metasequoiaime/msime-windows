@@ -29,6 +29,10 @@ inline constexpr std::string_view kDoubaoEndpointAsync = "wss://openspeech.byted
 
 bool IsDoubaoAsrProvider(std::string_view provider);
 std::string NormalizeProviderId(std::string_view provider);
+// MiMo-style transcription: an ASR endpoint that is a Chat Completions URL takes the clip as
+// base64 input_audio in a chat body instead of an OpenAI multipart upload. Keyed off the endpoint
+// rather than the provider label so a "custom" slot pointed at such a gateway behaves the same.
+bool UsesChatTranscription(std::string_view endpoint);
 // DeepSeek thinking levels: disabled | low | high | max (the latter three are sent as reasoning_effort).
 bool IsValidThinkingLevel(std::string_view level);
 // True only for DeepSeek with a level other than disabled; every other case keeps thinking off.

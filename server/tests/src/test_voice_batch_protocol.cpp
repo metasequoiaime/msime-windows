@@ -3,6 +3,7 @@
 #endif
 #include "voice-input/voice_batch_protocol.h"
 #include "tests/includes/test_framework.h"
+#include <msime/voice/provider_protocol.h>
 #include <msime/voice/stt_service.h>
 #include <nlohmann/json.hpp>
 
@@ -78,4 +79,61 @@ TEST_CASE(voice_batch_protocol_sends_deepseek_thinking_level)
     REQUIRE(!foreign.contains("thinking"));
     REQUIRE(!foreign.contains("reasoning_effort"));
     REQUIRE(!foreign.contains("enable_thinking"));
+}
+
+// 聊天补全形态的转写（小米 MiMo）：音频以 base64 input_audio 进 chat body，
+// 不发 multipart、不发 language 字段——网关自备转写提示词，多余文本部件会被拒。
+TEST_CASE(voice_batch_protocol_chat_transcription_uses_input_audio)
+{
+    VoiceInputConfig config;
+    config.asr_provider = "mimo";
+    config.asr_endpoint = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions";
+    config.asr_model = "mimo-v2.5-asr";
+    config.language = "zh-cn";
+    const std::vector<float> samples(160, 0.125f);
+    const auto request = VoiceInput::BuildBatchTranscription(samples, config);
+    REQUIRE_EQ(request.content_type, std::string("application/json"));
+    const auto body = nlohmann::json::parse(request.body);
+    REQUIRE_EQ(body["model"].get<std::string>(), "mimo-v2.5-asr");
+    REQUIRE(!body.contains("language"));
+    const auto &message = body["messages"][0];
+    REQUIRE_EQ(message["role"].get<std::string>(), "user");
+    REQUIRE_EQ(message["content"].size(), 1u);
+    const auto &part = message["content"][0];
+    REQUIRE_EQ(part["type"].get<std::string>(), "input_audio");
+    REQUIRE_EQ(part["input_audio"]["format"].get<std::string>(), "wav");
+    // base64("RIFF...") 固定前缀为 UklGR，确认音频真的进了 data 字段。
+    const std::string data = part["input_audio"]["data"].get<std::string>();
+    REQUIRE(data.size() > 5);
+    REQUIRE_EQ(data.substr(0, 5), std::string("UklGR"));
+
+    // 「自定义」槽位指向同一网关时走相同协议（按接口地址判定，不看标签）。
+    config.asr_provider = "custom";
+    const auto custom = VoiceInput::BuildBatchTranscription(samples, config);
+    REQUIRE_EQ(custom.content_type, std::string("application/json"));
+    // 传统转写端点保持 multipart 不变。
+    config.asr_provider = "openai";
+    config.asr_endpoint = "https://api.openai.com/v1/audio/transcriptions";
+    const auto openai = VoiceInput::BuildBatchTranscription(samples, config);
+    REQUIRE(openai.content_type.find("multipart/form-data") == 0);
+}
+
+TEST_CASE(voice_batch_protocol_parses_chat_completion_transcription)
+{
+    const std::string chat = R"({"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"你好。"}}]})";
+    REQUIRE_EQ(metasequoia::voice::parse_transcription(chat), std::string("你好。"));
+    // 空转写仍按缺失处理，让上层走「无语音」路径。
+    bool threw = false;
+    try
+    {
+        (void)metasequoia::voice::parse_transcription(R"({"choices":[{"message":{"content":""}}]})");
+    }
+    catch (const metasequoia::voice::VoiceError &)
+    {
+        threw = true;
+    }
+    REQUIRE(threw);
+    // OpenAI 转写形态优先级不变：text 字段存在时仍取它。
+    REQUIRE_EQ(metasequoia::voice::parse_transcription(R"({"text":"a","choices":[{"message":{"content":"b"}}]})"),
+               std::string("a"));
 }

@@ -14,6 +14,13 @@ struct MultipartRequest
     std::string body;
 };
 MultipartRequest make_transcription_request(std::string_view wav, std::string_view model, std::string_view language = {});
+// Chat-completions transcription (MiMo-style gateways): the clip travels as base64 input_audio in
+// a chat body. These gateways reject multipart uploads and extra text parts - their gateway injects
+// its own transcription prompt - so language is deliberately not part of the request.
+std::string make_chat_transcription_request(std::string_view wav, std::string_view model);
+// Accepts the OpenAI transcription shapes (text / transcription / result.text) and, as a fallback,
+// a chat completion whose assistant message carries the transcript verbatim (no reasoning strip:
+// transcribed speech must stay faithful).
 std::string parse_transcription(std::string_view response);
 // user_message is sent verbatim. The caller owns prompt policy and any ASR delimiters.
 std::string make_polish_request(std::string_view model, std::string_view system_prompt, std::string_view user_message);

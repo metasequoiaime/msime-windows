@@ -162,6 +162,22 @@ bool ReadAutomation(Target &target, bool &known)
         return false;
     }
 
+    // A password field is never a commit destination. Its caret and patterns
+    // would otherwise look writable, so the check runs before the runtime ID,
+    // pattern and caret branches below; recognized text must not land in a
+    // credential box.
+    BOOL password = FALSE;
+    if (FAILED(element->get_CurrentIsPassword(&password)))
+    {
+        return fail_closed();
+    }
+    if (password)
+    {
+        known = true;
+        target.editable = false;
+        return false;
+    }
+
     // Runtime ID is the field identity inside a shared HWND (Chromium, OWA,
     // ...). Different fields of the same window must compare unequal, so a
     // missing or invalid runtime ID is fail-closed: editability cannot be
@@ -337,9 +353,15 @@ Target CaptureTarget()
     {
         // Authoritative for standard Edit / RichEdit: enabled and not
         // ES_READONLY. A disabled or read-only control is never editable.
+        // Password controls are rejected here as well: ES_PASSWORD covers
+        // Edit and EM_GETPASSWORDCHAR also catches RichEdit, so neither may
+        // receive recognized text.
         const bool enabled = IsWindowEnabled(info.hwndFocus) != FALSE;
-        const bool read_only = (GetWindowLongPtrW(info.hwndFocus, GWL_STYLE) & ES_READONLY) != 0;
-        target.editable = enabled && !read_only;
+        const LONG_PTR style = GetWindowLongPtrW(info.hwndFocus, GWL_STYLE);
+        const bool read_only = (style & ES_READONLY) != 0;
+        const bool password =
+            (style & ES_PASSWORD) != 0 || SendMessageW(info.hwndFocus, EM_GETPASSWORDCHAR, 0, 0) != 0;
+        target.editable = enabled && !read_only && !password;
     }
     else
     {
@@ -412,17 +434,18 @@ bool IsTargetCurrentFast(const Target &target)
         return false;
     }
     // Native Edit/RichEdit fast path: re-check enabled/read-only at decision
-    // time so a control disabled or made read-only during the ASR wait no
-    // longer counts as committable. Non-Edit targets are identity-checked only;
-    // editability re-verification for those needs UIA and stays with the full
-    // CaptureTarget call outside the lock.
+    // time so a control disabled, made read-only or switched to password
+    // during the ASR wait no longer counts as committable. Non-Edit targets
+    // are identity-checked only; editability re-verification for those needs
+    // UIA and stays with the full CaptureTarget call outside the lock.
     wchar_t class_name[128]{};
     GetClassNameW(focus, class_name, 128);
     if (IsStandardEditClass(class_name))
     {
         const bool enabled = IsWindowEnabled(focus) != FALSE;
-        const bool read_only = (GetWindowLongPtrW(focus, GWL_STYLE) & ES_READONLY) != 0;
-        if (!enabled || read_only)
+        const LONG_PTR style = GetWindowLongPtrW(focus, GWL_STYLE);
+        const bool read_only = (style & ES_READONLY) != 0;
+        if (!enabled || read_only || (style & ES_PASSWORD) != 0)
         {
             return false;
         }

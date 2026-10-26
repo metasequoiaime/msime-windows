@@ -69,6 +69,17 @@ std::string NormalizeProviderId(std::string_view provider)
     return Lower(provider);
 }
 
+bool UsesChatTranscription(std::string_view endpoint)
+{
+    const std::size_t query_at = endpoint.find_first_of("?#");
+    std::string_view path = endpoint.substr(0, query_at);
+    while (!path.empty() && path.back() == '/')
+        path.remove_suffix(1);
+    constexpr std::string_view kChatSuffix = "/chat/completions";
+    return path.size() >= kChatSuffix.size() &&
+           path.compare(path.size() - kChatSuffix.size(), kChatSuffix.size(), kChatSuffix) == 0;
+}
+
 bool IsValidThinkingLevel(std::string_view level)
 {
     return level == "disabled" || level == "low" || level == "high" || level == "max";
@@ -187,8 +198,8 @@ std::string LookupToken(const std::map<std::string, std::string> &tokens, std::s
 
 const std::vector<std::string_view> &AsrProviders()
 {
-    static const std::vector<std::string_view> kProviders{"doubao", "openai",  "siliconflow", "groq",
-                                                          "zhipu",  "minimax", "custom"};
+    static const std::vector<std::string_view> kProviders{"doubao",  "openai",  "siliconflow", "groq",
+                                                          "zhipu",   "minimax", "mimo",        "custom"};
     return kProviders;
 }
 
@@ -196,7 +207,7 @@ const std::vector<std::string_view> &PolishProviders()
 {
     static const std::vector<std::string_view> kProviders{"siliconflow", "openai",     "deepseek", "groq",
                                                           "minimax",     "moonshot",   "zhipu",    "dashscope",
-                                                          "volcengine",  "openrouter", "custom"};
+                                                          "volcengine",  "openrouter", "mimo",     "custom"};
     return kProviders;
 }
 
@@ -245,6 +256,8 @@ std::string DefaultAsrEndpoint(std::string_view provider)
         return "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions";
     if (id == "minimax")
         return "https://api.minimax.cn/v1/speech_to_text";
+    if (id == "mimo")
+        return "https://token-plan-cn.xiaomimimo.com/v1/chat/completions";
     if (id == "doubao")
         return "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async";
     return "https://api.siliconflow.cn/v1/audio/transcriptions";
@@ -263,6 +276,8 @@ std::string DefaultAsrModel(std::string_view provider)
         return "glm-asr";
     if (id == "minimax")
         return "asr-1.0";
+    if (id == "mimo")
+        return "mimo-v2.5-asr";
     if (id == "doubao")
         return {};
     return "FunAudioLLM/SenseVoiceSmall";
@@ -291,6 +306,8 @@ std::string DefaultPolishEndpoint(std::string_view provider)
         return "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
     if (id == "openrouter")
         return "https://openrouter.ai/api/v1/chat/completions";
+    if (id == "mimo")
+        return "https://token-plan-cn.xiaomimimo.com/v1/chat/completions";
     return "https://api.siliconflow.cn/v1/chat/completions";
 }
 
@@ -317,6 +334,8 @@ std::string DefaultPolishModel(std::string_view provider)
         return "doubao-seed-1.6-flash";
     if (id == "openrouter")
         return "openrouter/auto";
+    if (id == "mimo")
+        return "mimo-v2.6-flash";
     return "Qwen/Qwen3-8B";
 }
 

@@ -498,6 +498,7 @@ asr_token_siliconflow = ""
 asr_token_groq = ""
 asr_token_zhipu = ""
 asr_token_minimax = ""
+asr_token_mimo = ""
 asr_token_custom = ""
 # 豆包流式接口二选一：
 #   .../sauc/bigmodel_nostream 边录边传、返回整句结果，准确率更高，官方推荐用于输入法
@@ -528,6 +529,7 @@ polish_token_zhipu = ""
 polish_token_dashscope = ""
 polish_token_volcengine = ""
 polish_token_openrouter = ""
+polish_token_mimo = ""
 polish_token_custom = ""
 polish_endpoint = "https://api.siliconflow.cn/v1/chat/completions"
 # 留空则按提供商填默认值，例如 Qwen/Qwen3-8B、gpt-4o-mini。

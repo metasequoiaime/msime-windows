@@ -97,9 +97,28 @@ TEST_CASE(voice_providers_empty_custom_falls_back_to_cleanup)
     VoiceInputConfig config;
     config.polish_prompt_id = "custom_2";
     config.polish_prompt.clear();
-    config.polish_prompt_custom_2 = "第二个自定义提示词";
-    REQUIRE_EQ(VoiceInput::ResolvePolishSystemPrompt(config), "第二个自定义提示词");
+    config.polish_prompt_custom_2 = "第二个自定义提示。";
+    REQUIRE_EQ(VoiceInput::ResolvePolishSystemPrompt(config), "第二个自定义提示。");
     config.polish_prompt_custom_2.clear();
     const std::string prompt = VoiceInput::ResolvePolishSystemPrompt(config);
     REQUIRE(prompt.find("整理助手") != std::string::npos);
+}
+
+// 小米 MiMo：ASR 与润色共用一个聊天补全网关。ASR 侧的转写走 chat 协议（base64 input_audio），
+// 由接口地址而不是供应商标签判定，这样「自定义」槽位指向同一网关时行为一致。
+TEST_CASE(voice_providers_mimo_defaults_and_chat_transcription_detection)
+{
+    REQUIRE_EQ(VoiceInput::DefaultAsrEndpoint("mimo"), "https://token-plan-cn.xiaomimimo.com/v1/chat/completions");
+    REQUIRE_EQ(VoiceInput::DefaultAsrModel("mimo"), "mimo-v2.5-asr");
+    REQUIRE_EQ(VoiceInput::AsrTokenSlotKey("mimo"), "asr_token_mimo");
+    REQUIRE_EQ(VoiceInput::DefaultPolishEndpoint("mimo"), "https://token-plan-cn.xiaomimimo.com/v1/chat/completions");
+    REQUIRE_EQ(VoiceInput::DefaultPolishModel("mimo"), "mimo-v2.6-flash");
+    REQUIRE_EQ(VoiceInput::PolishTokenSlotKey("mimo"), "polish_token_mimo");
+
+    REQUIRE(VoiceInput::UsesChatTranscription("https://token-plan-cn.xiaomimimo.com/v1/chat/completions"));
+    REQUIRE(VoiceInput::UsesChatTranscription("https://example.com/v1/chat/completions?api-version=1"));
+    REQUIRE(VoiceInput::UsesChatTranscription("https://example.com/v1/chat/completions/"));
+    REQUIRE(!VoiceInput::UsesChatTranscription("https://api.openai.com/v1/audio/transcriptions"));
+    REQUIRE(!VoiceInput::UsesChatTranscription("https://api.minimax.cn/v1/speech_to_text"));
+    REQUIRE(!VoiceInput::UsesChatTranscription(""));
 }

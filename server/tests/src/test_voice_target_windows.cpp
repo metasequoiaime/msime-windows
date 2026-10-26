@@ -81,6 +81,8 @@ int Host(const wchar_t *title)
                   reinterpret_cast<HMENU>(4), instance, nullptr);
     CreateWindowW(L"RICHEDIT50W", L"readonly rich", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY, 20, 200, 330, 30,
                   root, reinterpret_cast<HMENU>(5), instance, nullptr);
+    CreateWindowW(L"Edit", L"password fixture", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_PASSWORD, 20, 245, 330, 30,
+                  root, reinterpret_cast<HMENU>(8), instance, nullptr);
     ShowWindow(root, SW_SHOW);
     SetForegroundWindow(root);
     SetFocus(GetDlgItem(root, 1));
@@ -189,6 +191,8 @@ int wmain(int argc, wchar_t **argv)
     check(Capture().editable, "editable RichEdit");
     focus(5);
     check(!Capture().editable, "readonly RichEdit rejected");
+    focus(8);
+    check(!Capture().editable, "password Edit rejected");
     std::wstring embedded_command =
         L"\"" + std::wstring(path) + L"\" --embedded " + std::to_wstring(reinterpret_cast<std::uintptr_t>(root));
     PROCESS_INFORMATION embedded{};

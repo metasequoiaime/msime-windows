@@ -23,12 +23,16 @@ metasequoia::voice::MultipartRequest BuildBatchTranscription(const std::vector<f
     constexpr std::size_t upload_sample_limit = (metasequoia::voice::maximum_encoded_audio_bytes - 44) / 2;
     const auto wav = metasequoia::voice::WavWriter::create_wav(siliconflow ? padded : samples,
                                                                metasequoia::voice::sample_rate, upload_sample_limit);
+    const std::string_view wav_view(reinterpret_cast<const char *>(wav.data()), wav.size());
+    // Chat-completions transcription gateways (MiMo) take the clip as base64 input_audio and
+    // accept neither multipart nor a language field - the gateway injects its own prompt.
+    if (UsesChatTranscription(config.asr_endpoint))
+        return {"application/json", metasequoia::voice::make_chat_transcription_request(wav_view, ResolveAsrModel(config))};
     // SiliconFlow rejects the optional language field. Keep the existing Windows mapping elsewhere.
     const std::string language = !siliconflow && config.language == "zh-cn" ? "zh"
                                  : !siliconflow && config.language == "en"  ? "en"
                                                                             : "";
-    return metasequoia::voice::make_transcription_request(
-        std::string_view(reinterpret_cast<const char *>(wav.data()), wav.size()), ResolveAsrModel(config), language);
+    return metasequoia::voice::make_transcription_request(wav_view, ResolveAsrModel(config), language);
 }
 
 std::string BuildBatchPolish(const std::string &text, const VoiceInputConfig &config)

@@ -24,6 +24,9 @@ const std::map<std::string, ProviderDefaults> &AsrDefaults()
         {"openai", {"https://api.openai.com/v1/audio/transcriptions", "whisper-1"}},
         {"siliconflow", {"https://api.siliconflow.cn/v1/audio/transcriptions", "FunAudioLLM/SenseVoiceSmall"}},
         {"groq", {"https://api.groq.com/openai/v1/audio/transcriptions", "whisper-large-v3-turbo"}},
+        {"zhipu", {"https://open.bigmodel.cn/api/paas/v4/audio/transcriptions", "glm-asr"}},
+        {"minimax", {"https://api.minimax.cn/v1/speech_to_text", "asr-1.0"}},
+        {"mimo", {"https://token-plan-cn.xiaomimimo.com/v1/chat/completions", "mimo-v2.5-asr"}},
     };
     return defaults;
 }
@@ -35,12 +38,22 @@ const std::map<std::string, ProviderDefaults> &PolishDefaults()
         {"openai", {"https://api.openai.com/v1/chat/completions", "gpt-4o-mini"}},
         {"deepseek", {"https://api.deepseek.com/chat/completions", "deepseek-v4-flash"}},
         {"groq", {"https://api.groq.com/openai/v1/chat/completions", "llama-3.3-70b-versatile"}},
+        {"minimax", {"https://api.minimax.cn/v1/chat/completions", "MiniMax-M3.1-Flash-Preview"}},
+        {"moonshot", {"https://api.moonshot.cn/v1/chat/completions", "kimi-k2-0905-preview"}},
+        {"zhipu", {"https://open.bigmodel.cn/api/paas/v4/chat/completions", "glm-4-flash"}},
+        {"dashscope", {"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "qwen-plus"}},
+        {"volcengine", {"https://ark.cn-beijing.volces.com/api/v3/chat/completions", "doubao-seed-1.6-flash"}},
+        {"openrouter", {"https://openrouter.ai/api/v1/chat/completions", "openrouter/auto"}},
+        {"mimo", {"https://token-plan-cn.xiaomimimo.com/v1/chat/completions", "mimo-v2.6-flash"}},
     };
     return defaults;
 }
 
-const std::vector<std::string> kAsrProviders = {"doubao", "openai", "siliconflow", "groq"};
-const std::vector<std::string> kPolishProviders = {"siliconflow", "openai", "deepseek", "groq"};
+const std::vector<std::string> kAsrProviders = {"doubao",  "openai",  "siliconflow", "groq",
+                                                "zhipu",   "minimax", "mimo",        "custom"};
+const std::vector<std::string> kPolishProviders = {"siliconflow", "openai",     "deepseek", "groq",
+                                                    "minimax",     "moonshot",   "zhipu",    "dashscope",
+                                                    "volcengine",  "openrouter", "mimo",     "custom"};
 // The Server rejects an empty Resource ID, so a cleared field falls back to the hourly 2.0 resource.
 constexpr char kDoubaoDefaultResourceId[] = "volc.seedasr.sauc.duration";
 
@@ -218,6 +231,17 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
     std::unique_ptr<CredentialTest> asrTest;
     std::unique_ptr<CredentialTest> polishTest;
 
+    std::shared_ptr<PlainButton> asrFetchButton;
+    std::shared_ptr<Dropdown> asrModelPicker;
+    std::shared_ptr<Hideable> asrModelPickerWrap;
+    std::shared_ptr<StatusText> asrFetchStatus;
+    std::string asrPendingFetch;
+    std::shared_ptr<PlainButton> polishFetchButton;
+    std::shared_ptr<Dropdown> polishModelPicker;
+    std::shared_ptr<Hideable> polishModelPickerWrap;
+    std::shared_ptr<StatusText> polishFetchStatus;
+    std::string polishPendingFetch;
+
     void Write(const std::string &path, Json value)
     {
         // The page applies host snapshots only; its own writes
@@ -245,24 +269,6 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
             prompt->SetText(Widen(stored.empty() ? BuiltinPrompt(id) : stored));
     }
 
-    void FillIfDefault(const std::shared_ptr<InputBox> &input, const std::string &next,
-                       const std::map<std::string, ProviderDefaults> &table, bool model, const std::string &path,
-                       const std::vector<std::string> &extra = {})
-    {
-        const std::string current = Value(input);
-        std::vector<std::string> known = extra;
-        for (const auto &[name, defaults] : table)
-        {
-            const char *value = model ? defaults.model : defaults.endpoint;
-            if (*value)
-                known.emplace_back(value);
-        }
-        if (!current.empty() && std::find(known.begin(), known.end(), current) == known.end())
-            return;
-        input->SetText(Widen(next));
-        Write(path, next);
-    }
-
     void SyncAsrProviderUi()
     {
         const bool doubao = asrProvider == "doubao";
@@ -286,12 +292,18 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         asrToken->SetText(Widen(asrTokens[provider]));
         Write("voice_input.asr_provider", provider);
         SyncAsrProviderUi();
+        // 预置供应商切换时总是切到它自己的默认地址/模型；「自定义」没有默认值，
+        // 保留用户手填的地址。旧规则是「值不在默认集合里就保留」，结果手填过一次
+        // 中转地址后会一直粘着它，切到 DeepSeek 也还在用中转地址。
         const auto it = AsrDefaults().find(provider);
         if (it == AsrDefaults().end())
             return;
-        FillIfDefault(asrEndpoint, it->second.endpoint, AsrDefaults(), false, "voice_input.asr_endpoint");
-        FillIfDefault(asrModel, it->second.model, AsrDefaults(), true, "voice_input.asr_model",
-                      {"TeleAI/TeleSpeechASR"});
+        asrEndpoint->SetText(Widen(it->second.endpoint));
+        Write("voice_input.asr_endpoint", it->second.endpoint);
+        asrModel->SetText(Widen(it->second.model));
+        Write("voice_input.asr_model", it->second.model);
+        asrModelPickerWrap->SetVisible(false);
+        asrFetchStatus->Clear();
     }
 
     void SwitchPolishProvider(const std::string &provider)
@@ -305,8 +317,13 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         if (it == PolishDefaults().end())
             return;
         polishModel->SetPlaceholder(Widen(it->second.model));
-        FillIfDefault(polishEndpoint, it->second.endpoint, PolishDefaults(), false, "voice_input.polish_endpoint");
-        FillIfDefault(polishModel, it->second.model, PolishDefaults(), true, "voice_input.polish_model");
+        // 同 ASR：预置供应商总是切到自己的默认地址/模型；自定义保留手填值。
+        polishEndpoint->SetText(Widen(it->second.endpoint));
+        Write("voice_input.polish_endpoint", it->second.endpoint);
+        polishModel->SetText(Widen(it->second.model));
+        Write("voice_input.polish_model", it->second.model);
+        polishModelPickerWrap->SetVisible(false);
+        polishFetchStatus->Clear();
     }
 
     void OnPromptSelected(const std::string &id)
@@ -375,6 +392,75 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
             {"token", Value(polishToken)},
             {"endpoint", !endpoint.empty() ? endpoint : (it != PolishDefaults().end() ? it->second.endpoint : "")},
             {"model", !model.empty() ? model : (it != PolishDefaults().end() ? it->second.model : "")}};
+    }
+
+    void FetchAsrModels()
+    {
+        if (!asrPendingFetch.empty())
+            return;
+        asrPendingFetch = context.model.NewRequestId("asr-models");
+        asrFetchButton->SetDisabled(true);
+        asrFetchButton->SetText(L"获取中…");
+        asrFetchStatus->Set(L"正在向服务商查询模型列表…", "pending");
+        context.model.Post("apiModelList", Json{{"requestId", asrPendingFetch},
+                                                {"service", "voice.asr"},
+                                                {"config", AsrTestConfig()}});
+    }
+
+    void FetchPolishModels()
+    {
+        if (!polishPendingFetch.empty())
+            return;
+        polishPendingFetch = context.model.NewRequestId("polish-models");
+        polishFetchButton->SetDisabled(true);
+        polishFetchButton->SetText(L"获取中…");
+        polishFetchStatus->Set(L"正在向服务商查询模型列表…", "pending");
+        context.model.Post("apiModelList", Json{{"requestId", polishPendingFetch},
+                                                {"service", "voice.polish"},
+                                                {"config", PolishTestConfig()}});
+    }
+
+    void OnModels(const Json &message)
+    {
+        const std::string request_id = message.value("requestId", std::string());
+        const bool is_asr = !asrPendingFetch.empty() && request_id == asrPendingFetch;
+        const bool is_polish = !polishPendingFetch.empty() && request_id == polishPendingFetch;
+        if (!is_asr && !is_polish)
+            return;
+        std::string &pending = is_asr ? asrPendingFetch : polishPendingFetch;
+        const auto button = is_asr ? asrFetchButton : polishFetchButton;
+        const auto status = is_asr ? asrFetchStatus : polishFetchStatus;
+        const auto picker = is_asr ? asrModelPicker : polishModelPicker;
+        const auto picker_wrap = is_asr ? asrModelPickerWrap : polishModelPickerWrap;
+        pending.clear();
+        button->SetDisabled(false);
+        button->SetText(L"查询模型");
+        if (!message.value("ok", false))
+        {
+            status->Set(Widen(message.value("message", std::string())), "error");
+            return;
+        }
+        std::vector<DropdownOption> options;
+        if (message.contains("models") && message["models"].is_array())
+        {
+            for (const auto &item : message["models"])
+            {
+                if (!item.is_string() || item.get<std::string>().empty())
+                    continue;
+                DropdownOption option;
+                option.value = item.get<std::string>();
+                option.label = Widen(option.value);
+                options.push_back(std::move(option));
+            }
+        }
+        if (options.empty())
+        {
+            status->Set(L"服务商没有返回可用模型", "error");
+            return;
+        }
+        status->Set(L"获取到 " + std::to_wstring(options.size()) + L" 个模型，点击下方下拉选择", "success");
+        picker->SetOptions(std::move(options));
+        picker_wrap->SetVisible(true);
     }
 
     // applyVoiceConfig
@@ -532,11 +618,18 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         {
             auto column = std::make_shared<Column>(0.0f);
             column->Add(Heading(L"ASR API"));
-            column->Add(SectionDescription(L"豆包为流式识别；OpenAI、SiliconFlow、Groq 走 OpenAI 兼容的语音转写接口。"
+            column->Add(SectionDescription(L"豆包为流式识别；OpenAI、SiliconFlow、Groq、智谱、MiniMax 走 OpenAI 兼容的语音转写接口；"
+                                           L"小米 MiMo 通过聊天补全接口转写，接口地址以 /chat/completions 结尾时自动按该协议发送。"
                                            L"每个提供商的 Token 分开保存，切换时只换当前使用的那一份。"));
             auto grid = std::make_shared<FormGrid>();
-            asrProviderDropdown = MakeGridDropdown(Options(
-                {{"doubao", L"豆包"}, {"openai", L"OpenAI"}, {"siliconflow", L"SiliconFlow"}, {"groq", L"Groq"}}));
+            asrProviderDropdown = MakeGridDropdown(Options({{"doubao", L"豆包"},
+                                                           {"openai", L"OpenAI"},
+                                                           {"siliconflow", L"SiliconFlow"},
+                                                           {"groq", L"Groq"},
+                                                           {"zhipu", L"智谱 GLM"},
+                                                           {"minimax", L"MiniMax"},
+                                                           {"mimo", L"小米 MiMo"},
+                                                           {"custom", L"自定义"}}));
             asrProviderDropdown->SetOnChanged(
                 [this](size_t, const DropdownOption &option) { SwitchAsrProvider(option.value); });
             grid->Add(std::make_shared<Field>(L"服务提供商", asrProviderDropdown));
@@ -563,7 +656,24 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
             modelOptions.placeholder = L"whisper-1";
             asrModel = std::make_shared<InputBox>(modelOptions);
             asrModel->SetOnCommit(commit("voice_input.asr_model"));
-            asrModelField = std::make_shared<Hideable>(std::make_shared<Field>(L"模型", asrModel));
+            auto asrModelRow = std::make_shared<Row>(8.0f);
+            asrModelRow->SetAlign(Row::Align::Stretch);
+            asrModelRow->Add(asrModel, 1.0f);
+            asrFetchButton = std::make_shared<PlainButton>(L"查询模型", CredentialButtonStyle());
+            asrFetchButton->SetOnClick([this]() { FetchAsrModels(); });
+            asrModelRow->Add(asrFetchButton);
+            auto asrModelFieldInner = std::make_shared<Field>(L"模型", asrModelRow);
+            asrModelPicker = MakeGridDropdown({});
+            asrModelPicker->SetOnChanged([this](size_t, const DropdownOption &option) {
+                asrModel->SetText(Widen(option.value));
+                Write("voice_input.asr_model", option.value);
+            });
+            asrModelPickerWrap = std::make_shared<Hideable>(asrModelPicker, false);
+            asrModelFieldInner->Add(asrModelPickerWrap);
+            asrFetchStatus = std::make_shared<StatusText>();
+            asrFetchStatus->SetMargin({0.0f, 7.0f, 0.0f, 0.0f});
+            asrModelFieldInner->Add(asrFetchStatus);
+            asrModelField = std::make_shared<Hideable>(asrModelFieldInner);
             grid->Add(asrModelField);
 
             InputBox::Options tokenOptions;
@@ -678,13 +788,21 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
                                                        BindToggle(context, "voice_input.polish_text"));
             header->SetMargin({0.0f, 0.0f, 0.0f, 12.0f});
             column->Add(header);
-            column->Add(
-                SectionDescription(L"SiliconFlow、OpenAI、DeepSeek、Groq 均走 OpenAI 兼容的 Chat Completions 接口。"));
+            column->Add(SectionDescription(
+                L"所有提供商均走 OpenAI 兼容的 Chat Completions 接口；选择「自定义」时填自己的接口地址和模型。"));
             auto grid = std::make_shared<FormGrid>();
             polishProviderDropdown = MakeGridDropdown(Options({{"siliconflow", L"SiliconFlow"},
                                                                {"openai", L"OpenAI"},
                                                                {"deepseek", L"DeepSeek"},
-                                                               {"groq", L"Groq"}}));
+                                                               {"groq", L"Groq"},
+                                                               {"minimax", L"MiniMax"},
+                                                               {"moonshot", L"Moonshot（Kimi）"},
+                                                               {"zhipu", L"智谱 GLM"},
+                                                               {"dashscope", L"通义千问"},
+                                                               {"volcengine", L"火山方舟"},
+                                                               {"openrouter", L"OpenRouter"},
+                                                               {"mimo", L"小米 MiMo"},
+                                                               {"custom", L"自定义"}}));
             polishProviderDropdown->SetOnChanged(
                 [this](size_t, const DropdownOption &option) { SwitchPolishProvider(option.value); });
             grid->Add(std::make_shared<Field>(L"服务提供商", polishProviderDropdown));
@@ -694,7 +812,24 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
             polishModel = std::make_shared<InputBox>(modelOptions);
             polishModel->SetOnCommit(
                 [this](const std::wstring &text) { Write("voice_input.polish_model", Narrow(Trim(text))); });
-            grid->Add(std::make_shared<Field>(L"模型", polishModel));
+            auto polishModelRow = std::make_shared<Row>(8.0f);
+            polishModelRow->SetAlign(Row::Align::Stretch);
+            polishModelRow->Add(polishModel, 1.0f);
+            polishFetchButton = std::make_shared<PlainButton>(L"查询模型", CredentialButtonStyle());
+            polishFetchButton->SetOnClick([this]() { FetchPolishModels(); });
+            polishModelRow->Add(polishFetchButton);
+            auto polishModelFieldInner = std::make_shared<Field>(L"模型", polishModelRow);
+            polishModelPicker = MakeGridDropdown({});
+            polishModelPicker->SetOnChanged([this](size_t, const DropdownOption &option) {
+                polishModel->SetText(Widen(option.value));
+                Write("voice_input.polish_model", option.value);
+            });
+            polishModelPickerWrap = std::make_shared<Hideable>(polishModelPicker, false);
+            polishModelFieldInner->Add(polishModelPickerWrap);
+            polishFetchStatus = std::make_shared<StatusText>();
+            polishFetchStatus->SetMargin({0.0f, 7.0f, 0.0f, 0.0f});
+            polishModelFieldInner->Add(polishFetchStatus);
+            grid->Add(polishModelFieldInner);
 
             auto thinking = BindDropdown(
                 context, "voice_input.polish_thinking",
@@ -802,6 +937,10 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         }
 
         SyncAsrProviderUi();
+        context.OnMessage("apiModelListResult", [weak](const Json &message) {
+            if (auto page = weak.lock())
+                page->OnModels(message);
+        });
         context.OnConfig([weak]() {
             if (auto page = weak.lock())
                 page->Sync();

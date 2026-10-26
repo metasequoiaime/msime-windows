@@ -28,6 +28,25 @@ std::string text_member(const nlohmann::json &object, const char *key)
     const auto found = object.find(key);
     return found != object.end() && found->is_string() ? found->get<std::string>() : std::string{};
 }
+std::string base64_encode(std::string_view data)
+{
+    static constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((data.size() + 2) / 3 * 4);
+    for (size_t i = 0; i < data.size(); i += 3)
+    {
+        unsigned value = static_cast<unsigned char>(data[i]) << 16;
+        if (i + 1 < data.size())
+            value |= static_cast<unsigned char>(data[i + 1]) << 8;
+        if (i + 2 < data.size())
+            value |= static_cast<unsigned char>(data[i + 2]);
+        out.push_back(kAlphabet[(value >> 18) & 63]);
+        out.push_back(kAlphabet[(value >> 12) & 63]);
+        out.push_back(i + 1 < data.size() ? kAlphabet[(value >> 6) & 63] : '=');
+        out.push_back(i + 2 < data.size() ? kAlphabet[value & 63] : '=');
+    }
+    return out;
+}
 } // namespace
 MultipartRequest make_transcription_request(std::string_view wav, std::string_view model, std::string_view language)
 {
@@ -56,6 +75,25 @@ MultipartRequest make_transcription_request(std::string_view wav, std::string_vi
     body += "\r\n--" + boundary + "--\r\n";
     return request;
 }
+std::string make_chat_transcription_request(std::string_view wav, std::string_view model)
+{
+    if (wav.empty() || wav.size() > maximum_encoded_audio_bytes || model.empty())
+        throw VoiceError("Audio and transcription model are required within the upload limit");
+    nlohmann::json input_audio;
+    input_audio["data"] = base64_encode(wav);
+    input_audio["format"] = "wav";
+    nlohmann::json part;
+    part["type"] = "input_audio";
+    part["input_audio"] = input_audio;
+    nlohmann::json message;
+    message["role"] = "user";
+    message["content"] = nlohmann::json::array({part});
+    nlohmann::json body;
+    body["model"] = std::string(model);
+    body["stream"] = false;
+    body["messages"] = nlohmann::json::array({message});
+    return body.dump();
+}
 std::string parse_transcription(std::string_view response)
 {
     const auto json = parse_response(response);
@@ -70,6 +108,18 @@ std::string parse_transcription(std::string_view response)
         auto text = text_member(json["result"], "text");
         if (!text.empty())
             return text;
+    }
+    // Chat-completions gateways answer with the transcript as the assistant message. Taken
+    // verbatim: this is recogniser output, not a model answer, so no reasoning stripping here.
+    if (json.is_object() && json.contains("choices") && json["choices"].is_array() && !json["choices"].empty())
+    {
+        const auto &first = json["choices"][0];
+        if (first.is_object() && first.contains("message"))
+        {
+            auto text = text_member(first["message"], "content");
+            if (!text.empty())
+                return text;
+        }
     }
     throw VoiceError("Missing transcription text");
 }

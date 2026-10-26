@@ -15,6 +15,9 @@
 #include "voice-input/doubao_asr_client.h"
 #include "voice-input/voice_providers.h"
 
+#include <msime/voice/provider_protocol.h>
+#include <msime/voice/stt_service.h>
+
 #include "utils/network_proxy.h"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -285,6 +288,27 @@ ApiCredentialTest::Result TestBatchAsr(const ApiCredentialTest::Request &request
         return {false, "请先填写有效的 API Key。"};
     if (!IsHttpEndpoint(endpoint) || model.empty())
         return {false, "请填写以 http:// 或 https:// 开头的接口地址和模型名。"};
+
+    // Chat-completions transcription gateways (MiMo) take the probe clip as base64 input_audio;
+    // multipart uploads reach them as an unknown route and fail before credentials are judged.
+    if (VoiceInput::UsesChatTranscription(endpoint))
+    {
+        std::string payload;
+        try
+        {
+            const auto wav = SilentWav();
+            payload = metasequoia::voice::make_chat_transcription_request(
+                std::string_view(reinterpret_cast<const char *>(wav.data()), wav.size()), model);
+        }
+        catch (const metasequoia::voice::VoiceError &)
+        {
+            return {false, "录音数据无效或超过 20 MiB 上传限制。"};
+        }
+        const HttpResponse response = PerformJsonRequest(endpoint, token, &payload);
+        if (response.code == CURLE_OK && response.status >= 200 && response.status < 300)
+            return {true, "连接成功，API Key 和模型配置有效。"};
+        return {false, "测试失败：" + ErrorDetail(response)};
+    }
 
     InitCurl();
     HttpResponse response;

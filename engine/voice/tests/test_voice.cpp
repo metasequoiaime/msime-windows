@@ -48,6 +48,22 @@ int main(int argc, char **argv)
             for (const auto *response : {"invalid", "[]", R"({"text":42})", R"({"text":"","result":null})"})
                 fails([&] { parse_transcription(response); });
             fails([] { parse_transcription(std::string(1024 * 1024 + 1, 'x')); });
+            {
+                const auto chat = make_chat_transcription_request(binary, "fixture-model");
+                require(chat.find("\"type\":\"input_audio\"") != std::string::npos, "Chat transcription carries input_audio");
+                require(chat.find("\"format\":\"wav\"") != std::string::npos, "Chat transcription labels the wav format");
+                require(chat.find("\"data\":\"UklGR") != std::string::npos, "Chat transcription base64-encodes the clip");
+                require(chat.find("language") == std::string::npos, "Chat transcription sends no language field");
+                fails([] { make_chat_transcription_request({}, "model"); });
+                fails([] { make_chat_transcription_request("audio", {}); });
+                fails([] { make_chat_transcription_request(std::string(maximum_encoded_audio_bytes + 1, 'x'), "model"); });
+            }
+            require(parse_transcription(R"({"choices":[{"message":{"role":"assistant","content":"水杉"}}]})") == "水杉",
+                    "Chat completion transcription response");
+            require(parse_transcription(R"({"text":"a","choices":[{"message":{"content":"b"}}]})") == "a",
+                    "OpenAI transcription shape keeps priority");
+            for (const auto *response : {"{}", R"({"choices":[]})", R"({"choices":[{"message":{"content":""}}]})"})
+                fails([&] { parse_transcription(response); });
             require(parse_polished_text(R"({"choices":[{"message":{"content":"水杉"}}]})") == "水杉", "Polish response");
             for (const auto *response : {"{}", R"({"choices":[]})", R"({"choices":[{"message":{"content":null}}]})", R"({"choices":[{"message":{"content":""}}]})"})
                 fails([&] { parse_polished_text(response); });
