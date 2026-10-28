@@ -2502,6 +2502,9 @@ void QuanpinDictionary::set_sentence_association(const SentenceAssociationOption
     {
         return;
     }
+    // 打字闸门每段输入只翻效果档的模型路径：那种改动只影响 series_cache_，
+    // 别把逐前缀词库和词格缓存一起清掉。
+    const bool series_only = sentence_association_.differs_only_in_effect_tier_model(options);
     sentence_association_ = options;
     // 模型路径随开关一起变更时才重新解析：进程内按路径共享（shared_gram_db），
     // 重复解析只是查一次表，路径无效时拿到 valid()==false 的实例，词格静默降级。
@@ -2521,7 +2524,14 @@ void QuanpinDictionary::set_sentence_association(const SentenceAssociationOption
                                           : metasequoia::path_from_utf8(sentence_association_.language_model.c_str()));
     // 开关变了，之前缓存的候选列表按旧开关算出，必须清掉，否则打开/关闭后要到缓存过期
     // 才见效。整句候选都进这几个缓存，见 query_series / query_single_path。
-    reset_cache();
+    if (series_only)
+    {
+        reset_sentence_cache();
+    }
+    else
+    {
+        reset_cache();
+    }
 }
 
 void QuanpinDictionary::set_rescoring_context(const std::string &context)

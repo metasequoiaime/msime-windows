@@ -62,4 +62,20 @@ struct SentenceAssociationOptions
     {
         return !(*this == other);
     }
+
+    // 只有效果档的模型路径不同。路径只决定词格要不要解 12-best 交给神经重排，影响范围止于
+    // series_cache_；其余字段（尤其开关本身）会牵动词格 LM 与切分歧义仲裁，得清整张缓存。
+    // 打字闸门的节奏只翻这个路径，见 Server 的 EngineInputSession::ApplyConfiguration。
+    bool differs_only_in_effect_tier_model(const SentenceAssociationOptions &other) const
+    {
+        if (*this == other)
+        {
+            return false;
+        }
+        SentenceAssociationOptions mine = *this;
+        SentenceAssociationOptions theirs = other;
+        mine.neural_desktop_model.clear();
+        theirs.neural_desktop_model.clear();
+        return mine == theirs;
+    }
 };

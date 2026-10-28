@@ -132,28 +132,11 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     PushUiLessCandidatesToOwner();
 }
 
-// 候选列表当初是按词格的静态顺序发出去的，因为打分那会儿还没算完。现在算完了：把引擎的候选缓存
-// 丢掉重查一次，这一次 quanpin::make_neural_reranker 能在结果表里查到顺序，整句就落到它该在的位
-// 置上。重查本身不碰模型，走的还是词格那条快路。
-//
-// 后台线程算的可能已经是上一次输入的了（用户没停手），所以这里不认「哪一批」，只看重查出来的词
-// 序有没有真的变：没变就一个字节都不动 UI。这既挡掉了过期结果，也挡掉了模型弃权的情况。
-void ApplyRescoredOrder()
+bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner)
 {
-    if (!g_inputSession || !CanMergeAsyncCandidates())
-        return;
-    // 造词界面和译文页各自占着 items，重排不该去动它们。
-    if (GlobalIme::composition.creating_word.active)
-        return;
-    if (Global::candidate_ui.items.empty())
-        return;
-    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
-    if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
-        return;
-
     const std::vector<WordItem> before = g_inputSession->get_candidates();
     // 云/AI 候选只活在 series cache 里，reset_cache 会把它们一起清掉，而它们的请求早已回来、不会
-    // 再发一次——不补回来，重排一落地它们就从列表里消失了。重查不推进在线请求的 generation，
+    // 再发一次——不补回来，重查一落地它们就从列表里消失了。重查不推进在线请求的 generation，
     // 所以用当前的 online_query 原样回填即可；回填时若同一句已被整句候选占了，引擎自己会拒绝。
     std::vector<WordItem> online_items;
     std::copy_if(before.begin(), before.end(), std::back_inserter(online_items), [](const WordItem &item) {
@@ -175,11 +158,33 @@ void ApplyRescoredOrder()
     if (after.size() == before.size() &&
         std::equal(before.begin(), before.end(), after.begin(),
                    [](const WordItem &a, const WordItem &b) { return a.word == b.word; }))
-        return;
+        return false;
 
     PrepareCandidateList(owner.client_id, owner.activation_epoch);
     RequestShowCandidateWindow();
     PushUiLessCandidatesToOwner();
+    return true;
+}
+
+// 候选列表当初是按词格的静态顺序发出去的，因为打分那会儿还没算完。现在算完了：把引擎的候选缓存
+// 丢掉重查一次，这一次 quanpin::make_neural_reranker 能在结果表里查到顺序，整句就落到它该在的位
+// 置上。重查本身不碰模型，走的还是词格那条快路。
+//
+// 后台线程算的可能已经是上一次输入的了（用户没停手），所以这里不认「哪一批」，只看重查出来的词
+// 序有没有真的变：没变就一个字节都不动 UI。这既挡掉了过期结果，也挡掉了模型弃权的情况。
+void ApplyRescoredOrder()
+{
+    if (!g_inputSession || !CanMergeAsyncCandidates())
+        return;
+    // 造词界面和译文页各自占着 items，重排不该去动它们。
+    if (GlobalIme::composition.creating_word.active)
+        return;
+    if (Global::candidate_ui.items.empty())
+        return;
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+        return;
+    (void)RequeryCandidatesPreservingOnline(owner);
 }
 
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,

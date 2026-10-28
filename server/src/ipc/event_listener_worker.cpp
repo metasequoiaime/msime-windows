@@ -1,6 +1,7 @@
 // 任务队列与任务线程：Task 定义、WorkerThread 的分发循环，以及各个 Enqueue* 入口。
 #include "ipc/event_listener_internal.h"
 #include <Windows.h>
+#include <array>
 #include <string>
 #include <chrono>
 #include <cstdint>
@@ -22,6 +23,7 @@
 #include "english/english_ime.h"
 #include "config/ime_config.h"
 #include "window/window_hook.h"
+#include "session/input_cadence.h"
 #include "session/session_factory.h"
 #include "log/candidate_diag_log.h"
 #include "log/ftb_diag_log.h"
@@ -172,11 +174,58 @@ double QueueWaitMilliseconds(const Task &task)
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - task.enqueued_at).count();
 }
 
-std::queue<Task> taskQueue;
+// 按类别分的四条 FIFO 队列。同类内保持入队顺序；类别之间由 NextTaskClass 决定。
+std::array<std::queue<Task>, kTaskClassCount> taskQueues;
 std::mutex queueMutex;
 // 队列里已经有一个还没开始跑的 ApplyRescoredOrder（受 queueMutex 保护）。它跑起来时会读所有模型
 // 已算完的结果，所以排队期间再完成的批次不必再各排一个，免得每批都在按键前面重查一次词格。
 bool rescoreApplyQueued = false;
+// 同理，停手重查最多排一个：排队期间再关一次闸不该叠出第二次全量重查（受 queueMutex 保护）。
+bool refreshEnrichmentQueued = false;
+
+// 调用方持 queueMutex。
+void PushTaskLocked(Task &&task)
+{
+    // 入队时间在取任务时才用来算队首年龄；维护任务原先都不记这个字段，统一在这里补上，
+    // 否则它们的等待时长恒为 0，「等满 500 ms 就越过富化」永远不会触发。
+    if (task.enqueued_at == std::chrono::steady_clock::time_point{})
+        task.enqueued_at = std::chrono::steady_clock::now();
+    taskQueues[TaskClassIndex(ClassifyTask(task.type))].push(std::move(task));
+}
+
+// 某个任务类别自己的队尾：同类型合并只该看同类队列，不能看整个队列的最新一格。
+std::queue<Task> &TaskQueueFor(TaskType type)
+{
+    return taskQueues[TaskClassIndex(ClassifyTask(type))];
+}
+
+bool AnyTaskQueuedLocked()
+{
+    for (const std::queue<Task> &queue : taskQueues)
+    {
+        if (!queue.empty())
+            return true;
+    }
+    return false;
+}
+
+// 调用方持 queueMutex。每类队首现算一次年龄，再交给纯函数决定下一类。
+Task TakeNextTaskLocked()
+{
+    std::array<TaskClassHead, kTaskClassCount> heads;
+    for (std::size_t i = 0; i < kTaskClassCount; ++i)
+    {
+        if (!taskQueues[i].empty())
+        {
+            heads[i].has_task = true;
+            heads[i].wait_ms = QueueWaitMilliseconds(taskQueues[i].front());
+        }
+    }
+    std::queue<Task> &queue = taskQueues[TaskClassIndex(NextTaskClass(heads))];
+    Task task = std::move(queue.front());
+    queue.pop();
+    return task;
+}
 
 // 顶字推送后的 HideCandidate 抑制标记：CommitCandidateAndContinue 会让 DLL 提交文本并
 // 结束旧组合，TSF 随之发来 HideCandidateWnd；若 HideCandidate 处理器照常 ClearState，
@@ -218,19 +267,64 @@ bool ConsumeTopCommitPendingHide(uint64_t client_id, uint64_t activation_epoch)
 
 void WorkerThread()
 {
+    // 输入节奏闸门只归这个线程：按键出队时刷新 deadline，停手到点后在同一条
+    // 条件变量上醒来，把效果档放回来并排一次重查。别的线程只通过 TypingInProgress
+    // 的原子量看见「正在打字」。放成循环外的局部量，闸门状态就不需要任何同步。
+    InputCadence cadence;
     while (pipe_running)
     {
         Task task;
+        // 闸门只服务效果档：效果档没开时连节奏状态都不维护，按键路径退回原来的
+        // 无限等待，一次超时唤醒都不多，单开速度档与两档全关的行为逐字节不变。
+        // 阈值是内部常数，不暴露配置：它不是可调参数，而是「打字」与「停下来看」的分界。
+        const int idle_gate_ms = GetConfiguredAssocSentenceNeuralDesktop() ? kNeuralDesktopIdleGateMs : 0;
         {
             std::unique_lock lock(queueMutex);
-            pipe_queueCv.wait(lock, [] { return !taskQueue.empty() || !pipe_running; });
+            const auto has_work = [] { return AnyTaskQueuedLocked() || !pipe_running; };
+            // 效果档在运行中被关掉时，可能残留着上一次按键置起的打字状态；在这里收掉，
+            // 否则效果档会被一个不再刷新的 deadline 永远压着。
+            if (idle_gate_ms <= 0 && cadence.typing())
+            {
+                cadence.CloseGate();
+                SetTypingInProgress(false);
+            }
+            const auto gate_deadline = cadence.Deadline(idle_gate_ms);
+            if (gate_deadline == InputCadence::Clock::time_point{})
+            {
+                // 闸门关着（或不在打字）：保持原来的无限等待。
+                pipe_queueCv.wait(lock, has_work);
+            }
+            else
+            {
+                pipe_queueCv.wait_until(lock, gate_deadline, has_work);
+            }
             if (!pipe_running)
                 break;
-            task = std::move(taskQueue.front());
-            taskQueue.pop();
+            if (cadence.ShouldCloseGate(InputCadence::Clock::now(), idle_gate_ms))
+            {
+                // 到点且没有新按键：这段连续打字结束。先关闸再排重查，保证
+                // recompute_candidates 里重新应用的配置看到的是 Idle。
+                cadence.CloseGate();
+                SetTypingInProgress(false);
+                // 排队期间又关了一次闸不该再叠一个：每次都会跑一遍全量重查。
+                if (!refreshEnrichmentQueued)
+                {
+                    refreshEnrichmentQueued = true;
+                    Task refresh;
+                    refresh.type = TaskType::RefreshWithEnrichment;
+                    PushTaskLocked(std::move(refresh));
+                }
+            }
+            // wait 与上面的超时分支都保证此刻队列非空；这里只是防御 TakeNextTaskLocked
+            // 的 front() 没有空检查，别在后续改动里把「到点但没排到重查」变成空队列取任务。
+            if (!AnyTaskQueuedLocked())
+                continue;
+            task = TakeNextTaskLocked();
             // 出队即放行：之后完成的批次结果不一定被这次重查读到，得能再排一个。
             if (task.type == TaskType::ApplyRescoredOrder)
                 rescoreApplyQueued = false;
+            if (task.type == TaskType::RefreshWithEnrichment)
+                refreshEnrichmentQueued = false;
         }
         LatchCandidateUiInteraction();
 
@@ -258,6 +352,15 @@ void WorkerThread()
                            static_cast<int>(task.type), task.client_id, task.activation_epoch,
                            GetActivePipeClient().epoch);
             continue;
+        }
+
+        if (task.type == TaskType::ImeKeyEvent)
+        {
+            // 只给真正会被受理的按键记账：被判 stale 丢弃的键（焦点/会话已经翻页）不该压住
+            // 效果档一次，也不该让它去排一次注定被跳过的重查。用入队时间而不是出队时间，
+            // worker 被别的任务拖住时闸门不会把「实际已经停手」的那段时间也算成打字。
+            cadence.NoteKey(task.enqueued_at, idle_gate_ms);
+            SetTypingInProgress(cadence.typing());
         }
 
         const bool candidateUiAction =
@@ -359,8 +462,11 @@ void WorkerThread()
             const double queue_elapsed_ms = QueueWaitMilliseconds(task);
             if (queue_elapsed_ms >= kSlowQueueThresholdMs)
             {
-                DIAG_LOGF(L"[key-latency] side=server stage=queue request={} client={} epoch={} elapsed_ms={:.3f}",
-                          task.pipe_data.request_id, task.client_id, task.activation_epoch, queue_elapsed_ms);
+                // 只记类别、请求标识和等待时长：按键内容、候选和文本一律不进诊断日志。
+                DIAG_LOGF(L"[key-latency] side=server stage=queue class={} request={} client={} epoch={} "
+                          L"elapsed_ms={:.3f}",
+                          TaskClassName(ClassifyTask(task.type)), task.pipe_data.request_id, task.client_id,
+                          task.activation_epoch, queue_elapsed_ms);
             }
             // 顶字后第 4 码丢失的定位探针：DLL 侧 keydown-sent 已确认发出，若这里没打出来，
             // 说明任务根本没进队列（reader 未收到/未入队）；打出来了但组合没变，才是 HandleImeKey 内部问题。
@@ -864,9 +970,52 @@ void WorkerThread()
             ApplyRescoredOrder();
             break;
         }
+
+        case TaskType::RefreshWithEnrichment: {
+            // 停手到点后的唯一一次重查：recompute_candidates 会重新执行 ApplyConfiguration，
+            // 此时 TypingInProgress 已清零，效果档按配置值放行，打字期间缺的整句候选才补得回来。
+            // 排队期间用户又开始了下一段打字：这次重查已经过期，跳过它，别让一次全量重查
+            // 落在一颗正在等的键上；下一键的 ApplyConfiguration 会重新压住效果档，不用收尾。
+            if (TypingInProgress())
+                break;
+            // 重查被跳过时效果档必须放回来，否则这条组合剩下的展开/翻页查询都按打字中的
+            // 配置走，停手后整句候选依然不出现。
+            const auto restore_effect_tier = [] {
+                if (g_inputSession)
+                    g_inputSession->refresh_configuration();
+            };
+            if (!g_inputSession)
+                break;
+            // 守卫和 ApplyRescoredOrder 一致：造词/译文页占着、用户已开始选词、候选页已经
+            // 不在了，都不该拿引擎结果去覆盖界面。英文输入与日语等非拼音方案没有可重排的
+            // 拼音整句，而且 PrepareCandidateList 在英文模式下会故意发出空页，直接跳过。
+            // 五笔本身没有拼音整句，但开了拼音混输时同一个混合查询会把全拼词典的整句一并
+            // 算出来（见 ImeSession::refresh_candidates 的混输分支），停手后同样要补这一次。
+            const SchemeType scheme = g_inputSession->current_scheme_type();
+            const bool pinyin_sentence_scheme = scheme == SchemeType::Quanpin || scheme == SchemeType::Shuangpin ||
+                                                (scheme == SchemeType::Wubi && GetConfiguredWubiMixedPinyin());
+            if (g_english_input_mode || !pinyin_sentence_scheme || !CanMergeAsyncCandidates() ||
+                GlobalIme::composition.creating_word.active || Global::candidate_ui.items.empty())
+            {
+                restore_effect_tier();
+                break;
+            }
+            const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+            if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+            {
+                restore_effect_tier();
+                break;
+            }
+            // Global::candidate_ui.items 是按键时那份副本，重查后必须重新组页才看得到新的
+            // 整句候选；只刷新页面会把旧列表再发一遍。与 ApplyRescoredOrder 共用同一段。
+            (void)RequeryCandidatesPreservingOnline(owner);
+            break;
+        }
         }
     }
 
+    // 进程停在打字中时退出，闸门状态不能留给下一个读它的人。
+    SetTypingInProgress(false);
     ShutdownPipeClients();
     WakeNamedPipeListenersForShutdown();
 }
@@ -882,7 +1031,7 @@ void EnqueueTask(TaskType type, const FanyImeNamedpipeData &pipeData, uint64_t a
         task.client_id = pipeData.client_id;
         task.activation_epoch = activation_epoch;
         task.enqueued_at = std::chrono::steady_clock::now();
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -904,7 +1053,7 @@ void EnqueueCloudCandidate(const std::string &candidate, const std::string &piny
         task.online_query = origin.engine_query;
         task.client_id = origin.client_id;
         task.activation_epoch = origin.activation_epoch;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -920,7 +1069,7 @@ void EnqueueRescoredCandidates()
         rescoreApplyQueued = true;
         Task task;
         task.type = TaskType::ApplyRescoredOrder;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -940,7 +1089,7 @@ void EnqueueAiCandidate(const std::string &candidate, const std::string &identit
         task.online_query = origin.engine_query;
         task.client_id = origin.client_id;
         task.activation_epoch = origin.activation_epoch;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -961,7 +1110,7 @@ void EnqueueEnglishCandidates(std::vector<WordItem> candidates, const std::strin
         task.english_generation = generation;
         task.client_id = origin.client_id;
         task.activation_epoch = origin.activation_epoch;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -975,7 +1124,7 @@ void EnqueueCandidateTranslations(std::vector<EnglishIme::TranslationResult> res
         task.translation_results = std::move(results);
         task.translation_generation = generation;
         task.translation_merge = merge;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -996,7 +1145,7 @@ void EnqueueMixedCandidates(MixedCandidates::Result result, const std::string &i
         task.mixed_generation = generation;
         task.client_id = origin.client_id;
         task.activation_epoch = origin.activation_epoch;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1013,7 +1162,7 @@ void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &wo
         // A language cycle can replace the active language session before this
         // queued learning task runs. Store into the session that chose the word.
         task.phrase_session = PersistentInputSession();
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1224,7 +1373,7 @@ void EnqueueCandidateUiAction(CandidateUiAction action, int one_based_index, int
         task.activation_epoch = owner.activation_epoch;
         task.candidate_one_based_index = one_based_index;
         task.fixed_position = fixed_position;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1252,10 +1401,12 @@ void EnqueueCandidateUiPaging(CandidateUiAction action, int steps)
         // One notch of the wheel is one step, and every step can hit the engine
         // and the user dictionary. Folding a burst into the task already waiting
         // for the same page keeps a fast scroll from queueing an unbounded run.
-        if (!taskQueue.empty() && taskQueue.back().type == type && taskQueue.back().client_id == owner.client_id &&
-            taskQueue.back().activation_epoch == owner.activation_epoch)
+        // 合并只看同类队列的队尾：队列分成四条之后，全队列的最新一格可能是别的类别。
+        std::queue<Task> &queue = TaskQueueFor(type);
+        if (!queue.empty() && queue.back().type == type && queue.back().client_id == owner.client_id &&
+            queue.back().activation_epoch == owner.activation_epoch)
         {
-            taskQueue.back().page_steps += steps;
+            queue.back().page_steps += steps;
         }
         else
         {
@@ -1264,7 +1415,7 @@ void EnqueueCandidateUiPaging(CandidateUiAction action, int steps)
             task.client_id = owner.client_id;
             task.activation_epoch = owner.activation_epoch;
             task.page_steps = steps;
-            taskQueue.push(std::move(task));
+            PushTaskLocked(std::move(task));
         }
     }
     pipe_queueCv.notify_one();
@@ -1289,7 +1440,7 @@ void EnqueueCandidateUiCommitAt(int absolute_index, std::wstring expected_text)
         task.activation_epoch = owner.activation_epoch;
         task.candidate_absolute_index = absolute_index;
         task.candidate_expected_text = std::move(expected_text);
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1307,10 +1458,10 @@ void EnqueueCandidateUiExpand()
     }
     {
         std::lock_guard lock(queueMutex);
-        // 连续滚到底部只需要展开一次。
-        if (!taskQueue.empty() && taskQueue.back().type == TaskType::UiExpandCandidates &&
-            taskQueue.back().client_id == owner.client_id &&
-            taskQueue.back().activation_epoch == owner.activation_epoch)
+        // 连续滚到底部只需要展开一次。同样只看它自己那类队列的队尾。
+        std::queue<Task> &queue = TaskQueueFor(TaskType::UiExpandCandidates);
+        if (!queue.empty() && queue.back().type == TaskType::UiExpandCandidates &&
+            queue.back().client_id == owner.client_id && queue.back().activation_epoch == owner.activation_epoch)
         {
             return;
         }
@@ -1318,7 +1469,7 @@ void EnqueueCandidateUiExpand()
         task.type = TaskType::UiExpandCandidates;
         task.client_id = owner.client_id;
         task.activation_epoch = owner.activation_epoch;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1333,7 +1484,7 @@ void EnqueueReloadInputSessionTask()
         std::lock_guard lock(queueMutex);
         Task task;
         task.type = TaskType::ReloadInputSession;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1348,7 +1499,7 @@ void EnqueueEnsureInputSessionMatchesConfigTask()
         std::lock_guard lock(queueMutex);
         Task task;
         task.type = TaskType::EnsureInputSessionMatchesConfig;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1363,7 +1514,7 @@ void EnqueueApplyCandidatePageSizeTask()
         std::lock_guard lock(queueMutex);
         Task task;
         task.type = TaskType::ApplyCandidatePageSize;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1378,7 +1529,7 @@ void EnqueueRefreshCandidatePageTask()
         std::lock_guard lock(queueMutex);
         Task task;
         task.type = TaskType::RefreshCandidatePage;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1393,7 +1544,7 @@ void EnqueueResetInputSessionCacheTask()
         std::lock_guard lock(queueMutex);
         Task task;
         task.type = TaskType::ResetInputSessionCache;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1408,7 +1559,7 @@ void EnqueueExitEnglishInputModeTask()
         std::lock_guard lock(queueMutex);
         Task task;
         task.type = TaskType::ExitEnglishInputMode;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }
@@ -1424,7 +1575,7 @@ void EnqueueToolbarLanguageToggleTask(bool from_ime_enabled)
         Task task;
         task.type = TaskType::ToolbarLanguageToggle;
         task.toolbar_from_ime_enabled = from_ime_enabled;
-        taskQueue.push(std::move(task));
+        PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();
 }

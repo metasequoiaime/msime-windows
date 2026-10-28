@@ -21,6 +21,11 @@ class IInputSession
 
     virtual void handle_key(UINT vk, UINT modifiers_down, WCHAR wch) = 0;
     virtual void recompute_candidates() = 0;
+    // 只把当前配置重新下发给引擎（幂等，不重算候选）。打字闸门收尾那次重查被守卫跳过时，
+    // 用它把效果档放回来，否则这条组合剩下的展开/翻页查询都按打字中的配置走。
+    virtual void refresh_configuration()
+    {
+    }
     virtual SchemeType current_scheme_type() const = 0;
     virtual void switch_scheme(SchemeType scheme_type) = 0;
 

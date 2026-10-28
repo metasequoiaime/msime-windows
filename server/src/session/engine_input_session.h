@@ -25,6 +25,7 @@ class EngineInputSession : public IInputSession
 
     void handle_key(UINT vk, UINT modifiers_down, WCHAR wch) override;
     void recompute_candidates() override;
+    void refresh_configuration() override;
     SchemeType current_scheme_type() const override;
     void switch_scheme(SchemeType scheme_type) override;
 

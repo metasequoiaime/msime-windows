@@ -1332,6 +1332,9 @@ void ShuangpinDictionary::set_sentence_association(const SentenceAssociationOpti
     {
         return;
     }
+    // 打字闸门每段输入只翻效果档的模型路径：那种改动只影响 series_cache_，
+    // 见 QuanpinDictionary::set_sentence_association。
+    const bool series_only = sentence_association_.differs_only_in_effect_tier_model(options);
     sentence_association_ = options;
     // 模型路径随开关一起变更时才重新解析，见 QuanpinDictionary::set_sentence_association。
     collocation_db_ =
@@ -1345,7 +1348,14 @@ void ShuangpinDictionary::set_sentence_association(const SentenceAssociationOpti
                                           ? paths_.resource(metasequoia::assets::language_model)
                                           : metasequoia::path_from_utf8(sentence_association_.language_model.c_str()));
     // 开关变了就清缓存，否则打开/关闭要等缓存过期才见效。见 generateSeries 的整句块。
-    reset_cache();
+    if (series_only)
+    {
+        reset_sentence_cache();
+    }
+    else
+    {
+        reset_cache();
+    }
 }
 
 void ShuangpinDictionary::set_rescoring_context(const std::string &context)

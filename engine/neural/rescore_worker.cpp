@@ -5,6 +5,10 @@
 #include <cstdlib>
 #include <utility>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace neural
 {
 namespace
@@ -128,6 +132,13 @@ void RescoreWorker::ensure_threads()
 
 void RescoreWorker::run()
 {
+#if defined(_WIN32)
+    // These scoring threads compete with the key thread for CPU while a user is typing. At
+    // normal priority a loaded machine splits a core 1:1, so the key path is slowed by the
+    // rerank that is supposed to help it. Below-normal matches the dictionary writer's
+    // background thread and leaves the foreground thread first claim on a core.
+    (void)::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
     for (;;)
     {
         // 线程是 detach 出来的，异常逃出线程函数没人接，直接 std::terminate，一个只在后台改
