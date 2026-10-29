@@ -11,7 +11,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include <windows.h>
@@ -1173,4 +1176,158 @@ TEST_CASE(DateTimeFormatOrderIsLearnedPinnedAndFixedByFormatId)
     items = ordered("rq");
     REQUIRE_EQ(items[0].fixed_position, 0);
     std::filesystem::remove_all(directory);
+}
+namespace
+{
+// 一条写法记录：（全拼键, 简体底词, 写法）。
+using VariantChoiceRow = std::tuple<std::string, std::string, std::string>;
+using VariantChoiceRows = std::vector<VariantChoiceRow>;
+
+// 日志库 traditional_variant_choices 表里的全部记录，按（键, 底词）排好，便于整份比较。
+VariantChoiceRows VariantChoiceRowsIn(const std::filesystem::path &user_path)
+{
+    sqlite3 *opened = nullptr;
+    const int open_status = sqlite3_open_v2(test::Utf8(user_path).c_str(), &opened, SQLITE_OPEN_READWRITE, nullptr);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(opened, sqlite3_close);
+    REQUIRE_EQ(open_status, SQLITE_OK);
+    sqlite3_stmt *prepared = nullptr;
+    REQUIRE_EQ(sqlite3_prepare_v2(
+                   db.get(), "SELECT key,base_word,spelling FROM traditional_variant_choices ORDER BY key,base_word",
+                   -1, &prepared, nullptr),
+               SQLITE_OK);
+    const std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> stmt(prepared, sqlite3_finalize);
+    const auto text = [&](int column) {
+        return std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt.get(), column)));
+    };
+    VariantChoiceRows rows;
+    int status = SQLITE_ROW;
+    while ((status = sqlite3_step(stmt.get())) == SQLITE_ROW)
+        rows.emplace_back(text(0), text(1), text(2));
+    REQUIRE_EQ(status, SQLITE_DONE);
+    return rows;
+}
+} // namespace
+
+// 繁体写法记录的表随日志库的 schema 建立：已有的旧日志库（没有这张表）打开时补建，
+// 反复打开不重建、不丢记录。
+TEST_CASE(TraditionalVariantChoiceTableIsCreatedOnceAndKeepsItsRows)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-schema-");
+    const auto user_path = directory.path() / "msime_user.db";
+    {
+        TestDatabase old_journal(user_path);
+        old_journal.exec("CREATE TABLE user_dictionary_operations(dictionary TEXT NOT NULL,key TEXT NOT NULL,"
+                         "value TEXT NOT NULL,operation TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+                         "display TEXT NOT NULL DEFAULT '',PRIMARY KEY(dictionary,key,value));");
+    }
+    const std::string user = test::Utf8(user_path);
+    REQUIRE(!user_dictionary::traditional_variant_choice(user, "tai'wan", "台湾").has_value());
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(user_dictionary::ensure_user_database(user));
+    REQUIRE(user_dictionary::ensure_user_database(user));
+    REQUIRE_EQ(VariantChoiceRowsIn(user_path), (VariantChoiceRows{{"tai'wan", "台湾", "台灣"}}));
+    TestDatabase journal(user_path);
+    REQUIRE_EQ(journal.scalar_int("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND "
+                                  "name='traditional_variant_choices'"),
+               1);
+}
+
+// 同一个（键, 底词）只留最后一次选择；键或底词不同就是另一条。
+TEST_CASE(TraditionalVariantChoiceKeepsOnlyTheLatestSpellingPerKeyAndWord)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-upsert-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const std::string user = test::Utf8(user_path);
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "檯"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "颱"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "太", "太"));
+    REQUIRE_EQ(VariantChoiceRowsIn(user_path),
+               (VariantChoiceRows{{"tai", "台", "颱"}, {"tai", "太", "太"}, {"tai'wan", "台湾", "台灣"}}));
+}
+
+// 删一条只删那个（键, 底词）：同一底词在别的键下、同一键下的别的底词都留着；删不存在的记录不算失败。
+TEST_CASE(TraditionalVariantChoiceForgetsOneKeyAndWord)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-forget-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const std::string user = test::Utf8(user_path);
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台弯", "臺彎"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan'", "台湾", "台灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "颱"));
+    REQUIRE(user_dictionary::forget_traditional_variant(user, "tai'wan", "台湾"));
+    REQUIRE(user_dictionary::forget_traditional_variant(user, "hou'tai", "后台"));
+    REQUIRE_EQ(VariantChoiceRowsIn(user_path),
+               (VariantChoiceRows{{"tai", "台", "颱"}, {"tai'wan", "台弯", "臺彎"}, {"tai'wan'", "台湾", "台灣"}}));
+}
+
+// 删词时按底词删：这个底词在所有键下的记录都删，别的底词留着；底词为空时不删。
+TEST_CASE(TraditionalVariantChoiceForgetsAWordUnderEveryKey)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-forget-word-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const std::string user = test::Utf8(user_path);
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "hou'tai", "后台", "後台"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "hou'tai'", "后台", "後臺"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "颱"));
+    REQUIRE(user_dictionary::forget_traditional_variants_of_word(user, "后台"));
+    REQUIRE_EQ(VariantChoiceRowsIn(user_path), (VariantChoiceRows{{"tai", "台", "颱"}}));
+    REQUIRE(!user_dictionary::forget_traditional_variants_of_word(user, ""));
+    REQUIRE_EQ(VariantChoiceRowsIn(user_path), (VariantChoiceRows{{"tai", "台", "颱"}}));
+}
+
+// 安装升级时的回放只读操作日志：写法记录原样留在日志库里，词库里也不会多出繁体词。
+TEST_CASE(TraditionalVariantChoicesSurviveReplayAndNeverReachTheDictionary)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-replay-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const auto main_path = directory.path() / "msime.db";
+    const auto english_path = directory.path() / "english.db";
+    {
+        TestDatabase main_db(main_path);
+        main_db.exec("CREATE TABLE tbl_1_t(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                     "CREATE TABLE tbl_2_t(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                     "INSERT INTO tbl_1_t VALUES('tai','t','台',100);"
+                     "INSERT INTO tbl_2_t VALUES('tai''wan','tw','台湾',100);");
+        TestDatabase english_db(english_path);
+        english_db.exec("CREATE TABLE english_words(word TEXT PRIMARY KEY,display TEXT);");
+    }
+    const std::string user = test::Utf8(user_path);
+    REQUIRE(user_dictionary::record_upsert(user, user_dictionary::DictionaryKind::Pinyin, "tai'wan", "台湾", 500));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai", "台", "颱"));
+    const VariantChoiceRows before = VariantChoiceRowsIn(user_path);
+
+    const auto replay = user_dictionary::replay(user, test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(replay.error.empty());
+    REQUIRE_EQ(replay.failed, 0);
+    REQUIRE_EQ(replay.applied, 1);
+
+    REQUIRE_EQ(VariantChoiceRowsIn(user_path), before);
+    REQUIRE_EQ(before.size(), static_cast<size_t>(2));
+    TestDatabase main_db(main_path);
+    REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM tbl_2_t WHERE value='台灣'"), 0);
+    REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM tbl_1_t WHERE value='颱'"), 0);
+    REQUIRE_EQ(main_db.scalar_int("SELECT weight FROM tbl_2_t WHERE value='台湾'"), 500);
+    REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM tbl_2_t"), 1);
+    REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM tbl_1_t"), 1);
+}
+
+// 日志库打不开时查不到：所在目录不存在，或路径上是一个不是数据库的文件。
+TEST_CASE(TraditionalVariantChoiceLookupReturnsNothingWhenTheJournalCannotBeOpened)
+{
+    const ScopedTempDirectory directory("msime-variant-choice-lookup-unopenable-");
+    const auto missing_directory = directory.path() / "missing";
+    REQUIRE(
+        !user_dictionary::traditional_variant_choice(test::Utf8(missing_directory / "msime_user.db"), "tai'wan", "台湾")
+             .has_value());
+    REQUIRE(!std::filesystem::exists(missing_directory));
+
+    const auto garbage_path = directory.path() / "msime_user.db";
+    {
+        std::ofstream garbage(garbage_path, std::ios::binary);
+        garbage << std::string(4096, 'x');
+    }
+    REQUIRE(!user_dictionary::traditional_variant_choice(test::Utf8(garbage_path), "tai'wan", "台湾").has_value());
 }

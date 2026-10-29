@@ -6,6 +6,7 @@
 #include "conversion/traditional_spelling_index.h"
 #include "engine/core/word_item.h"
 #include "ipc/traditional_region_policy.h"
+#include "ipc/traditional_spelling_index_with_choices.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "tests/includes/test_framework.h"
 
@@ -15,7 +16,9 @@
 #include <cstdio>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -360,6 +363,117 @@ TEST_CASE(traditional_conversion_async_candidate_skips_a_spelling_shown_inside_a
                        .output_text,
                    std::string("颱"));
         REQUIRE(!FanyImeIpc::ShouldInsertAsyncCandidate(tai, "tai", "颱", source, RealSettings(region)));
+    }
+}
+
+// ---- 真数据下造词逐段选出的写法 ----
+
+namespace
+{
+Spellings RealTaiwanSpellingsOf(const std::string &word, const std::optional<std::string> &remembered)
+{
+    return FanyImeIpc::TraditionalSpellingsOf(word, ChineseConverter::OpenCcTraditionalSpellingIndex(),
+                                              FanyImeIpc::TraditionalRegion::Taiwan, remembered);
+}
+} // namespace
+
+// 整词转换只有一种写法，记住的写法由单字写法逐段拼成：「乾」是「干」的字表写法，「台」是「台」的转换与字表
+// 写法。记录插到第一位，转换结果跟在后面。
+TEST_CASE(traditional_conversion_puts_a_composed_remembered_spelling_first)
+{
+    RequireForms("干早", "幹早", "幹早", "幹早", {});
+    RequireForms("台风", "颱風", "颱風", "颱風", {});
+    REQUIRE_EQ(RealTaiwanSpellingsOf("干早", std::nullopt), (Spellings{"幹早"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("干早", std::string("乾早")), (Spellings{"乾早", "幹早"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("台风", std::nullopt), (Spellings{"颱風"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("台风", std::string("台風")), (Spellings{"台風", "颱風"}));
+}
+
+// OpenCC 字表里「复」有 復 複 覆，「覆」是独立的简体字，索引不把它列在「复」下：记成「覆」的「复」记录不起作用，
+// 「复」单字与「复习」都照地区默认排；记成「複」「復習」照常排第一（「复习」整词转换是「複習」，期望值照 OpenCC
+// STPhrases、STCharacters、TSCharacters 原文）。
+TEST_CASE(traditional_conversion_ignores_a_remembered_independent_simplified_character)
+{
+    RequireForms("复", "復", "復", "復", {"復", "複", "覆"});
+    RequireForms("复习", "複習", "複習", "複習", {});
+    REQUIRE_EQ(RealTaiwanSpellingsOf("复", std::nullopt), (Spellings{"復", "複"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("复", std::string("覆")), (Spellings{"復", "複"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("复", std::string("複")), (Spellings{"複", "復"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("复习", std::string("覆習")), (Spellings{"複習"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("复习", std::string("復習")), (Spellings{"復習", "複習"}));
+}
+
+// 单字写法里只来自转换结果、不在字表里的字：「着」不在 STCharacters 里，t2tw 给「著」；「为」的字表只有「爲」，
+// t2tw、t2hk 给「為」。「干着急」整词转换是 乾着急、乾著急，「为难」是 爲難、為難（期望值照 opencc.exe 用 s2t、
+// t2tw、t2hk 实测）。逐字拼出的「幹著急」「為难」不在整词转换结果里，照样插到第一位。
+TEST_CASE(traditional_conversion_puts_first_a_remembered_spelling_composed_from_a_conversion_only_character)
+{
+    RequireForms("着", "着", "著", "着", {});
+    RequireForms("为", "爲", "為", "為", {"爲"});
+    RequireForms("干着急", "乾着急", "乾著急", "乾着急", {});
+    RequireForms("为难", "爲難", "為難", "為難", {});
+    REQUIRE_EQ(RealTaiwanSpellingsOf("干着急", std::nullopt), (Spellings{"乾著急", "乾着急"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("干着急", std::string("幹著急")), (Spellings{"幹著急", "乾著急", "乾着急"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("为难", std::nullopt), (Spellings{"為難", "爲難"}));
+    REQUIRE_EQ(RealTaiwanSpellingsOf("为难", std::string("為难")), (Spellings{"為难", "為難", "爲難"}));
+}
+
+// ---- 真数据经带写法记录的索引展开 ----
+
+namespace
+{
+// 写法记录查 records：（全拼键, 简体底词）→ 写法。
+FanyImeIpc::TraditionalSpellingIndexWithChoices::RememberedSpellingLookup RecordsIn(
+    std::map<std::pair<std::string, std::string>, std::string> records)
+{
+    return
+        [records = std::move(records)](const std::string &key, const std::string &word) -> std::optional<std::string> {
+            const auto found = records.find({key, word});
+            if (found == records.end())
+                return std::nullopt;
+            return found->second;
+        };
+}
+
+WordItem Keyed(const char *pinyin, const char *word, int weight)
+{
+    return WordItem(pinyin, word, weight, CandidateSource::Database, pinyin);
+}
+} // namespace
+
+// 产品的同步展开用的是 OpenCC 索引加上写法记录。经过这一层，写法归属照旧：「复」组是 復 複、没有「覆」，记成
+// 「複」时「複」排第一；「鍾」不论先后都归首选底词「钟」；「臺」「颱」词条排在「台」后面时，写法全被「台」组
+// 占走，整项不出现；「臺」词条排在「台」前面时留下「臺」，「台」组只剩 台 檯 颱（「臺」不是简体写法，不与「台」
+// 争首选底词）。
+TEST_CASE(traditional_conversion_keeps_spelling_ownership_through_the_index_with_choices)
+{
+    const FanyImeIpc::TraditionalSpellingIndexWithChoices index(ChineseConverter::OpenCcTraditionalSpellingIndex(),
+                                                                RecordsIn({{{"fu", "复"}, "複"}}));
+    for (const auto region : {FanyImeIpc::TraditionalRegion::Taiwan, FanyImeIpc::TraditionalRegion::HongKong})
+    {
+        const auto expand = [&](std::vector<WordItem> items) {
+            return FanyImeIpc::ExpandTraditionalVariants(std::move(items), index, region);
+        };
+
+        const auto fu = expand({Keyed("fu", "复", 9), Keyed("fu", "覆", 8)});
+        REQUIRE_EQ(Words(fu), (Spellings{"复", "复", "覆"}));
+        REQUIRE_EQ(OutputTexts(fu), (Spellings{"複", "復", "覆"}));
+        REQUIRE_EQ(Ranks(fu), (std::vector<int>{0, 1, 0}));
+
+        for (const auto &items : {std::vector<WordItem>{Keyed("zhong", "锺", 9), Keyed("zhong", "钟", 8)},
+                                  std::vector<WordItem>{Keyed("zhong", "钟", 9), Keyed("zhong", "锺", 8)}})
+            REQUIRE_EQ(WordsShownAs(expand(items), "鍾"), Spellings{"钟"});
+
+        const auto tai =
+            expand({Keyed("tai", "台", 9), Keyed("tai", "太", 8), Keyed("tai", "臺", 3), Keyed("tai", "颱", 2)});
+        REQUIRE_EQ(Words(tai), (Spellings{"台", "台", "台", "台", "太"}));
+        REQUIRE_EQ(OutputTexts(tai), region == FanyImeIpc::TraditionalRegion::Taiwan
+                                         ? (Spellings{"臺", "台", "檯", "颱", "太"})
+                                         : (Spellings{"台", "臺", "檯", "颱", "太"}));
+
+        const auto traditional_first = expand({Keyed("tai", "臺", 9), Keyed("tai", "台", 8)});
+        REQUIRE_EQ(Words(traditional_first), (Spellings{"臺", "台", "台", "台"}));
+        REQUIRE_EQ(OutputTexts(traditional_first), (Spellings{"臺", "台", "檯", "颱"}));
     }
 }
 

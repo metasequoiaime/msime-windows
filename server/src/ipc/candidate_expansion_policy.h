@@ -48,8 +48,9 @@ inline bool SetExpandedCandidatesKeepingPagePosition(Global::CandidateUiState &u
         // 前面的「台」收回「臺」。已显示的项不撤，所以新项的写法已经属于列表里另一个底词时丢掉新项，
         // 每种写法在列表里只属于一个底词。追加的项按组从 0 起重新编号（组以展开结果里 variant_rank 为 0 的项
         // 开头），被抵掉或丢掉的项不占序号，组首是这一组剩下的第一种写法。
-        // 一组不会前半已显示、后半是新项：已显示项的写法只看它自己的底词、来源与地区，与列表里还有谁无关，
-        // 选词期间也不并入异步候选，所以它在追加批里多出的写法一定已显示在别的底词下，会被丢掉。
+        // 一组不会前半已显示、后半是新项：已显示项的写法只看它自己的底词、来源、地区与写法记录，与列表里
+        // 还有谁无关，选词期间也不并入异步候选，所以它在追加批里多出的写法一定已显示在别的底词下，会被丢掉。
+        // 记录在选词、置顶、固定、删词时同步写入，之后列表整份重建。
         const auto identity = [](const WordItem &item) {
             return item.word + '\x1f' + item.pinyin + '\x1f' + std::to_string(static_cast<int>(item.source)) + '\x1f' +
                    item.output_text;

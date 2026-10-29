@@ -2,6 +2,7 @@
 
 #include "engine/core/word_item.h"
 #include "engine/local_modes/date_time_query.h"
+#include "ipc/candidate_text_policy.h"
 
 #include <algorithm>
 #include <limits>
@@ -82,6 +83,27 @@ inline bool ShouldStoreEarlyReturnPhrase(CandidateSource source, bool creating_w
         return ShouldStoreStandaloneSentence(source, candidate_canonical_pinyin);
     }
     return !prefix_canonical_pinyin.empty();
+}
+
+/** 提前返回分支要落库的一条词：pinyin 是 canonical 全拼，word 是简体底词。 */
+struct EarlyReturnPhrase
+{
+    std::string pinyin;
+    std::string word;
+};
+
+/**
+ * 提前返回分支落库的词（何时落库见 ShouldStoreEarlyReturnPhrase）：读音是造词前缀与候选两段 canonical
+ * 全拼的拼接，前缀为空时只取候选的；词是两段的简体底词拼接。屏幕上显示的繁体写法不进用户词库。
+ */
+inline EarlyReturnPhrase EarlyReturnPhraseToStore(const std::string &prefix_canonical_pinyin, const ChosenText &prefix,
+                                                  const std::string &candidate_canonical_pinyin,
+                                                  const ChosenText &candidate)
+{
+    // 前缀为空时不能带上那个分隔符，'na'yi'tiao 这种前导撇号会让整条读音作废。
+    std::string pinyin = prefix_canonical_pinyin.empty() ? candidate_canonical_pinyin
+                                                         : prefix_canonical_pinyin + "'" + candidate_canonical_pinyin;
+    return {std::move(pinyin), prefix.word + candidate.word};
 }
 
 // 异步候选的槽位按普通候选数，快捷短语不占槽位，同一底词的繁体写法（variant_rank > 0 的项）

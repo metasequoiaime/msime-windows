@@ -123,6 +123,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_region_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_order_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_expansion_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_choice_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_performance.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_size_estimator.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/candidate_size_estimator.cpp"

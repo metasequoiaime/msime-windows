@@ -3,6 +3,7 @@
 #include "conversion/traditional_forms.h"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,15 +33,26 @@ class TraditionalSpellingIndex
      * 单字写法 spelling 的首选底词：繁转简时它转成的那个字，不转换时是它自己。不是单字时返回空串。
      */
     virtual std::string PreferredWordOf(const std::string &spelling) const = 0;
+
+    /** 用户在全拼键 key 下给简体底词 word 选过的写法；没有记录时返回空。不带写法记录的索引恒返回空。 */
+    virtual std::optional<std::string> RememberedSpellingOf(const std::string & /*key*/,
+                                                            const std::string & /*word*/) const
+    {
+        return std::nullopt;
+    }
 };
+
+/** 以 lead 为首字节的 UTF-8 码位占几个字节。 */
+inline size_t Utf8CodePointLength(unsigned char lead)
+{
+    return lead < 0x80 ? 1 : (lead & 0xE0) == 0xC0 ? 2 : (lead & 0xF0) == 0xE0 ? 3 : 4;
+}
 
 inline bool IsSingleUtf8CodePoint(const std::string &text)
 {
     if (text.empty())
         return false;
-    const auto lead = static_cast<unsigned char>(text.front());
-    const size_t length = lead < 0x80 ? 1 : (lead & 0xE0) == 0xC0 ? 2 : (lead & 0xF0) == 0xE0 ? 3 : 4;
-    return text.size() == length;
+    return text.size() == Utf8CodePointLength(static_cast<unsigned char>(text.front()));
 }
 
 /**

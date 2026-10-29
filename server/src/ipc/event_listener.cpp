@@ -674,7 +674,8 @@ std::vector<WordItem> WithTraditionalVariantsFor(std::vector<WordItem> items, co
 {
     if (!ShouldConvertCandidateTextIn(character_set, IsRadicalCandidateListActive()))
         return items;
-    return FanyImeIpc::ExpandTraditionalVariants(std::move(items), ChineseConverter::OpenCcTraditionalSpellingIndex(),
+    return FanyImeIpc::ExpandTraditionalVariants(std::move(items),
+                                                 FanyNamedPipe::TraditionalSpellingIndexWithUserChoices(),
                                                  ChineseConverter::UserTraditionalRegion());
 }
 
@@ -689,12 +690,17 @@ void ReorderCandidatesAsOneItemPerWord(std::vector<WordItem> &items,
     items = FanyImeIpc::ReorderAsOneItemPerWord(std::move(items), reorder, WithTraditionalVariants);
 }
 
+std::string RegionalFirstSpellingOfText(const std::string &text)
+{
+    const auto spellings = TraditionalSpellingsOfText(text);
+    return spellings.empty() ? text : spellings.front();
+}
+
 std::string FirstSpellingOfText(const std::string &text)
 {
     if (!ShouldConvertCandidateTextIn(ShownCandidateCharacterSet(), /*radical_candidate_list=*/false))
         return text;
-    const auto spellings = TraditionalSpellingsOfText(text);
-    return spellings.empty() ? text : spellings.front();
+    return RegionalFirstSpellingOfText(text);
 }
 
 FanyImeIpc::ChosenText CreatingWordChosenText()
@@ -712,6 +718,14 @@ FanyImeIpc::CandidateSpellingSettings CandidateListSpellingSettings()
             FanyNamedPipe::CandidateListCharacterSet() == "traditional",
             g_inputSession ? g_inputSession->current_scheme_type() : SchemeType::Quanpin,
             IsRadicalCandidateListActive()};
+}
+
+FanyImeIpc::VariantChoiceScope CurrentVariantChoiceScope(const WordItem &item)
+{
+    const bool japanese_scheme =
+        item.scheme == SchemeType::JapaneseRomaji ||
+        (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji);
+    return {ShownCandidateCharacterSet() == "traditional", japanese_scheme, IsRadicalCandidateListActive()};
 }
 
 WordItem WithFirstTraditionalSpelling(WordItem item)

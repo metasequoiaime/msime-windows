@@ -2,11 +2,14 @@
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "tests/includes/fake_traditional_spelling_index.h"
+#include "tests/includes/table_traditional_spelling_index.h"
 #include "tests/includes/test_framework.h"
 
 #include <algorithm>
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -411,6 +414,97 @@ TEST_CASE(candidate_output_text_converts_an_unexpanded_candidate)
     REQUIRE_EQ(FanyImeIpc::CandidateOutputTextFor(item, true, to_output), std::string("converted:快捷短语"));
 }
 
+// ---- 记住的写法不在转换结果里：造词逐段选出的写法 ----
+
+namespace
+{
+// 整词与单字的 s2t、t2tw、t2hk 结果与单字字表写法。「干早」「台风」的整词转换只有一种写法；表里没有的字转换成
+// 自己、没有字表写法。
+test::TableTraditionalSpellingIndex ComposedIndex(std::set<std::string> traditional_words = {},
+                                                  test::TableTraditionalSpellingIndex::RememberedOf remembered = {})
+{
+    return test::TableTraditionalSpellingIndex(
+        {
+            {"干早", {"幹早", "幹早", "幹早"}},
+            {"干", {"幹", "幹", "幹"}},
+            {"台风", {"颱風", "颱風", "颱風"}},
+            {"台", {"臺", "臺", "台"}},
+            {"风", {"風", "風", "風"}},
+            {"台湾", {"臺灣", "臺灣", "台灣"}},
+            {"湾", {"灣", "灣", "灣"}},
+            {"乾早", {"乾早", "乾早", "乾早"}},
+        },
+        {{"干", {"幹", "乾", "干", "榦"}}, {"台", {"臺", "檯", "颱", "台"}}, {"风", {"風"}}, {"湾", {"灣"}}},
+        std::move(traditional_words), std::move(remembered));
+}
+
+Spellings ComposedSpellingsOf(const std::string &word, FanyImeIpc::TraditionalRegion region,
+                              const std::optional<std::string> &remembered)
+{
+    return FanyImeIpc::TraditionalSpellingsOf(word, ComposedIndex(), region, remembered);
+}
+
+Spellings TaiwanComposedSpellingsOf(const std::string &word, const std::optional<std::string> &remembered)
+{
+    return ComposedSpellingsOf(word, FanyImeIpc::TraditionalRegion::Taiwan, remembered);
+}
+
+// 记录只有一条：全拼键 gan'zao 下的「干早」记成「乾早」。
+std::optional<std::string> GanzaoRemembered(const std::string &key, const std::string &word)
+{
+    if (key == "gan'zao" && word == "干早")
+        return std::string("乾早");
+    return std::nullopt;
+}
+} // namespace
+
+// 逐个位置上，记住的字等于底词的字也算可选：「风」不在「风」自己的单字写法（只有「風」）里。
+TEST_CASE(traditional_spellings_accept_a_remembered_character_equal_to_the_base_character)
+{
+    REQUIRE_EQ(TaiwanComposedSpellingsOf("台风", std::string("颱风")), (Spellings{"颱风", "颱風"}));
+}
+
+// 不可选的记录照旧忽略：有一个位置的字不在底词那个字的写法里，或码位数与底词不同。
+TEST_CASE(traditional_spellings_ignore_a_remembered_spelling_that_is_not_composable)
+{
+    const Spellings regional = {"幹早"};
+    // 「燥」不是「早」的写法。
+    REQUIRE_EQ(TaiwanComposedSpellingsOf("干早", std::string("乾燥")), regional);
+    // 码位数不同：短了，或前面几位都可选但多出一位。
+    REQUIRE_EQ(TaiwanComposedSpellingsOf("干早", std::string("乾")), regional);
+    REQUIRE_EQ(TaiwanComposedSpellingsOf("干早", std::string("乾早早")), regional);
+    // 每个字都是底词里某个字的写法，但位置对不上。
+    REQUIRE_EQ(TaiwanComposedSpellingsOf("台风", std::string("風台")), (Spellings{"颱風"}));
+    REQUIRE_EQ(TaiwanComposedSpellingsOf("干早", std::string("")), regional);
+}
+
+// 记住的写法在转换结果里时照旧挪到第一，不重复插入。
+TEST_CASE(traditional_spellings_move_a_listed_remembered_spelling_without_inserting_it)
+{
+    REQUIRE_EQ(ComposedSpellingsOf("台湾", FanyImeIpc::TraditionalRegion::Taiwan, std::string("台灣")),
+               (Spellings{"台灣", "臺灣"}));
+    REQUIRE_EQ(ComposedSpellingsOf("台", FanyImeIpc::TraditionalRegion::Taiwan, std::string("颱")),
+               (Spellings{"颱", "臺", "台", "檯"}));
+}
+
+// 展开按候选的全拼键（canonical_pinyin）查记录：键为空的候选不查，同一底词在别的键下不用这条记录。
+TEST_CASE(expanding_looks_up_records_by_the_canonical_pinyin_of_each_candidate)
+{
+    std::vector<std::pair<std::string, std::string>> lookups;
+    const auto index = ComposedIndex({}, [&](const std::string &key, const std::string &word) {
+        lookups.emplace_back(key, word);
+        return GanzaoRemembered(key, word);
+    });
+    const auto expanded = FanyImeIpc::ExpandTraditionalVariants(
+        std::vector<WordItem>{WordItem("gan'zao", "干早", 9),
+                              WordItem("gz", "干早", 8, CandidateSource::Database, "gan'zao"),
+                              WordItem("gan'zao", "干早", 7, CandidateSource::Database, "gang'zao")},
+        index, FanyImeIpc::TraditionalRegion::Taiwan);
+    REQUIRE_EQ(OutputTexts(expanded), (Spellings{"幹早", "乾早", "幹早", "幹早"}));
+    REQUIRE_EQ(Ranks(expanded), (std::vector<int>{0, 0, 1, 0}));
+    REQUIRE((lookups == std::vector<std::pair<std::string, std::string>>{{"gan'zao", "干早"}, {"gang'zao", "干早"}}));
+}
+
 // 快捷短语组的「越过」学习：选了组后某个候选的第二写法，名次按这一组的第一写法算，每组算一个。
 TEST_CASE(quick_phrase_bypass_rank_counts_each_spelling_group_once)
 {
@@ -596,6 +690,54 @@ TEST_CASE(page_position_of_word_is_empty_without_a_page_size)
 {
     const std::vector<WordItem> items = {WithRank("台", 0)};
     REQUIRE(!FanyImeIpc::PagePositionOfWord(items, "台", 0).has_value());
+}
+
+// ---- 写法记录与异步候选 ----
+
+// 列表里「干早」组因记录换了组首：记成「乾早」，组是 乾早 幹早。底词不同的云 / AI 候选「乾早」（繁体字词条）的
+// 第一写法「乾早」正是这组显示的组首：跳过。同一份列表没有记录时组里只有「幹早」，同一条候选照常插入。
+TEST_CASE(async_insertion_compares_with_the_spellings_a_record_put_in_the_list)
+{
+    const auto remembered = ComposedIndex({"乾早"}, GanzaoRemembered);
+    const auto plain = ComposedIndex({"乾早"});
+    const std::vector<WordItem> local = {WordItem("gan'zao", "干早", 9, CandidateSource::Database, "gan'zao"),
+                                         WordItem("ta", "他", 8, CandidateSource::Database, "ta")};
+    const auto with_record =
+        FanyImeIpc::ExpandTraditionalVariants(local, remembered, FanyImeIpc::TraditionalRegion::Taiwan);
+    const auto without_record =
+        FanyImeIpc::ExpandTraditionalVariants(local, plain, FanyImeIpc::TraditionalRegion::Taiwan);
+    REQUIRE_EQ(OutputTexts(with_record), (Spellings{"乾早", "幹早", "他"}));
+    REQUIRE_EQ(OutputTexts(without_record), (Spellings{"幹早", "他"}));
+    const FanyImeIpc::CandidateSpellingSettings settings{plain, FanyImeIpc::TraditionalRegion::Taiwan, true,
+                                                         SchemeType::Quanpin, false};
+    for (const auto source : kAsyncSources)
+    {
+        REQUIRE(!FanyImeIpc::ShouldInsertAsyncCandidate(with_record, "gan'zao", "乾早", source, settings));
+        REQUIRE(FanyImeIpc::ShouldInsertAsyncCandidate(without_record, "gan'zao", "乾早", source, settings));
+    }
+}
+
+// 云、AI 候选没有全拼键，填第一写法与插入判定都不查写法记录：索引里有「干早」的记录，候选「干早」的第一写法仍是
+// 地区默认的「幹早」，列表里显示「乾早」的项挡不住它；查记录的次数为 0。
+TEST_CASE(async_candidates_do_not_read_spelling_records)
+{
+    size_t lookups = 0;
+    const auto index = ComposedIndex({"乾早"}, [&](const std::string &key, const std::string &word) {
+        ++lookups;
+        return GanzaoRemembered(key, word);
+    });
+    const FanyImeIpc::CandidateSpellingSettings settings{index, FanyImeIpc::TraditionalRegion::Taiwan, true,
+                                                         SchemeType::Quanpin, false};
+    WordItem shown("gan'zao", "乾早", 9);
+    shown.output_text = "乾早";
+    for (const auto source : kAsyncSources)
+    {
+        REQUIRE_EQ(
+            FanyImeIpc::WithFirstTraditionalSpellingOf(WordItem("gan'zao", "干早", 0, source), settings).output_text,
+            std::string("幹早"));
+        REQUIRE(FanyImeIpc::ShouldInsertAsyncCandidate({shown}, "gan'zao", "干早", source, settings));
+    }
+    REQUIRE_EQ(lookups, size_t{0});
 }
 
 // ---- 组字途中切换字形：在当前列表上收拢，再按新字形展开 ----

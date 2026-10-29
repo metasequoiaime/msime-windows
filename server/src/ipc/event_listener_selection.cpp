@@ -255,6 +255,8 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         const auto ranking_keys = RankingKeysForCandidate(curWordItem);
         const std::string ranking_context_key = ranking_keys.first;
         const std::string ranking_entry_key = ranking_keys.second;
+        // 繁体写法记录的判定条件，同样要在组合推进之前取。
+        const FanyImeIpc::VariantChoiceScope variant_choice_scope = CurrentVariantChoiceScope(curWordItem);
         // First-page first slot is already the default commit; space/mouse/digit
         // should only learn when the user picked something else.
         const bool is_first_page_first = Global::candidate_ui.page_index == 0 && index == 0;
@@ -306,8 +308,10 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             curWordItem.source == CandidateSource::DateTime ||
             (curWordItem.source == CandidateSource::Generated && !japanese_candidate))
         {
-            Global::candidate_ui.selected_text = string_to_wstring(FanyImeIpc::CommitTextAfterCreatingWordPrefix(
-                CreatingWordChosenText(), curChosen, IsRadicalCandidateListActive(), FirstSpellingOfText));
+            const FanyImeIpc::ChosenText prefix_chosen = CreatingWordChosenText();
+            const std::string committed_text = FanyImeIpc::CommitTextAfterCreatingWordPrefix(
+                prefix_chosen, curChosen, IsRadicalCandidateListActive(), FirstSpellingOfText);
+            Global::candidate_ui.selected_text = string_to_wstring(committed_text);
             // 整句候选走的是这条提前返回的捷径，到不了下面 creating_word 的收尾逻辑，
             // 因此造好的词必须在这里落库，否则前缀 + 整句只上屏、学不到。没有前缀时
             // 整句自己就是要落库的那条词：它在词库里没有行，下面的调频改不到它。
@@ -319,14 +323,18 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
                                            curWordItem.source, GlobalIme::composition.creating_word.active,
                                            GlobalIme::composition.creating_word.pinyin, curWordItem.canonical_pinyin))
             {
-                const std::string &prefix_pinyin = GlobalIme::composition.creating_word.pinyin;
-                // 前缀为空时不能带上那个分隔符，'na'yi'tiao 这种前导撇号会让整条读音作废。
-                const std::string stored_pinyin = prefix_pinyin.empty()
-                                                      ? curWordItem.canonical_pinyin
-                                                      : prefix_pinyin + "'" + curWordItem.canonical_pinyin;
+                const FanyImeIpc::EarlyReturnPhrase phrase =
+                    FanyImeIpc::EarlyReturnPhraseToStore(GlobalIme::composition.creating_word.pinyin, prefix_chosen,
+                                                         curWordItem.canonical_pinyin, curChosen);
                 // 这里异步处理，不然有可能会阻塞住 TSF 端读取 pipe 导致超时
-                EnqueueStoreUserPhraseTask(stored_pinyin, GlobalIme::composition.creating_word.word + curWord,
-                                           /*pinyin_is_canonical=*/true);
+                EnqueueStoreUserPhraseTask(phrase.pinyin, phrase.word, /*pinyin_is_canonical=*/true);
+                // 前缀接上这条候选上屏时，按上屏的整串写法改写法记录。
+                if (GlobalIme::composition.creating_word.active)
+                {
+                    RememberOrForgetComposedTraditionalVariant(
+                        variant_choice_scope, prefix_chosen.first_spellings && curChosen.first_spellings, phrase.pinyin,
+                        phrase.word, committed_text);
+                }
             }
             // 同理，这条捷径也到不了下面的 AI 上下文累积。造词前缀在它自己被选中的那次
             // ProcessSelectionKey 里已经追加过了，这里只补本次提交的这一段。
@@ -511,6 +519,14 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
                                                GlobalIme::composition.creating_word.word,
                                                /*pinyin_is_canonical=*/true);
                 }
+                if (!japanese_candidate)
+                {
+                    const auto &creating_word = GlobalIme::composition.creating_word;
+                    RememberOrForgetComposedTraditionalVariant(variant_choice_scope, creating_word.all_first_spellings,
+                                                               creating_word_progress.can_store ? creating_word.pinyin
+                                                                                                : std::string(),
+                                                               creating_word.word, creating_word.prefix_text);
+                }
 
                 /* 清理 */
                 GlobalIme::composition.clear_creating_word();
@@ -583,6 +599,12 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             /* TODO: 这里到 main 线程的时候，可能下面的那个清理状态的操作已经执行了，因此，这里可能会导致 string
              * 越界的问题 */
             RequestShowCandidateWindow();
+        }
+
+        // 普通选词（不在造词里）选了这组不排第一的写法时记下它；造词的写法在上面按整词记。
+        if (!isNeedCreateWord && !was_creating_word)
+        {
+            RememberOrForgetSelectedTraditionalVariant(variant_choice_scope, curWordItem);
         }
 
         if (isNeedUpdateWeight)

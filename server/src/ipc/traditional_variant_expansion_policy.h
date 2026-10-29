@@ -4,6 +4,7 @@
 #include "engine/core/word_item.h"
 #include "ipc/candidate_text_policy.h"
 #include "ipc/traditional_region_policy.h"
+#include "ipc/traditional_variant_choice_policy.h"
 #include "ipc/traditional_variant_order_policy.h"
 
 #include <algorithm>
@@ -90,26 +91,22 @@ inline std::unordered_map<std::string, std::string> SpellingOwners(
     }
     return owners;
 }
-} // namespace traditional_variant_detail
 
-/**
- * 一个简体词按地区排好序的全部繁体写法：index 的三种转换结果，单字再接 index 给的字表写法；多字词不查字表。
- */
-inline std::vector<std::string> TraditionalSpellingsOf(const std::string &simplified,
-                                                       const ChineseConverter::TraditionalSpellingIndex &index,
-                                                       TraditionalRegion region)
+inline std::optional<std::string> RememberedSpellingFor(const WordItem &item,
+                                                        const ChineseConverter::TraditionalSpellingIndex &index)
 {
-    const auto forms = index.FormsOf(simplified);
-    const std::vector<std::string> character_table = ChineseConverter::IsSingleUtf8CodePoint(simplified)
-                                                         ? index.CharacterTableSpellingsOf(simplified)
-                                                         : std::vector<std::string>{};
-    return OrderTraditionalVariants(forms.standard, forms.taiwan, forms.hong_kong, character_table, region);
+    const std::string key = VariantChoiceKeyOf(item);
+    if (key.empty())
+        return std::nullopt;
+    return index.RememberedSpellingOf(key, item.word);
 }
+} // namespace traditional_variant_detail
 
 /**
  * 把候选列表展开成繁体写法：按 VariantExpansionFor 决定每个候选出几项，每项复制原候选的全部字段，
  * output_text 填写法，variant_rank 是它在这个底词留下的写法里的序号（0 起）。写法取
- * TraditionalSpellingsOf(word, index, region)；没有写法的候选原样保留。
+ * TraditionalSpellingsOf(word, index, region, 记住的写法)，记住的写法是 index.RememberedSpellingOf(键, word)，
+ * 键见 VariantChoiceKeyOf，键为空的候选不查记录；没有写法的候选原样保留。
  * 填了写法的项之间，两个不同底词（word）出同一种写法时只留一项，依次按：
  * 单字写法被两个以上简体写法（index.IsSimplifiedSpelling 为真）的单字底词展开、且它的首选底词
  * （index.PreferredWordOf）也在其中时，留首选底词；写法就等于自己底词、且这个底词是简体写法时，留它；
@@ -128,7 +125,8 @@ inline std::vector<WordItem> ExpandTraditionalVariants(std::vector<WordItem> ite
         if (expansion == VariantExpansion::Unchanged)
             continue;
         auto &spellings = listed[position];
-        spellings = TraditionalSpellingsOf(items[position].word, index, region);
+        spellings = TraditionalSpellingsOf(items[position].word, index, region,
+                                           traditional_variant_detail::RememberedSpellingFor(items[position], index));
         spellings.erase(std::remove(spellings.begin(), spellings.end(), std::string()), spellings.end());
         if (expansion == VariantExpansion::FirstSpelling && spellings.size() > 1)
             spellings.resize(1);
@@ -321,7 +319,7 @@ struct CandidateSpellingSettings
 /**
  * 给一条云或 AI 候选填上排序后的第一写法，插进列表的项与插入前判定用的探针都由它填。
  * 按 ShouldConvertCandidateTextToTraditional 不做简转繁时（简体字形、日语方案、U 模式拆字列表）原样返回；
- * 没有写法时也原样返回。
+ * 没有写法时也原样返回。写法记录的查法同 ExpandTraditionalVariants：云、AI 候选没有全拼键，不查记录。
  */
 inline WordItem WithFirstTraditionalSpellingOf(WordItem item, const CandidateSpellingSettings &settings)
 {
@@ -335,7 +333,8 @@ inline WordItem WithFirstTraditionalSpellingOf(WordItem item, const CandidateSpe
 
 /**
  * 一条云或 AI 候选（底词 word、拼音 pinyin、来源 source）该不该插进当前列表 items：按 settings 填好它插入后的
- * 第一写法（方案取 settings.scheme），列表里已有同一底词、或已有项显示同一种写法时为假。
+ * 第一写法（方案取 settings.scheme），列表里已有同一底词、或已有项显示同一种写法时为假。候选不查写法记录
+ * （它没有全拼键）；列表里的项按各自的 output_text 比。
  */
 inline bool ShouldInsertAsyncCandidate(const std::vector<WordItem> &items, const std::string &pinyin,
                                        const std::string &word, CandidateSource source,
