@@ -498,6 +498,16 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         {
             input = '-';
         }
+        else if (keycode == VK_OEM_MINUS && (wch == L'-' || wch == L'_'))
+        {
+            // Page-boundary minus and its Shift variant become literal input.
+            input = static_cast<char>(wch);
+        }
+        else if (keycode == VK_OEM_PLUS && wch == L'+')
+        {
+            // Shift+= becomes a literal plus.
+            input = static_cast<char>(wch);
+        }
         else if (IsDateTimeInputKey(keycode, wch, raw) || IsVModeInputKey(wch, raw))
         {
             input = static_cast<char>(wch);
@@ -555,6 +565,49 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         g_inputSession->recompute_candidates();
     }
     composition.raw_input_with_cases = raw;
+    return true;
+}
+
+// A literal character that would otherwise be swallowed as a candidate-navigation
+// key becomes part of the raw spelling. The engine cannot split a spelling that
+// carries it, so the candidate list collapses to the single fallback entry
+// showing the typed string, and Space commits exactly that string.
+//
+// Only hosts that negotiated composition restore can apply the frame. Callers
+// decide which keys qualify; this helper only checks that the append itself is
+// meaningful.
+bool AppendLiteralToComposition(WCHAR literal, uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
+{
+    const std::string raw = g_inputSession->get_pinyin_sequence_with_cases();
+    if (raw.empty() || GlobalIme::composition.caret_position < raw.size() || g_english_input_mode || IsUiLessMode() ||
+        IsJapaneseInputMode() || IsSpecialModeCompositionActive(raw) || IsCandidateSubPageActive() ||
+        !ClientNegotiatedCompositionRestore(client_id))
+    {
+        return false;
+    }
+
+    // Reuse the ordinary edit-key path so the engine sequence, the literal-input
+    // flag, wubi truncation and the caret rule all match a normal typed letter.
+    const UINT keycode = literal == L'+' ? VK_OEM_PLUS : VK_OEM_MINUS;
+    bool composition_restored = false;
+    if (!ApplyCompositionEditKey(keycode, literal, Global::ModifiersDown, true, composition_restored))
+    {
+        return false;
+    }
+    if (composition_restored)
+    {
+        return false;
+    }
+
+    // PrepareCandidateList emits the same single fallback for an unsplittable
+    // spelling, so later rebuilds keep the entry instead of dropping it right
+    // before Space.
+    FanyNamedPipe::PrepareCandidateList(client_id, activation_epoch);
+
+    Global::MsgTypeToTsf = Global::DataFromServerMsgType::CompositionRestored;
+    Global::candidate_ui.selected_text = BuildCreateWordPipePayload(g_inputSession->get_pinyin_sequence_with_cases(),
+                                                                    GlobalIme::composition.creating_word.word);
+    FanyNamedPipe::SendCurrentDataToClient(client_id, activation_epoch, request_id);
     return true;
 }
 
@@ -1783,6 +1836,16 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         };
 
         const bool shift_down = (Global::ModifiersDown & 0b00000001u) != 0;
+        // Shift+- / Shift+= append the ASCII symbol to the raw spelling. The key
+        // stays claimed by the IME, so the reply has to rebuild the composition;
+        // MoveCandidatePage would otherwise swallow it as a page turn. Hosts that
+        // cannot apply the frame fall through to the ordinary paging path.
+        if (GetConfiguredPagingMinusEqualEnabled() &&
+            FanyImeIpc::IsShiftedPagingSymbolKey(Global::Keycode, Global::Wch, Global::ModifiersDown) &&
+            AppendLiteralToComposition(Global::Wch, client_id, activation_epoch, request_id))
+        {
+            return;
+        }
         if (Global::Keycode == VK_OEM_MINUS && GetConfiguredPagingMinusEqualEnabled())
         {
             move_page(-1, Global::DataFromServerMsgType::MovePagePrevious);

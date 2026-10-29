@@ -1054,6 +1054,28 @@ HRESULT CMetasequoiaIME::_ApplyCreatingWordPayload(TfEditCookie ec, _In_ ITfCont
 
 //+---------------------------------------------------------------------------
 //
+// _HandleApplyCompositionRestore
+//
+// Applies a Server-authored composition rebuild that arrived as the answer to a
+// candidate key. The creating-word frame is the same one Backspace and Escape
+// already consume, so the keystroke buffer, accumulated word, preedit and caret
+// all follow the Server's copy instead of being reproduced locally.
+//
+//----------------------------------------------------------------------------
+
+HRESULT CMetasequoiaIME::_HandleApplyCompositionRestore(TfEditCookie ec, _In_ ITfContext *pContext,
+                                                        const std::wstring &payload)
+{
+    CreatingWordPayload parsed;
+    if (!ParseCreatingWordPayload(payload, parsed))
+    {
+        return S_OK;
+    }
+    return _ApplyCreatingWordPayload(ec, pContext, parsed);
+}
+
+//+---------------------------------------------------------------------------
+//
 // _HandleCompositionBackspace
 //
 //----------------------------------------------------------------------------

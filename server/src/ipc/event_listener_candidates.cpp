@@ -845,7 +845,13 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
         !FanyImeIpc::IsCaretPrefixEmpty(g_inputSession->prefix_end(),
                                         g_inputSession->get_pinyin_sequence_with_cases().size()))
     {
-        items.emplace_back(pinyin, pinyin, 1, CandidateSource::Fallback);
+        // A spelling carrying a literal '-', '_' or '+' cannot be split by the
+        // engine, so every rebuild has to reproduce the same typed-string
+        // fallback the key published; otherwise the next ShowCandidate drops the
+        // only entry and Space has nothing to commit.
+        const bool literal_spelling = current_input.find_first_of("-_+") != std::string::npos;
+        const std::string fallback = literal_spelling ? current_input : pinyin;
+        items.emplace_back(fallback, fallback, 1, CandidateSource::Fallback);
     }
 
     // Whatever the branch above did that the two splits did not already claim.

@@ -922,6 +922,30 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
             pIME->_CompleteDeferredKeyReplay(request.deferredReplayToken);
             break;
         }
+        if (receivedData->msg_type == Global::DataFromServerMsgType::CompositionRestored)
+        {
+            // A page-boundary minus turned into a literal character in the raw
+            // spelling. The Server owns the new composition; TSF rebuilds its
+            // keystroke buffer from the payload instead of guessing the edit.
+            ITfDocumentMgr *pDocMgrFocus = nullptr;
+            ITfContext *pContext = nullptr;
+            if (SUCCEEDED(pIME->_GetThreadMgr()->GetFocus(&pDocMgrFocus)) && pDocMgrFocus &&
+                SUCCEEDED(pDocMgrFocus->GetTop(&pContext)) && pContext)
+            {
+                _KEYSTROKE_STATE state = {};
+                state.Category = CATEGORY_COMPOSING;
+                state.Function = FUNCTION_APPLY_COMPOSITION_RESTORE;
+                pIME->_InvokeKeyHandler(pContext, code, wch, 0, state, request.requestId,
+                                        std::wstring(receivedData->candidate_string), 0, request.compositionEpoch,
+                                        request.focusToken, request.deferredReplayToken);
+                pContext->Release();
+            }
+            if (pDocMgrFocus != nullptr)
+            {
+                pDocMgrFocus->Release();
+            }
+            break;
+        }
         if (navigationOnly)
         {
             // The Server never commits for these keys, so the reply (or the

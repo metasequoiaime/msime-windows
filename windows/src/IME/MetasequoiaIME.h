@@ -308,6 +308,9 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     // word (NeedToCreateWord) and when the Server retracts it
     // (CompositionRestored).
     HRESULT _ApplyCreatingWordPayload(TfEditCookie ec, _In_ ITfContext *pContext, const CreatingWordPayload &payload);
+    // Applies a Server-driven composition rebuild carried by an asynchronous
+    // candidate-key request. The payload is the ordinary creating-word frame.
+    HRESULT _HandleApplyCompositionRestore(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &payload);
     HRESULT _HandleCompositionDelete(TfEditCookie ec, _In_ ITfContext *pContext, uint64_t requestId);
     HRESULT _HandleCompositionArrowKey(TfEditCookie ec, _In_ ITfContext *pContext, KEYSTROKE_FUNCTION keyFunction,
                                        uint64_t requestId = FANY_IME_NO_REQUEST_ID);
