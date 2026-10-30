@@ -1,11 +1,15 @@
-#include "ipc/event_listener_internal.h"
+#include "ipc/event_listener_task_class.h"
 #include "tests/includes/test_framework.h"
 
 #include <array>
+#include <deque>
+#include <future>
 #include <initializer_list>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -27,6 +31,50 @@ std::array<TaskClassHead, kTaskClassCount> HeadsWith(std::initializer_list<std::
         heads[TaskClassIndex(task_class)] = TaskClassHead{true, wait_ms};
     }
     return heads;
+}
+
+std::vector<TaskType> DrainBlockedWorker(std::initializer_list<TaskType> posted)
+{
+    struct QueuedTask
+    {
+        TaskType type;
+        std::uint64_t sequence;
+    };
+    std::array<std::deque<QueuedTask>, kTaskClassCount> queues;
+    std::vector<TaskType> completed;
+    std::promise<void> worker_started;
+    std::promise<void> release_worker;
+    auto started = worker_started.get_future();
+    auto released = release_worker.get_future();
+    std::thread worker([&] {
+        worker_started.set_value();
+        released.wait();
+        for (;;)
+        {
+            std::array<TaskClassHead, kTaskClassCount> heads{};
+            bool has_work = false;
+            for (std::size_t i = 0; i < queues.size(); ++i)
+            {
+                heads[i].has_task = !queues[i].empty();
+                has_work |= heads[i].has_task;
+                if (heads[i].has_task)
+                    heads[i].enqueue_sequence = queues[i].front().sequence;
+            }
+            if (!has_work)
+                break;
+            auto &queue = queues[TaskClassIndex(NextTaskClass(heads))];
+            completed.push_back(queue.front().type);
+            queue.pop_front();
+        }
+    });
+    started.wait();
+    // The gate keeps the worker from taking a task until every task is queued.
+    std::uint64_t sequence = 0;
+    for (TaskType type : posted)
+        queues[TaskClassIndex(ClassifyTask(type))].push_back({type, ++sequence});
+    release_worker.set_value();
+    worker.join();
+    return completed;
 }
 } // namespace
 
@@ -54,16 +102,16 @@ TEST_CASE(task_classification_covers_every_task_type)
         {TaskType::ClientSuspended, TaskClass::Foreground},
         {TaskType::StatusSnapshot, TaskClass::Foreground},
         {TaskType::UiCommitCandidate, TaskClass::Foreground},
-        {TaskType::UiPinCandidate, TaskClass::UserAction},
-        {TaskType::UiDeleteCandidate, TaskClass::UserAction},
-        {TaskType::UiFixCandidatePosition, TaskClass::UserAction},
-        {TaskType::UiClearCandidatePosition, TaskClass::UserAction},
+        {TaskType::UiPinCandidate, TaskClass::Foreground},
+        {TaskType::UiDeleteCandidate, TaskClass::Foreground},
+        {TaskType::UiFixCandidatePosition, TaskClass::Foreground},
+        {TaskType::UiClearCandidatePosition, TaskClass::Foreground},
         {TaskType::UiPageUp, TaskClass::Foreground},
         {TaskType::UiPageDown, TaskClass::Foreground},
         {TaskType::UiCommitCandidateAt, TaskClass::Foreground},
         {TaskType::UiExpandCandidates, TaskClass::UserAction},
-        {TaskType::ReloadInputSession, TaskClass::Maintenance},
-        {TaskType::EnsureInputSessionMatchesConfig, TaskClass::Maintenance},
+        {TaskType::ReloadInputSession, TaskClass::Foreground},
+        {TaskType::EnsureInputSessionMatchesConfig, TaskClass::Foreground},
         {TaskType::ApplyCandidatePageSize, TaskClass::Maintenance},
         {TaskType::RefreshCandidatePage, TaskClass::Maintenance},
         {TaskType::ResetInputSessionCache, TaskClass::Maintenance},
@@ -133,4 +181,99 @@ TEST_CASE(maintenance_never_overtakes_foreground_or_user_action)
             TaskClass::UserAction);
     // 三更高优先级都空时，等过上限的维护任务才轮到。
     REQUIRE(NextTaskClass(HeadsWith({{TaskClass::Maintenance, 0.0}})) == TaskClass::Maintenance);
+}
+
+TEST_CASE(older_user_action_runs_before_later_foreground)
+{
+    auto heads = HeadsWith({{TaskClass::UserAction, 10.0}, {TaskClass::Foreground, 1.0}});
+    heads[TaskClassIndex(TaskClass::UserAction)].enqueue_sequence = 1;
+    heads[TaskClassIndex(TaskClass::Foreground)].enqueue_sequence = 2;
+    REQUIRE(NextTaskClass(heads) == TaskClass::UserAction);
+
+    heads[TaskClassIndex(TaskClass::UserAction)].enqueue_sequence = 2;
+    heads[TaskClassIndex(TaskClass::Foreground)].enqueue_sequence = 1;
+    REQUIRE(NextTaskClass(heads) == TaskClass::Foreground);
+}
+
+TEST_CASE(earlier_mode_action_does_not_clear_a_later_key)
+{
+    const TaskType actions[] = {TaskType::ExitEnglishInputMode, TaskType::ToolbarLanguageToggle};
+    const TaskType rebuilds[] = {TaskType::ReloadInputSession, TaskType::EnsureInputSessionMatchesConfig};
+    for (TaskType action : actions)
+    {
+        for (TaskType rebuild : rebuilds)
+        {
+            for (const auto &completed : {DrainBlockedWorker({action, rebuild, TaskType::ImeKeyEvent}),
+                                          DrainBlockedWorker({rebuild, action, TaskType::ImeKeyEvent})})
+            {
+                std::string preedit;
+                for (TaskType type : completed)
+                {
+                    if (type == action || type == rebuild)
+                        preedit.clear();
+                    if (type == TaskType::ImeKeyEvent)
+                        preedit += 'x';
+                }
+                REQUIRE(preedit == "x");
+                REQUIRE(completed.back() == TaskType::ImeKeyEvent);
+            }
+        }
+    }
+}
+
+TEST_CASE(earlier_expand_runs_before_later_page_change)
+{
+    const auto completed = DrainBlockedWorker({TaskType::UiExpandCandidates, TaskType::UiPageDown});
+    REQUIRE(completed.size() == 2);
+    REQUIRE(completed[0] == TaskType::UiExpandCandidates);
+    REQUIRE(completed[1] == TaskType::UiPageDown);
+}
+
+TEST_CASE(indexed_candidate_actions_keep_the_clicked_page)
+{
+    const TaskType edits[] = {TaskType::UiPinCandidate, TaskType::UiDeleteCandidate, TaskType::UiFixCandidatePosition,
+                              TaskType::UiClearCandidatePosition};
+    for (TaskType edit : edits)
+    {
+        const auto completed = DrainBlockedWorker({edit, TaskType::UiPageDown, TaskType::ImeKeyEvent});
+        int page = 0;
+        std::string edited_word;
+        const std::string words[] = {"clicked-word", "next-page-word"};
+        for (TaskType type : completed)
+        {
+            if (type == TaskType::UiPageDown || type == TaskType::ImeKeyEvent)
+                page = 1;
+            if (type == edit)
+                edited_word = words[page];
+        }
+        REQUIRE(edited_word == "clicked-word");
+        REQUIRE(completed.size() == 3);
+    }
+}
+
+TEST_CASE(session_rebuild_finishes_before_later_key)
+{
+    const TaskType rebuilds[] = {TaskType::ReloadInputSession, TaskType::EnsureInputSessionMatchesConfig};
+    for (TaskType rebuild : rebuilds)
+    {
+        const auto completed = DrainBlockedWorker({rebuild, TaskType::ImeKeyEvent});
+        std::string scheme = "old";
+        std::string preedit;
+        std::string key_scheme;
+        for (TaskType type : completed)
+        {
+            if (type == rebuild)
+            {
+                scheme = "new";
+                preedit.clear();
+            }
+            if (type == TaskType::ImeKeyEvent)
+            {
+                key_scheme = scheme;
+                preedit += 'x';
+            }
+        }
+        REQUIRE(key_scheme == "new");
+        REQUIRE(preedit == "x");
+    }
 }
