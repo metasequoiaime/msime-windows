@@ -84,6 +84,11 @@ const wchar_t *TaskClassName(TaskClass type)
     return L"foreground";
 }
 
+bool NeedsInputPriorityBoost(TaskClass type)
+{
+    return type == TaskClass::Foreground;
+}
+
 TaskClass NextTaskClass(const std::array<TaskClassHead, kTaskClassCount> &heads)
 {
     const TaskClassHead &foreground = heads[TaskClassIndex(TaskClass::Foreground)];

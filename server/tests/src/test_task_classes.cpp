@@ -12,6 +12,7 @@ namespace
 using FanyNamedPipe::ClassifyTask;
 using FanyNamedPipe::kMaintenanceMaxWaitMs;
 using FanyNamedPipe::kTaskClassCount;
+using FanyNamedPipe::NeedsInputPriorityBoost;
 using FanyNamedPipe::NextTaskClass;
 using FanyNamedPipe::TaskClass;
 using FanyNamedPipe::TaskClassHead;
@@ -95,6 +96,15 @@ TEST_CASE(task_class_names_are_distinct_and_loggable)
             REQUIRE(std::wstring(names[i]) != names[j]);
         }
     }
+}
+
+// 输入线程的 boost 只给 Foreground；其余三类必须保持进程的 Normal。
+TEST_CASE(input_priority_boost_is_foreground_only)
+{
+    REQUIRE(NeedsInputPriorityBoost(TaskClass::Foreground));
+    REQUIRE(!NeedsInputPriorityBoost(TaskClass::UserAction));
+    REQUIRE(!NeedsInputPriorityBoost(TaskClass::Enrichment));
+    REQUIRE(!NeedsInputPriorityBoost(TaskClass::Maintenance));
 }
 
 // 富化先到、按键后到：出队仍是按键先。这是 P1 唯一要保证的用户可见结果。

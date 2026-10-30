@@ -270,6 +270,8 @@ constexpr double kMaintenanceMaxWaitMs = 500.0;
 TaskClass ClassifyTask(TaskType type);
 // 排队诊断日志用的类别名；只用于观测，不参与调度。
 const wchar_t *TaskClassName(TaskClass type);
+// 输入线程的 scoped Above normal 只给用户正在等结果的 Foreground 任务；WorkerThread 与测试共用这一判定。
+bool NeedsInputPriorityBoost(TaskClass type);
 // 依据每类队首的等待时长选出下一个该出队的类。纯函数，测试直接调它，不依赖全局队列。
 // 调用方保证至少一类有任务。
 TaskClass NextTaskClass(const std::array<TaskClassHead, kTaskClassCount> &heads);

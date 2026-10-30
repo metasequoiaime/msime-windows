@@ -25,6 +25,7 @@
 #include "global/globals.h"
 #include "utils/common_utils.h"
 #include "utils/hanzi_pinyin.h"
+#include "utils/process_priority.h"
 #include "utils/single_instance.h"
 #include "session/session_factory.h"
 #include "settings/collocation_model.h"
@@ -120,6 +121,19 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     // Initialize for logging
     InitializeSpdLog();
     // #endif
+
+    // 登录任务的默认 Priority 是 7（Below normal），watchdog 和它拉起的 Server 会继承这个
+    // 优先级；TSF、手工启动和以后的拉起路径也可能带进来。启动时统一复位，失败只记 warning，
+    // 不阻止 Server 启动。SetPriorityClass 不会恢复内存优先级，两项必须分开设置。
+    const ProcessPriority::PriorityRestoreResult priority_result = ProcessPriority::RestoreInteractiveProcessPriority();
+    if (!priority_result.cpu_ok)
+    {
+        spdlog::warn("Failed to restore NORMAL_PRIORITY_CLASS (Win32 error {})", priority_result.cpu_error);
+    }
+    if (!priority_result.memory_ok)
+    {
+        spdlog::warn("Failed to restore MEMORY_PRIORITY_NORMAL (Win32 error {})", priority_result.memory_error);
+    }
 
     // Initialize config
     InitImeConfig();

@@ -52,6 +52,27 @@ target_include_directories(test_voice_target PRIVATE ../src)
 target_compile_features(test_voice_target PRIVATE cxx_std_17)
 add_test(NAME voice_target COMMAND test_voice_target)
 
+# Drives the real process-priority restore against a deliberately lowered
+# process, so the Server startup path is covered without launching the Server.
+add_executable(test_process_priority
+    src/test_process_priority.cpp
+    ../src/utils/process_priority.cpp)
+target_include_directories(test_process_priority PRIVATE ../src)
+target_compile_features(test_process_priority PRIVATE cxx_std_17)
+add_test(NAME process_priority COMMAND test_process_priority)
+set_tests_properties(process_priority PROPERTIES SKIP_RETURN_CODE 77)
+
+# Exercises the scoped thread-priority boost against the real thread APIs: the
+# guard must raise the thread, restore the entry priority, and skip cleanly on
+# hosts whose policy rejects thread priority changes.
+add_executable(test_thread_priority
+    src/test_thread_priority.cpp
+    ../src/utils/thread_priority.cpp)
+target_include_directories(test_thread_priority PRIVATE ../src)
+target_compile_features(test_thread_priority PRIVATE cxx_std_17)
+add_test(NAME thread_priority COMMAND test_thread_priority)
+set_tests_properties(thread_priority PROPERTIES SKIP_RETURN_CODE 77)
+
 set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark_model_path.cpp"
