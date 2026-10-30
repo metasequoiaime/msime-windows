@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS stats_hourly(
 CREATE TABLE IF NOT EXISTS stats_meta(
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS stats_honor(
+  id TEXT PRIMARY KEY,
+  unlocked_day_key INTEGER NOT NULL);
 )SQL";
 
 const char *kUpsertDailySql =
@@ -537,6 +540,111 @@ bool Store::HourlyRows(int day_key, std::vector<HourlyRow> &rows, std::string &e
     return ok;
 }
 
+bool Store::HourlyRowsAll(std::vector<HourlyRow> &rows, std::string &error) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    rows.clear();
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT day_key, hour, chars, active_ms FROM stats_hourly ORDER BY day_key, hour", -1,
+                           &statement, nullptr) != SQLITE_OK)
+    {
+        error = Describe("query all hourly", db_);
+        return false;
+    }
+
+    int step = SQLITE_OK;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW)
+    {
+        HourlyRow row;
+        row.day_key = static_cast<int>(sqlite3_column_int64(statement, 0));
+        row.hour = static_cast<int>(sqlite3_column_int64(statement, 1));
+        row.chars = sqlite3_column_int64(statement, 2);
+        row.active_ms = sqlite3_column_int64(statement, 3);
+        rows.push_back(row);
+    }
+    const bool ok = step == SQLITE_DONE;
+    if (!ok)
+    {
+        error = Describe("query all hourly", db_);
+        rows.clear();
+    }
+    sqlite3_finalize(statement);
+    return ok;
+}
+
+bool Store::HonorUnlocks(std::vector<HonorUnlock> &unlocks, std::string &error) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    unlocks.clear();
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT id, unlocked_day_key FROM stats_honor ORDER BY unlocked_day_key, id", -1,
+                           &statement, nullptr) != SQLITE_OK)
+    {
+        error = Describe("query honor", db_);
+        return false;
+    }
+
+    int step = SQLITE_OK;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW)
+    {
+        HonorUnlock unlock;
+        const unsigned char *id = sqlite3_column_text(statement, 0);
+        unlock.id = id != nullptr ? reinterpret_cast<const char *>(id) : "";
+        unlock.day_key = static_cast<int>(sqlite3_column_int64(statement, 1));
+        unlocks.push_back(std::move(unlock));
+    }
+    const bool ok = step == SQLITE_DONE;
+    if (!ok)
+    {
+        error = Describe("query honor", db_);
+        unlocks.clear();
+    }
+    sqlite3_finalize(statement);
+    return ok;
+}
+
+bool Store::AddHonorUnlocks(const std::vector<HonorUnlock> &unlocks, std::string &error)
+{
+    if (unlocks.empty())
+    {
+        return true;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!BeginTransaction(error))
+    {
+        return false;
+    }
+    sqlite3_stmt *statement = nullptr;
+    bool ok = sqlite3_prepare_v2(db_, "INSERT OR IGNORE INTO stats_honor(id, unlocked_day_key) VALUES(?, ?)", -1,
+                                 &statement, nullptr) == SQLITE_OK;
+    if (!ok)
+    {
+        error = Describe("prepare honor upsert", db_);
+    }
+    else
+    {
+        for (const HonorUnlock &unlock : unlocks)
+        {
+            sqlite3_bind_text(statement, 1, unlock.id.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(statement, 2, unlock.day_key);
+            if (sqlite3_step(statement) != SQLITE_DONE)
+            {
+                error = Describe("write honor", db_);
+                ok = false;
+                break;
+            }
+            sqlite3_reset(statement);
+        }
+        sqlite3_finalize(statement);
+    }
+    if (!ok)
+    {
+        Rollback();
+        return false;
+    }
+    return Commit(error);
+}
+
 bool Store::Meta(const std::string &key, std::string &value, bool &present, std::string &error) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -706,6 +814,8 @@ bool Store::ClearAll(int64_t &removed_days, std::string &error)
         // keep, and the next write may start a fresh once-per-day cycle.
         ok = DeleteMetaRow(kStoreMetaLastRetentionDay, error);
     }
+    // stats_honor is intentionally not touched here. Clearing counts is not a
+    // request to forget achievements; retention likewise leaves it alone.
     if (!ok)
     {
         Rollback();

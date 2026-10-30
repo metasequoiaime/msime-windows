@@ -18,6 +18,7 @@
 #include "settings/serial_task_queue.h"
 #include "statistics/stats_overview.h"
 #include "statistics/stats_store.h"
+#include "honor/honor_room.h"
 #include <chrono>
 #include <future>
 #include <memory>
@@ -638,7 +639,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"autocorrect_insertion", GetConfiguredQuanpinAutocorrectInsertion()},
             {"autocorrect_marker", GetConfiguredQuanpinAutocorrectMarker()}}},
           {"statistics",
-           {{"enabled", GetConfiguredStatisticsEnabled()}, {"retention", GetConfiguredStatisticsRetention()}}}}}};
+           {{"enabled", GetConfiguredStatisticsEnabled()}, {"retention", GetConfiguredStatisticsRetention()}}},
+          {"honor", {{"enabled", GetConfiguredHonorRoomEnabled()}}}}}};
     payload["data"]["voice_input"]["polish_presets"] = std::move(polish_presets);
     payload["data"]["helpcode"]["custom_schemas"] = CustomHelpcodeSchemasJson();
     payload["data"]["helpcode"]["custom_directory"] = GetCustomHelpcodeDirectory();
@@ -825,6 +827,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredStatisticsEnabled(json::value_to<bool>(data.at("value")));
     if (path == "statistics.retention")
         return SetConfiguredStatisticsRetention(json::value_to<std::string>(data.at("value")));
+    if (path == "honor.enabled")
+        return SetConfiguredHonorRoomEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.floating_toolbar_scale")
     {
         const json::value &value = data.at("value");
@@ -1308,6 +1312,145 @@ json::object HandleStatsRequest(const json::object &data, HWND hwnd)
     return response;
 }
 
+// 荣誉室请求：只在开关打开、且输入统计已经开启时才读 stats.db。开关关掉时不创建、
+// 不读取数据库，隐私语义和统计页一致。首次结算时把本次判定的解锁写成当天的日期，
+// 之后保留策略删掉旧计数也不会让成就重新锁上。
+json::object HandleHonorRequest(const json::object &data)
+{
+    const std::string request_id = json::value_to<std::string>(data.at("requestId"));
+    const std::string action = json::value_to<std::string>(data.at("action"));
+    json::object response;
+    response["requestId"] = request_id;
+    response["action"] = action;
+    response["ok"] = true;
+    response["message"] = "成功";
+    response["enabled"] = GetConfiguredHonorRoomEnabled();
+    response["statisticsEnabled"] = GetConfiguredStatisticsEnabled();
+    response["limited"] = false;
+    response["hasData"] = false;
+    response["achievements"] = json::array();
+    response["total"] = static_cast<int64_t>(MsimeHonor::Catalog().size());
+    response["unlocked"] = int64_t{0};
+
+    if (action != "overview")
+    {
+        response["ok"] = false;
+        response["message"] = "未知的荣誉室操作。";
+        return response;
+    }
+    if (!GetConfiguredHonorRoomEnabled())
+    {
+        response["message"] = "荣誉室尚未开启";
+        return response;
+    }
+    if (!GetConfiguredStatisticsEnabled())
+    {
+        // 荣誉室不单独采集数据，统计关着就没有可结算的内容。返回完整目录让页面
+        // 仍能展示成就墙，但全部标记为未解锁、样本不足。
+        response["limited"] = true;
+        response["message"] = "开启输入统计后才能结算荣誉室";
+        json::array achievements;
+        for (const MsimeHonor::Definition &definition : MsimeHonor::Catalog())
+        {
+            json::object entry;
+            entry["id"] = definition.id;
+            entry["tier"] = MsimeHonor::TierId(definition.tier);
+            entry["tierName"] = wstring_to_string(MsimeHonor::TierName(definition.tier));
+            entry["title"] = wstring_to_string(definition.title);
+            entry["description"] = wstring_to_string(definition.description);
+            entry["value"] = int64_t{0};
+            entry["target"] = definition.target;
+            entry["display"] = MsimeHonor::DisplayId(definition.display);
+            entry["unlocked"] = false;
+            entry["sampleOk"] = false;
+            entry["unlockedDayKey"] = int64_t{0};
+            achievements.push_back(std::move(entry));
+        }
+        response["achievements"] = std::move(achievements);
+        return response;
+    }
+
+    // 和统计页同一条隐私边界：浏览不能凭空创建 stats.db。
+    const std::filesystem::path database_path = StatisticsDatabasePath();
+    std::error_code exists_error;
+    const bool database_exists = std::filesystem::exists(database_path, exists_error) && !exists_error;
+    if (!database_exists)
+    {
+        response["message"] = "还没有输入统计，正常打字积累几天再来。";
+        return response;
+    }
+    std::string error;
+    std::unique_ptr<MsimeStats::Store> store = MsimeStats::Store::Open(database_path, error);
+    if (!store)
+    {
+        response["ok"] = false;
+        response["message"] = "无法打开统计数据库：" + error;
+        return response;
+    }
+
+    std::vector<MsimeStats::DailyRow> daily;
+    std::vector<MsimeStats::HourlyRow> hourly;
+    std::vector<MsimeStats::HonorUnlock> unlocks;
+    if (!store->DailyRows(daily, error) || !store->HourlyRowsAll(hourly, error) || !store->HonorUnlocks(unlocks, error))
+    {
+        response["ok"] = false;
+        response["message"] = "读取统计数据失败：" + error;
+        return response;
+    }
+    response["hasData"] =
+        std::any_of(daily.begin(), daily.end(),
+                    [](const MsimeStats::DailyRow &row) { return row.Total() > 0 || row.active_ms > 0; }) ||
+        !unlocks.empty();
+
+    const int today = LocalTodayDayKey();
+    std::vector<MsimeHonor::Progress> progress = MsimeHonor::Evaluate(daily, hourly, today, unlocks);
+
+    // 只把本次新判定的写库；已有记录的解锁日保持不变。
+    std::vector<MsimeStats::HonorUnlock> fresh;
+    int64_t unlocked_count = 0;
+    for (MsimeHonor::Progress &item : progress)
+    {
+        if (!item.unlocked)
+            continue;
+        if (item.unlocked_day_key == 0)
+        {
+            item.unlocked_day_key = today;
+            fresh.push_back({item.definition->id, today});
+        }
+        ++unlocked_count;
+    }
+    bool write_ok = true;
+    if (!fresh.empty() && !store->AddHonorUnlocks(fresh, error))
+    {
+        // 落库失败不影响本次展示，下次打开会重新判定。
+        write_ok = false;
+        response["message"] = "成就已结算，但写入数据库失败：" + error;
+    }
+    json::array achievements;
+    achievements.reserve(progress.size());
+    for (const MsimeHonor::Progress &item : progress)
+    {
+        json::object entry;
+        entry["id"] = item.definition->id;
+        entry["tier"] = MsimeHonor::TierId(item.definition->tier);
+        entry["tierName"] = wstring_to_string(MsimeHonor::TierName(item.definition->tier));
+        entry["title"] = wstring_to_string(item.definition->title);
+        entry["description"] = wstring_to_string(item.definition->description);
+        entry["value"] = item.value;
+        entry["target"] = item.definition->target;
+        entry["display"] = MsimeHonor::DisplayId(item.definition->display);
+        entry["unlocked"] = item.unlocked;
+        entry["sampleOk"] = item.sample_ok;
+        entry["unlockedDayKey"] = item.unlocked_day_key;
+        achievements.push_back(std::move(entry));
+    }
+    response["achievements"] = std::move(achievements);
+    response["unlocked"] = unlocked_count;
+    if (write_ok)
+        response["message"] = unlocked_count > 0 ? "已加载荣誉室" : "荣誉室已开门，先打几个字吧";
+    return response;
+}
+
 // The settings window posts its requests as webview-contract client messages, validated here
 // against the same contract as every other surface.
 void HandleClientMessage(HWND hwnd, const std::string &raw)
@@ -1713,6 +1856,37 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                 response["protocolVersion"] = metasequoia::webview::Version;
                 if (!metasequoia::webview::Validate(response, "server"))
                     throw std::runtime_error("Invalid statistics response");
+                auto message = string_to_wstring(json::serialize(response));
+                return [message = std::move(message)] { PostToPage(message); };
+            });
+        }
+        else if (type == "honorRequest")
+        {
+            const auto data = value.at("data").as_object();
+            g_worker->Submit([data]() -> SerialTaskQueue::Completion {
+                json::object response;
+                try
+                {
+                    response = HandleHonorRequest(data);
+                }
+                catch (...)
+                {
+                    response["ok"] = false;
+                    response["message"] = "荣誉室操作失败，请重试";
+                    response["enabled"] = GetConfiguredHonorRoomEnabled();
+                    response["statisticsEnabled"] = GetConfiguredStatisticsEnabled();
+                    response["limited"] = false;
+                    response["hasData"] = false;
+                    response["total"] = static_cast<int64_t>(MsimeHonor::Catalog().size());
+                    response["unlocked"] = int64_t{0};
+                    response["achievements"] = json::array();
+                }
+                response["requestId"] = data.at("requestId");
+                response["action"] = data.at("action");
+                response["type"] = "honorResponse";
+                response["protocolVersion"] = metasequoia::webview::Version;
+                if (!metasequoia::webview::Validate(response, "server"))
+                    throw std::runtime_error("Invalid honor response");
                 auto message = string_to_wstring(json::serialize(response));
                 return [message = std::move(message)] { PostToPage(message); };
             });

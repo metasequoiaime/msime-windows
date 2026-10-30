@@ -689,3 +689,14 @@ enabled = false
 # 统计保留策略：forever | 30d | 90d | 180d | 365d；Server 每天首次写入时删除
 # 超出保留窗口的记录，forever 表示永久保留、不自动删除。非法值按 forever 处理。
 retention = "forever"
+
+#
+# Honor room
+# 荣誉室
+#
+[honor]
+# Off by default. The room only reads the local statistics database; it adds no
+# new collection and no network traffic. Opening the page is the only way to
+# turn it on.
+# 默认关闭。荣誉室只读取本机统计数据库，不新增采集、不联网；进入设置页手动开启。
+enabled = false

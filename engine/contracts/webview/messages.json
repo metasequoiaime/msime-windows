@@ -498,6 +498,30 @@
         "additionalProperties": false
       }
     },
+    "honorRequest": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "overview"
+            ]
+          }
+        },
+        "required": [
+          "requestId",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
     "defaultImeRequest": {
       "surfaces": [
         "settings"
@@ -1401,6 +1425,121 @@
         "message"
       ],
       "additionalProperties": true
+    },
+    "honorResponse": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "statisticsEnabled": {
+          "type": "boolean"
+        },
+        "limited": {
+          "type": "boolean"
+        },
+        "hasData": {
+          "type": "boolean"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "unlocked": {
+          "type": "integer"
+        },
+        "achievements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "tier": {
+                "type": "string",
+                "enum": [
+                  "sprout",
+                  "branch",
+                  "ring",
+                  "crown"
+                ]
+              },
+              "tierName": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "value": {
+                "type": "integer"
+              },
+              "target": {
+                "type": "integer"
+              },
+              "display": {
+                "type": "string",
+                "enum": [
+                  "count",
+                  "percent",
+                  "speed",
+                  "days"
+                ]
+              },
+              "unlocked": {
+                "type": "boolean"
+              },
+              "sampleOk": {
+                "type": "boolean"
+              },
+              "unlockedDayKey": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "tier",
+              "tierName",
+              "title",
+              "description",
+              "value",
+              "target",
+              "display",
+              "unlocked",
+              "sampleOk",
+              "unlockedDayKey"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "requestId",
+        "action",
+        "ok",
+        "message",
+        "enabled",
+        "statisticsEnabled",
+        "limited",
+        "hasData",
+        "total",
+        "unlocked",
+        "achievements"
+      ],
+      "additionalProperties": false
     }
   }
 }

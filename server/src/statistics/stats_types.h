@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace MsimeStats
@@ -235,6 +236,14 @@ struct HourlyRow
     int hour = 0;
     int64_t chars = 0;
     int64_t active_ms = 0;
+};
+
+// HonorUnlock is one row of stats_honor: an achievement id and the local day
+// key it was first unlocked on. Only ids and days, never any text.
+struct HonorUnlock
+{
+    std::string id;
+    int day_key = 0;
 };
 
 // DayDelta is the per-day contribution of one batch of events.

@@ -44,6 +44,7 @@ try {
         'neural-model/NOTICE.md',
         'server/assets/settings/arrow.svg',
         'server/assets/settings/sidebar/about.svg',
+        'server/assets/settings/sidebar/honor.svg',
         'skins/default/fluent/skin.toml',
         'skins/default/canvas/skin.toml'
     )) { Write-Fixture $file }
@@ -73,6 +74,7 @@ strings = "あ亜".encode()
     if ($LASTEXITCODE -ne 0) { throw 'Failed to create packaging fixture' }
     & (Join-Path $installer 'Prepare-PackageFiles.ps1') -RepoRoot $fixture -TargetVersion '2026.9.1' -IncludeSymbols
     foreach ($file in @('app_data/assets/settings/arrow.svg', 'app_data/assets/settings/sidebar/about.svg',
+                         'app_data/assets/settings/sidebar/honor.svg',
                          'app_data/dictionary-manifest.json',
                          'app_data/dict_pinyin.dat',
                          'app_data/sentence-model.safetensors', 'app_data/chinese-ime-lm-NOTICE.md',
@@ -221,6 +223,7 @@ strings = "あ亜".encode()
     & (Join-Path $installer 'Prepare-PackageFiles.ps1') -RepoRoot $fixture -TsfDirectory windows -ServerDirectory server -NoticesDirectory . -Light
     if ([IO.File]::ReadAllText($database) -ne 'preserved user data') { throw 'Light package replaced dictionary data' }
     if (-not (Test-Path (Join-Path $installer 'app_data/assets/settings/sidebar/about.svg'))) { throw 'Light package lost settings assets' }
+    if (-not (Test-Path (Join-Path $installer 'app_data/assets/settings/sidebar/honor.svg'))) { throw 'Light package lost the honor room icon' }
     if (Test-Path (Join-Path $installer 'app_data/html')) { throw 'Light package kept the retired html directory' }
     # dict_pinyin.dat 是静默失败：缺了它 im_open_decoder 返回 false，Google 那条 Fallback 整句
     # 候选悄无声息地消失。它长期没被打包进去，测试却是绿的，因为测试用的是

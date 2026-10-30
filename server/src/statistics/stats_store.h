@@ -30,7 +30,9 @@ namespace MsimeStats
 // on open; kStoreSchemaVersion is the value. They must stay distinct: a future
 // migration reads the key back and compares it against the current version.
 inline constexpr const char *kStoreMetaSchemaVersion = "schema_version";
-inline constexpr const char *kStoreSchemaVersion = "2";
+// v3 增加 stats_honor：荣誉室的解锁事实。它和每日计数分开存放，保留策略删掉旧计数后
+// 已解锁的成就仍然保留，不会因为数据过期重新锁上。
+inline constexpr const char *kStoreSchemaVersion = "3";
 
 // First-word hit-rate columns of stats_daily (introduced by schema v2).
 // first_word_counts commits made from the candidate list; first_word_hits
@@ -103,6 +105,19 @@ class Store
 
     // HourlyRows returns the hour buckets of one day, ascending by hour.
     bool HourlyRows(int day_key, std::vector<HourlyRow> &rows, std::string &error) const;
+
+    // HourlyRowsAll returns every hour bucket, ascending by day then hour. The
+    // honour room needs the 0-5 o'clock band across the whole history; the
+    // statistics page only ever asks for today.
+    bool HourlyRowsAll(std::vector<HourlyRow> &rows, std::string &error) const;
+
+    // HonorUnlocks reads the unlock facts, ascending by day.
+    bool HonorUnlocks(std::vector<HonorUnlock> &unlocks, std::string &error) const;
+
+    // AddHonorUnlocks inserts unlock facts with INSERT OR IGNORE: an achievement
+    // unlocked twice keeps its first day, which is what the UI shows. Callers
+    // pass only the ids they believe are new; duplicates are harmless.
+    bool AddHonorUnlocks(const std::vector<HonorUnlock> &unlocks, std::string &error);
 
     // Meta reads a stats_meta value; `present` reports whether the key exists.
     bool Meta(const std::string &key, std::string &value, bool &present, std::string &error) const;

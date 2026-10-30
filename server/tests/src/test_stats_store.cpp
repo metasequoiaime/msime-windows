@@ -363,7 +363,9 @@ TEST_CASE(stats_store_clear_to_empty_resets_first_day)
     REQUIRE(hourly.empty());
 }
 
-// The privacy contract: the on-disk schema must not be able to store text.
+// The privacy contract: the on-disk schema must not be able to store typed
+// text. Daily and hourly rows are numbers only; stats_honor holds a catalog id
+// and a day key, and the id comes from the fixed achievement table.
 TEST_CASE(stats_store_schema_has_no_text_columns)
 {
     ScopedTempDir temp;
@@ -379,15 +381,41 @@ TEST_CASE(stats_store_schema_has_no_text_columns)
     const std::vector<std::string> allowed = {"day_key",         "hour",  "cjk",   "latin",     "digit",
                                               "punct",           "other", "chars", "active_ms", "first_word_hits",
                                               "first_word_total"};
+    std::vector<std::string> columns;
     int step = SQLITE_OK;
     while ((step = sqlite3_step(statement)) == SQLITE_ROW)
     {
         const char *name = reinterpret_cast<const char *>(sqlite3_column_text(statement, 0));
         REQUIRE(name != nullptr);
-        REQUIRE(std::find(allowed.begin(), allowed.end(), std::string(name)) != allowed.end());
+        columns.push_back(name);
     }
     REQUIRE_EQ(step, SQLITE_DONE);
     sqlite3_finalize(statement);
+    // 先收完再断言：断言失败时不能留着未 finalize 的语句，否则连接关不掉，
+    // 临时目录删不干净，后面的用例会连锁失败。
+    for (const std::string &name : columns)
+        REQUIRE(std::find(allowed.begin(), allowed.end(), name) != allowed.end());
+    // 表不存在或列被删掉时循环会真空通过；daily 9 列加 hourly 4 列正好 13。
+    REQUIRE_EQ(columns.size(), size_t{13});
+
+    // 荣誉室只有目录 id 和解锁日期，没有可写自由文本的列。
+    statement = nullptr;
+    REQUIRE(sqlite3_prepare_v2(raw.get(), "SELECT name FROM pragma_table_info('stats_honor')", -1, &statement,
+                               nullptr) == SQLITE_OK);
+    std::vector<std::string> honor_columns;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW)
+    {
+        const char *name = reinterpret_cast<const char *>(sqlite3_column_text(statement, 0));
+        REQUIRE(name != nullptr);
+        honor_columns.push_back(name);
+    }
+    REQUIRE_EQ(step, SQLITE_DONE);
+    sqlite3_finalize(statement);
+    const std::vector<std::string> honor_allowed = {"id", "unlocked_day_key"};
+    for (const std::string &name : honor_columns)
+        REQUIRE(std::find(honor_allowed.begin(), honor_allowed.end(), name) != honor_allowed.end());
+    // 表不存在时 pragma 返回零行，上面的循环会真空通过；这里把列数钉死。
+    REQUIRE_EQ(honor_columns.size(), size_t{2});
 
     // WAL is a database property, so a second connection can assert it too.
     statement = nullptr;
@@ -781,6 +809,14 @@ TEST_CASE(stats_store_migrates_v1_database_with_version_key)
     REQUIRE(store->Meta(MsimeStats::kStoreMetaSchemaVersion, value, present, error));
     REQUIRE(present);
     REQUIRE_EQ(value, std::string(MsimeStats::kStoreSchemaVersion));
+
+    // v3 的 stats_honor 由 kSchema 的 CREATE TABLE IF NOT EXISTS 补上：老库第一次打开
+    // 就能读写解锁记录，不需要单独的 ALTER。
+    REQUIRE(store->AddHonorUnlocks({{"first_commit", 20260919}}, error));
+    std::vector<MsimeStats::HonorUnlock> unlocks;
+    REQUIRE(store->HonorUnlocks(unlocks, error));
+    REQUIRE_EQ(unlocks.size(), size_t{1});
+    REQUIRE_EQ(unlocks[0].id, std::string("first_commit"));
 }
 
 // A database whose tables exist but were never stamped (a v1 file from before
@@ -813,6 +849,57 @@ TEST_CASE(stats_store_migrates_v1_database_without_version_key)
     bool present = false;
     REQUIRE(store->Meta(MsimeStats::kStoreMetaSchemaVersion, value, present, error));
     REQUIRE_EQ(value, std::string(MsimeStats::kStoreSchemaVersion));
+}
+
+// A v2 database has the first-word columns but no stats_honor. Opening it must
+// create the honour table without touching the existing rows; the table is the
+// only change v3 makes.
+TEST_CASE(stats_store_migrates_v2_database_gains_honor_table)
+{
+    ScopedTempDir temp;
+    const fs::path db_path = temp.Root() / L"stats.db";
+    {
+        RawDb raw(db_path);
+        REQUIRE(sqlite3_exec(raw.get(),
+                             "CREATE TABLE stats_daily(day_key INTEGER PRIMARY KEY, cjk INTEGER NOT NULL DEFAULT 0, "
+                             "latin INTEGER NOT NULL DEFAULT 0, digit INTEGER NOT NULL DEFAULT 0, "
+                             "punct INTEGER NOT NULL DEFAULT 0, other INTEGER NOT NULL DEFAULT 0, "
+                             "active_ms INTEGER NOT NULL DEFAULT 0, first_word_hits INTEGER NOT NULL DEFAULT 0, "
+                             "first_word_total INTEGER NOT NULL DEFAULT 0);"
+                             "CREATE TABLE stats_hourly(day_key INTEGER NOT NULL, hour INTEGER NOT NULL, "
+                             "chars INTEGER NOT NULL DEFAULT 0, active_ms INTEGER NOT NULL DEFAULT 0, "
+                             "PRIMARY KEY(day_key, hour));"
+                             "CREATE TABLE stats_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                             "INSERT INTO stats_meta(key, value) VALUES('schema_version', '2');"
+                             "INSERT INTO stats_daily(day_key, cjk) VALUES(20261001, 9);"
+                             "INSERT INTO stats_hourly(day_key, hour, chars) VALUES(20261001, 3, 4);",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+    }
+
+    std::string error;
+    std::unique_ptr<Store> store = Store::Open(db_path, error);
+    REQUIRE(store != nullptr);
+
+    std::vector<DailyRow> rows;
+    REQUIRE(store->DailyRows(rows, error));
+    REQUIRE_EQ(rows.size(), size_t{1});
+    REQUIRE_EQ(rows[0].cjk, 9);
+    REQUIRE(store->AddHonorUnlocks({{"thousand_chars", 20261001}}, error));
+    std::vector<MsimeStats::HonorUnlock> unlocks;
+    REQUIRE(store->HonorUnlocks(unlocks, error));
+    REQUIRE_EQ(unlocks.size(), size_t{1});
+    REQUIRE_EQ(unlocks[0].day_key, 20261001);
+
+    // 原样保留的小时桶与版本戳也要核对：v3 只加表，不改已有数据。
+    std::vector<HourlyRow> hourly;
+    REQUIRE(store->HourlyRowsAll(hourly, error));
+    REQUIRE_EQ(hourly.size(), size_t{1});
+    REQUIRE_EQ(hourly[0].chars, int64_t{4});
+    std::string version;
+    bool present = false;
+    REQUIRE(store->Meta(MsimeStats::kStoreMetaSchemaVersion, version, present, error));
+    REQUIRE(present);
+    REQUIRE_EQ(version, std::string(MsimeStats::kStoreSchemaVersion));
 }
 
 // The table shape decides, not the stamp: a database already stamped with the

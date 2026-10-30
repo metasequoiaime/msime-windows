@@ -1472,6 +1472,72 @@ TEST_CASE(shipped_template_carries_statistics_switch)
     REQUIRE_EQ(parsed["statistics"]["retention"].value_or(std::string()), std::string("forever"));
 }
 
+// 荣誉室总开关：默认关闭，能落盘并在重读后保持；模板缺段时 setter 自己补段。
+// 这条和统计开关分开测，因为 [honor] 是独立段，漏写段或漏写键都会让开关在升级后回退。
+TEST_CASE(honor_enabled_defaults_off_and_round_trips)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = test::TempRoot() / (L"msime-荣誉室开关测试-" + std::to_wstring(GetCurrentProcessId()));
+    const fs::path local_app_data = unique_root / L"profile";
+    const fs::path data_dir = local_app_data / L"metasequoiaime";
+
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+
+    // 无文件形态：全局量保持静态默认 false。
+    {
+        ScopedConfigLocation local_app_data_env(local_app_data);
+        InitImeConfig();
+        REQUIRE(!GetConfiguredHonorRoomEnabled());
+    }
+
+    SeedTemplate(data_dir);
+
+    {
+        ScopedConfigLocation local_app_data_env(local_app_data);
+
+        InitImeConfig();
+        REQUIRE(!GetConfiguredHonorRoomEnabled());
+
+        // 缺段写入：手写一份没有 [honor] 的配置，首次打开必须自己把段补出来。
+        WriteText(data_dir / L"config.toml", "[input]\nschema = \"quanpin\"\n");
+        REQUIRE(SetConfiguredHonorRoomEnabled(true));
+        REQUIRE(GetConfiguredHonorRoomEnabled());
+        {
+            const std::string text = ReadText(data_dir / L"config.toml");
+            REQUIRE(text.find("[honor]") != std::string::npos);
+            REQUIRE(text.find("enabled = true") != std::string::npos);
+        }
+
+        // 缺键回落：抹掉段后重读，模板缺键时默认必须是 false。
+        WriteText(data_dir / L"config.toml", "[input]\nschema = \"quanpin\"\n");
+        InitImeConfig();
+        REQUIRE(!GetConfiguredHonorRoomEnabled());
+
+        // 重读保持：开关真实落盘、跨 InitImeConfig 存活，关闭同样可逆。
+        REQUIRE(SetConfiguredHonorRoomEnabled(true));
+        InitImeConfig();
+        REQUIRE(GetConfiguredHonorRoomEnabled());
+        REQUIRE(SetConfiguredHonorRoomEnabled(false));
+        REQUIRE(!GetConfiguredHonorRoomEnabled());
+        InitImeConfig();
+        REQUIRE(!GetConfiguredHonorRoomEnabled());
+    }
+
+    fs::remove_all(unique_root, ec);
+}
+
+// 出厂模板必须携带 honor.enabled 且默认 false。理由同 statistics：模板里没有的键
+// 会在升级合并时被丢弃，设置页改了也会在下次升级后静默回退。
+TEST_CASE(shipped_template_carries_honor_switch)
+{
+    std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string installed((std::istreambuf_iterator<char>(input)), {});
+    const auto parsed = toml::parse(installed);
+    REQUIRE(!parsed["honor"]["enabled"].value_or(true));
+}
+
 // 统计保留策略：默认 forever（无文件 / 出厂模板 / 缺键 / 非法值四种形态），
 // 合法值能落盘并在重读后保持，非法 setter 被拒绝且不污染文件。
 TEST_CASE(statistics_retention_defaults_forever_and_round_trips)

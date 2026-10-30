@@ -1752,9 +1752,10 @@ VisualPtr BuildStatsPage(PageContext &context)
     // 数据清理
     {
         auto column = std::make_shared<Column>(0.0f);
-        column->Add(MakeTitleBlock(
-            L"数据清理", L"自动清理按保留策略删除超期记录，在 Server "
-                         L"跨天后首次写入统计时执行；「清空统计数据」会删除全部记录（包括今天），删除后无法恢复"));
+        column->Add(MakeTitleBlock(L"数据清理",
+                                   L"自动清理按保留策略删除超期记录，在 Server "
+                                   L"跨天后首次写入统计时执行；「清空统计数据」会删除全部每日与每小时记录（包括今天），"
+                                   L"荣誉室的解锁记录不受影响，删除后无法恢复"));
         auto retentionRow = ClearRow();
         retentionRow->Add(MakeLabel(L"自动清理", DocStyle(kFontDefault), TextRole::Primary));
         // A native <select> (forms.css): as wide as its widest option plus padding 10px, the
@@ -1784,7 +1785,7 @@ VisualPtr BuildStatsPage(PageContext &context)
         auto clear = std::make_shared<CssButton>(L"清空统计数据", StatsButtonStyle(CssButton::Look::StatsDanger));
         clear->SetOnClick([s]() {
             s->host->Confirm(
-                L"确定要清空全部统计数据吗？今天与历史的记录都会被删除，删除后无法恢复。",
+                L"确定要清空全部统计数据吗？今天与历史的统计记录都会被删除，荣誉室的解锁记录保留；删除后无法恢复。",
                 [s](bool confirmed) {
                     if (!confirmed)
                         return;
@@ -1794,7 +1795,7 @@ VisualPtr BuildStatsPage(PageContext &context)
                 L"清空统计数据", L"清空");
         });
         clearRow->Add(clear);
-        clearRow->Add(Note(L"删除全部记录且无法恢复"));
+        clearRow->Add(Note(L"删除全部统计记录且无法恢复"));
         column->Add(clearRow);
 
         // .stats-clear-status: margin-top 10px, min-height 18px.
@@ -1810,8 +1811,9 @@ VisualPtr BuildStatsPage(PageContext &context)
         auto column = std::make_shared<Column>(0.0f);
         column->Add(MakeTitle(L"数据位置与隐私"));
         column->Add(
-            MakeDescription(L"统计数据保存在本机数据目录的 stats.db（SQLite）中，只包含每天每类字符的数量与活跃时长， "
-                            L"没有任何文本内容；不联网、不上传。关闭开关后停止记录，历史数据继续保留。"));
+            MakeDescription(L"统计数据保存在本机数据目录的 stats.db（SQLite）中，只包含每天每类字符的数量、活跃时长，"
+                            L"以及荣誉室的成就编号与解锁日期，没有任何输入文本；不联网、不上传。关闭开关后停止记录，"
+                            L"历史数据继续保留。"));
         auto row = ClearRow();
         auto open = std::make_shared<CssButton>(L"打开数据目录", StatsButtonStyle(CssButton::Look::Secondary));
         open->SetOnClick([s]() { s->Post("openDirectory"); });

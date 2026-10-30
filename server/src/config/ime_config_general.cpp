@@ -64,6 +64,19 @@ bool SetConfiguredStatisticsRetention(const std::string &retention)
     return true;
 }
 
+bool GetConfiguredHonorRoomEnabled()
+{
+    return g_honor_room_enabled.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredHonorRoomEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("honor", "enabled", enabled ? "true" : "false"))
+        return false;
+    g_honor_room_enabled.store(enabled, std::memory_order_relaxed);
+    return true;
+}
+
 bool GetConfiguredEnglishCandidatesEnabled()
 {
     return g_english_candidates_enabled;

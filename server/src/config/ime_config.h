@@ -261,6 +261,9 @@ bool SetConfiguredStatisticsEnabled(bool enabled);
 // forever——坏配置绝不能导致自动清理误删数据；setter 校验枚举才落盘。
 const std::string &GetConfiguredStatisticsRetention();
 bool SetConfiguredStatisticsRetention(const std::string &retention);
+// 荣誉室总开关，默认关闭。关闭时设置页只显示开启引导，不读写统计数据库。
+bool GetConfiguredHonorRoomEnabled();
+bool SetConfiguredHonorRoomEnabled(bool enabled);
 const std::string &GetConfiguredCandidateTextColor();
 bool SetConfiguredCandidateTextColor(const std::string &color);
 // Installed font family names for settings dropdowns (cached after first call).

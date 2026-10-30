@@ -752,6 +752,226 @@
     "valid": true
   },
   {
+    "name": "honor overview request",
+    "message": {
+      "type": "honorRequest",
+      "data": {
+        "requestId": "honor-1",
+        "action": "overview"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "honor request unknown action",
+    "message": {
+      "type": "honorRequest",
+      "data": {
+        "requestId": "honor-2",
+        "action": "reset"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": false
+  },
+  {
+    "name": "honor request missing request id",
+    "message": {
+      "type": "honorRequest",
+      "data": {
+        "action": "overview"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": false
+  },
+  {
+    "name": "honor request extra field",
+    "message": {
+      "type": "honorRequest",
+      "data": {
+        "requestId": "honor-3",
+        "action": "overview",
+        "force": true
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": false
+  },
+  {
+    "name": "honor response with achievement",
+    "message": {
+      "type": "honorResponse",
+      "requestId": "honor-1",
+      "action": "overview",
+      "ok": true,
+      "message": "已加载荣誉室",
+      "enabled": true,
+      "statisticsEnabled": true,
+      "limited": false,
+      "hasData": true,
+      "total": 24,
+      "unlocked": 1,
+      "achievements": [
+        {
+          "id": "first_commit",
+          "tier": "sprout",
+          "tierName": "新芽",
+          "title": "初次上屏",
+          "description": "累计输入 1 个字。",
+          "value": 42,
+          "target": 1,
+          "display": "count",
+          "unlocked": true,
+          "sampleOk": true,
+          "unlockedDayKey": 20261029
+        }
+      ]
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "honor response disabled",
+    "message": {
+      "type": "honorResponse",
+      "requestId": "honor-4",
+      "action": "overview",
+      "ok": true,
+      "message": "荣誉室尚未开启",
+      "enabled": false,
+      "statisticsEnabled": false,
+      "limited": false,
+      "hasData": false,
+      "total": 24,
+      "unlocked": 0,
+      "achievements": []
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "honor response statistics disabled",
+    "message": {
+      "type": "honorResponse",
+      "requestId": "honor-8",
+      "action": "overview",
+      "ok": true,
+      "message": "开启输入统计后才能结算荣誉室",
+      "enabled": true,
+      "statisticsEnabled": false,
+      "limited": true,
+      "hasData": false,
+      "total": 24,
+      "unlocked": 0,
+      "achievements": []
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "honor response error keeps the required fields",
+    "message": {
+      "type": "honorResponse",
+      "requestId": "honor-9",
+      "action": "overview",
+      "ok": false,
+      "message": "荣誉室操作失败，请重试",
+      "enabled": true,
+      "statisticsEnabled": true,
+      "limited": false,
+      "hasData": false,
+      "total": 24,
+      "unlocked": 0,
+      "achievements": []
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "honor response missing has data",
+    "message": {
+      "type": "honorResponse",
+      "requestId": "honor-5",
+      "action": "overview",
+      "ok": true,
+      "message": "已加载荣誉室",
+      "enabled": true,
+      "statisticsEnabled": true,
+      "limited": false,
+      "total": 24,
+      "unlocked": 0,
+      "achievements": []
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": false
+  },
+  {
+    "name": "honor response unknown tier",
+    "message": {
+      "type": "honorResponse",
+      "requestId": "honor-6",
+      "action": "overview",
+      "ok": true,
+      "message": "已加载荣誉室",
+      "enabled": true,
+      "statisticsEnabled": true,
+      "limited": false,
+      "hasData": true,
+      "total": 24,
+      "unlocked": 1,
+      "achievements": [
+        {
+          "id": "first_commit",
+          "tier": "legendary",
+          "tierName": "传说",
+          "title": "初次上屏",
+          "description": "累计输入 1 个字。",
+          "value": 42,
+          "target": 1,
+          "display": "count",
+          "unlocked": true,
+          "sampleOk": true,
+          "unlockedDayKey": 20261029
+        }
+      ]
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": false
+  },
+  {
+    "name": "honor response extra field",
+    "message": {
+      "type": "honorResponse",
+      "requestId": "honor-7",
+      "action": "overview",
+      "ok": true,
+      "message": "已加载荣誉室",
+      "enabled": true,
+      "statisticsEnabled": true,
+      "limited": false,
+      "hasData": false,
+      "total": 24,
+      "unlocked": 0,
+      "achievements": [],
+      "reset": true
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": false
+  },
+  {
     "name": "collocation model download with model id",
     "message": {
       "type": "collocationModelDownload",

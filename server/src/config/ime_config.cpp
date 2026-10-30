@@ -78,6 +78,9 @@ std::atomic_bool g_tsf_diagnostic_log_enabled{false};
 std::atomic_bool g_statistics_enabled{false};
 // 统计保留策略（forever|30d|90d|180d|365d），默认永久保留。
 std::string g_statistics_retention = "forever";
+// 荣誉室，默认关闭。它只是统计数据的展示层，不单独采集任何东西；关闭时设置页只显示
+// 一块开启引导，不读也不写 stats.db。
+std::atomic_bool g_honor_room_enabled{false};
 std::string g_candidate_text_color = "auto";
 std::string g_shuangpin_schema = "xiaohe";
 std::string g_wubi_schema = "wubi86";
@@ -609,6 +612,7 @@ bool LoadImeConfig()
         g_tsf_diagnostic_log_enabled.store(tbl["general"]["tsf_diagnostic_log"].value_or(false),
                                            std::memory_order_relaxed);
         g_statistics_enabled.store(tbl["statistics"]["enabled"].value_or(false), std::memory_order_relaxed);
+        g_honor_room_enabled.store(tbl["honor"]["enabled"].value_or(false), std::memory_order_relaxed);
         {
             // 读侧对缺键与非法值一律回落 forever：一个手写坏值不能让自动清理误删数据。
             const std::string retention = tbl["statistics"]["retention"].value_or(std::string("forever"));
