@@ -13,6 +13,7 @@ project(MetasequoiaImePortableTests LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(Threads REQUIRED)
 
 set(SERVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
@@ -28,6 +29,7 @@ add_executable(portable_tests
 )
 
 target_include_directories(portable_tests PRIVATE "${SERVER_ROOT}" "${SERVER_ROOT}/src" "${SERVER_ROOT}/..")
+target_link_libraries(portable_tests PRIVATE Threads::Threads)
 
 if(MSIME_PORTABLE_TESTS_SANITIZE AND NOT MSVC)
     target_compile_options(portable_tests PRIVATE
