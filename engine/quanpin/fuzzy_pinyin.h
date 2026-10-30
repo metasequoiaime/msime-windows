@@ -131,12 +131,17 @@ std::vector<WordItem> merge_fuzzy_candidates(std::vector<WordItem> exact, std::v
 
     std::vector<WordItem> remaining;
     remaining.reserve(fuzzy.size());
+    // fuzzy 池自己也会有同名词：同一个词被多条模糊读法命中、又不在 exact 里时，
+    // 旧代码的全局 seen 顺带挡住了这层重复，换成择优保留后就没了，得单独再收一次。
+    std::unordered_set<std::string> remaining_words;
+    remaining_words.reserve(fuzzy.size());
     for (auto &item : fuzzy)
     {
         const auto found = exact_index.find(item.word);
         if (found == exact_index.end())
         {
-            remaining.push_back(std::move(item));
+            if (remaining_words.insert(item.word).second)
+                remaining.push_back(std::move(item));
             continue;
         }
         // 同名词已在 exact 里：位置不动，内容择优。整句候选被词库真身顶掉时，

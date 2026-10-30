@@ -19,5 +19,5 @@ struct PendingReview
 void StartReviewWorker();
 void StopReviewWorker();
 void SubmitReview(const RuntimeConfig &config, std::vector<PendingReview> items, const std::string &target_language,
-                  const std::string &vendor_scope);
+                  const std::string &vendor_scope, uint64_t generation);
 } // namespace Translate

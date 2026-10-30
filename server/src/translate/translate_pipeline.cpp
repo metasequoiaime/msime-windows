@@ -181,7 +181,7 @@ void WorkerLoop()
         if (!alive || pending.empty())
             continue;
         // 校对丢给独立线程，工作循环立刻回去等下一次输入，上屏延迟不受影响。
-        SubmitReview(*resolved, std::move(pending), target_language, vendor_scope);
+        SubmitReview(*resolved, std::move(pending), target_language, vendor_scope, generation);
     }
 }
 } // namespace Translate

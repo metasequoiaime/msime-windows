@@ -1846,6 +1846,10 @@ VisualPtr BuildInputPage(PageContext &context)
         s->translationOptions->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         master->SetOnChanged([s, model](bool on) {
             model->Update("general.candidate_translations", on);
+            // 界面只剩自定义服务：开关打开即选中它。留给 [translation].provider 空着会被旧 enabled
+            // 布尔推到小牛，用户填的自定义接口就永远不生效。
+            if (on)
+                model->Update("translation.provider", "custom");
             s->SetTranslationsEnabled(on);
         });
         page.AddSection(

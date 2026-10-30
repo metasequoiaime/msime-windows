@@ -144,9 +144,21 @@ secret_key = ""
 # api_key 留空时不发送 Authorization 请求头。
 #
 [custom_translation]
+# enabled 布尔仅为旧版兼容保留，实际生效方由 [translation].provider 决定。
 enabled = false
 endpoint = ""
 api_key = ""
+# 协议格式：openai（Chat Completions）/ responses / anthropic / gemini。
+format = "openai"
+# 模型名。留空时服务端按 gpt-4o-mini 发请求，多数服务商会直接拒绝，务必填写。
+model = "gpt-4o-mini"
+# 思考强度：留空表示不传；可选 disabled / low / high / max。
+thinking = ""
+# 提示词槽位：custom_1 / custom_2 / custom_3，三槽各存一份，切换只改当前生效的那一个。
+prompt_id = "custom_1"
+prompt_custom_1 = ""
+prompt_custom_2 = ""
+prompt_custom_3 = ""
 # 译后校对：译完再让同一模型复核一遍，只把确实要改的条目写回词库。
 review = true
 

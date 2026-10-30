@@ -25,6 +25,9 @@ struct ReviewJob
     RuntimeConfig config;
     std::string target_language;
     std::string vendor_scope;
+    // 提交这一批时的翻译代次。校对结果只能回到产生它的那一代，后台拿「最新代次」发布，
+    // 旧语言的结果会合法地穿过代次校验，落到新语言的候选缓存上。
+    uint64_t generation = 0;
 };
 
 std::mutex g_review_mutex;
@@ -104,17 +107,16 @@ void ReviewLoop()
         }
         if (job.items.empty())
             continue;
+        // 代次在跑校对之前就要验：过期的任务跑完也不能用，词库更不该被旧语言的修正写进去。
+        if (!EnglishIme::IsTranslationCurrent(job.generation))
+            continue;
         auto corrections = ReviewPending(job.config, job.items, job.target_language, job.vendor_scope);
         if (corrections.empty() || !running.load() || !Internal::Callback())
             continue;
-        uint64_t generation = 0;
-        {
-            std::lock_guard lock(Internal::Mutex());
-            generation = Internal::LatestGeneration();
-        }
-        if (!EnglishIme::IsTranslationCurrent(generation))
+        // 校对本身要几秒，回来的这一刻用户可能已经切了语言：用条目自己的代次再验一次。
+        if (!EnglishIme::IsTranslationCurrent(job.generation))
             continue;
-        Internal::Callback()(std::move(corrections), generation);
+        Internal::Callback()(std::move(corrections), job.generation);
     }
 }
 } // namespace
@@ -132,7 +134,7 @@ void StopReviewWorker()
 }
 
 void SubmitReview(const RuntimeConfig &config, std::vector<PendingReview> items, const std::string &target_language,
-                  const std::string &vendor_scope)
+                  const std::string &vendor_scope, uint64_t generation)
 {
     if (items.empty())
         return;
@@ -140,10 +142,17 @@ void SubmitReview(const RuntimeConfig &config, std::vector<PendingReview> items,
         std::lock_guard lock(g_review_mutex);
         if (g_review_job.items.size() + items.size() > kMaxReviewBacklog)
             g_review_job.items.clear(); // 积压过多说明用户一直在连打，丢掉旧的一批
+        // 代次、目标语言或生效服务变了，积压的旧条目已无意义：整批换掉，
+        // 不能让两种语言混进同一次校对，也不能把旧条目挂在新的代次上。
+        if (!g_review_job.items.empty() &&
+            (g_review_job.generation != generation || g_review_job.target_language != target_language ||
+             g_review_job.vendor_scope != vendor_scope))
+            g_review_job.items.clear();
         g_review_job.items.insert(g_review_job.items.end(), items.begin(), items.end());
         g_review_job.config = config;
         g_review_job.target_language = target_language;
         g_review_job.vendor_scope = vendor_scope;
+        g_review_job.generation = generation;
         g_review_pending = true;
     }
     g_review_cv.notify_one();

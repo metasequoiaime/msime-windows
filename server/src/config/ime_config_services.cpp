@@ -354,6 +354,11 @@ bool SetConfiguredCustomTranslationString(const std::string &key, const std::str
             g_custom_translation.prompt_id == "custom_2"   ? g_custom_translation.prompt_custom_2
             : g_custom_translation.prompt_id == "custom_3" ? g_custom_translation.prompt_custom_3
                                                            : g_custom_translation.prompt_custom_1;
+    // 设置页只剩自定义服务一套表单：填进去任何一个字段就代表要用它，把生效提供方钉到 custom。
+    // 否则 [translation].provider 留空时按旧 enabled 布尔推导，出厂配置里 [niutrans].enabled 是 true，
+    // 用户填完地址与模型、点测试也通过，真实翻译却仍走小牛，界面上还看不到实际生效的是谁。
+    if (g_translation_provider != "custom" && !SetConfiguredTranslationString("provider", "custom"))
+        return false;
     PublishTranslationConfig();
     return true;
 }
