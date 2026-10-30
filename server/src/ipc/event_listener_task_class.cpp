@@ -92,7 +92,11 @@ TaskClass NextTaskClass(const std::array<TaskClassHead, kTaskClassCount> &heads)
     const TaskClassHead &enrichment = heads[TaskClassIndex(TaskClass::Enrichment)];
     const TaskClassHead &maintenance = heads[TaskClassIndex(TaskClass::Maintenance)];
 
-    // 用户正在等的任务先取：这正是把富化从按键前面摘出去的全部目的。
+    // Keep user actions ahead of later foreground work.
+    // Both classes still pass enrichment and maintenance work.
+    if (foreground.has_task && user_action.has_task)
+        return user_action.enqueue_sequence < foreground.enqueue_sequence ? TaskClass::UserAction
+                                                                          : TaskClass::Foreground;
     if (foreground.has_task)
         return TaskClass::Foreground;
     if (user_action.has_task)

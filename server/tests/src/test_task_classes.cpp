@@ -35,7 +35,12 @@ std::array<TaskClassHead, kTaskClassCount> HeadsWith(std::initializer_list<std::
 
 std::vector<TaskType> DrainBlockedWorker(std::initializer_list<TaskType> posted)
 {
-    std::array<std::deque<TaskType>, kTaskClassCount> queues;
+    struct QueuedTask
+    {
+        TaskType type;
+        std::uint64_t sequence;
+    };
+    std::array<std::deque<QueuedTask>, kTaskClassCount> queues;
     std::vector<TaskType> completed;
     std::promise<void> worker_started;
     std::promise<void> release_worker;
@@ -52,18 +57,21 @@ std::vector<TaskType> DrainBlockedWorker(std::initializer_list<TaskType> posted)
             {
                 heads[i].has_task = !queues[i].empty();
                 has_work |= heads[i].has_task;
+                if (heads[i].has_task)
+                    heads[i].enqueue_sequence = queues[i].front().sequence;
             }
             if (!has_work)
                 break;
             auto &queue = queues[TaskClassIndex(NextTaskClass(heads))];
-            completed.push_back(queue.front());
+            completed.push_back(queue.front().type);
             queue.pop_front();
         }
     });
     started.wait();
     // The gate keeps the worker from taking a task until every task is queued.
+    std::uint64_t sequence = 0;
     for (TaskType type : posted)
-        queues[TaskClassIndex(ClassifyTask(type))].push_back(type);
+        queues[TaskClassIndex(ClassifyTask(type))].push_back({type, ++sequence});
     release_worker.set_value();
     worker.join();
     return completed;
@@ -173,6 +181,52 @@ TEST_CASE(maintenance_never_overtakes_foreground_or_user_action)
             TaskClass::UserAction);
     // 三更高优先级都空时，等过上限的维护任务才轮到。
     REQUIRE(NextTaskClass(HeadsWith({{TaskClass::Maintenance, 0.0}})) == TaskClass::Maintenance);
+}
+
+TEST_CASE(older_user_action_runs_before_later_foreground)
+{
+    auto heads = HeadsWith({{TaskClass::UserAction, 10.0}, {TaskClass::Foreground, 1.0}});
+    heads[TaskClassIndex(TaskClass::UserAction)].enqueue_sequence = 1;
+    heads[TaskClassIndex(TaskClass::Foreground)].enqueue_sequence = 2;
+    REQUIRE(NextTaskClass(heads) == TaskClass::UserAction);
+
+    heads[TaskClassIndex(TaskClass::UserAction)].enqueue_sequence = 2;
+    heads[TaskClassIndex(TaskClass::Foreground)].enqueue_sequence = 1;
+    REQUIRE(NextTaskClass(heads) == TaskClass::Foreground);
+}
+
+TEST_CASE(earlier_mode_action_does_not_clear_a_later_key)
+{
+    const TaskType actions[] = {TaskType::ExitEnglishInputMode, TaskType::ToolbarLanguageToggle};
+    const TaskType rebuilds[] = {TaskType::ReloadInputSession, TaskType::EnsureInputSessionMatchesConfig};
+    for (TaskType action : actions)
+    {
+        for (TaskType rebuild : rebuilds)
+        {
+            for (const auto &completed : {DrainBlockedWorker({action, rebuild, TaskType::ImeKeyEvent}),
+                                          DrainBlockedWorker({rebuild, action, TaskType::ImeKeyEvent})})
+            {
+                std::string preedit;
+                for (TaskType type : completed)
+                {
+                    if (type == action || type == rebuild)
+                        preedit.clear();
+                    if (type == TaskType::ImeKeyEvent)
+                        preedit += 'x';
+                }
+                REQUIRE(preedit == "x");
+                REQUIRE(completed.back() == TaskType::ImeKeyEvent);
+            }
+        }
+    }
+}
+
+TEST_CASE(earlier_expand_runs_before_later_page_change)
+{
+    const auto completed = DrainBlockedWorker({TaskType::UiExpandCandidates, TaskType::UiPageDown});
+    REQUIRE(completed.size() == 2);
+    REQUIRE(completed[0] == TaskType::UiExpandCandidates);
+    REQUIRE(completed[1] == TaskType::UiPageDown);
 }
 
 TEST_CASE(indexed_candidate_actions_keep_the_clicked_page)

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 
 namespace FanyNamedPipe
 {
@@ -47,7 +48,7 @@ enum class TaskType
 };
 
 // The worker keeps FIFO order within each class.
-// Indexed candidate edits and session changes share Foreground order with keys.
+// It also preserves posting order across Foreground and UserAction.
 enum class TaskClass
 {
     Foreground,
@@ -67,6 +68,7 @@ struct TaskClassHead
 {
     bool has_task = false;
     double wait_ms = 0.0;
+    std::uint64_t enqueue_sequence = 0;
 };
 
 // A waiting Maintenance task can pass Enrichment after this limit.
