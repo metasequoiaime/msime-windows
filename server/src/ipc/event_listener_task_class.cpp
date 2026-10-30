@@ -1,6 +1,6 @@
 // 任务分级表与取任务次序。这两件事都不依赖队列和线程，单独放一个翻译单元，测试不必把整条
 // event_listener 链路链进来。
-#include "ipc/event_listener_internal.h"
+#include "ipc/event_listener_task_class.h"
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -33,13 +33,16 @@ TaskClass ClassifyTask(TaskType type)
     case TaskType::UiCommitCandidateAt:
     case TaskType::UiPageUp:
     case TaskType::UiPageDown:
-        return TaskClass::Foreground;
-
-    // 用户主动点的候选操作：有可见的后续，但当前按键的回复不依赖它们。
+    // Keep indexed edits and session changes ahead of later keys and page moves.
     case TaskType::UiPinCandidate:
     case TaskType::UiDeleteCandidate:
     case TaskType::UiFixCandidatePosition:
     case TaskType::UiClearCandidatePosition:
+    case TaskType::ReloadInputSession:
+    case TaskType::EnsureInputSessionMatchesConfig:
+        return TaskClass::Foreground;
+
+    // Other UI actions keep their existing priority.
     case TaskType::UiExpandCandidates:
     case TaskType::ExitEnglishInputMode:
     case TaskType::ToolbarLanguageToggle:
@@ -57,8 +60,6 @@ TaskClass ClassifyTask(TaskType type)
 
     // 没有人在等结果，但丢不得、也不能无限期拖着的事。
     case TaskType::StoreUserPhrase:
-    case TaskType::ReloadInputSession:
-    case TaskType::EnsureInputSessionMatchesConfig:
     case TaskType::ApplyCandidatePageSize:
     case TaskType::RefreshCandidatePage:
     case TaskType::ResetInputSessionCache:
