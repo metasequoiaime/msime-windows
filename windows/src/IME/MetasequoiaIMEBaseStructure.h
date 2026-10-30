@@ -96,7 +96,12 @@ enum KEYSTROKE_FUNCTION
     // either moves the highlight or moves the caret and answers with the authoritative caret. Append-only, like
     // every function above.
     FUNCTION_MOVE_LEFT_CANDIDATE,
-    FUNCTION_MOVE_RIGHT_CANDIDATE
+    FUNCTION_MOVE_RIGHT_CANDIDATE,
+
+    // Server-authoritative composition rebuild after a page-boundary minus
+    // appended a literal '-' to the raw spelling. The payload is the ordinary
+    // creating-word frame. Append-only, like every function above.
+    FUNCTION_APPLY_COMPOSITION_RESTORE
 };
 
 //---------------------------------------------------------------------

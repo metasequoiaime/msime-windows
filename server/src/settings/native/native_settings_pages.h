@@ -50,6 +50,10 @@ class PageContext
     SettingsModel &model;
     HostServices &host;
 
+    // Credential test timeout. Production keeps 30 s; tests shorten it so the real
+    // timer path is covered without a 30-second wait.
+    unsigned credentialTestTimeoutMs = 30000;
+
     // Runs `sync` now (when a snapshot is already there) and after every snapshot.
     void OnConfig(std::function<void()> sync);
     // Message listener that lives as long as the window.

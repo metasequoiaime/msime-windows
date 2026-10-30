@@ -165,11 +165,10 @@ STDAPI CMetasequoiaIME::OnSetFocus(_In_ ITfDocumentMgr *pDocMgrFocus, _In_ ITfDo
         _focusLossDeferPending = false;
     }
 
-    // bcaf34e used document focus as the authoritative reconnect boundary.
-    // The modern protocol preserves that behavior with a new activation epoch
-    // on the existing healthy transport; EnsureNamedpipeFocusSessionActivated
-    // physically reopens a channel as well when its health check fails.
-    if (pDocMgrFocus && (!Global::g_connected || windowsTextInputHostTransition))
+    // Document focus authorizes a new session only while this TSF thread owns
+    // input focus. Background documents keep their bookkeeping below; the
+    // thread-focus callback resumes their connection when they become active.
+    if (pDocMgrFocus && IsNamedpipeThreadFocused() && (!Global::g_connected || windowsTextInputHostTransition))
     {
         // A genuine focus-session handover starts here: the activation token
         // that the pending smart-punctuation action was armed under is about

@@ -375,3 +375,18 @@ bool SetConfiguredSettingsLaunchAnimation(bool enabled)
     g_settings_launch_animation = enabled;
     return true;
 }
+
+bool GetConfiguredAutoDownloadUpdate()
+{
+    return g_auto_download_update;
+}
+
+bool SetConfiguredAutoDownloadUpdate(bool enabled)
+{
+    if (!WriteConfiguredValue("appearance", "auto_download_update", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_auto_download_update = enabled;
+    return true;
+}

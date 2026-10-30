@@ -21,6 +21,7 @@ $files = if ($Set -eq 'Payload') {
         'server_exe/MetasequoiaImeServer.exe',
         'server_exe/MetasequoiaImeWatchdog.exe',
         'server_exe/MetasequoiaImeDictionaryReplay.exe',
+        'server_exe/MetasequoiaImeDictionaryBuild.exe',
         'server_exe/MetasequoiaImeEmojiPanel.exe',
         'server_exe/MetasequoiaImeKeyboardPanel.exe',
         'server_exe/MetasequoiaImeHandwritingPanel.exe',

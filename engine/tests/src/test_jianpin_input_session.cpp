@@ -183,7 +183,8 @@ int run_test()
             "A corrupt super-jianpin database was not isolated.");
 
     set_data_directory(complete);
-    metasequoia::InputSession session(SchemeType::Quanpin);
+    // 超级简拼只保留给双拼：全拼直接打声母就是简拼，Shift+J 在全拼下不再是特殊模式。
+    metasequoia::InputSession session(SchemeType::Shuangpin);
     require(session.handle_character('J', true).handled &&
                 session.local_input_mode() == metasequoia::LocalInputMode::SuperJianpin && session.preedit() == "J" &&
                 session.candidates().empty(),
@@ -202,18 +203,22 @@ int run_test()
 
     metasequoia::LocalModeOptions disabled_options;
     disabled_options.super_jianpin = false;
-    metasequoia::InputSession disabled(SchemeType::Quanpin);
+    metasequoia::InputSession disabled(SchemeType::Shuangpin);
     disabled.set_local_mode_options(disabled_options);
     require(!disabled.handle_character('J', true).handled && !disabled.has_composition() &&
                 disabled.local_input_mode() == metasequoia::LocalInputMode::None,
             "A disabled super-jianpin shortcut swallowed Shift+J.");
+    metasequoia::InputSession quanpin_session(SchemeType::Quanpin);
+    (void)quanpin_session.handle_character('J', true);
+    require(quanpin_session.local_input_mode() != metasequoia::LocalInputMode::SuperJianpin,
+            "Shift+J entered super-jianpin in quanpin; the shortcut is shuangpin-only.");
     metasequoia::InputSession wubi(SchemeType::Wubi);
     require(!wubi.handle_character('J', true).handled && !wubi.has_composition() &&
                 wubi.local_input_mode() == metasequoia::LocalInputMode::None,
             "Shift+J was swallowed outside a pinyin scheme.");
 
     user_dictionary::close_default_user_database();
-    metasequoia::InputSession learning(SchemeType::Quanpin);
+    metasequoia::InputSession learning(SchemeType::Shuangpin);
     require(learning.set_frequency_adjustment({metasequoia::FrequencyAdjustmentMode::Pin, 1, 1}),
             "A valid super-jianpin frequency configuration was rejected.");
     require(learning.handle_character('J', true).handled, "Super-jianpin learning mode did not start.");
@@ -221,7 +226,7 @@ int run_test()
     const auto learned = learning.select_candidate(std::string("拟好"));
     require(learned.handled && learned.commit == "拟好" && !learned.diagnostic.has_value(),
             "Super-jianpin frequency learning blocked candidate commit.");
-    metasequoia::InputSession reopened(SchemeType::Quanpin);
+    metasequoia::InputSession reopened(SchemeType::Shuangpin);
     require(reopened.handle_character('J', true).handled, "Super-jianpin mode did not reopen after learning.");
     type(reopened, "nh");
     require(!reopened.candidates().empty() && reopened.candidates().front().word == "拟好",

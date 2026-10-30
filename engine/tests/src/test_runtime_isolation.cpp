@@ -298,6 +298,9 @@ void test_runtime_isolation()
         SessionOptions options;
         options.paths = paths_a;
         options.learning = false;
+        // 超级简拼只对双拼生效，J 用双拼会话验证本地模式的光标边界。
+        if (marker == 'J')
+            options.scheme = SchemeType::Shuangpin;
         Session session(options);
         session.character(marker, true);
         // U 模式是部件拆字：受理小写字母，数字会被吞，所以这里用字母载荷。

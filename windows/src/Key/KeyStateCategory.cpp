@@ -150,6 +150,9 @@ HRESULT CKeyStateCategory::KeyStateHandler(KEYSTROKE_FUNCTION function, KeyHandl
     case FUNCTION_PUNCTUATION:
         return HandleKeyPunctuation(dto);
 
+    case FUNCTION_APPLY_COMPOSITION_RESTORE:
+        return _pTextService->_HandleApplyCompositionRestore(dto.ec, dto.pContext, dto.prefetchedText);
+
     case FUNCTION_SELECT_BY_NUMBER:
         return HandleKeySelectByNumber(dto);
 

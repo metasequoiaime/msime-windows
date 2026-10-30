@@ -518,6 +518,11 @@ void InputBox::SetOnCommit(std::function<void(const std::wstring &)> handler)
     onCommit_ = std::move(handler);
 }
 
+void InputBox::SetOnEdited(std::function<void(const std::wstring &)> handler)
+{
+    box_->SetOnTextChanged(std::move(handler));
+}
+
 bool InputBox::IsFocused() const
 {
     return box_->IsFocused();
@@ -631,7 +636,8 @@ msimeui::Visual *InputBox::FindFirstFocusableDescendant()
 // ---------------------------------------------------------------------------------
 Field::Field(std::wstring label, VisualPtr control) : Column(7.0f)
 {
-    label_ = std::make_shared<Label>(std::move(label), FieldTextStyle(), TextRole::Secondary);
+    label_ = std::make_shared<Label>(label, FieldTextStyle(), TextRole::Secondary);
+    IndexSettingTitle(label_, std::move(label));
     Add(label_);
     Add(std::move(control));
 }
@@ -905,7 +911,11 @@ StatusText::StatusText() : Hideable(nullptr, false)
 
 void StatusText::Set(const std::wstring &text, const std::string &kind)
 {
-    label_->SetText(text);
+    if (text_ == text && kind_ == kind)
+        return;
+    text_ = text;
+    kind_ = kind;
+    label_->SetText(prefix_ + text_);
     if (kind == "success")
         label_->SetColor(Hex(0x4CAF72));
     else if (kind == "error")
@@ -913,13 +923,24 @@ void StatusText::Set(const std::wstring &text, const std::string &kind)
     else
         label_->SetRole(TextRole::Muted);
     SetVisible(!text.empty());
+    if (onChanged_)
+        onChanged_();
 }
 
 void StatusText::Clear()
 {
-    label_->SetText(L"");
-    label_->SetRole(TextRole::Muted);
-    SetVisible(false);
+    Set(L"", "");
+}
+
+void StatusText::SetDisplayPrefix(const std::wstring &prefix)
+{
+    prefix_ = prefix;
+    label_->SetText(prefix_ + text_);
+}
+
+void StatusText::SetOnChanged(std::function<void()> handler)
+{
+    onChanged_ = std::move(handler);
 }
 
 UINT_PTR SetTimeout(UINT ms, std::function<void()> callback)
@@ -968,7 +989,7 @@ void CredentialTest::Start()
     pendingService_ = service_();
     pendingSnapshot_ = readConfig_();
     const std::string requestId = pendingId_;
-    timer_ = SetTimeout(30000, [this, requestId]() {
+    timer_ = SetTimeout(context_->credentialTestTimeoutMs, [this, requestId]() {
         timer_ = 0;
         if (pendingId_ != requestId)
             return;
@@ -989,6 +1010,12 @@ void CredentialTest::Finish()
     pendingId_.clear();
     button_->SetDisabled(false);
     button_->SetText(idleLabel_);
+}
+
+void CredentialTest::Reset()
+{
+    Finish();
+    status_->Clear();
 }
 
 // ---------------------------------------------------------------------------------

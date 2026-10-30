@@ -6,9 +6,11 @@
 #include "settings/settings_launcher.h"
 #include "settings/api_credential_test.h"
 #include "settings/collocation_model.h"
+#include "settings/lattice_model.h"
 #include "settings/neural_model.h"
 #include "settings/default_input_method.h"
 #include "settings/game_compat_name.h"
+#include "settings/input_method_install.h"
 #include "settings/dictionary_manager.h"
 #include "settings/native/native_settings_window.h"
 
@@ -418,6 +420,14 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"candidate_horizontal_arrow_navigation", GetConfiguredCandidateHorizontalArrowNavigationEnabled()}}},
           {"association",
            {{"sentence_wordlattice", GetConfiguredAssocSentenceWordLattice()},
+            {"sentence_wordlattice_model_status", [] {
+                 const auto status = lattice_model::GetModelStatus();
+                 return nlohmann::json{{"state", status.state},
+                                       {"progress", status.progress},
+                                       {"error", status.error},
+                                       {"deletePending", status.delete_pending}};
+             }()},
+            {"sentence_wordlattice_model_url", lattice_model::SourceUrl()},
             {"sentence_google", GetConfiguredAssocSentenceGoogle()},
             {"sentence_neural_desktop", GetConfiguredAssocSentenceNeuralDesktop()},
             {"sentence_neural_desktop_model_status", [] {
@@ -427,6 +437,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
              }()},
             {"sentence_neural_desktop_model_url", neural_model::SourceUrl()},
             {"sentence_neural_keyboard", GetConfiguredAssocSentenceNeuralKeyboard()},
+            {"context_candidate_rerank", GetConfiguredAssocContextCandidateRerank()},
             {"sentence_show_next_on_duplicate", GetConfiguredAssocSentenceShowNextOnDuplicate()},
             {"sentence_source_badge", GetConfiguredAssocSentenceSourceBadge()},
             {"sentence_collocation_enabled", GetConfiguredAssocSentenceCollocationEnabled()},
@@ -491,6 +502,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"appearance",
            {{"settings_window_linger", GetConfiguredSettingsWindowLinger()},
             {"settings_launch_animation", GetConfiguredSettingsLaunchAnimation()},
+            {"auto_download_update", GetConfiguredAutoDownloadUpdate()},
             {"candidate_window_layout", GetConfiguredCandidateWindowLayout()},
             {"candidate_window_follow_cursor", GetConfiguredCandidateWindowFollowCursor()},
             {"candidate_window_fit_content", GetConfiguredCandidateWindowFitContent()},
@@ -581,6 +593,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"providers", ProviderEntriesJson(ai)},
             {"candidate_limit", ai.candidate_limit},
             {"thinking", ai.thinking},
+            {"json_mode", ai.json_mode},
             {"prompt", ai.prompt},
             {"prompt_id", ai.prompt_id},
             {"prompt_custom_1", ai.prompt_custom_1},
@@ -750,6 +763,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredSettingsWindowLinger(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.settings_launch_animation")
         return SetConfiguredSettingsLaunchAnimation(json::value_to<bool>(data.at("value")));
+    if (path == "appearance.auto_download_update")
+        return SetConfiguredAutoDownloadUpdate(json::value_to<bool>(data.at("value")));
     if (path == "appearance.candidate_window_layout")
         return SetConfiguredCandidateWindowLayout(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.candidate_window_follow_cursor")
@@ -864,6 +879,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredAssocSentenceGoogle(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_neural_desktop")
         return SetConfiguredAssocSentenceNeuralDesktop(json::value_to<bool>(data.at("value")));
+    if (path == "association.context_candidate_rerank")
+        return SetConfiguredAssocContextCandidateRerank(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_neural_keyboard")
         return SetConfiguredAssocSentenceNeuralKeyboard(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_show_next_on_duplicate")
@@ -1341,6 +1358,16 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             if (!ec)
                 ShellExecuteW(hwnd, L"open", skins.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
+        else if (type == "openLogDirectory")
+        {
+            // Keep in sync with the writer in src/log/candidate_diag_log.cpp: the
+            // diagnostics live under the data directory, not on the Desktop.
+            const std::filesystem::path logs = std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"logs";
+            std::error_code ec;
+            std::filesystem::create_directories(logs, ec);
+            if (!ec)
+                ShellExecuteW(hwnd, L"open", logs.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
         else if (type == "openHelpcodeDirectory")
         {
             const std::filesystem::path directory = metasequoia::path_from_utf8(GetCustomHelpcodeDirectory().c_str());
@@ -1403,6 +1430,29 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             PostConfig(false);
         }
         else if (type == "neuralModelStatusRequest")
+        {
+            PostConfig(false);
+        }
+        else if (type == "latticeModelDownload")
+        {
+            // 词格语言模型 sc.lm，与神经模型同一套：后台下载，进度随快照回放，页面在下载态轮询。
+            lattice_model::StartDownload();
+            PostConfig(false);
+        }
+        else if (type == "latticeModelImport")
+        {
+            const std::filesystem::path source = lattice_model::PromptForModelFile(hwnd);
+            if (!source.empty())
+                lattice_model::ImportModel(source);
+            PostConfig(false);
+        }
+        else if (type == "latticeModelDelete")
+        {
+            // Server 映射着文件时删不掉，DeleteModel 改留删除标记，快照里 deletePending 提示重启。
+            lattice_model::DeleteModel();
+            PostConfig(false);
+        }
+        else if (type == "latticeModelStatusRequest")
         {
             PostConfig(false);
         }
@@ -1531,21 +1581,25 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
         }
         else if (type == "restartServer")
         {
-            if (!NotifyImeServerRestart())
+            // 入口已保证 g_worker 非空且未在关闭：从那里到这里只经过 JSON 解析和这次同步的
+            // 管道写，都不泵消息，所以 g_closing / g_worker 中途不会变。若有哪个分支被改成
+            // 会泵消息的等待，就要改回「发送后重新检查状态、不可用也发回执」的写法。
+            const bool ok = NotifyImeServerRestart();
+            if (!ok)
             {
                 MessageBoxW(g_settings_hwnd, L"未能重启输入法进程，请稍后重试。", L"水杉输入法",
                             MB_OK | MB_ICONWARNING);
-                PostRestartServerDone(false);
             }
-            else if (g_worker && !g_closing)
+            else
             {
                 // Watchdog 拉起新 Server 后才会落位 .gram.new；设置进程不会因为这次重启
                 // 收到配置变化，所以在接下来几秒主动拉快照，待更新清掉或次数用完就停。
                 // 不重启设置进程：避免单实例/重开时序问题和窗口闪现。
                 g_restart_refresh_remaining = kRestartRefreshTicks;
                 SetTimer(hwnd, kRestartRefreshTimer, 500, nullptr);
-                PostRestartServerDone(true);
             }
+            // 回执只有一个出口：无论重启是否成功，页面按 restartServerDone 恢复按钮。
+            PostRestartServerDone(ok);
         }
         else if (type == "openExternalUrl")
         {
@@ -1961,6 +2015,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_command)
 {
     TraceStartup("wWinMain");
+    // Per-user keyboard list entry, started by the installer as the original user; no window, no single-instance
+    // check. Must come before the elevated half below: that one writes HKLM and must not touch HKCU.
+    if (const int profile_result = input_method_install::RunRegisterProfileIfRequested(command_line);
+        profile_result >= 0)
+        return profile_result;
     // The elevated half of the game-compat switch: write HKLM and exit, no window, no single-instance check.
     if (const int elevated_result = game_compat_name::RunElevatedApplyIfRequested(command_line); elevated_result >= 0)
         return elevated_result;

@@ -684,6 +684,15 @@ TEST_CASE(translation_provider_migrates_from_legacy_enabled_flags)
         REQUIRE(SetConfiguredAiAssistantString("model", "translation-model"));
         REQUIRE_EQ(GetConfiguredTranslation()->ai.model, std::string("translation-model"));
 
+        // 输出格式策略与翻译快照共用一份：改一次两边都读到，落盘后重载仍是它。
+        REQUIRE(SetConfiguredAiAssistantString("json_mode", "off"));
+        REQUIRE_EQ(GetConfiguredTranslation()->ai.json_mode, std::string("off"));
+        REQUIRE(!SetConfiguredAiAssistantString("json_mode", "not-a-mode"));
+        REQUIRE_EQ(GetConfiguredTranslation()->ai.json_mode, std::string("off"));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredTranslation()->ai.json_mode, std::string("off"));
+        REQUIRE(SetConfiguredAiAssistantString("json_mode", "auto"));
+
         // 切到阿里云：provider 与快照里的凭据一起更新，旧布尔同步写回 false。
         REQUIRE(SetConfiguredAliyunMtString("secret_id", "LTAIlegacy"));
         REQUIRE(SetConfiguredTranslationString("provider", "aliyun"));

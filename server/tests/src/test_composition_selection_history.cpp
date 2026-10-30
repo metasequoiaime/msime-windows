@@ -1,4 +1,5 @@
 #include "global/globals.h"
+#include "ipc/input_key_policy.h"
 #include "tests/includes/test_framework.h"
 
 namespace
@@ -178,4 +179,117 @@ TEST_CASE(composition_clear_drops_history_while_clear_creating_word_keeps_it)
     composition.clear();
     REQUIRE(composition.selection_history.empty());
     REQUIRE(!composition.restore_last_selection());
+}
+
+// 繁体写法的造词状态（显示文字、第一写法标记、前缀文字）随撤回快照一起恢复，清空时回到初值。
+TEST_CASE(composition_selection_snapshots_restore_the_traditional_spelling_state)
+{
+    GlobalIme::CompositionState composition;
+    composition.creating_word = MakeCreatingWord("gan", "干");
+    composition.creating_word.output_text = "乾";
+    composition.creating_word.all_first_spellings = false;
+    composition.creating_word.prefix_text = "乾";
+    composition.push_selection_snapshot("zao");
+
+    composition.creating_word.word = "干燥";
+    composition.creating_word.output_text = "乾燥";
+    composition.creating_word.all_first_spellings = true;
+    composition.creating_word.prefix_text = "乾燥";
+    REQUIRE(composition.restore_last_selection());
+    REQUIRE_EQ(composition.creating_word.output_text, std::string("乾"));
+    REQUIRE(!composition.creating_word.all_first_spellings);
+    REQUIRE_EQ(composition.creating_word.prefix_text, std::string("乾"));
+
+    composition.clear_creating_word();
+    REQUIRE(composition.creating_word.output_text.empty());
+    REQUIRE(composition.creating_word.all_first_spellings);
+    REQUIRE(composition.creating_word.prefix_text.empty());
+}
+
+TEST_CASE(composition_terminal_helpcode_restore_preserves_current_suffix_and_caret)
+{
+    for (const std::string tail : {"f", "fR", "|f", "|fR", "Fr"})
+    {
+        for (const std::string suffix : {"hc", "h", ""})
+        {
+            for (const std::size_t caret : {std::size_t(0), std::size_t(1), suffix.size(), std::size_t(99)})
+            {
+                GlobalIme::CompositionState composition;
+                composition.creating_word = MakeCreatingWord("wo", "我");
+                composition.push_selection_snapshot("ni'", 2, "nihc", tail);
+                composition.creating_word = MakeCreatingWord("wo'ni", "我拟");
+                composition.raw_input_with_cases = suffix;
+                composition.caret_position = caret;
+                REQUIRE(composition.restore_last_selection());
+                REQUIRE_EQ(composition.raw_input_with_cases, std::string("ni'") + suffix + tail);
+                const auto clamped = (std::min)(caret, suffix.size());
+                REQUIRE_EQ(composition.caret_position, 3 + clamped + (clamped == suffix.size() ? tail.size() : 0));
+                REQUIRE_EQ(composition.creating_word.word, std::string("我"));
+                const auto highlight = composition.take_restored_selection_highlight();
+                REQUIRE_EQ(highlight.absolute_index, 2);
+                REQUIRE_EQ(highlight.page_prefix, std::string("nihc"));
+                REQUIRE(!composition.restore_last_selection());
+                REQUIRE_EQ(composition.raw_input_with_cases, std::string("ni'") + suffix + tail);
+            }
+        }
+    }
+}
+
+TEST_CASE(composition_terminal_helpcode_history_restores_each_selection_once)
+{
+    GlobalIme::CompositionState composition;
+    composition.push_selection_snapshot("ni", -1, "", "|fR");
+    composition.creating_word = MakeCreatingWord("ni", "拟");
+    composition.note_raw_inserted();
+    composition.push_selection_snapshot("hc");
+    composition.creating_word = MakeCreatingWord("ni'hao", "拟好");
+    composition.raw_input_with_cases = "buhc";
+    composition.caret_position = 4;
+    REQUIRE(composition.restore_last_selection());
+    REQUIRE_EQ(composition.raw_input_with_cases, std::string("hcbuhc"));
+    REQUIRE_EQ(composition.creating_word.word, std::string("拟"));
+    REQUIRE(composition.last_selection_raw_edited());
+    REQUIRE(composition.restore_last_selection());
+    REQUIRE_EQ(composition.raw_input_with_cases, std::string("nihcbuhc|fR"));
+    REQUIRE_EQ(composition.caret_position, std::size_t(11));
+    REQUIRE(!composition.creating_word.active);
+    REQUIRE(!composition.restore_last_selection());
+}
+
+TEST_CASE(composition_terminal_helpcode_drop_and_clear_never_restore_the_tail)
+{
+    GlobalIme::CompositionState composition;
+    composition.push_selection_snapshot("ni", -1, "", "|fR");
+    composition.creating_word = MakeCreatingWord("ni", "拟");
+    REQUIRE(composition.drop_last_selection());
+    REQUIRE(composition.raw_input_with_cases.empty());
+    REQUIRE(!composition.restore_last_selection());
+    composition.push_selection_snapshot("ni", -1, "", "|fR");
+    composition.clear();
+    REQUIRE(!composition.restore_last_selection());
+    REQUIRE(composition.raw_input_with_cases.empty());
+}
+
+TEST_CASE(composition_terminal_helpcode_restore_respects_edit_lock_and_empty_raw_override)
+{
+    GlobalIme::CompositionState composition;
+    composition.push_selection_snapshot("ni", -1, "", "|fR");
+    composition.creating_word = MakeCreatingWord("ni", "拟");
+    composition.raw_input_with_cases = "hcx";
+    composition.caret_position = 3;
+    composition.note_raw_inserted();
+    const auto should_retreat = [&] {
+        return FanyImeIpc::ShouldRetreatCreatingWordSelection(
+            composition.creating_word.active, false, true, composition.raw_input_with_cases.size(),
+            composition.selection_history.size(), composition.last_selection_raw_edited());
+    };
+    REQUIRE(!should_retreat());
+    composition.raw_input_with_cases = "hc";
+    REQUIRE(!should_retreat());
+    composition.raw_input_with_cases.clear();
+    composition.caret_position = 0;
+    REQUIRE(should_retreat());
+    REQUIRE(composition.restore_last_selection());
+    REQUIRE_EQ(composition.raw_input_with_cases, std::string("ni|fR"));
+    REQUIRE_EQ(composition.caret_position, std::size_t(5));
 }

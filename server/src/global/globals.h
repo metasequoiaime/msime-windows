@@ -54,6 +54,18 @@ struct CreatingWordState
     std::string preedit;
     std::string pinyin;
     std::string word;
+    // 已选各段选中时实际显示的文字拼起来的串。与 word 同处累积；不做简转繁时与 word 相同。
+    // word 仍是简体底词，造词落库用它。
+    std::string output_text;
+    // 已选的每一段显示的都是它底词的整词第一写法（判定见 FanyImeIpc::ChosenTextOf），且每一段选中时的字形
+    // 都与 first_segment_character_set 相同。与 output_text 同处更新，变成 false 之后不再变回 true。
+    bool all_first_spellings = true;
+    // 第一段选中时的字形（"traditional" 或 "simplified"）；还没选过段时是空串。
+    std::string first_segment_character_set;
+    // 前缀的输出文字（规则见 FanyImeIpc::ChosenTextForOutput）。工作线程在每段选中后写（ProcessSelectionKey），
+    // 撤回快照恢复时随整个结构一起回来。读方：工作线程上的造词中间态管道载荷、三语循环键与 TSF 行内预编辑
+    // （GetTsfPreedit），界面线程上的候选窗预编辑（GetPreedit）。界面线程不碰会话与转换器，所以算好存成字段。
+    std::string prefix_text;
     bool active = false;
     // 已选的每一段都是第 1 页第 1 位。首词命中率按整次上屏记账，任一段没选首位就不算命中。
     bool all_segments_first = true;
@@ -63,6 +75,10 @@ struct CreatingWordState
         preedit.clear();
         pinyin.clear();
         word.clear();
+        output_text.clear();
+        all_first_spellings = true;
+        first_segment_character_set.clear();
+        prefix_text.clear();
         active = false;
         all_segments_first = true;
     }
@@ -91,6 +107,8 @@ struct CreatingWordSnapshot
     // input stays editable. Caret moves deliberately do not set it -- the caret
     // may stand anywhere, retraction still wins.
     bool raw_edited_after_selection = false;
+    // Restored after the current suffix, separately from the consumed prefix.
+    std::string consumed_terminal_helpcode_with_cases;
 };
 
 // One-shot hand-off from restore_last_selection to the frame builder: the
@@ -152,14 +170,15 @@ struct CompositionState
     // selected_page_prefix is the normalized prefix that list was built for, so a
     // restore can re-highlight that item once it rebuilt the same page.
     void push_selection_snapshot(const std::string &consumed_raw_input_with_cases, int selected_absolute_index = -1,
-                                 const std::string &selected_page_prefix = std::string())
+                                 const std::string &selected_page_prefix = std::string(),
+                                 const std::string &consumed_terminal_helpcode_with_cases = std::string())
     {
         if (consumed_raw_input_with_cases.empty())
         {
             return;
         }
-        selection_history.push_back(
-            {consumed_raw_input_with_cases, creating_word, selected_absolute_index, selected_page_prefix, false});
+        selection_history.push_back({consumed_raw_input_with_cases, creating_word, selected_absolute_index,
+                                     selected_page_prefix, false, consumed_terminal_helpcode_with_cases});
     }
 
     // Typing a character after a selection locks the newest snapshot: Backspace
@@ -197,12 +216,13 @@ struct CompositionState
     // Returns false when there is nothing to retract.
     //
     // One placement rule regardless of the caret: the spelling goes back in front
-    // of the untouched suffix (raw only ever holds what follows the newest
-    // selection), and the caret shifts by the restored length, keeping its
+    // of the current suffix (raw only ever holds what follows the newest
+    // selection), and the caret shifts by the restored prefix length, keeping its
     // distance to the suffix. That is Rime's "input grows, the caret does not
     // move" translated to this shrinking-raw model: caret 0 (standing behind the
     // word) lands at the end of the restored word, caret at the end of the raw
-    // stays at the end, so the next Backspace deletes through the suffix first.
+    // stays at the end. A separately consumed terminal helpcode goes after the
+    // current suffix; only a caret at its end follows the restored helpcode.
     bool restore_last_selection()
     {
         if (selection_history.empty())
@@ -212,8 +232,18 @@ struct CompositionState
         CreatingWordSnapshot snapshot = std::move(selection_history.back());
         selection_history.pop_back();
         const std::size_t restored_length = snapshot.consumed_raw_input_with_cases.size();
+        if (!snapshot.consumed_terminal_helpcode_with_cases.empty())
+        {
+            caret_position = (std::min)(caret_position, raw_input_with_cases.size());
+        }
+        const bool caret_at_end = caret_position == raw_input_with_cases.size();
         raw_input_with_cases.insert(0, snapshot.consumed_raw_input_with_cases);
         caret_position += restored_length;
+        raw_input_with_cases += snapshot.consumed_terminal_helpcode_with_cases;
+        if (caret_at_end)
+        {
+            caret_position += snapshot.consumed_terminal_helpcode_with_cases.size();
+        }
         creating_word = std::move(snapshot.previous_creating_word);
         restored_selection_highlight = {snapshot.selected_absolute_index, std::move(snapshot.selected_page_prefix)};
         return true;

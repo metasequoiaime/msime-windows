@@ -45,20 +45,22 @@ class Stages:
 def build_msime(source: inputs.Inputs, path: Path, stage: Stages) -> None:
     connection = sqlite3.connect(path)
     try:
-        stage("quanpin", lambda: f"{pinyin_db.build_quanpin(connection, source.source('sources/pinyin/single-chars.txt'), [source.source('sources/pinyin/rime-ice.txt'), source.source('sources/pinyin/rime-ice-supplement.txt')])} rows")
+        stage("quanpin", lambda: pinyin_db.build_quanpin(
+            connection, pinyin_db.wanxiang_files(source.dictionary / pinyin_db.WANXIANG)))
 
         def words(relative: str):
             entries = pinyin_db.parse_word_list(textutil.read(source.source(relative)), relative)
             inserted, promoted, unchanged = pinyin_db.apply_words(connection, entries)
             return f"{len(entries)} entries: {inserted} inserted, {promoted} promoted, {unchanged} already at or above their weight"
 
-        stage("places-supplement", lambda: words("sources/pinyin/places.txt"))
         stage("custom-words", lambda: words("custom/words.txt"))
 
         def corrections():
             name = "pinyin-reading-corrections.txt"
             entries = pinyin_db.parse_reading_corrections(textutil.read(source.resource(name)), name)
-            return f"{len(entries)} entries: {pinyin_db.apply_reading_corrections(connection, entries, name)} rows removed"
+            removed, stale, kept = pinyin_db.apply_reading_corrections(connection, entries)
+            return (f"{len(entries)} entries: {removed} rows removed, {stale} with no wrong row, "
+                    f"{kept} kept for lack of a row at the correct reading")
 
         stage("reading-corrections", corrections)
 

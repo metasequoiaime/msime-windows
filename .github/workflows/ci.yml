@@ -21,7 +21,7 @@ jobs:
 
   lock:
     name: Product inputs
-    runs-on: ubuntu-24.04
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 60
     steps:
       # The engine is vendored in-tree, so a plain checkout already carries the contracts this job
@@ -49,7 +49,7 @@ jobs:
 
   windows:
     name: Windows ${{ matrix.name }}
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -113,7 +113,7 @@ jobs:
   # sanitized build would; it covers it on every pull request.
   sanitizers:
     name: Sanitizers
-    runs-on: ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -133,7 +133,7 @@ jobs:
   server:
     name: Server
     needs: lock
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 90
     # sccache caches individual MSVC compiles across runs so an incremental change recompiles only
     # what it touched instead of the whole server + engine tree. It needs SCCACHE_GHA_ENABLED for
@@ -219,7 +219,7 @@ jobs:
   engine:
     name: Engine
     needs: lock
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 60
     # Same sccache setup as the Server job. SCCACHE_IGNORE_SERVER_IO_ERROR lets a compile fall back
     # to plain cl.exe when the sccache server is unreachable, so a GitHub cache outage costs time
@@ -245,13 +245,24 @@ jobs:
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       # Keep Ninja Multi-Config: CMake ignores CMAKE_<LANG>_COMPILER_LAUNCHER under the Visual
       # Studio generator, so switching back to -A x64 would silently disable sccache.
+      #
+      # X_VCPKG_APPLOCAL_DEPS_SERIALIZED exists for this job and little else. vcpkg's default
+      # applocal pass runs as a POST_BUILD command on every executable, and every one of them
+      # copies the same sqlite3.dll into the same Release directory. Twenty-plus test binaries
+      # linking in parallel therefore race to write one file, and the loser dies with "The
+      # process cannot access the file because it is being used by another process", a red
+      # Engine check with nothing wrong in the code. The option adds USES_TERMINAL to those
+      # commands, which makes Ninja run post-build steps one at a time. It is marked
+      # experimental upstream (microsoft/vcpkg#13025); if a future vcpkg drops it, the durable
+      # fix is VCPKG_APPLOCAL_DEPS=OFF plus a PATH entry in the CTest environment.
       - name: Configure
         shell: pwsh
         run: |
           $cmakeArgs = @(
             '-S', 'engine', '-B', 'engine/build', '-G', 'Ninja Multi-Config',
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
-            '-DVCPKG_TARGET_TRIPLET=x64-windows', '-DBUILD_TESTING=ON'
+            '-DVCPKG_TARGET_TRIPLET=x64-windows', '-DBUILD_TESTING=ON',
+            '-DX_VCPKG_APPLOCAL_DEPS_SERIALIZED=ON'
           )
           $cmakeArgs += @(./scripts/ci/cmake-sccache-args.ps1 -SetupOutcome '${{ steps.sccache.outcome }}')
           cmake @cmakeArgs
@@ -278,7 +289,7 @@ jobs:
 
   gui:
     name: GUI framework
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 30
     steps:
       - name: Check out source
@@ -299,7 +310,7 @@ jobs:
   # enforces plus the example's installer; both run against the example and the skins/ collection.
   skins:
     name: Skins
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -322,7 +333,7 @@ jobs:
 
   packaging:
     name: Package contents
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -336,8 +347,8 @@ jobs:
         run: ./installer/tests/cloud-choice.ps1
       - name: Test that bundled skins back up changed user copies before overwriting
         run: ./installer/tests/bundled-skins.ps1
-      - name: Test that upgrades keep the desktop neural model shipped by 0.9.x
-        run: ./installer/tests/retired-desktop-model.ps1
+      - name: Test that upgrades keep the desktop neural model and sc.lm older packages shipped
+        run: ./installer/tests/retired-models.ps1
       - name: Stop local packaging after failed component builds
         run: ./installer/tests/build-failures.ps1
       - name: Test local Server test entrypoints in a moved checkout

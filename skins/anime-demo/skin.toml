@@ -1,0 +1,171 @@
+schema_version = 2
+
+id = "anime-demo"
+name = "anime-demo"
+version = "0.1.12"
+description = "奶油棕浅色 / 可可棕深色候选窗，右上角趴着猫猫虫动图、左下角挂着抱樱花的小白猫、正下方倒挂着长发少女、右下角吊着野猪头少年，布朗熊敲电脑动图与圆底工具按钮。仅供学习使用，形象版权归 LINE FRIENDS。"
+base = "canvas"
+
+[supports]
+layouts = ["horizontal", "vertical"]
+themes = ["dark", "light"]
+
+# 面板用原生圆角底色，随主题切换；不再让一张奶油色贴图覆盖两套配色。
+# 内容留白 8 DIP，比内置皮肤的 5 DIP 稍宽松，横竖排相同。
+[candidate_window]
+shadow = "soft"
+corner_radius_dip = 8
+border_width_dip = 1
+padding = 8
+item_corner_radius_dip = 4
+
+# 猫猫虫趴在候选框右上角：300x252 px 的循环 GIF 缩到 60 x 50.4 DIP，猫身在图的左侧约七成。
+# 趴下那几帧的脚底就在图的最下一行（站立帧高 7 px，约 1.4 DIP）。框上移一个框高再回落 2 DIP、右移 10 DIP，
+# 脚底压进面板上沿 2 DIP，踩在上边框上。
+[[candidate_window.decorations]]
+image = "assets/cat.gif"
+anchor = "top-right"
+offset_x_dip = 10
+offset_y_dip = -48.4
+width_dip = 60
+height_dip = 50.4
+z_index = 2
+
+# 抱着樱花枝的小白猫挂在候选框左下角：100x142 px 的 2 倍图，显示 50 x 71 DIP。
+# 框左移 38 DIP、下移 20 DIP，大半伸出面板左侧，右缘压进面板 12 DIP（内边距 8 DIP，再多 4 DIP 是尾巴尖）。
+[[candidate_window.decorations]]
+image = "assets/sakura-kitten.png"
+anchor = "bottom-left"
+offset_x_dip = -38
+offset_y_dip = 20
+width_dip = 50
+height_dip = 71
+z_index = 2
+
+# 倒挂的长发少女挂在候选框正下方居中：80x80 px 的 2 倍图（帽子在图的最上一行被截平），显示 40 x 40 DIP。
+# 框下移一个框高，帽子截口正好贴着面板下边框，整个人都在面板外，不挡候选；
+# 脸的中线在图中偏右约 1.35 DIP（原图 627 px 宽里约 335 px 处），框左移 1.35 DIP 让脸落在面板正中。
+[[candidate_window.decorations]]
+image = "assets/hanging-girl.png"
+anchor = "bottom"
+offset_x_dip = -1.35
+offset_y_dip = 40
+width_dip = 40
+height_dip = 40
+z_index = 2
+
+# 吊在绳子上的野猪头少年挂在候选框右下角：100x187 px（绳头在图的最上一行、中心 x = 57.5 px），显示 38.5 x 72 DIP。
+# 框下移一个框高，绳头正好贴着面板下边框；右移 8.36 DIP 让绳子中心落在离右边 8 DIP 处，
+# 即下边直线与 8 DIP 圆角的交界（38.5 - 22.14 - 8 = 8.36）。框右缘伸出面板 8.36 DIP，在 outer_insets 右侧 10 DIP 之内。
+[[candidate_window.decorations]]
+image = "assets/boar-warrior.png"
+anchor = "bottom-right"
+offset_x_dip = 8.36
+offset_y_dip = 72
+width_dip = 38.5
+height_dip = 72
+z_index = 2
+
+# 给伸出面板的挂件留出窗口空白，否则会被窗口边界裁掉。
+[candidate_window.outer_insets_dip]
+top = 48.4
+right = 10
+bottom = 72
+left = 38
+
+[candidate.dark]
+surface = "#2E241F"
+border = "#8C6A50"
+accent = "#F2AD68"
+text = "#F9EBDD"
+candidate_text = "#F9EBDD"
+preedit_text = "#F9EBDD"
+preedit_caret = "#F2AD68"
+number = "#C9AB91"
+selected = "#64442F"
+hover = "#463328"
+translation = "#D7B99C"
+translation_pos = "#C9AB91"
+translation_separator = "#A98A70"
+selected_text = "#FFF4E8"
+selected_number = "#FFD09C"
+selected_translation = "#FFE0BC"
+selected_translation_pos = "#FFD09C"
+selected_translation_separator = "#DBBA98"
+selected_bar = "#F2AD68"
+show_selected_bar = true
+preedit_background = "transparent"
+preedit_divider = "transparent"
+page_arrow_divider = "#8C6A50"
+
+[candidate.dark.menu]
+background = "#2E241F"
+border = "#8C6A50"
+text = "#F9EBDD"
+hover = "#463328"
+
+[candidate.light]
+surface = "#FCF3E3"
+border = "#9A7855"
+accent = "#BD641E"
+text = "#5A3A22"
+candidate_text = "#5A3A22"
+preedit_text = "#5A3A22"
+preedit_caret = "#BD641E"
+number = "#88603E"
+selected = "#F7DAB7"
+hover = "#F0E3D1"
+translation = "#88603E"
+translation_pos = "#88603E"
+translation_separator = "#956A45"
+selected_text = "#5A3A22"
+selected_number = "#704726"
+selected_translation = "#704726"
+selected_translation_pos = "#704726"
+selected_translation_separator = "#88603E"
+selected_bar = "#BD641E"
+show_selected_bar = true
+preedit_background = "transparent"
+preedit_divider = "transparent"
+page_arrow_divider = "#9A7855"
+
+[candidate.light.menu]
+background = "#FCF3E3"
+border = "#9A7855"
+text = "#5A3A22"
+hover = "#F0E3D1"
+
+# 240x272 px 的 APNG 按 0.7 显示：168 x 190.4 DIP，布朗熊竖直居中。按钮不画进背景图：圆底是每个按钮自己的
+# background（button_defaults），按 button_flow 在熊右边竖排，设置页关掉哪个按钮，它连同圆底一起消失、后面的往上补。
+[toolbar]
+mode = "image"
+image = "assets/toolbar.apng"
+image_width_dip = 168
+image_height_dip = 190.4
+icon_corner_radius_dip = 15
+
+[toolbar.dark]
+hover = "rgba(90,58,34,.18)"
+icon = "#5A3A22"
+
+[toolbar.light]
+hover = "rgba(90,58,34,.18)"
+icon = "#5A3A22"
+
+[toolbar.button_defaults]
+width_dip = 30
+height_dip = 30
+icon_size_dip = 20
+background = "assets/plate.png"
+
+[toolbar.button_flow]
+x_dip = 170
+y_dip = 0
+direction = "vertical"
+gap_dip = 2
+
+# 素材授权未核实，仅作仓库演示；打包脚本按 UNVERIFIED 标记排除，不随安装包分发。
+[license]
+code = "MIT"
+assets = "UNVERIFIED-DEMO-ONLY"
+source = "布朗熊动图（LINE FRIENDS）、候选框右上角的猫猫虫动图、左下角的抱樱花小白猫、正下方的倒挂少女与右下角的野猪头少年来自网络，按钮圆底与候选窗面板由 Metasequoia IME contributors 程序生成。"

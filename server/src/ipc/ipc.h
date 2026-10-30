@@ -165,6 +165,16 @@ uint64_t DeactivatePipeRouteForForegroundClient(uint64_t client_id, uint64_t mai
 PipeClientActivation GetActivePipeClient();
 bool IsActivePipeClient(uint64_t client_id, uint64_t activation_epoch = 0);
 bool IsPipeActivationCurrent(uint64_t client_id, uint64_t activation_epoch);
+// Whether the focused window's input thread belongs to a TSF client that is still
+// connected. This is the usable "the window being looked at runs this IME"
+// question: ownership (the active client) cannot answer it, because a route-only
+// suspension clears the active client on every focus change inside a host while
+// the TIP stays loaded and keeps its pipes.
+bool IsForegroundInputThreadConnectedPipeClient();
+// Whether this one client owns the focused window's input thread: its thread, or
+// the thread owning that window's keyboard focus (a child window on an attached
+// input queue). Shared with the pipe routing checks.
+bool PipeClientOwnsForegroundInput(uint64_t client_id);
 void ShutdownPipeClients();
 bool SendToTsfClientViaNamedpipe(uint64_t client_id, uint64_t activation_epoch, UINT msg_type, uint64_t request_id,
                                  const std::wstring &pipeData);

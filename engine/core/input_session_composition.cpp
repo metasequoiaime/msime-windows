@@ -1,5 +1,6 @@
 #include "input_session.h"
 #include "../common/helpcode_utils.h"
+#include "../contracts/mid_sentence_helpcode.h"
 #include "../quanpin/quanpin_query.h"
 #include "../quanpin/quanpin_utils.h"
 #include "../shuangpin/shuangpin_query.h"
@@ -954,6 +955,56 @@ InputSession::SelectionTransition InputSession::advance_composition_after_select
         size_t consumed_length = remove_delimiters(selected_pinyin).size();
         // 带句中辅助码时 base 是去掉反引号段的串，推进结果要映射回原串，见 RemapMidSentenceRest。
         const std::string typed = request().raw_input_with_syllable_helpcodes;
+        const std::string original = typed.empty() ? base.raw_input_with_cases : typed;
+        std::string terminal_helpcode;
+        if (!prefix_candidates_active_)
+        {
+            if (!request().end_helpcodes.empty())
+            {
+                FanyImeMidSentenceHelpcode::ScanBlocks(
+                    original.data(), original.size(), engine_.helpcode_uppercase_triggers(),
+                    [&](size_t begin, size_t end, size_t, FanyImeMidSentenceHelpcode::BlockKind kind) {
+                        if (kind == FanyImeMidSentenceHelpcode::BlockKind::End && end == original.size())
+                        {
+                            terminal_helpcode = original.substr(begin);
+                        }
+                    });
+            }
+            else if (base.helpcode_length > 0)
+            {
+                const size_t begin = shuangpin::raw_length_for_effective_prefix(
+                    base.raw_input_with_cases, total_input_length - base.helpcode_length);
+                terminal_helpcode = typed.empty()
+                                        ? original.substr(begin)
+                                        : RemapMidSentenceRest(request(), typed, begin,
+                                                               base.raw_input_with_cases.size(), shuangpin_profile_)
+                                              .rest;
+            }
+        }
+        const auto consume_terminal_helpcode = [&](std::string &normalized_rest, std::string &cased_rest) {
+            if (terminal_helpcode.empty())
+            {
+                return;
+            }
+            // Explicit terminal blocks survive the existing layout remapping;
+            // implicit direct codes have already been excluded by rest_end.
+            if (!request().end_helpcodes.empty())
+            {
+                if (cased_rest.size() < terminal_helpcode.size() ||
+                    cased_rest.compare(cased_rest.size() - terminal_helpcode.size(), terminal_helpcode.size(),
+                                       terminal_helpcode) != 0)
+                {
+                    return;
+                }
+                cased_rest.resize(cased_rest.size() - terminal_helpcode.size());
+                normalized_rest = LowercaseLetters(cased_rest);
+            }
+            transition.consumed_terminal_helpcode_with_cases = terminal_helpcode;
+            // Include separators removed with the prefix so the consumed prefix,
+            // remaining suffix and terminal helpcode reconstruct the exact raw.
+            transition.consumed_raw_input_with_cases =
+                original.substr(0, original.size() - cased_rest.size() - terminal_helpcode.size());
+        };
         if (base.helpcode_length > 0)
         {
             const size_t rest_start =
@@ -978,6 +1029,7 @@ InputSession::SelectionTransition InputSession::advance_composition_after_select
                     cased_rest = std::move(remapped.rest);
                     normalized_rest = LowercaseLetters(cased_rest);
                 }
+                consume_terminal_helpcode(normalized_rest, cased_rest);
                 engine_.replace_shuangpin_raw_input(normalized_rest, cased_rest);
                 online_requests_.invalidate();
                 update_mixed_candidates();
@@ -1012,6 +1064,7 @@ InputSession::SelectionTransition InputSession::advance_composition_after_select
                     cased_rest = std::move(remapped.rest);
                     normalized_rest = LowercaseLetters(cased_rest);
                 }
+                consume_terminal_helpcode(normalized_rest, cased_rest);
                 engine_.replace_shuangpin_raw_input(normalized_rest, cased_rest);
                 online_requests_.invalidate();
                 update_mixed_candidates();

@@ -271,6 +271,13 @@ bool CCompositionProcessorEngine::IsSmartPunctuationChinese(WCHAR ch)
 
 WCHAR CCompositionProcessorEngine::GetSmartPunctuationAscii(WCHAR chinese)
 {
+    // 顿号跟随中文标点下出顿号的键位设定（EnumerationCommaKeysChanged）：
+    // 只勾 \ 转 \，勾了 / 转 /；两个都勾时保留历史行为转 /。
+    if (chinese == L'、')
+    {
+        const unsigned keys = Global::EnumerationCommaKeys.load(std::memory_order_relaxed);
+        return (keys & FanyImeEnumerationComma::kSlash) != 0 ? L'/' : L'\\';
+    }
     for (const SmartPunctuationMapping &mapping : kSmartPunctuationMap)
     {
         if (mapping.chinese == chinese)

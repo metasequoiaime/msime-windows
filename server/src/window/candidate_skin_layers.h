@@ -27,13 +27,18 @@ struct NineSlice
     // v2 规定 border-width 等于切片数值）。
     Edges width;
     bool fill = true;
+    // 同 CSS border-image-repeat。
+    bool repeatX = false;
+    bool repeatY = false;
 };
 
 NineSlice ResolveNineSlice(const CandidateSkinCatalog::BorderImage &borderImage);
 
 // 面板外缘到内容的距离（DIP）。写了 content_insets_dip 时就是它，但不小于九宫格该边的边宽（文字不压在边框上，
 // 与 CSS 的 border + padding 一致）；没写时是九宫格边宽加上基底自己的内边距。
-Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double basePadding);
+// vertical 为 true 时，写了 border_image.vertical / content_insets_dip.vertical 就按竖排那套算，
+// 没写的部分仍用横排的值。
+Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double basePadding, bool vertical = false);
 
 struct Layers
 {

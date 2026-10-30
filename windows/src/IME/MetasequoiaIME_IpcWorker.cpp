@@ -494,6 +494,29 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             // worker pipe.
             validFrame = hasTerminator && buf.data[0] != L'\0' && end && *end == L'\0';
         }
+        if (validFrame && buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateInstallerReady)
+        {
+            // Soft control frame: a truncated or forged payload must never be answered with a
+            // process-wide modal dialog. Accept only the exact three-field shape
+            // "<version>\t<path>\t<name>".
+            bool hasTerminator = false;
+            for (const wchar_t ch : buf.data)
+            {
+                if (ch == L'\0')
+                {
+                    hasTerminator = true;
+                    break;
+                }
+            }
+            int tabs = 0;
+            for (size_t index = 0; index < FanyImePipeLimits::CandidateTextCapacity && buf.data[index] != L'\0';
+                 ++index)
+            {
+                if (buf.data[index] == L'\t')
+                    ++tabs;
+            }
+            validFrame = hasTerminator && tabs == 2 && buf.data[0] != L'\0';
+        }
 
         if (!validFrame)
         {
@@ -533,7 +556,8 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateVoiceComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitVoiceComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition ||
-                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
+                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged ||
+                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateInstallerReady)
             {
                 continue;
             }
@@ -598,6 +622,12 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             {
                 pIME->_PostServerTextDelivery(WM_CancelVoiceComposition, L"");
             }
+        }
+        else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateInstallerReady)
+        {
+            // 安装包已经下好并校验过。这里只问用户，不联网、不启动程序：确认后发 Aux 通知，
+            // 由 Server 拉起安装包并退出，让安装程序不必和正在映射的 TSF DLL 抢文件。
+            PromptUpdateInstaller(buf.data);
         }
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
         {

@@ -370,6 +370,8 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(static_cast<bool>(input));
     const std::string installed((std::istreambuf_iterator<char>(input)), {});
     const std::string previous_defaults = "[general]\nemoji_mixed_input = true\ncandidate_translations = true\n"
+                                          "floating_toolbar_font_size = 24\n"
+                                          "[association]\nsentence_wordlattice = true\n"
                                           "[input]\ndefault_ime_mode = \"english\"\n"
                                           "[appearance]\ncandidate_window_layout = \"vertical\"\n"
                                           "candidate_skin = \"willow_green\"\n"
@@ -383,6 +385,9 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     const auto upgraded = toml::parse(MergeConfigIntoTemplate(installed, previous_defaults, previous_defaults));
     REQUIRE(upgraded["general"]["emoji_mixed_input"].value_or(false));
     REQUIRE(upgraded["general"]["candidate_translations"].value_or(false));
+    REQUIRE_EQ(upgraded["general"]["floating_toolbar_font_size"].value_or(0), 24);
+    // 0.12.0 起 sc.lm 改为按需下载，新装默认关；升级用户的模型由安装器挪进 models\language-model\，开关保持原样。
+    REQUIRE(upgraded["association"]["sentence_wordlattice"].value_or(false));
     REQUIRE_EQ(upgraded["input"]["default_ime_mode"].value_or(std::string()), std::string("english"));
     REQUIRE_EQ(upgraded["appearance"]["candidate_window_layout"].value_or(std::string()), std::string("vertical"));
     REQUIRE_EQ(upgraded["appearance"]["candidate_skin"].value_or(std::string()), std::string("willow_green"));
@@ -400,6 +405,7 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     const auto fresh = toml::parse(installed);
     REQUIRE_EQ(fresh["appearance"]["candidate_window_layout"].value_or(std::string()), std::string("horizontal"));
     REQUIRE(!fresh["helpcode"]["shuangpin_helpcode"].value_or(true));
+    REQUIRE(!fresh["association"]["sentence_wordlattice"].value_or(true));
 }
 
 TEST_CASE(config_merge_drops_keys_and_sections_absent_from_template)

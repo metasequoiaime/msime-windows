@@ -89,6 +89,27 @@ TEST_CASE(word_to_character_uses_only_the_selected_unmodified_key_pair)
     REQUIRE_EQ(WordToCharacterDirection('A', '=', 0, true, true), 0);
 }
 
+TEST_CASE(shifted_paging_symbols_commit_the_ascii_character)
+{
+    using FanyImeIpc::IsShiftedPagingSymbolKey;
+    REQUIRE(IsShiftedPagingSymbolKey(0xBD, '_', FanyImeIpc::kModifierShift));
+    REQUIRE(IsShiftedPagingSymbolKey(0xBB, '+', FanyImeIpc::kModifierShift));
+    // Host-drawn candidates carry an unrelated UI-less flag.
+    REQUIRE(IsShiftedPagingSymbolKey(0xBD, '_', FanyImeIpc::kModifierShift | FanyImeIpc::kModifierUiLess));
+    REQUIRE(IsShiftedPagingSymbolKey(0xBB, '+', FanyImeIpc::kModifierShift | FanyImeIpc::kModifierUiLess));
+
+    // Unshifted keys stay paging keys.
+    REQUIRE(!IsShiftedPagingSymbolKey(0xBD, '-', 0));
+    REQUIRE(!IsShiftedPagingSymbolKey(0xBB, '=', 0));
+    // Ctrl and Alt combinations keep their existing meaning.
+    REQUIRE(!IsShiftedPagingSymbolKey(0xBD, '_', FanyImeIpc::kModifierShift | FanyImeIpc::kModifierControl));
+    REQUIRE(!IsShiftedPagingSymbolKey(0xBB, '+', FanyImeIpc::kModifierShift | FanyImeIpc::kModifierAlt));
+    // A different character on the same key is not the shifted symbol.
+    REQUIRE(!IsShiftedPagingSymbolKey(0xBD, '-', FanyImeIpc::kModifierShift));
+    REQUIRE(!IsShiftedPagingSymbolKey(0xBB, '+', 0));
+    REQUIRE(!IsShiftedPagingSymbolKey(0xDB, '_', FanyImeIpc::kModifierShift));
+}
+
 TEST_CASE(shift_variants_are_backend_independent_composition_reset_keys)
 {
     REQUIRE(FanyImeIpc::IsBackendIndependentCompositionResetKey(0x10));

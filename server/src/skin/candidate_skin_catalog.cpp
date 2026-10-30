@@ -216,6 +216,22 @@ double BoundedNumber(const toml::table &table, const char *key, double maximum)
     return -1.0;
 }
 
+// 只覆盖表里写了的边，没写的边保留 out 里的原值；越界或类型不对返回 false。
+bool ReadInsetSide(const toml::table &table, const char *key, double maximum, double &out)
+{
+    if (!table.contains(key))
+    {
+        return true;
+    }
+    const double value = BoundedNumber(table, key, maximum);
+    if (value < 0.0)
+    {
+        return false;
+    }
+    out = value;
+    return true;
+}
+
 bool ReadEnum(const toml::table &table, const char *key, const std::vector<std::string> &allowed, std::string &out)
 {
     if (!table.contains(key))
@@ -382,6 +398,148 @@ bool ReadSignedNumber(const toml::table &table, const char *key, double limit, d
         return false;
     }
     out = value;
+    return true;
+}
+
+bool ReadOptionalBool(const toml::table &table, const char *key, std::optional<bool> &out);
+
+// border_image 的平铺方式：同 CSS border-image-repeat，1 个或 2 个值「横向 纵向」，stretch（默认）/ repeat。
+bool ReadBorderImageRepeat(const toml::table &table, BorderImage &out)
+{
+    const toml::node *node = table.get("repeat");
+    if (!node)
+    {
+        return true;
+    }
+    std::vector<std::string> values;
+    if (const auto *single = node->as_string())
+    {
+        values.push_back(single->get());
+    }
+    else if (const auto *array = node->as_array())
+    {
+        for (const auto &item : *array)
+        {
+            const auto *value = item.as_string();
+            if (!value)
+            {
+                return false;
+            }
+            values.push_back(value->get());
+        }
+    }
+    else
+    {
+        return false;
+    }
+    if (values.empty() || values.size() > 2)
+    {
+        return false;
+    }
+    const auto parse = [](const std::string &value, bool &repeat) {
+        if (value == "stretch")
+        {
+            repeat = false;
+            return true;
+        }
+        if (value == "repeat")
+        {
+            repeat = true;
+            return true;
+        }
+        return false;
+    };
+    bool repeatX = false;
+    bool repeatY = false;
+    if (!parse(values[0], repeatX))
+    {
+        return false;
+    }
+    if (values.size() == 1)
+    {
+        repeatY = repeatX;
+    }
+    else if (!parse(values[1], repeatY))
+    {
+        return false;
+    }
+    out.repeatX = repeatX;
+    out.repeatY = repeatY;
+    return true;
+}
+
+// 读一张九宫格表。base 非空时先继承它的值，表里写了哪项就覆盖哪项——
+// [candidate_window.border_image.vertical] 用它只写与横排不同的部分。
+bool ReadBorderImage(const toml::table &table, const BorderImage *base, BorderImage &out, std::string *error,
+                     const char *where)
+{
+    if (base)
+    {
+        out = *base;
+    }
+    if (table.contains("source") && (!ReadResource(table, "source", out.source) || !IsAnimatableImagePath(out.source)))
+    {
+        SetError(error, std::string(where) + ".source 无效（需为 .png、.apng、.gif 或 .webp）");
+        return false;
+    }
+    if (out.source.empty())
+    {
+        SetError(error, std::string(where) + " 缺少 source");
+        return false;
+    }
+    if (table.contains("light_source") &&
+        (!ReadResource(table, "light_source", out.lightSource) || !IsAnimatableImagePath(out.lightSource)))
+    {
+        SetError(error, std::string(where) + ".light_source 无效（需为 .png、.apng、.gif 或 .webp）");
+        return false;
+    }
+    if (table.contains("slice_dip"))
+    {
+        out.sliceDip.clear();
+        if (!ReadBoxValues(table, "slice_dip", out.sliceDip))
+        {
+            SetError(error, std::string(where) + ".slice_dip 必须是 1、2 或 4 个 0–500 的数值");
+            return false;
+        }
+    }
+    if (out.sliceDip.empty())
+    {
+        SetError(error, std::string(where) + " 缺少 slice_dip");
+        return false;
+    }
+    if (table.contains("stretch_dip"))
+    {
+        out.stretchDip.clear();
+        if (!ReadBoxValues(table, "stretch_dip", out.stretchDip))
+        {
+            SetError(error, std::string(where) + ".stretch_dip 必须是 1、2 或 4 个 0–500 的数值");
+            return false;
+        }
+    }
+    if (table.contains("width_dip"))
+    {
+        out.widthDip.clear();
+        if (!ReadBoxValues(table, "width_dip", out.widthDip))
+        {
+            SetError(error, std::string(where) + ".width_dip 必须是 1、2 或 4 个 0–500 的数值");
+            return false;
+        }
+    }
+    std::optional<bool> fill;
+    if (!ReadOptionalBool(table, "fill", fill))
+    {
+        SetError(error, std::string(where) + ".fill 必须是 true 或 false");
+        return false;
+    }
+    if (fill)
+    {
+        out.fill = *fill;
+    }
+    if (!ReadBorderImageRepeat(table, out))
+    {
+        SetError(error, std::string(where) + ".repeat 必须是 stretch 或 repeat，1 个或 2 个值");
+        return false;
+    }
     return true;
 }
 
@@ -1311,43 +1469,37 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
             {
                 const auto *borderImageTable = borderImageNode->as_table();
                 BorderImage bi;
-                if (!borderImageTable || !borderImageTable->contains("source") ||
-                    !ReadResource(*borderImageTable, "source", bi.source) || !IsAnimatableImagePath(bi.source))
+                if (!borderImageTable)
                 {
-                    SetError(error, "candidate_window.border_image.source 无效（需为 .png、.apng、.gif 或 .webp）");
+                    SetError(error, "candidate_window.border_image 必须是表");
                     return std::nullopt;
                 }
-                if (borderImageTable->contains("light_source") &&
-                    (!ReadResource(*borderImageTable, "light_source", bi.lightSource) ||
-                     !IsAnimatableImagePath(bi.lightSource)))
+                if (!ReadBorderImage(*borderImageTable, nullptr, bi, error, "candidate_window.border_image"))
                 {
-                    SetError(error,
-                             "candidate_window.border_image.light_source 无效（需为 .png、.apng、.gif 或 .webp）");
                     return std::nullopt;
                 }
-                if (!borderImageTable->contains("slice_dip") ||
-                    !ReadBoxValues(*borderImageTable, "slice_dip", bi.sliceDip))
+                // 竖排覆盖：只写与横排不同的键，其余继承上面那份。
+                if (const toml::node *verticalNode = borderImageTable->get("vertical"))
                 {
-                    SetError(error, "candidate_window.border_image.slice_dip 必须是 1、2 或 4 个 0–500 的数值");
-                    return std::nullopt;
+                    const auto *verticalTable = verticalNode->as_table();
+                    if (!verticalTable)
+                    {
+                        SetError(error, "candidate_window.border_image.vertical 必须是表");
+                        return std::nullopt;
+                    }
+                    BorderImage vertical;
+                    if (!ReadBorderImage(*verticalTable, &bi, vertical, error,
+                                         "candidate_window.border_image.vertical"))
+                    {
+                        return std::nullopt;
+                    }
+                    // 浅色主题的图不跟着继承：横排那张是按横排几何画的，套到竖排会错位。
+                    if (!verticalTable->contains("light_source"))
+                    {
+                        vertical.lightSource.clear();
+                    }
+                    package.borderImageVertical = vertical;
                 }
-                if (!ReadBoxValues(*borderImageTable, "stretch_dip", bi.stretchDip))
-                {
-                    SetError(error, "candidate_window.border_image.stretch_dip 必须是 1、2 或 4 个 0–500 的数值");
-                    return std::nullopt;
-                }
-                if (!ReadBoxValues(*borderImageTable, "width_dip", bi.widthDip))
-                {
-                    SetError(error, "candidate_window.border_image.width_dip 必须是 1、2 或 4 个 0–500 的数值");
-                    return std::nullopt;
-                }
-                std::optional<bool> fill;
-                if (!ReadOptionalBool(*borderImageTable, "fill", fill))
-                {
-                    SetError(error, "candidate_window.border_image.fill 必须是 true 或 false");
-                    return std::nullopt;
-                }
-                bi.fill = fill.value_or(true);
                 package.borderImage = bi;
             }
 
@@ -1370,6 +1522,27 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                     return std::nullopt;
                 }
                 package.contentInsetsDip = insets;
+                if (const toml::node *verticalNode = insetsTable->get("vertical"))
+                {
+                    const auto *verticalTable = verticalNode->as_table();
+                    if (!verticalTable)
+                    {
+                        SetError(error, "candidate_window.content_insets_dip.vertical 必须是表");
+                        return std::nullopt;
+                    }
+                    // 竖排只覆盖它写了的边，其余与横排共用。
+                    InsetsDip vertical = insets;
+                    const bool valid = ReadInsetSide(*verticalTable, "top", 200.0, vertical.top) &&
+                                       ReadInsetSide(*verticalTable, "right", 500.0, vertical.right) &&
+                                       ReadInsetSide(*verticalTable, "bottom", 200.0, vertical.bottom) &&
+                                       ReadInsetSide(*verticalTable, "left", 500.0, vertical.left);
+                    if (!valid)
+                    {
+                        SetError(error, "candidate_window.content_insets_dip.vertical 数值超出范围");
+                        return std::nullopt;
+                    }
+                    package.contentInsetsDipVertical = vertical;
+                }
             }
 
             if (!ReadOptionalBounded(*window, "line_gap_dip", 100.0, package.lineGapDip))
@@ -1498,6 +1671,20 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                                               ec))
         {
             SetError(error, "找不到 candidate_window.border_image.light_source 文件");
+            return std::nullopt;
+        }
+        if (package.borderImageVertical &&
+            !std::filesystem::is_regular_file(directory / std::filesystem::u8path(package.borderImageVertical->source),
+                                              ec))
+        {
+            SetError(error, "找不到 candidate_window.border_image.vertical.source 文件");
+            return std::nullopt;
+        }
+        if (package.borderImageVertical && !package.borderImageVertical->lightSource.empty() &&
+            !std::filesystem::is_regular_file(
+                directory / std::filesystem::u8path(package.borderImageVertical->lightSource), ec))
+        {
+            SetError(error, "找不到 candidate_window.border_image.vertical.light_source 文件");
             return std::nullopt;
         }
         for (const auto &dec : package.freeDecorations)

@@ -303,7 +303,7 @@ bool is_pure_jianpin(const Segments &segments)
                        [](const std::string &segment) { return segment.size() == 1; });
 }
 
-bool is_shuangpin_initial_token(const std::string &segment)
+bool is_two_letter_initial(const std::string &segment)
 {
     return segment == "zh" || segment == "ch" || segment == "sh";
 }
@@ -320,7 +320,21 @@ bool needs_mixed_jianpin_query(const Segments &segments, QuerySource source)
         {
             return true;
         }
-        return source == QuerySource::Shuangpin && is_shuangpin_initial_token(segment);
+        return source == QuerySource::Shuangpin && is_two_letter_initial(segment);
+    });
+}
+
+// 全拼的简拼形态：至少两段，且非末尾段里有单字母段或 zh/ch/sh 声母段（zhly = 张靓颖）。
+// 末尾段是待补全的音节，由前缀区间负责，不算简拼意图。
+bool quanpin_jianpin_shaped(const Segments &segments)
+{
+    if (segments.size() <= 1)
+    {
+        return false;
+    }
+
+    return std::any_of(segments.begin(), segments.end() - 1, [](const std::string &segment) {
+        return segment.size() == 1 || is_two_letter_initial(segment);
     });
 }
 
@@ -355,11 +369,12 @@ bool matches_mixed_segments(const std::string &key, const Segments &segments, Qu
             return false;
         }
 
-        const bool is_strict_shuangpin_initial =
-            source == QuerySource::Shuangpin && is_shuangpin_initial_token(expected);
-        if (expected.size() == 1 || is_strict_shuangpin_initial)
+        const bool is_strict_shuangpin_initial = source == QuerySource::Shuangpin && is_two_letter_initial(expected);
+        // 全拼把 zh/ch/sh 当声母段时按声母比，而不是整段相等：zhg 的 zh 要认 zhang。
+        const bool is_quanpin_two_letter_initial = source == QuerySource::Quanpin && is_two_letter_initial(expected);
+        if (expected.size() == 1 || is_strict_shuangpin_initial || is_quanpin_two_letter_initial)
         {
-            if (source == QuerySource::Shuangpin)
+            if (source == QuerySource::Shuangpin || is_quanpin_two_letter_initial)
             {
                 if (extract_initial_token(actual) != expected)
                 {
@@ -389,6 +404,16 @@ int build_mixed_jianpin_scan_limit(int limit)
         return INT_MAX;
     }
     return std::max(limit * 16, 128);
+}
+
+// 全拼简拼与前缀同层合并时最多扫多少行 jp 命中。jp 是索引列，等值命中量由词库决定，
+// 常用两键输入在一两百到一千多行；2048 只给异常词库兜底，正常词库不会截掉候选，
+// 同时避免按键路径上无上限地扫一张异常大的表。
+constexpr int kQuanpinJianpinScanCeiling = 2048;
+
+int quanpin_jianpin_scan_limit(int limit)
+{
+    return std::min(build_mixed_jianpin_scan_limit(limit), kQuanpinJianpinScanCeiling);
 }
 
 bool can_match_exact_key(const Segments &segments)
@@ -796,6 +821,41 @@ void deduplicate_keyed_items_by_value(std::vector<KeyedQueryItem> &items)
                 items.end());
 }
 
+// 全拼的简拼召回与全拼前缀同层：按词去重保留最大权重，再按权重降序。平局用稳定排序，
+// 前缀行排在前面，因为它按用户真正敲到的音节切分，比整串首字母更贴字面。搜狗把全拼与
+// 简拼候选放在同一层按词频排，这里对齐它，不再让前缀命中压掉整条简拼候选。
+std::vector<KeyedQueryItem> merge_jianpin_into_prefix(std::vector<KeyedQueryItem> prefix_rows,
+                                                      std::vector<KeyedQueryItem> jianpin_rows, int limit)
+{
+    std::unordered_map<std::string, std::size_t> position_by_value;
+    position_by_value.reserve(prefix_rows.size() + jianpin_rows.size());
+    std::vector<KeyedQueryItem> merged;
+    merged.reserve(prefix_rows.size() + jianpin_rows.size());
+    const auto append = [&](std::vector<KeyedQueryItem> &rows) {
+        for (auto &row : rows)
+        {
+            const auto inserted = position_by_value.emplace(row.value, merged.size());
+            if (inserted.second)
+            {
+                merged.push_back(std::move(row));
+            }
+            else if (row.weight > merged[inserted.first->second].weight)
+            {
+                merged[inserted.first->second] = std::move(row);
+            }
+        }
+    };
+    append(prefix_rows);
+    append(jianpin_rows);
+    std::stable_sort(merged.begin(), merged.end(),
+                     [](const KeyedQueryItem &lhs, const KeyedQueryItem &rhs) { return lhs.weight > rhs.weight; });
+    if (limit > 0 && static_cast<int>(merged.size()) > limit)
+    {
+        merged.resize(static_cast<std::size_t>(limit));
+    }
+    return merged;
+}
+
 std::vector<KeyedQueryItem> query_single_cut_keyed(sqlite3 *db, const Segments &segments, int limit, QuerySource source)
 {
     const auto table = build_table_name_impl(segments);
@@ -826,6 +886,24 @@ std::vector<KeyedQueryItem> query_single_cut_keyed(sqlite3 *db, const Segments &
 
     const auto prefix_sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
                             "\" WHERE \"key\" >= ? AND \"key\" < ? ORDER BY \"weight\" DESC LIMIT ?";
+    const auto jp_sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
+                        "\" WHERE \"jp\" = ? ORDER BY \"weight\" DESC LIMIT ?";
+
+    if (source == QuerySource::Quanpin)
+    {
+        // 全拼：按真正的键前缀做区间扫描。build_key_like_pattern 里的 % 是给 LIKE 通配符
+        // 准备的，用在这个字符串区间比较上会把区间算空，所以全拼不经过它。
+        auto prefix_rows = run_keyed_query(db, prefix_sql, key, build_key_prefix_upper_bound(key), limit);
+        if (!quanpin_jianpin_shaped(segments))
+        {
+            return prefix_rows;
+        }
+        auto jianpin_rows = filter_mixed_jianpin_rows(
+            run_keyed_query(db, jp_sql, jp, quanpin_jianpin_scan_limit(limit)), segments, limit, source);
+        return merge_jianpin_into_prefix(std::move(prefix_rows), std::move(jianpin_rows), limit);
+    }
+
+    // 双拼保持原有分层：前缀命中即返回，简拼只在空手时兜底。
     rows = run_keyed_query(db, prefix_sql, key_prefix, key_prefix_upper_bound, limit);
     if (!rows.empty())
     {
@@ -834,10 +912,7 @@ std::vector<KeyedQueryItem> query_single_cut_keyed(sqlite3 *db, const Segments &
 
     if (needs_mixed_query)
     {
-        const auto mixed_sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
-                               "\" WHERE \"jp\" = ? ORDER BY \"weight\" DESC LIMIT ?";
-        rows =
-            filter_mixed_jianpin_rows(run_keyed_query(db, mixed_sql, jp, mixed_query_limit), segments, limit, source);
+        rows = filter_mixed_jianpin_rows(run_keyed_query(db, jp_sql, jp, mixed_query_limit), segments, limit, source);
         if (!rows.empty())
         {
             return rows;
@@ -849,8 +924,6 @@ std::vector<KeyedQueryItem> query_single_cut_keyed(sqlite3 *db, const Segments &
         return {};
     }
 
-    const auto jp_sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
-                        "\" WHERE \"jp\" = ? ORDER BY \"weight\" DESC LIMIT ?";
     return run_keyed_query(db, jp_sql, jp, limit);
 }
 
@@ -886,6 +959,25 @@ std::vector<KeyedQueryItem> query_single_cut_keyed(sqlite3 *db,
 
     const auto prefix_sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
                             "\" WHERE \"key\" >= ? AND \"key\" < ? ORDER BY \"weight\" DESC LIMIT ?";
+    const auto jp_sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
+                        "\" WHERE \"jp\" = ? ORDER BY \"weight\" DESC LIMIT ?";
+
+    if (source == QuerySource::Quanpin)
+    {
+        // 与不带 statement cache 的重载保持同一套全拼语义，改动要两边同步。
+        auto prefix_rows =
+            run_keyed_query(db, statement_cache, prefix_sql, key, build_key_prefix_upper_bound(key), limit);
+        if (!quanpin_jianpin_shaped(segments))
+        {
+            return prefix_rows;
+        }
+        auto jianpin_rows = filter_mixed_jianpin_rows(
+            run_keyed_query(db, statement_cache, jp_sql, jp, quanpin_jianpin_scan_limit(limit)), segments, limit,
+            source);
+        return merge_jianpin_into_prefix(std::move(prefix_rows), std::move(jianpin_rows), limit);
+    }
+
+    // 双拼保持原有分层：前缀命中即返回，简拼只在空手时兜底。
     rows = run_keyed_query(db, statement_cache, prefix_sql, key_prefix, key_prefix_upper_bound, limit);
     if (!rows.empty())
     {
@@ -894,10 +986,8 @@ std::vector<KeyedQueryItem> query_single_cut_keyed(sqlite3 *db,
 
     if (needs_mixed_query)
     {
-        const auto mixed_sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
-                               "\" WHERE \"jp\" = ? ORDER BY \"weight\" DESC LIMIT ?";
-        rows = filter_mixed_jianpin_rows(run_keyed_query(db, statement_cache, mixed_sql, jp, mixed_query_limit),
-                                         segments, limit, source);
+        rows = filter_mixed_jianpin_rows(run_keyed_query(db, statement_cache, jp_sql, jp, mixed_query_limit), segments,
+                                         limit, source);
         if (!rows.empty())
         {
             return rows;
@@ -909,8 +999,6 @@ std::vector<KeyedQueryItem> query_single_cut_keyed(sqlite3 *db,
         return {};
     }
 
-    const auto jp_sql = "SELECT \"key\", \"value\", \"weight\" FROM \"" + table +
-                        "\" WHERE \"jp\" = ? ORDER BY \"weight\" DESC LIMIT ?";
     return run_keyed_query(db, statement_cache, jp_sql, jp, limit);
 }
 

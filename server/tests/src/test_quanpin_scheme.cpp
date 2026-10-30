@@ -669,6 +669,66 @@ TEST_CASE(QuanpinAutocorrectInsertionTableEntriesAreLegal)
     }
 }
 
+TEST_CASE(QuanpinAutocorrectGeneratedShapeTableEntriesAreLegal)
+{
+    // 形状与内容两部分的钉子。形状：key 与目标等长（替换，不是增删）、
+    // 永不合法、目标合法、且不是邻键表已覆盖的那一对（更便宜的权重会遮住这一行）。
+    // 内容：下面几条具体 (wrong, correct) 对必须真的在这张表里，钉住「这些键确实
+    // 指向它们该指向的音节」，而不只是「排版没变」——形状断言同一组字节全对也能
+    // 过。表由启动时的 build_generated_pairs() 枚举改成编译期常量，这两种断言合起
+    // 来才是「换一种表示不改变结果」的证据；单靠形状做不到。
+    const auto &legal = quanpin::intact_pinyin_set();
+    REQUIRE(quanpin::autocorrect::kGeneratedShapeCount > 0);
+    // Pairs covered by the neighbour table. Checking membership here instead of
+    // re-deriving the QWERTY adjacency keeps the test free of the second copy
+    // of that table (the copy this change deleted from the engine would be the
+    // third): "the neighbour table owns this pair" is the property that
+    // matters, and the table states it directly.
+    std::unordered_set<std::string> neighbour_pairs;
+    std::unordered_set<std::string> generated_pairs;
+    std::size_t longest_generated_key = 0;
+    for (std::size_t i = 0; i < quanpin::autocorrect::kNeighborCount; ++i)
+    {
+        const auto &entry = quanpin::autocorrect::kNeighborEntries[i];
+        neighbour_pairs.insert(std::string(entry.wrong) + '\0' +
+                               std::string(quanpin::autocorrect::kCorrectSyllables[entry.correct]));
+    }
+    for (std::size_t i = 0; i < quanpin::autocorrect::kGeneratedShapeCount; ++i)
+    {
+        const auto &entry = quanpin::autocorrect::kGeneratedShapeEntries[i];
+        const std::string wrong(entry.wrong);
+        const std::string correct(quanpin::autocorrect::kCorrectSyllables[entry.correct]);
+        // Same length as its target (a substitution, not an insert/drop), and
+        // inside the reachable key window.
+        REQUIRE_EQ(wrong.size(), correct.size());
+        REQUIRE(wrong.size() >= 3);
+        REQUIRE(wrong.size() <= quanpin::kAutocorrectMaxKeyLength);
+        REQUIRE(!legal.count(wrong));
+        REQUIRE(legal.count(correct));
+        // The pair belongs to this table alone: the neighbour table must not
+        // already explain it, or the cheaper weight would shadow this row.
+        REQUIRE(neighbour_pairs.find(wrong + '\0' + correct) == neighbour_pairs.end());
+        generated_pairs.insert(wrong + '\0' + correct);
+        longest_generated_key = std::max(longest_generated_key, wrong.size());
+    }
+    // The 6-letter cap is a C++ constant shared with autocorrect_cut_kbest's
+    // per-piece scan; the generator keeps its own copy (it cannot read the C++
+    // side), so the binding is asserted here rather than described in a comment.
+    REQUIRE(longest_generated_key <= quanpin::kAutocorrectMaxKeyLength);
+    // Content pin: the concrete pairs the far-substitution rule is documented
+    // with (see far_substitution_variants()). zhe/shang are len 3/5 syllables, so
+    // "zher"-like keys are substitutions, not accidental rows from another rule.
+    //
+    // zher -> zhe is deliberately absent: the insertion table already owns that
+    // pair (one extra h at the end), and the generator drops generated pairs the
+    // static tables explain. The rows this table keeps for "zher" are the
+    // ambiguous zhei/zhen reads, which must survive alongside it.
+    REQUIRE(generated_pairs.count(std::string("shatg") + '\0' + std::string("shang")) == 1);
+    REQUIRE(generated_pairs.count(std::string("zher") + '\0' + std::string("zhei")) == 1);
+    REQUIRE(generated_pairs.count(std::string("zher") + '\0' + std::string("zhen")) == 1);
+    REQUIRE(generated_pairs.count(std::string("zher") + '\0' + std::string("zhe")) == 0);
+}
+
 TEST_CASE(QuanpinAutocorrectSwitchMaskDerivationIsOneToOne)
 {
     const auto mask = &quanpin::autocorrect_types_from_switches;

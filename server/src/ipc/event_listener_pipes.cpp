@@ -15,6 +15,7 @@
 #include "fmt/xchar.h"
 #include "global/globals.h"
 #include "config/ime_config.h"
+#include "settings/update_check.h"
 #include "window/window_hook.h"
 #include "log/candidate_diag_log.h"
 #include "statistics/stats_pipe.h"
@@ -134,32 +135,11 @@ bool IsImplicitActivationEvent(UINT event_type)
 // client_id is PID << 32 | TID of the TSF thread. A match against the
 // foreground window's thread, or the thread owning its keyboard focus (a
 // child window on an attached thread), means the user is looking at this TIP.
+// The window/thread matching itself lives in ipc.cpp, because the floating
+// toolbar asks the same question of every connected client at once.
 bool IsForegroundInputThreadClient(uint64_t client_id)
 {
-    const HWND foreground = GetForegroundWindow();
-    if (!foreground)
-    {
-        return false;
-    }
-    DWORD process_id = 0;
-    const DWORD thread_id = GetWindowThreadProcessId(foreground, &process_id);
-    if (thread_id == 0 || static_cast<DWORD>(client_id >> 32) != process_id)
-    {
-        return false;
-    }
-    const DWORD client_thread_id = static_cast<DWORD>(client_id & 0xFFFFFFFFull);
-    if (client_thread_id == thread_id)
-    {
-        return true;
-    }
-    GUITHREADINFO info{sizeof(info)};
-    if (!GetGUIThreadInfo(thread_id, &info) || !info.hwndFocus)
-    {
-        return false;
-    }
-    DWORD focus_process_id = 0;
-    const DWORD focus_thread_id = GetWindowThreadProcessId(info.hwndFocus, &focus_process_id);
-    return focus_process_id == process_id && focus_thread_id == client_thread_id;
+    return PipeClientOwnsForegroundInput(client_id);
 }
 
 void SendFocusSessionReady(const PipeClientActivation &activation)
@@ -1037,6 +1017,16 @@ void AuxPipeEventListenerLoopThread()
                     // the config notifications use. The Watchdog relaunches us.
                     RestartServerProcess();
                 }
+                else if (message.rfind(L"InstallUpdate|", 0) == 0)
+                {
+                    // 用户在弹窗里同意安装新版本。安装程序要替换本进程映射着的 TSF DLL，
+                    // 所以先退出让 Watchdog 立刻拉起一份新的 Server，安装程序启动时就不再
+                    // 有旧 DLL 被占用。安装包本身由 Server 在退出前拉起：路径只认数据目录
+                    // 里校验过的那一份，消息里的文件名只用于核对，不直接当成路径信任。
+                    const std::wstring installer = message.substr(std::wstring(L"InstallUpdate|").size());
+                    update_check::LaunchPendingInstaller(installer);
+                    RestartServerProcess();
+                }
                 else if (message == L"ConfigChanged" || message == L"InputSchemeChanged" ||
                          message == L"CandidateSkinRefresh")
                 {
@@ -1158,8 +1148,8 @@ void TsfDiagnosticPipeEventListenerLoopThread()
                     memcpy(payload.data(), frame.data() + sizeof(header), header.payload_bytes);
                     if (header.dropped_count != 0)
                     {
-                        DiagnosticLog::Write(fmt::format(L"[tsf-log] source_pid={} dropped_records={}",
-                                                         header.source_process_id, header.dropped_count));
+                        DiagnosticLog::WriteTsf(fmt::format(L"[tsf-log] source_pid={} dropped_records={}",
+                                                            header.source_process_id, header.dropped_count));
                     }
                     size_t start = 0;
                     while (start < payload.size())
@@ -1168,7 +1158,7 @@ void TsfDiagnosticPipeEventListenerLoopThread()
                         const size_t length = end == std::wstring::npos ? payload.size() - start : end - start;
                         if (length != 0)
                         {
-                            DiagnosticLog::Write(payload.substr(start, length));
+                            DiagnosticLog::WriteTsf(payload.substr(start, length));
                         }
                         if (end == std::wstring::npos)
                         {

@@ -37,8 +37,8 @@ try {
                 ($configure.arguments -join '|') -ne "--preset=$preset|-DBUILD_TESTING=ON") {
                 throw 'Configured the obsolete standalone tests project'
             }
-            if (($compile.arguments -join '|') -ne "--build|$build|--config|$configuration|--target|MetasequoiaImeServerTests|test_webview_contract") {
-                throw 'Did not build both registered tests in the parent Server tree'
+            if (($compile.arguments -join '|') -ne "--build|$build|--config|$configuration|--target|MetasequoiaImeServerTests|MetasequoiaImeSettingsUiTests|test_webview_contract") {
+                throw 'Did not build every registered test in the parent Server tree'
             }
             if ($test.tool -ne 'ctest' -or ($test.arguments -join '|') -ne "--test-dir|$build|-C|$configuration|--output-on-failure|--no-tests=error|--timeout|120") {
                 throw 'Did not run the matching CTest registry with empty-test rejection'

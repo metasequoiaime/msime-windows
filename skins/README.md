@@ -10,7 +10,8 @@
 | [`sakura-night`](sakura-night/) | 夜樱 | v2 全贴图皮肤（`canvas`，取自 `examples/skin-examples`）：紫夜玻璃九宫格面板、面板后的月亮、APNG 飘落花瓣与 GIF 闪烁星星 |
 | [`acrylic`](acrylic/) | 亚克力 Acrylic | 候选卡片背后垫系统亚克力，模糊后面的窗口 |
 | [`mica`](mica/) | 云母 Mica | 候选卡片背后垫系统云母，取样桌面壁纸（Windows 11；更早的系统按亚克力画） |
-| [`brown-desk`](brown-desk/) | 布朗熊上班 Demo | 奶油棕浅色 / 可可棕深色候选窗，布朗熊敲电脑动图与按开关自动排列的圆底工具按钮；素材授权未核实，仅演示，不随安装包分发 |
+| [`anime-demo`](anime-demo/) | anime-demo | 奶油棕浅色 / 可可棕深色候选窗，四周挂着猫猫虫动图、抱樱花小白猫与倒挂少女，布朗熊敲电脑动图与按开关自动排列的圆底工具按钮；素材授权未核实，仅演示，不随安装包分发 |
+| [`tokisaki`](tokisaki/) | 时崎狂三 Demo | 时崎狂三与转动钟盘的 GIF 作候选框动态背景，黑底压暗、深红高亮与金色序号；素材授权未核实，仅演示，不随安装包分发 |
 | [`niya-demo`](niya-demo/) | Niya Demo | 官方外部皮肤样例：候选框上方的人物装饰图、星点背景图、12dip 圆角，以及配套的悬浮工具栏配色 |
 | [`bigfish`](bigfish/) | 蓝色大肥鱼 | 鲸鱼女仆角色装饰、海底气泡背景，深海蓝配色搭配金色序号 |
 | [`bigfish-national-day`](bigfish-national-day/) | 大肥鱼·国庆 | 红裙敬礼的大肥鱼站在卡片右上方、金色星星背景，中国红高亮搭配金色序号 |
@@ -20,7 +21,7 @@
 | [`sogou-classic`](sogou-classic/) | 搜狗经典·石墨 | 基于石墨，仿经典搜狗：白底浅蓝边框、蓝字候选、首选红字不铺底色、拼音下方浅蓝分隔线 |
 | [`wechat_glass`](wechat_glass/) | 微信玻璃 | 移植自 rime-wechat-glass 的微信绿配色与紧凑几何，磨砂玻璃用自绘噪点底图近似 |
 
-除 `sogou-classic` 基于 `graphite`、`shoudao-blue` 基于 `willow_green`、`green_leaf`、`sakura-night` 与 `brown-desk` 基于 `canvas` 外，其余皮肤均基于 `fluent`；全部支持横排 / 竖排布局以及深色 / 浅色主题。
+除 `sogou-classic` 基于 `graphite`、`shoudao-blue` 基于 `willow_green`、`green_leaf`、`sakura-night`、`anime-demo` 与 `tokisaki` 基于 `canvas` 外，其余皮肤均基于 `fluent`；全部支持横排 / 竖排布局以及深色 / 浅色主题。
 
 官方皮肤包的名单在 Server 的 `CandidateSkinCatalog::OfficialPackageIds()`（目前只有 `green_leaf`）。它们和其他随包皮肤一样装到 `skins\<id>`、照外部皮肤加载，只是设置页的展示位置不同；用户删掉目录后设置页就不再列出。
 
@@ -47,7 +48,7 @@
 
 ## 安装
 
-除 `niya-demo` 与 `brown-desk`（素材授权未核实）外，这里的皮肤都随安装包装到数据目录的 `skins\<id>`。用户那边已有同名皮肤且内容和随包的不一样（改过、多了或少了文件）时，安装器先把它改名成 `<id>.bak` 保留下来（已有 `.bak` 则用 `<id>.2.bak`……），再装新版本；输入法不会把 `.bak` 目录列成皮肤。
+除 `niya-demo`、`anime-demo` 与 `tokisaki`（素材授权未核实）外，这里的皮肤都随安装包装到数据目录的 `skins\<id>`。用户那边已有同名皮肤且内容和随包的不一样（改过、多了或少了文件）时，安装器先把它改名成 `<id>.bak` 保留下来（已有 `.bak` 则用 `<id>.2.bak`……），再装新版本；输入法不会把 `.bak` 目录列成皮肤。
 
 手动安装时，把想用的皮肤目录整个复制到：
 
@@ -84,7 +85,7 @@ my-skin/
 | `[candidate_window.background]` | 卡片背景图：`image`、`fit`（`cover` / `contain` / `stretch`）、`opacity`（0–1） |
 | `[candidate.dark]` / `[candidate.light]` | 候选配色：`accent`、`selected`、`hover`、`surface`、`border`、`text`、`number`、`translation`、`show_selected_bar`；细分配色 `candidate_text`、`preedit_text`、`preedit_caret`、`selected_text`、`selected_number`、`selected_translation`、`translation_pos`、`translation_separator`、`selected_translation_pos`、`selected_translation_separator`、`selected_bar`、`preedit_background`、`preedit_divider`、`page_arrow_divider`（三角翻页箭头前的分隔线） |
 | `[candidate.dark.menu]` / `[candidate.light.menu]` | 候选窗右键菜单：`background`、`border`、`text`、`hover` |
-| `[candidate_window.border_image]` | v2 九宫格面板图：`source`、`light_source`（浅色主题换用的面板图，几何与 `source` 相同）、`slice_dip`、`stretch_dip`、`width_dip`、`fill`，见 [schema 说明](../examples/skin-examples/schema/README.md) |
+| `[candidate_window.border_image]` | v2 九宫格面板图：`source`、`light_source`（浅色主题换用的面板图，几何与 `source` 相同）、`slice_dip`、`stretch_dip`、`width_dip`、`fill`、`repeat`（`stretch` / `repeat`，同 CSS `border-image-repeat`）；子表 `[candidate_window.border_image.vertical]` 可给竖排换一套图和几何，见 [schema 说明](../examples/skin-examples/schema/README.md) |
 | `[toolbar]` / `[toolbar.dark]` / `[toolbar.light]` | 悬浮工具栏：`corner_radius_dip`、`icon_corner_radius_dip`（图标悬停底色的圆角，0–16），以及 `background`、`border`、`handle`（不写时取同主题的 `accent`）、`divider`、`icon`、`hover`；`mode = "image"` 时整个工具栏换成一张背景图（`image`、`image_width_dip`、`image_height_dip`），窗口按图片透明区域裁成异形，按钮用 `[toolbar.buttons.<按钮>]` 的 `x_dip`、`y_dip`、`width_dip`、`height_dip`、`icon_size_dip`、`visible`、`background`（按钮底图）、`image` 与按状态的 `[images]` 摆放；`[toolbar.button_defaults]` 给所有按钮设默认值，`[toolbar.button_flow]` 让没写坐标的按钮自动排成一行或一列，用户开关按钮时跟着增减，见 [schema 说明](../examples/skin-examples/schema/README.md#图片模式mode--image) |
 | `[license]` | `code`、`assets`、`source`：代码与素材的授权信息 |
 
@@ -106,4 +107,4 @@ my-skin/
 
 本仓库以 [GNU General Public License v3.0](LICENSE) 开源。单个皮肤如在 `skin.toml` 的 `[license]` 中另有声明，以该声明为准。
 
-`niya-demo` 与 `brown-desk` 中的图片素材授权尚未核实（`assets = "UNVERIFIED-DEMO-ONLY"`），仅作演示用途，请勿直接用于再分发的皮肤。
+`niya-demo`、`anime-demo` 与 `tokisaki` 中的图片素材授权尚未核实（`assets = "UNVERIFIED-DEMO-ONLY"`），仅作演示用途，请勿直接用于再分发的皮肤。

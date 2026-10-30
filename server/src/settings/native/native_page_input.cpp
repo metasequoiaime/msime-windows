@@ -439,7 +439,7 @@ class TwoColumns : public msimeui::Panel
 VisualPtr SubBlock(std::wstring title, std::wstring description, bool descriptionMargin = true)
 {
     auto column = std::make_shared<Column>(0.0f);
-    column->Add(MakeSubTitle(std::move(title)));
+    column->Add(MakeSubTitle(std::move(title), description));
     if (!description.empty())
     {
         auto desc = MakeDescription(std::move(description));
@@ -1327,6 +1327,11 @@ struct InputPage
     std::unique_ptr<CredentialTest> credentialTest;
 
     // Models
+    ModelRow lattice;
+    std::shared_ptr<ToggleSwitch> latticeToggle;
+    UINT_PTR latticePoll = 0;
+    bool latticeLinkShown = false;
+    std::string latticeUrl;
     ModelRow neural;
     std::shared_ptr<ToggleSwitch> neuralToggle;
     UINT_PTR neuralPoll = 0;
@@ -1474,14 +1479,10 @@ struct ToggleSection
 ToggleSection MakeToggleSection(std::wstring title, VisualPtr detailsContent)
 {
     ToggleSection section;
-    section.expander = std::make_shared<Expander>(std::move(title));
+    section.expander = MakeExpander(std::move(title));
     detailsContent->SetMargin({18.0f, 4.0f, 0.0f, 0.0f});
     section.details = std::make_shared<Hideable>(detailsContent, false);
-    std::weak_ptr<Hideable> details = section.details;
-    section.expander->SetOnToggled([details](bool expanded) {
-        if (auto box = details.lock())
-            box->SetVisible(expanded);
-    });
+    BindExpander(section.expander, section.details);
     return section;
 }
 } // namespace
@@ -1941,18 +1942,39 @@ VisualPtr BuildInputPage(PageContext &context)
 
     // ---- 整句候选 ----
     {
+        // 按需下载的模型：紧贴在各自开关下面，标题带折叠箭头，默认折叠。标题比上面开关的标题小一号，
+        // 读起来是那个开关的附属项。
+        auto downloadSection = [](std::wstring title, std::wstring description, const ModelRow &row) {
+            TextStyle titleStyle = SubItemTitleStyle();
+            titleStyle.size = 13.0f;
+            auto expander = MakeExpander(std::move(title), titleStyle);
+            auto list = Col({row.view}, 10.0f);
+            list->SetMargin({0.0f, 6.0f, 0.0f, 0.0f});
+            auto body = Col({MakeDescription(std::move(description)), list});
+            body->SetMargin({18.0f, 4.0f, 10.0f, 0.0f});
+            auto details = std::make_shared<Hideable>(body, false);
+            BindExpander(expander, details);
+            return Padded(Col({expander, details}), {0.0f, 0.0f, 0.0f, 10.0f});
+        };
+
+        s->lattice = MakeModelRow(context, "", L"词格语言模型 sc.lm", L"约 35 MB · LGPL-2.1", "", false,
+                                  "latticeModelDownload", "latticeModelImport", "latticeModelDelete");
+        auto latticeSection = downloadSection(
+            L"Trigram 模型下载",
+            L"三元语言模型不随安装包分发，下载后才能开启上面的 Trigram 整句开关，可随时删除；神经网络整句也会用它"
+            L"给备选句打分。应用内下载较慢时，可点「浏览器下载」用浏览器下好，再点「导入」选中该 sc.lm 文件；"
+            L"也可以在「帮助」页设置网络代理",
+            s->lattice);
+        s->latticeToggle = BindToggle(context, "association.sentence_wordlattice");
+
         s->neural = MakeModelRow(context, "", L"chinese-ime-lm 效果优先模型", L"约 25 MB · Apache-2.0", "", false,
                                  "neuralModelDownload", "neuralModelImport", "neuralModelDelete");
-        auto neuralList = Col({s->neural.view}, 10.0f);
-        neuralList->SetMargin({0.0f, 6.0f, 0.0f, 0.0f});
-        auto neuralBlock = Col(
-            {MakeSubTitle(L"神经网络模型（效果优先，需先下载）"),
-             MakeDescription(L"效果优先模型不随安装包分发，下载后才能开启下面的整句开关，可随时删除。"
-                             L"应用内下载较慢时，可点「浏览器下载」用浏览器下好，再点「导入」选中该 .safetensors 文件；"
-                             L"也可以在「帮助」页设置网络代理"),
-             neuralList});
-        // The empty <div> on the right of the row still takes the 10px gap.
-        neuralBlock->SetMargin({0.0f, 0.0f, 10.0f, 0.0f});
+        auto neuralSection =
+            downloadSection(L"神经网络模型（效果优先）下载",
+                            L"效果优先模型不随安装包分发，下载后才能开启上面的整句开关，可随时删除。"
+                            L"应用内下载较慢时，可点「浏览器下载」用浏览器下好，再点「导入」选中该 .safetensors 文件；"
+                            L"也可以在「帮助」页设置网络代理",
+                            s->neural);
         s->neuralToggle = BindToggle(context, "association.sentence_neural_desktop");
 
         s->collocationList = std::make_shared<Column>(10.0f);
@@ -1968,19 +1990,25 @@ VisualPtr BuildInputPage(PageContext &context)
         s->collocationToggle = BindToggle(context, "association.sentence_collocation_enabled");
 
         auto content = Col(
-            {FrequencyRow(SubBlock(L"Trigram 模型整句", L"本地生成，使用三元语言模型生成整句候选"),
-                          Toggle(context, "association.sentence_wordlattice")),
+            {FrequencyRow(SubBlock(L"Trigram 模型整句", L"本地生成，下载模型后可用：使用三元语言模型生成整句候选"),
+                          s->latticeToggle),
+             latticeSection,
              FrequencyRow(SubBlock(L"Unigram 模型整句", L"本地生成，使用一元语言模型生成整句候选"),
                           Toggle(context, "association.sentence_google")),
-             Padded(neuralBlock, {0.0f, 10.0f, 0.0f, 10.0f}),
              FrequencyRow(
                  SubBlock(
                      L"神经网络模型整句（效果优先）",
                      L"本地生成，下载模型后可用：结合已上屏的前文，从内部生成的最多 12 个备选句中选择，处理时间较长"),
                  s->neuralToggle),
+             neuralSection,
              FrequencyRow(SubBlock(L"神经网络模型整句（速度优先）",
                                    L"本地生成，使用轻量模型从最多 12 个备选句中选择；两种模式可同时独立给出结果"),
                           Toggle(context, "association.sentence_neural_keyboard")),
+             FrequencyRow(
+                 SubBlock(
+                     L"上文词库重排（实验）",
+                     L"使用轻量神经模型，根据本次输入的上文调整单字和词组顺序，例如“冬天会下大”后输入 xue 优先选“雪”"),
+                 Toggle(context, "association.context_candidate_rerank")),
              FrequencyRow(SubBlock(L"去重后补充次选",
                                    L"本地处理，某个模型的首选与已有候选重复时，显示该模型排名最高的下一条不同结果"),
                           Toggle(context, "association.sentence_show_next_on_duplicate")),
@@ -2148,6 +2176,43 @@ VisualPtr BuildInputPage(PageContext &context)
         s->SwitchTranslationPrompt(promptId);
         s->SyncProviderView();
 
+        // Lattice language model row. Server 映射着 sc.lm 时删除只留标记（deletePending），
+        // 下载按钮换成「重启输入法」，重启后 Server 在映射前把文件删掉。
+        {
+            const Json *status = model->Find("association.sentence_wordlattice_model_status");
+            const std::string stateName = StateOf(status);
+            const bool busy = IsBusy(stateName);
+            const bool deletePending = status && status->is_object() && status->value("deletePending", false);
+            s->lattice.status->SetText(deletePending ? L"已删除，重启输入法后释放文件" : StatusText(status));
+            s->lattice.download->SetText(deletePending ? L"重启输入法" : L"下载");
+            s->lattice.download->SetOnClick(deletePending ? s->lattice.restartAction : s->lattice.downloadAction);
+            s->lattice.download->SetDisabled(!deletePending && (stateName == "ready" || busy));
+            s->lattice.importBox->SetVisible(stateName != "ready" && !deletePending);
+            s->lattice.import->SetDisabled(busy);
+            s->lattice.removeBox->SetVisible(stateName == "ready");
+            const std::string url = model->GetString("association.sentence_wordlattice_model_url");
+            const bool showLink = !url.empty() && stateName != "ready" && !deletePending;
+            if (showLink != s->latticeLinkShown || url != s->latticeUrl)
+            {
+                s->latticeLinkShown = showLink;
+                s->latticeUrl = url;
+                s->lattice.name->SetSpans(NameSpans(L"词格语言模型 sc.lm", L"约 35 MB · LGPL-2.1", showLink,
+                                                    [model, url]() { model->Post("openExternalUrl", url); }));
+            }
+            // 模型没就绪时开关置灰并显示为关：Server 那边同样只在模型在时才出 Trigram 整句。
+            // 绑定已按配置值设过一次，这里在它之后跑，只需在未就绪时覆盖成关。
+            const bool ready = stateName == "ready";
+            s->latticeToggle->SetDisabled(!ready);
+            if (!ready)
+                s->latticeToggle->SetChecked(false);
+            // 待重启期间也轮询：点「重启」后 Server 删掉文件，下一份快照就回到「未下载」。
+            if ((busy || deletePending) && s->latticePoll == 0)
+                s->latticePoll = PageTimers::Start(host->Hwnd(), 2000, true,
+                                                   [model]() { model->Post("latticeModelStatusRequest"); });
+            else if (!busy && !deletePending)
+                PageTimers::Stop(s->latticePoll);
+        }
+
         // Neural model row (applyNeuralModelStatus).
         {
             const Json *status = model->Find("association.sentence_neural_desktop_model_status");
@@ -2167,7 +2232,10 @@ VisualPtr BuildInputPage(PageContext &context)
                 s->neural.name->SetSpans(NameSpans(L"chinese-ime-lm 效果优先模型", L"约 25 MB · Apache-2.0", showLink,
                                                    [model, url]() { model->Post("openExternalUrl", url); }));
             }
+            // 同 Trigram：未下载时置灰并显示为关，引擎在模型缺席时本来也不重排。
             s->neuralToggle->SetDisabled(stateName != "ready");
+            if (stateName != "ready")
+                s->neuralToggle->SetChecked(false);
             if (busy && s->neuralPoll == 0)
                 s->neuralPoll =
                     PageTimers::Start(host->Hwnd(), 2000, true, [model]() { model->Post("neuralModelStatusRequest"); });

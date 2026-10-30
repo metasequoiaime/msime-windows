@@ -846,12 +846,11 @@ STDAPI CMetasequoiaIME::ActivateEx(ITfThreadMgr *pThreadMgr, TfClientId tfClient
     Global::msgWndHandle = _msgWndHandle;
     _StartThemeRegistryWatcher();
 
-    BOOL hasThreadFocus = FALSE;
-    const HRESULT threadFocusResult = _pThreadMgr->IsThreadFocus(&hasThreadFocus);
-    // Preserve the historical eager-connect behavior if a host cannot report
-    // focus. Otherwise an already-focused activation could remain offline
-    // forever because no later focus callback is guaranteed.
-    Global::g_connected = SUCCEEDED(threadFocusResult) ? hasThreadFocus != FALSE : true;
+    // An already-focused activation must connect now: no later focus callback
+    // is guaranteed. A host that cannot report TSF focus falls back to Win32
+    // foreground ownership rather than connecting unconditionally, which let
+    // every process started in the background take over the Server.
+    Global::g_connected = IsNamedpipeThreadFocused();
     if (Global::g_connected)
     {
         RequireNamedpipeFocusActivation();

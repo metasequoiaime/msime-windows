@@ -29,19 +29,31 @@ NineSlice ResolveNineSlice(const CandidateSkinCatalog::BorderImage &borderImage)
     result.slice = ExpandBox(slice);
     result.width = borderImage.widthDip.empty() ? result.slice : ExpandBox(borderImage.widthDip);
     result.fill = borderImage.fill;
+    result.repeatX = borderImage.repeatX;
+    result.repeatY = borderImage.repeatY;
     return result;
 }
 
-Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double basePadding)
+Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double basePadding, bool vertical)
 {
-    Edges border;
-    if (package.borderImage && !package.borderImage->source.empty())
+    const CandidateSkinCatalog::BorderImage *image = package.borderImage ? &*package.borderImage : nullptr;
+    if (vertical && package.borderImageVertical)
     {
-        border = ResolveNineSlice(*package.borderImage).width;
+        image = &*package.borderImageVertical;
     }
-    if (package.contentInsetsDip)
+    const CandidateSkinCatalog::InsetsDip *insetsPtr = package.contentInsetsDip ? &*package.contentInsetsDip : nullptr;
+    if (vertical && package.contentInsetsDipVertical)
     {
-        const CandidateSkinCatalog::InsetsDip &insets = *package.contentInsetsDip;
+        insetsPtr = &*package.contentInsetsDipVertical;
+    }
+    Edges border;
+    if (image && !image->source.empty())
+    {
+        border = ResolveNineSlice(*image).width;
+    }
+    if (insetsPtr)
+    {
+        const CandidateSkinCatalog::InsetsDip &insets = *insetsPtr;
         return {(std::max)(insets.top, border.top), (std::max)(insets.right, border.right),
                 (std::max)(insets.bottom, border.bottom), (std::max)(insets.left, border.left)};
     }

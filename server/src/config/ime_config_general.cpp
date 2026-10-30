@@ -251,6 +251,18 @@ bool SetConfiguredAssocSentenceNeuralDesktop(bool enabled)
     return true;
 }
 
+bool GetConfiguredAssocContextCandidateRerank()
+{
+    return g_assoc_context_candidate_rerank;
+}
+bool SetConfiguredAssocContextCandidateRerank(bool enabled)
+{
+    if (!WriteConfiguredValue("association", "context_candidate_rerank", enabled ? "true" : "false"))
+        return false;
+    g_assoc_context_candidate_rerank = enabled;
+    return true;
+}
+
 bool GetConfiguredAssocSentenceNeuralKeyboard()
 {
     return g_assoc_sentence_neural_keyboard;

@@ -4,7 +4,7 @@
 读取 msime-dictionary checkout 的 sources/ 与 custom/，加上 scripts/dictionary_build/inputs.lock.json 固定的
 仓外文件（msime 的读音纠错、emoji/颜文字表，ECDICT，SCOWL，rime-jp_sela），产出：
 
-    msime.db           全拼表（含地名补充、自定义词条、读音纠错）、86 五笔、空的快捷短语表（出厂不带内置短语）、japanese_lexicon
+    msime.db           全拼表（sources/pinyin/wanxiang/ 的万象词库去调后导入，含自定义词条、读音纠错）、86 五笔、空的快捷短语表（出厂不带内置短语）、japanese_lexicon
     english.db         英文候选、中英双向释义（ECDICT）、sources/cn-en/ 的中译英释义（全部义项）、custom/translations.txt 覆盖
     others.db          emoji、颜文字、符号（sources/symbols/ 的万象符号表，剔除 wanxiang-unrenderable.txt 列出的）
     dict_japanese.dat  日文整句模型（sources/japanese/ 的 Mozc 词库）
@@ -20,7 +20,7 @@
     python scripts/build-dictionary.py --verify                         # 只校验 out/ 是否仍是本脚本构建的结果
     python scripts/build-dictionary.py --if-stale                       # 源数据或构建脚本没变就跳过（installer\test.ps1 用）
 
-构建 others.db 需要 pypinyin（python -m pip install pypinyin）。
+读万象词库与构建 others.db 需要 pypinyin（python -m pip install pypinyin）。
 """
 
 from __future__ import annotations

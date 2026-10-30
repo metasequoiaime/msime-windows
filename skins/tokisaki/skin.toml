@@ -1,0 +1,110 @@
+schema_version = 2
+
+id = "tokisaki"
+name = "时崎狂三 Demo"
+version = "0.1.0"
+description = "时崎狂三与转动的金色钟盘作候选框动态背景，黑底压暗、深红高亮与金色序号，深浅主题同一套暗色。仅供学习使用。"
+base = "canvas"
+
+[supports]
+layouts = ["horizontal", "vertical"]
+themes = ["dark", "light"]
+
+# 面板用原生圆角底色，动图背景盖在上面；canvas 基底下背景图按动图播放。
+[candidate_window]
+shadow = "soft"
+corner_radius_dip = 8
+border_width_dip = 1
+padding = 12
+item_corner_radius_dip = 4
+
+# 180x320 px、25 帧 x 200 ms 的循环 GIF（原图 50 帧 x 100 ms、1 MB，隔帧抽取以满足 500 KB 上限）。
+# cover 居中铺满：横排露出持枪的手与钟盘那一段，竖排接近原图比例。底色近黑，半透明盖上去压暗，文字才看得清。
+[candidate_window.background]
+image = "assets/background.gif"
+fit = "cover"
+opacity = 0.5
+
+# 背景图本身是暗红与金色，深浅主题都用同一套暗色，不随系统主题变成浅底。
+[candidate.dark]
+surface = "#120A0C"
+border = "#7A2A30"
+accent = "#E8B04A"
+text = "#FFF4E6"
+candidate_text = "#FFF4E6"
+preedit_text = "#FFF4E6"
+preedit_caret = "#E8B04A"
+number = "#E8C98A"
+selected = "rgba(170, 26, 40, 0.78)"
+hover = "rgba(170, 26, 40, 0.38)"
+translation = "#EAD7C2"
+translation_pos = "#E8C98A"
+translation_separator = "#B89A78"
+selected_text = "#FFFFFF"
+selected_number = "#FFD98A"
+selected_translation = "#FFE6CC"
+selected_translation_pos = "#FFD98A"
+selected_translation_separator = "#E0BFA0"
+selected_bar = "#E8B04A"
+show_selected_bar = true
+preedit_background = "transparent"
+preedit_divider = "transparent"
+page_arrow_divider = "#7A2A30"
+
+[candidate.dark.menu]
+background = "#1C1012"
+border = "#7A2A30"
+text = "#FFF4E6"
+hover = "#4A1A20"
+
+[candidate.light]
+surface = "#120A0C"
+border = "#7A2A30"
+accent = "#E8B04A"
+text = "#FFF4E6"
+candidate_text = "#FFF4E6"
+preedit_text = "#FFF4E6"
+preedit_caret = "#E8B04A"
+number = "#E8C98A"
+selected = "rgba(170, 26, 40, 0.78)"
+hover = "rgba(170, 26, 40, 0.38)"
+translation = "#EAD7C2"
+translation_pos = "#E8C98A"
+translation_separator = "#B89A78"
+selected_text = "#FFFFFF"
+selected_number = "#FFD98A"
+selected_translation = "#FFE6CC"
+selected_translation_pos = "#FFD98A"
+selected_translation_separator = "#E0BFA0"
+selected_bar = "#E8B04A"
+show_selected_bar = true
+preedit_background = "transparent"
+preedit_divider = "transparent"
+page_arrow_divider = "#7A2A30"
+
+[candidate.light.menu]
+background = "#1C1012"
+border = "#7A2A30"
+text = "#FFF4E6"
+hover = "#4A1A20"
+
+# 悬浮工具栏沿用 fluent 的版式，只换成同一套暗红配色；拖动条不写，自动取 accent。
+[toolbar.dark]
+background = "#1C1012"
+border = "#7A2A30"
+divider = "#4A1A20"
+icon = "#FFF4E6"
+hover = "rgba(170, 26, 40, 0.38)"
+
+[toolbar.light]
+background = "#1C1012"
+border = "#7A2A30"
+divider = "#4A1A20"
+icon = "#FFF4E6"
+hover = "rgba(170, 26, 40, 0.38)"
+
+# 素材授权未核实，仅作仓库演示；打包脚本按 UNVERIFIED 标记排除，不随安装包分发。
+[license]
+code = "MIT"
+assets = "UNVERIFIED-DEMO-ONLY"
+source = "背景动图来自网络（角色出自《约会大作战》），由 Metasequoia IME contributors 隔帧抽取压缩到 500 KB 以内。"

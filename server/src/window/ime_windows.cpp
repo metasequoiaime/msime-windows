@@ -430,6 +430,14 @@ int CreateCandidateWindow(HINSTANCE hInstance)
         0,                           //
         WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
 
+    // UIPI filters this hook for windows of higher integrity, so a focused Task
+    // Manager or an elevated console never reports a foreground change. Poll as
+    // the fallback; the event above stays the fast path for everything else.
+    if (::global_hwnd_ftb && IsWindow(::global_hwnd_ftb))
+    {
+        SetTimer(::global_hwnd_ftb, TIMER_ID_FTB_FOREGROUND_POLL, kFloatingToolbarForegroundPollMs, nullptr);
+    }
+
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0))
     {

@@ -955,6 +955,14 @@ bool SetConfiguredShowShuangpinHelpcodeInCandidateWindow(bool enabled)
     return true;
 }
 
+bool IsConfiguredShuangpinHelpcodeHintShown()
+{
+    // shuangpin_helpcode 只管末尾辅助码；只开句中辅助码（引导键或直接）时同样要在候选上看辅码。
+    return g_show_shuangpin_helpcode_in_candidate_window &&
+           (g_shuangpin_helpcode_enabled || g_shuangpin_mid_sentence_helpcode_enabled ||
+            g_shuangpin_direct_helpcode_enabled);
+}
+
 bool GetConfiguredShowQuanpinHelpcodeInCandidateWindow()
 {
     return g_show_quanpin_helpcode_in_candidate_window;

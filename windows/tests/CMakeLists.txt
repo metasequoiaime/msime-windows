@@ -101,6 +101,36 @@ target_include_directories(test_reconnect_recovery PRIVATE "${CMAKE_CURRENT_BINA
 target_compile_features(test_reconnect_recovery PRIVATE cxx_std_17)
 add_test(NAME reconnect_recovery COMMAND test_reconnect_recovery)
 
+# All activation callers share this IPC gate, including ordinary background
+# status packets that do not enter either reconnect handler.
+set(focus_activation_ipc_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/IPC/Ipc.cpp")
+set(focus_activation_generator "${CMAKE_CURRENT_SOURCE_DIR}/generate_focus_activation_fixture.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${focus_activation_ipc_source}" "${focus_activation_generator}")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${focus_activation_generator}"
+        "${focus_activation_ipc_source}" "${CMAKE_CURRENT_BINARY_DIR}/focus_activation_source.h"
+    COMMAND_ERROR_IS_FATAL ANY)
+add_executable(test_focus_activation focus_activation.cpp)
+target_include_directories(test_focus_activation PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_features(test_focus_activation PRIVATE cxx_std_17)
+add_test(NAME focus_activation COMMAND test_focus_activation)
+
+# Exercise both production extent handlers with clipped and collapsed host rectangles
+set(caret_layout_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Tf/TfTextLayoutSink.cpp")
+set(caret_edit_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Edit/GetTextExtentEditSession.cpp")
+set(caret_fixture_generator "${CMAKE_CURRENT_SOURCE_DIR}/generate_caret_extent_fixture.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${caret_layout_source}" "${caret_edit_source}" "${caret_fixture_generator}" "${reconnect_fixture_generator}")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -B "${caret_fixture_generator}"
+        "${caret_layout_source}" "${caret_edit_source}" "${CMAKE_CURRENT_BINARY_DIR}/caret_extent_source.h"
+    COMMAND_ERROR_IS_FATAL ANY)
+add_executable(test_caret_extent caret_extent.cpp)
+target_include_directories(test_caret_extent PRIVATE ../src "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_features(test_caret_extent PRIVATE cxx_std_17)
+add_test(NAME caret_extent COMMAND test_caret_extent)
+
 # Link the same inline key classifier used by normal and queued TSF paths.
 if(WIN32)
     # Compile actual preview write/cancel bodies; the text store is in memory, with no host UI.

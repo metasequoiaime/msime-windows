@@ -24,4 +24,10 @@ namespace quanpin
 LatticeReranker make_neural_reranker(const neural::SentenceModel *model, const std::string &context,
                                      const neural::RerankOptions &options = {});
 
+// Background rescore of up to 32 exact dictionary rows, including single characters. Only these
+// rows exchange slots; generated sentences, prefixes and fuzzy readings keep their positions.
+// Requires committed context. Keeps WordItem metadata and database weights unchanged.
+void rerank_dictionary_candidates(std::vector<WordItem> &candidates, const std::string &key,
+                                  const neural::SentenceModel *model, const std::string &context);
+
 } // namespace quanpin

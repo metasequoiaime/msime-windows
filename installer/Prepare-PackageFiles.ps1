@@ -14,10 +14,8 @@ param(
     # 取清单声明的那份，免得哪天两份不同步了装出来的和测出来的不是一个东西。
     [string]$PinyinModelDirectory = 'engine/googlepinyinime-rev/data',
     [string]$DictionaryDirectory = 'MetasequoiaImeDict',
-    # 词格打分用的语言模型不随词库发布下发，而是由 scripts/build-language-model.ps1
-    # 从钉住的上游语料现场转换到这个目录。
-    [string]$LanguageModelDirectory = 'language-model',
-    # 神经整句速度档模型（chinese-ime-lm 的 safetensors）从这个目录下发，与 sc.lm 同为资源根下的
+    # 词格打分用的语言模型 sc.lm（~24 MB，几乎压不动）不随包发布：缺它时词格整句退回启发式打分。
+    # 神经整句速度档模型（chinese-ime-lm 的 safetensors）从这个目录下发，是资源根下的
     # 只读文件。缺文件时引擎静默不出神经整句，但打包仍然必须带上，故这里断言存在。效果档模型
     # 不随包分发，由设置页按需下载到 <数据目录>\models\neural-desktop\。
     [string]$NeuralModelDirectory = 'neural-model',
@@ -60,6 +58,9 @@ function Reset-Directory {
 
 $serverRelease = Join-Path $RepoRoot (Join-Path $ServerDirectory 'build-release\bin\Release')
 $dictionaryReplayRelease = Join-Path $serverRelease 'MetasequoiaImeDictionaryReplay.exe'
+$dictionaryBuildRelease = Join-Path $serverRelease 'MetasequoiaImeDictionaryBuild.exe'
+# 词库不以 SQLite 文件进包：pack-dictionary-source.py 导出成文本源，安装时由 MetasequoiaImeDictionaryBuild.exe 还原。
+$dictionarySourceExporter = Join-Path $RepoRoot 'scripts\pack-dictionary-source.py'
 $tsf32Release = Join-Path $RepoRoot (Join-Path $TsfDirectory 'build32-release\Release\MetasequoiaImeTsf.dll')
 $tsf64Release = Join-Path $RepoRoot (Join-Path $TsfDirectory 'build64-release\Release\MetasequoiaImeTsf.dll')
 $tsf32Pdb = Join-Path $RepoRoot (Join-Path $TsfDirectory 'build32-release\Release\MetasequoiaImeTsf.pdb')
@@ -86,14 +87,13 @@ $japaneseModel = Join-Path $RepoRoot (Join-Path $DictionaryDirectory 'out\dict_j
 $japaneseModelLicense = Join-Path $RepoRoot (Join-Path $DictionaryDirectory 'source\mozc_dictionary_oss\README.txt')
 $englishDb = Join-Path $RepoRoot (Join-Path $DictionaryDirectory 'out\english.db')
 $othersDb = Join-Path $RepoRoot (Join-Path $DictionaryDirectory 'out\others.db')
-$languageModel = Join-Path $RepoRoot (Join-Path $LanguageModelDirectory 'sc.lm')
-$languageModelNotice = Join-Path $RepoRoot (Join-Path $LanguageModelDirectory 'NOTICE.md')
 $neuralModelKeyboard = Join-Path $RepoRoot (Join-Path $NeuralModelDirectory 'sentence-model.safetensors')
 $neuralModelNotice = Join-Path $RepoRoot (Join-Path $NeuralModelDirectory 'NOTICE.md')
 
 Assert-PathExists -LiteralPath $RepoRoot -Description '源码仓库根目录'
 Assert-PathExists -LiteralPath $serverRelease -Description 'Server Release 输出目录'
 Assert-PathExists -LiteralPath $dictionaryReplayRelease -Description '用户词库回放程序 Release EXE'
+Assert-PathExists -LiteralPath $dictionaryBuildRelease -Description '词库还原程序 Release EXE'
 Assert-PathExists -LiteralPath $tsf32Release -Description '32 位 TSF Release DLL'
 Assert-PathExists -LiteralPath $tsf64Release -Description '64 位 TSF Release DLL'
 Assert-PathExists -LiteralPath $tsf32Pdb -Description '32 位 TSF Release PDB'
@@ -142,11 +142,7 @@ if 'weight' not in names or pk != ['word', 'display']:
         throw "英文词库数据库 schema 检查失败：$englishDb"
     }
     Assert-PathExists -LiteralPath $othersDb -Description '杂项数据库 others.db'
-    # 摘要校验留在 build-language-model.ps1 里：它既有 lock.json 又刚生成完文件。
-    # 这里只确认文件在，与 msime.db 一样 —— 词库的摘要也是由 product_lock.py 校验的。
-    Assert-PathExists -LiteralPath $languageModel `
-        -Description '词格整句语言模型 sc.lm（用 scripts\build-language-model.ps1 生成）'
-    Assert-PathExists -LiteralPath $languageModelNotice -Description 'libime 语言模型授权声明 NOTICE.md'
+    Assert-PathExists -LiteralPath $dictionarySourceExporter -Description '词库文本源导出脚本 pack-dictionary-source.py'
     Assert-PathExists -LiteralPath $neuralModelKeyboard -Description '神经整句模型 sentence-model.safetensors'
     Assert-PathExists -LiteralPath $neuralModelNotice -Description 'chinese-ime-lm 授权声明 NOTICE.md'
 }
@@ -154,6 +150,7 @@ if 'weight' not in names or pk != ['word', 'display']:
 $targetAppData = Join-Path $PSScriptRoot 'app_data'
 $targetServer = Join-Path $PSScriptRoot 'server_exe'
 $targetTsf = Join-Path $PSScriptRoot 'tsf_dll'
+$targetDictionarySource = Join-Path $PSScriptRoot 'dictionary_source'
 
 if ($Light) {
     Write-Host '轻量模式：跳过词库、辅助码、拼音表和出厂配置，只刷新 TSF、Server 和设置窗口图片资源。'
@@ -165,26 +162,24 @@ else {
         throw "完整拼音音节表缺少 xing：$pinyinTable"
     }
     Copy-Item -LiteralPath $pinyinTable -Destination (Join-Path $targetAppData 'pinyin.txt') -Force
-    # Google 解码器的整句候选（CandidateSource::Fallback）没有这份词典就完全出不来，而且和
-    # sc.lm 一样是静默失败：im_open_decoder 返回 false，解码器直接不出候选，不报任何错。
+    # Google 解码器的整句候选（CandidateSource::Fallback）没有这份词典就完全出不来，而且是
+    # 静默失败：im_open_decoder 返回 false，解码器直接不出候选，不报任何错。
     # 与它配对的 user_dict.dat 是 role=user 的可写文件，profiles 为空，故意不进包 ——
     # 引擎首次使用时由 UserDict::reset 在用户数据目录下自行建出来。
     Copy-Item -LiteralPath $pinyinModel -Destination (Join-Path $targetAppData 'dict_pinyin.dat') -Force
-    Copy-Item -LiteralPath $dictionaryDb -Destination (Join-Path $targetAppData 'msime.db') -Force
+    # msime.db、english.db、others.db、dict_japanese.dat 不进 app_data：SQLite 页和索引几乎压不动，
+    # 导出成文本源后安装包小约 40 MB。安装程序在 ssPostInstall 里调 MetasequoiaImeDictionaryBuild.exe
+    # 把它们还原到数据目录（行数逐表核对，日文模型核对 SHA-256），见 msime_setup.iss 的 BuildDictionaries。
+    python $dictionarySourceExporter --out (Split-Path -Parent $dictionaryDb) --target $targetDictionarySource
+    if ($LASTEXITCODE -ne 0) {
+        throw "导出词库文本源失败（$LASTEXITCODE）"
+    }
+    # 清单仍随包：用户词库回放拿其中 msime.db 的摘要当出厂词库的版本标识，不拿它校验文件。
     if (Test-Path -LiteralPath $dictionaryManifest) {
         Copy-Item -LiteralPath $dictionaryManifest -Destination (Join-Path $targetAppData 'dictionary-manifest.json') -Force
     }
-    Copy-Item -LiteralPath $japaneseModel -Destination (Join-Path $targetAppData 'dict_japanese.dat') -Force
     Copy-Item -LiteralPath $japaneseModelLicense -Destination (Join-Path $targetAppData 'MOZC_DICTIONARY_LICENSE.txt') -Force
-    Copy-Item -LiteralPath $englishDb -Destination (Join-Path $targetAppData 'english.db') -Force
-    Copy-Item -LiteralPath $othersDb -Destination (Join-Path $targetAppData 'others.db') -Force
-    # sc.lm 落在资源目录根下，与 msime.db 同级：engine/contracts/assets 的清单就是这么
-    # 声明这个资源的路径的，引擎按该清单里的文件名去找。
-    Copy-Item -LiteralPath $languageModel -Destination (Join-Path $targetAppData 'sc.lm') -Force
-    # 模型数据是 LGPL-2.1-or-later 的第三方作品，声明必须跟着二进制到用户磁盘上，
-    # 理由同下面 rime-ice 那段。
-    Copy-Item -LiteralPath $languageModelNotice -Destination (Join-Path $targetAppData 'libime-lm-NOTICE.md') -Force
-    # 神经整句速度档模型与 sc.lm 一样落在资源目录根下，文件名由 engine/contracts/assets 清单声明。
+    # 神经整句速度档模型落在资源目录根下，文件名由 engine/contracts/assets 清单声明。
     # 缺文件时引擎静默不出神经整句候选（shared_sentence_model 返回 nullptr），不影响其它候选。
     Copy-Item -LiteralPath $neuralModelKeyboard -Destination (Join-Path $targetAppData 'sentence-model.safetensors') -Force
     # 权重是 Apache-2.0 的第三方作品，授权声明必须随二进制到用户磁盘上。
@@ -207,9 +202,15 @@ else {
     if ($defaultConfig -notmatch '(?m)^settings_window_linger\s*=\s*"off"\s*$') {
         throw '出厂配置的 appearance.settings_window_linger 必须是 off（关闭后立即退出）。'
     }
-    foreach ($sentenceSwitch in @('sentence_wordlattice', 'sentence_google', 'sentence_neural_keyboard')) {
+    foreach ($sentenceSwitch in @('sentence_google', 'sentence_neural_keyboard')) {
         if ($defaultConfig -notmatch "(?m)^$sentenceSwitch\s*=\s*true\s*$") {
             throw "出厂配置的 association.$sentenceSwitch 必须默认开启。"
+        }
+    }
+    # 这两个来源的模型都不随包分发，设置页在下载前把开关置灰显示为关，出厂值也得是关。
+    foreach ($sentenceSwitch in @('sentence_wordlattice', 'sentence_neural_desktop')) {
+        if ($defaultConfig -notmatch "(?m)^$sentenceSwitch\s*=\s*false\s*$") {
+            throw "出厂配置的 association.$sentenceSwitch 必须默认关闭（模型需在设置页下载）。"
         }
     }
     $defaultConfig = $defaultConfig.TrimEnd("`r", "`n") + "`r`n"

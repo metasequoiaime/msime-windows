@@ -33,7 +33,7 @@ floating_toolbar_settings = true
 # 悬浮工具栏用户缩放（相对系统 DPI），可选：0.75 / 1.0 / 1.25 / 1.5
 floating_toolbar_scale = 1.0
 # 悬浮工具栏图标尺寸（px，再乘 scale），可选：16–28
-floating_toolbar_font_size = 24
+floating_toolbar_font_size = 22
 # 悬浮工具栏自动隐藏：显示一段时间无交互后淡出，鼠标悬停时不隐藏，切换中英等状态时重新显示
 floating_toolbar_auto_hide = false
 # 自动隐藏延时（秒），可选：1–60
@@ -82,14 +82,16 @@ clean_mode = false
 # chinese-ime-lm 的 Transformer，还需模型文件在数据目录里，desktop 更准也更慢。
 #
 [association]
-# 词格整句联想（kenlm 三元模型打分）
-sentence_wordlattice = true
+# 词格整句联想（kenlm 三元模型打分）。模型 sc.lm 不随安装包分发，要在设置页下载后才能开启
+sentence_wordlattice = false
 # Google 解码器整句联想
 sentence_google = true
 # 神经网络模型整句（效果优先 / desktop）：内部生成最多 12 条 Trigram 备选并挑选，不依赖 sentence_wordlattice 开关
 sentence_neural_desktop = false
 # 神经网络模型整句（速度优先 / keyboard）：同上；与 desktop 同时开启时各自独立给出结果
 sentence_neural_keyboard = true
+# 实验：用轻量神经模型结合最近上屏的前文，重排完整拼音对应的前 32 个词库候选（含单字与词组）
+context_candidate_rerank = false
 # 某个模型的首选与已有候选重复时，改为显示该模型排名最高的下一条不同结果
 sentence_show_next_on_duplicate = false
 # 在候选窗的整句候选后显示来源标签（〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕〔八股〕〔墨奇〕）
@@ -208,6 +210,9 @@ theme_mode = "system"
 settings_window_linger = "off"
 # 打开设置窗口时先显示居中的齿轮启动画面，再淡入主界面
 settings_launch_animation = true
+# 发现新版本时由后台自动下载安装包并校验 SHA256。关闭后只在关于页提示新版本。
+# 后台只在输入法进程运行时工作，且只对正式版生效，nightly 与 dev 构建不参与。
+auto_download_update = false
 # 分表面主题，可选："follow", "dark", "light"（follow = 跟随 theme_mode）
 theme_settings = "follow"
 theme_cand = "follow"
@@ -594,7 +599,7 @@ date_time_mode = true # Shift+T 进入日期与时间快捷输入模式（全拼
 emoji_mode = false # Shift+E 进入 Emoji 快捷输入模式（支持全拼/简拼/双拼/英文）；默认关闭，避免截走大写 E 开头的英文
 kaomoji_mode = false # Shift+M 进入颜文字快捷输入模式（支持全拼/简拼/双拼/英文）
 symbol_mode = true # Shift+S 进入符号快捷输入模式：输入分组码（xl 希腊字母、sx 数学、szq 带圈数字、jt 箭头）或符号名（alpha、infinity）
-jianpin_mode = true # Shift+J 进入超级简拼模式（每个字母作为简拼；双拼按方案转换 zh/ch/sh）
+jianpin_mode = true # Shift+J 进入超级简拼模式（仅双拼生效；全拼直接输入声母即为简拼，无需该模式）
 y_mode = true # Shift+Y 进入临时英文模式（中文状态下直接打英文，上屏后回到中文）
 r_mode = true # Shift+R 进入临时日语模式（中文状态下使用罗马字输入日语，上屏后回到中文）
 v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，V123.45 → 壹佰贰拾叁元肆角伍分）或计算算式（V1+2*3 → 7）；双拼和五笔用大写 V，全拼大小写均可
@@ -654,6 +659,13 @@ model_ollama = ""
 candidate_limit = 3
 # DeepSeek 思考强度: disabled | low | high | max，仅 DeepSeek 生效。开启后联想明显变慢。
 thinking = "disabled"
+# 请求里是否带 response_format={"type":"json_object"}，AI 联想与候选词翻译共用。
+# auto  ：按接口地址判断。本机（localhost/127.x/10.x/192.168.x/172.16-31.x）和未知服务不带，
+#         OpenAI、DeepSeek 等原生实现带上。不确定时保持这一档。
+# force ：一定带。只适合确认支持 JSON 模式的服务商，部分本地部署会因此直接拒绝请求。
+# off   ：一定不带，由 prompt 约束输出，解析侧兼容纯 JSON、代码块包裹和逐行作答。
+# 本机跑 LM Studio、vLLM、Ollama 等服务时若报 400 或不生效，改成 off。
+json_mode = "auto"
 # 生成式模式下最后选过的服务商。provider 切到 jev 时它保持不变，切回生成式时据此恢复；
 # 旧配置没有这个键时跟随 provider。jev 不能填在这里。
 generate_provider = "deepseek"

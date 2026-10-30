@@ -8,7 +8,8 @@ $required = @(
     'MetasequoiaImeServer.exe',
     'MetasequoiaImeSettings.exe',
     'MetasequoiaImeWatchdog.exe',
-    'MetasequoiaImeDictionaryReplay.exe'
+    'MetasequoiaImeDictionaryReplay.exe',
+    'MetasequoiaImeDictionaryBuild.exe'
 )
 
 $missing = $required | Where-Object { -not (Test-Path (Join-Path $BuildDir $_)) }

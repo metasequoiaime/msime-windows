@@ -17,8 +17,31 @@ enum class DictionaryKind
 };
 
 std::string default_user_db_path();
+
+// How long a journal connection waits for a lock before giving up. This is deliberately shorter than every client
+// wait it can end up inside: the TSF client gives a commit reply FANY_IME_COMMIT_REPLY_TIMEOUT_MS (1500 ms) overall
+// and FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS (300 ms) in the one shot it takes inside an edit session, and it treats
+// running out of either as a transport failure that drops the key, the queue and the composition. A wait longer than
+// that window cannot end in success; all it can do is hold the caller until the client has already reset. Ending the
+// wait early costs one failed read on a page that comes back a moment later, or one lost frequency adjustment, both
+// invisible next to a reset composition.
+constexpr int kJournalBusyTimeoutMs = 200;
+
+// Pages of WAL after which the committing connection copies the log back into the database. SQLite's default is 1000
+// pages, about 4 MB at the default 4096-byte page size; a real install's WAL was sitting at 4,132,392 bytes, i.e. right
+// at the threshold, so the checkpoint was firing inside an ordinary keystroke's write. The threshold is in pages, not
+// bytes, so the file size only tells us it was near the limit. Copying less at a time spreads that cost, and the
+// writer runs a checkpoint of its own once its queue empties.
+constexpr int kWalAutocheckpointPages = 128;
+
 // Compatibility no-op; journal connections are operation-scoped.
 void close_default_user_database();
+
+// Copies the user journal's write-ahead log back into the database once it has grown past a few pages. The automatic
+// checkpoint fires on whichever commit crosses the threshold, i.e. inside a selection the user is waiting for; running
+// this while the writer has nothing queued moves that work off the keystroke path. PASSIVE never blocks a reader and
+// simply does nothing while one is active, so calling it is always safe.
+void checkpoint_user_journal_if_needed();
 
 bool record_upsert(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
                    const std::string &value, std::int64_t weight, const std::string &display = {});

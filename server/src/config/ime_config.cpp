@@ -23,6 +23,7 @@
 #include "engine/contracts/input_state_shortcuts.h"
 #include "statistics/stats_store.h"
 #include "voice-input/voice_providers.h"
+#include "ai/chat_request_params.h"
 
 using namespace ime_config_detail;
 
@@ -152,10 +153,11 @@ int g_english_mixed_input_min_chars = kEnglishMixedInputMinCharsDefault;
 int g_english_mixed_input_first_page_count = kEnglishMixedInputFirstPageCountDefault;
 bool g_cloud_candidates_enabled = true;
 // 整句候选来源与去重补位开关：词格、Google 和神经速度档默认开，神经效果档与去重补位默认关。
-bool g_assoc_sentence_wordlattice = true;
+bool g_assoc_sentence_wordlattice = false;
 bool g_assoc_sentence_google = true;
 bool g_assoc_sentence_neural_desktop = false;
 bool g_assoc_sentence_neural_keyboard = true;
+bool g_assoc_context_candidate_rerank = false;
 bool g_assoc_sentence_show_next_on_duplicate = false;
 // octagram 语法模型（八股文 .gram）：总开关默认关；模型 id 默认空（空 = 未选择任何模型）。
 // 奖励权重与六参数不进设置页，供配置文件高级调参；默认对齐万象现行（wanxiang.schema.yaml）。
@@ -225,6 +227,9 @@ std::string g_candidate_fixed_badge_style = "paperclip";
 std::string g_candidate_ai_badge_style = "robot";
 std::string g_settings_window_linger = "off";
 bool g_settings_launch_animation = true;
+// 发现新版本时由后台自动下载安装包并校验。出厂关闭：自动下载会占带宽和磁盘，
+// 属于要用户主动打开的行为。
+bool g_auto_download_update = false;
 std::string g_theme_mode = "system";
 std::string g_theme_settings = "follow";
 std::string g_theme_cand = "follow";
@@ -658,10 +663,11 @@ bool LoadImeConfig()
                     : kEnglishMixedInputFirstPageCountDefault;
         }
         g_cloud_candidates_enabled = tbl["general"]["cloud_candidates"].value_or(true);
-        g_assoc_sentence_wordlattice = tbl["association"]["sentence_wordlattice"].value_or(true);
+        g_assoc_sentence_wordlattice = tbl["association"]["sentence_wordlattice"].value_or(false);
         g_assoc_sentence_google = tbl["association"]["sentence_google"].value_or(true);
         g_assoc_sentence_neural_desktop = tbl["association"]["sentence_neural_desktop"].value_or(false);
         g_assoc_sentence_neural_keyboard = tbl["association"]["sentence_neural_keyboard"].value_or(true);
+        g_assoc_context_candidate_rerank = tbl["association"]["context_candidate_rerank"].value_or(false);
         g_assoc_sentence_show_next_on_duplicate = tbl["association"]["sentence_show_next_on_duplicate"].value_or(false);
         g_assoc_sentence_collocation_enabled = tbl["association"]["sentence_collocation_enabled"].value_or(false);
         g_assoc_sentence_collocation_model = tbl["association"]["sentence_collocation_model"].value_or(std::string());
@@ -827,6 +833,7 @@ bool LoadImeConfig()
             g_settings_window_linger = IsValidSettingsWindowLinger(linger) ? linger : "off";
         }
         g_settings_launch_animation = tbl["appearance"]["settings_launch_animation"].value_or(true);
+        g_auto_download_update = tbl["appearance"]["auto_download_update"].value_or(false);
         {
             const std::string theme_mode = tbl["appearance"]["theme_mode"].value_or(std::string("system"));
             if (theme_mode == "light" || theme_mode == "system" || theme_mode == "auto")
@@ -1042,6 +1049,10 @@ bool LoadImeConfig()
         g_ai_assistant.thinking = tbl["ai_assistant"]["thinking"].value_or(std::string("disabled"));
         if (!VoiceInput::IsValidThinkingLevel(g_ai_assistant.thinking))
             g_ai_assistant.thinking = "disabled";
+        // 旧配置里没有这个键，缺省按 auto：本机地址与未知服务不带 response_format，
+        // 原生实现照旧带上，升级后行为对已有的云端用户不变。
+        g_ai_assistant.json_mode =
+            ChatCompletions::NormalizeJsonMode(tbl["ai_assistant"]["json_mode"].value_or(std::string("auto")));
         const std::string legacy_ai_prompt = tbl["ai_assistant"]["prompt"].value_or(g_ai_assistant.prompt);
         g_ai_assistant.prompt_id = tbl["ai_assistant"]["prompt_id"].value_or(std::string("custom_1"));
         if (g_ai_assistant.prompt_id != "custom_1" && g_ai_assistant.prompt_id != "custom_2" &&

@@ -117,6 +117,9 @@ struct AiAssistantConfig
     int candidate_limit = 3;
     // DeepSeek reasoning effort: disabled | low | high | max. Other providers ignore it.
     std::string thinking = "disabled";
+    // response_format 策略：auto | force | off，见 ChatCompletions::JsonMode。AI 联想与候选词
+    // 翻译共用这一项，两边对同一个端点的请求形状保持一致。
+    std::string json_mode = "auto";
     // custom_1 | custom_2 | custom_3
     std::string prompt_id = "custom_1";
     std::string prompt_custom_1;
@@ -215,6 +218,8 @@ struct TranslationConfig
         std::string endpoint;
         std::string token;
         std::string model;
+        // 从 [ai_assistant].json_mode 带过来，翻译请求与 AI 联想用同一条策略。
+        std::string json_mode = "auto";
     } ai;
 };
 
@@ -486,6 +491,8 @@ std::vector<CustomHelpcodeSchemaInfo> GetCustomHelpcodeSchemas();
 std::string GetCustomHelpcodeDirectory();
 bool GetConfiguredShowShuangpinHelpcodeInCandidateWindow();
 bool SetConfiguredShowShuangpinHelpcodeInCandidateWindow(bool enabled);
+// 双拼候选此刻是否带辅码提示：勾了显示，且末尾、句中（引导键或直接）任意一种辅助码开着。
+bool IsConfiguredShuangpinHelpcodeHintShown();
 bool GetConfiguredShowQuanpinHelpcodeInCandidateWindow();
 bool SetConfiguredShowQuanpinHelpcodeInCandidateWindow(bool enabled);
 bool GetConfiguredFloatingToolbarEnabled();
@@ -556,6 +563,8 @@ bool GetConfiguredAssocSentenceNeuralDesktop();
 bool SetConfiguredAssocSentenceNeuralDesktop(bool enabled);
 bool GetConfiguredAssocSentenceNeuralKeyboard();
 bool SetConfiguredAssocSentenceNeuralKeyboard(bool enabled);
+bool GetConfiguredAssocContextCandidateRerank();
+bool SetConfiguredAssocContextCandidateRerank(bool enabled);
 bool GetConfiguredAssocSentenceShowNextOnDuplicate();
 bool SetConfiguredAssocSentenceShowNextOnDuplicate(bool enabled);
 bool GetConfiguredAssocSentenceSourceBadge();
@@ -706,6 +715,9 @@ bool SetConfiguredSettingsWindowLinger(const std::string &linger);
 // 设置窗口的齿轮启动画面，出厂开启。
 bool GetConfiguredSettingsLaunchAnimation();
 bool SetConfiguredSettingsLaunchAnimation(bool enabled);
+// 发现新版本时由后台自动下载安装包并校验 SHA256，出厂关闭。
+bool GetConfiguredAutoDownloadUpdate();
+bool SetConfiguredAutoDownloadUpdate(bool enabled);
 // "fluent" | "wechat" | "wechat_scroll" | "graphite" | "willow_green" | "autumn_osmanthus" | "microsoft"
 // — candidate-window and floating-toolbar skin.
 const std::string &GetConfiguredCandidateSkin();

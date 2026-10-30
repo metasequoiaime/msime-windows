@@ -10,6 +10,8 @@
 #include "defines/globals.h"
 #include <algorithm>
 #include <cmath>
+#include <cwchar>
+#include <filesystem>
 #include <string>
 #include <fmt/xchar.h>
 #include "utils/window_utils.h"
@@ -412,6 +414,134 @@ void RevealAutoHiddenFloatingToolbar(const wchar_t *reason)
     }
 }
 
+namespace
+{
+// Windows' own auxiliary input surfaces (the emoji panel, the touch keyboard) are
+// hosted by the Windows text input host, and this product's own panels (tray menu,
+// emoji / keyboard / handwriting) either belong to this process or live beside the
+// Server in the same installation. The TIP treats focus moving to them as a
+// temporary suspension and deliberately keeps the toolbar up (see
+// floating_toolbar_visibility_policy.h and windows/src/Thread/ThreadFocusSink.cpp),
+// so the foreground rule below must not read them as "another input method took
+// over".
+//
+// The settings window is the exception: it is a configuration surface, not a text
+// target, so there is no input state to show. Keeping the toolbar up there leaves
+// the previous window's CN/EN, punctuation and width on screen with nothing to
+// apply them to, which reads as a toolbar that stopped refreshing.
+bool IsAuxiliaryInputProcess(DWORD process_id)
+{
+    if (process_id == 0)
+    {
+        return false;
+    }
+    if (process_id == GetCurrentProcessId())
+    {
+        return true;
+    }
+
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    if (!process)
+    {
+        return false;
+    }
+
+    wchar_t image_path[MAX_PATH * 2] = {};
+    DWORD image_path_size = static_cast<DWORD>(ARRAYSIZE(image_path));
+    const bool queried = QueryFullProcessImageNameW(process, 0, image_path, &image_path_size) != FALSE;
+    CloseHandle(process);
+    if (!queried)
+    {
+        return false;
+    }
+
+    const wchar_t *image_name = wcsrchr(image_path, L'\\');
+    image_name = image_name ? image_name + 1 : image_path;
+    if (_wcsicmp(image_name, L"TextInputHost.exe") == 0)
+    {
+        return true;
+    }
+    if (_wcsicmp(image_name, L"MetasequoiaImeSettings.exe") == 0)
+    {
+        return false;
+    }
+
+    wchar_t server_path[MAX_PATH * 2] = {};
+    if (GetModuleFileNameW(nullptr, server_path, static_cast<DWORD>(ARRAYSIZE(server_path))) == 0)
+    {
+        return false;
+    }
+
+    const std::filesystem::path image_directory = std::filesystem::path(image_path).parent_path();
+    const std::filesystem::path server_directory = std::filesystem::path(server_path).parent_path();
+    return CompareStringOrdinal(image_directory.c_str(), -1, server_directory.c_str(), -1, TRUE) == CSTR_EQUAL;
+}
+
+// Windows' "Let me use a different input method for each app window" leaves this
+// text service loaded in the window the user just left: focus moves to a thread
+// that never had it, so no terminal deactivation is reported and the toolbar
+// would keep hanging over an application that uses another input method. Decide
+// from the foreground window's input thread instead of waiting for an edge this
+// mode never sends.
+//
+// The active client cannot answer this. A route-only suspension clears it on
+// every focus change inside a host (see event_listener_pipes.cpp), so it reads
+// as "nothing is active" while the TIP is still loaded, connected and shown in
+// the window the user is looking at. Connected ownership survives that.
+bool ForegroundWindowUsesThisIme()
+{
+    const HWND foreground = GetForegroundWindow();
+    if (!foreground || !IsWindow(foreground))
+    {
+        // Nothing to attribute the toolbar to; the TIP lifecycle owns it.
+        return true;
+    }
+
+    DWORD foreground_process = 0;
+    GetWindowThreadProcessId(foreground, &foreground_process);
+    if (IsAuxiliaryInputProcess(foreground_process))
+    {
+        return true;
+    }
+
+    return IsForegroundInputThreadConnectedPipeClient();
+}
+} // namespace
+
+namespace
+{
+// Last foreground window this file has accounted for. The event hook and the
+// poll fallback share it so a window change is settled exactly once.
+HWND g_last_foreground_window = nullptr;
+} // namespace
+
+void ScheduleFloatingToolbarForegroundReconcile()
+{
+    if (!::global_hwnd_ftb || !IsWindow(::global_hwnd_ftb))
+    {
+        return;
+    }
+    g_last_foreground_window = GetForegroundWindow();
+    // Only the newest foreground window matters: restarting the timer keeps a
+    // single pending decision, so a burst of activations costs one apply.
+    KillTimer(::global_hwnd_ftb, TIMER_ID_FTB_FOREGROUND_SETTLE);
+    SetTimer(::global_hwnd_ftb, TIMER_ID_FTB_FOREGROUND_SETTLE, kFloatingToolbarForegroundSettleMs, nullptr);
+}
+
+void PollFloatingToolbarForegroundChange()
+{
+    if (!::global_hwnd_ftb || !IsWindow(::global_hwnd_ftb))
+    {
+        return;
+    }
+    const HWND foreground = GetForegroundWindow();
+    if (foreground == g_last_foreground_window)
+    {
+        return;
+    }
+    ScheduleFloatingToolbarForegroundReconcile();
+}
+
 void ApplyConfiguredFloatingToolbarVisibility(const wchar_t *reason)
 {
     if (!::global_hwnd_ftb)
@@ -440,8 +570,9 @@ void ApplyConfiguredFloatingToolbarVisibility(const wchar_t *reason)
     {
         g_ftb_auto_hidden = false;
     }
-    const bool should_show =
-        FanyImeUi::ShouldShowFloatingToolbar(configured, fullscreen, g_is_ime_active, g_ftb_auto_hidden);
+    const bool foreground_uses_ime = ForegroundWindowUsesThisIme();
+    const bool should_show = FanyImeUi::ShouldShowFloatingToolbar(configured, fullscreen, g_is_ime_active,
+                                                                  g_ftb_auto_hidden, foreground_uses_ime);
     const bool is_visible = IsWindowVisible(::global_hwnd_ftb) != FALSE;
     const bool presenter_ready = FloatingToolbarPresenter::Instance().IsBound();
 
@@ -455,11 +586,25 @@ void ApplyConfiguredFloatingToolbarVisibility(const wchar_t *reason)
         // Every input of the decision, so a blank toolbar can be attributed to a
         // specific term rather than guessed at. Cloak and presenter readiness
         // matter more than IsWindowVisible once the host exists.
-        std::wstring decision =
-            fmt::format(L"apply reason={} active_client={} ime_active={} configured={} fullscreen={} "
-                        L"auto_hidden={} should_show={} was_visible={} was_cloaked={} presenter_ready={}",
-                        reason, active_client, g_is_ime_active, configured, fullscreen, g_ftb_auto_hidden, should_show,
-                        is_visible, IsHostWindowCloaked(::global_hwnd_ftb), presenter_ready);
+        std::wstring decision = fmt::format(
+            L"apply reason={} active_client={} ime_active={} configured={} fullscreen={} "
+            L"auto_hidden={} foreground_uses_ime={} "
+            L"should_show={} was_visible={} was_cloaked={} presenter_ready={}",
+            reason, active_client, g_is_ime_active, configured, fullscreen, g_ftb_auto_hidden, foreground_uses_ime,
+            should_show, is_visible, IsHostWindowCloaked(::global_hwnd_ftb), presenter_ready);
+        // The foreground window is not necessarily the process that hosts the TSF
+        // client (UWP apps are framed by ApplicationFrameHost, and elevated
+        // windows do not even deliver the foreground event to this process), so
+        // name both threads. Without them a wrong hide/show cannot be attributed.
+        DWORD foreground_process = 0;
+        const DWORD foreground_thread = foreground ? GetWindowThreadProcessId(foreground, &foreground_process) : 0;
+        DWORD focus_thread = 0;
+        GUITHREADINFO focus_info{sizeof(focus_info)};
+        if (foreground_thread != 0 && GetGUIThreadInfo(foreground_thread, &focus_info) && focus_info.hwndFocus)
+        {
+            focus_thread = GetWindowThreadProcessId(focus_info.hwndFocus, nullptr);
+        }
+        decision += fmt::format(L" fg={}:{} focus_tid={}", foreground_process, foreground_thread, focus_thread);
 
         // Applies are confined to the UI thread, so plain statics suffice.
         static std::wstring last_decision;
@@ -686,6 +831,11 @@ LRESULT CALLBACK WndProcFtbWindow(HWND hwnd, UINT message, WPARAM wParam, LPARAM
     }
 
     case WM_TIMER: {
+        if (wParam == TIMER_ID_FTB_FOREGROUND_POLL)
+        {
+            PollFloatingToolbarForegroundChange();
+            break;
+        }
         if (wParam == TIMER_ID_PLACE_FTB)
         {
             KillTimer(hwnd, TIMER_ID_PLACE_FTB);
@@ -700,6 +850,14 @@ LRESULT CALLBACK WndProcFtbWindow(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         if (wParam == TIMER_ID_FTB_AUTO_HIDE_FADE)
         {
             StepFloatingToolbarAutoHideFade();
+            break;
+        }
+        if (wParam == TIMER_ID_FTB_FOREGROUND_SETTLE)
+        {
+            KillTimer(hwnd, TIMER_ID_FTB_FOREGROUND_SETTLE);
+            // The new foreground window and the activation it belongs to have had
+            // their chance to arrive; whatever the state is now stands.
+            ApplyConfiguredFloatingToolbarVisibility(L"foreground-settle");
             break;
         }
         if (wParam == TIMER_ID_FTB_DPI_REMEASURE)

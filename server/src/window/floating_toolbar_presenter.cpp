@@ -1,6 +1,7 @@
 #include "window/floating_toolbar_presenter.h"
 
 #include "config/ime_config.h"
+#include "conversion/chinese_converter.h"
 #include "defines/globals.h"
 #include "global/globals.h"
 #include "ipc/event_listener.h"
@@ -645,7 +646,12 @@ void FloatingToolbarPresenter::RebuildScene()
                                   traditional ? kIconTraditional : kIconSimplified, []() {
                                       const std::string next =
                                           GetConfiguredCharacterSet() == "traditional" ? "simplified" : "traditional";
-                                      SetConfiguredCharacterSet(next);
+                                      if (!SetConfiguredCharacterSet(next))
+                                          return;
+                                      if (next == "traditional")
+                                          ChineseConverter::PreloadInBackground();
+                                      // 组字途中切换时，候选列表由任务线程按新字形换写法。
+                                      FanyNamedPipe::EnqueueRefreshCandidatePageTask();
                                   }));
     }
     if (items.emoji)

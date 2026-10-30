@@ -22,9 +22,11 @@ nlohmann::json BuildRequestBody(const Request &request)
     nlohmann::json body = {
         {"model", config.model},
         {"stream", false},
-        {"response_format", {{"type", "json_object"}}},
         {"messages",
          {{{"role", "system"}, {"content", config.prompt}}, {{"role", "user"}, {"content", input.dump()}}}}};
+    // 本地部署与未知服务默认不带，见 ChatCompletions::JsonMode。
+    if (ChatCompletions::UsesJsonResponseFormat(config.json_mode, config.endpoint))
+        body["response_format"] = {{"type", "json_object"}};
     if (!openai_reasoning)
         body["temperature"] = 0.2;
     // Reasoning tokens count against the output limit and can leave no room for JSON.

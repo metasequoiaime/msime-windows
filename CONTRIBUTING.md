@@ -55,7 +55,7 @@ pwsh -File .\import-dev-trust.ps1
 
 看到 `有效期至：<日期>` 就说明成功，然后双击安装包。
 
-**每次换新的 dev 构建都要重跑这个脚本。** 证书是每次运行现场生成的，指纹每次都不同；脚本按固定 subject 清旧导新，所以受信任存储不会越堆越多。嫌麻烦的话用 [nightly 通道](../installer/README.md#三个通道怎么选)，它的证书固定，导一次就够。
+**每次换新的 dev 构建都要重跑这个脚本。** 证书是每次运行现场生成的，指纹每次都不同；脚本按固定 subject 清旧导新，所以受信任存储不会越堆越多。嫌麻烦的话用 [nightly 通道](installer/README.md#三个通道怎么选)，它的证书固定，导一次就够。
 
 证书有效期 90 天。下载后放太久才装的话，脚本会发现证书已过期并直接退出——这时候要回仓库重新下载新构建，而不是继续装旧包。
 
@@ -64,6 +64,24 @@ pwsh -File .\import-dev-trust.ps1
 `workflow_dispatch` 需要仓库写权限；fork PR 的构建用 `pull_request` 触发（只读 token，无 secrets），首个 run 要维护者点一次批准；`component=tip` 或 `server` 只编译单个组件出裸二进制，其中 `component=server` 的产物会额外签名并附带 `dev-server-certificate`，因为带 `uiAccess` 的 Server 没有可信签名会静默失效；这个 workflow 不出 release、不碰更新清单，合并门槛仍然由 PR 上的 CI 把守。
 
 推送 `win7*` 开头的分支不会触发，那些分支属于 Windows 7 移植的工作。
+
+#### 短期改动与长期分支
+
+第一次改，或者只是想确认这个思路编得过，用上面这个 workflow。它跟着分支走，几十行的补丁从推上去到拿到安装包基本不用管。
+
+要在一个分支上连着改好几天、反复推、反复评，每次都等一轮干净 runner 重新编译不划算。这时候用 `.devcontainer/` 里的容器：
+
+```bash
+# 容器里，把 Linux 侧的检查一次跑完（不编译 Windows 组件，原因见下面的「边界」）
+bash .devcontainer/check-linux.sh
+
+# 评审某个 PR：先把该 PR 的 head 拉进临时 worktree，再跑同一套检查，外加改动文件的格式
+bash .devcontainer/check-pr.sh <PR 号>
+```
+
+在 GitHub 上开 Codespace 按 `.devcontainer/devcontainer.json` 建环境，镜像自带 CMake、GCC/Clang 与 Python 3。这个容器只跑得起不需要 Windows 的那部分检查：TSF DLL、Server 和 `msimeui` 在代码里引用 `windows.h` 并使用 `d2d1`、`user32` 这类 Windows 库，GCC 编不动，而 Codespaces 也不提供 Windows 容器。需要看编译结果和真实输入效果时，仍然回到 dev-build workflow 拿安装包。
+
+容器里别提交证书、token 或个人目录路径。`check-linux.sh` 覆盖的是能在 Linux 上复现的部分；`ctest` 那条 Server 单元测试要 MSVC 编出来的产物，只能在 Windows 或 CI 上跑。
 
 #### 注意事项
 只想看设置窗口的界面、不想为一个页面改动装整套输入法时，同一次构建还会出一个 `dev-settings-portable` 压缩包：
@@ -140,6 +158,8 @@ Set-Location ..\installer
 
 ## 改动前要知道的几条边界
 
+- **一个 PR 的体量要能读得完。** 推荐控制在一千行左右，除非确实必要不要超过五千行。输入法的改动大量靠人眼核对协议、状态机和绘制路径，行数一多，评审者只能扫个大概，漏掉的问题最后都会变成用户那边的问题。确实要穿过这个量级的话，以能独立验证的最小步骤拆成几个 PR，每个都能单独跑 CI，也能单独装一次看效果。仓库的 `dependencies` 检查只盯依赖清单的变动，拦不住 PR 体量，这条靠人。
+- **功能性 PR 尽量不要引入新的依赖。** 每加一个依赖，就要有人长期跟进它的安全公告、许可证和 Windows 上的构建陷阱，而这些东西通常比它省下的那点代码贵得多。确实绕不开时，先开 Issue 说明要解决的问题、评估过的替代方案和来源许可证，或者到 [QQ 群或 Telegram 群](#交流) 里讨论，达成一致再动代码。纯 CI、构建脚本层面的依赖调整可以不卡这一条，但同样要在 PR 里写明理由。
 - **协议的唯一来源是 `engine/contracts/`。** IPC 线格式、opcode、语音分帧和设置窗口的消息定义都在那里，两侧引用同一份头文件，不要在任何一侧另写一份。
 - **`engine/` 是本仓的一等代码。** 要为 Windows 改引擎就直接改，和改 `server/` 一样评审和测试；引擎和调用它的代码可以、也应该在同一个 PR 里。例外是 `engine/` 下的 `googlepinyinime-rev/`、`ngram/kenlm/`、`utfcpp/`、`voice/third_party/`，那是上游副本。见 [engine/UPSTREAM.md](engine/UPSTREAM.md)。
 - **`ui/` 不许反向依赖产品。** 它不读 Server 配置、IPC、引擎、词库或全局输入状态。`ui/scripts/check-boundary.py` 在 CI 里检查。

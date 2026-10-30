@@ -854,6 +854,11 @@ void CandidatePresenter::PlaceAndShow(POINT caret, float widthDip, float heightD
     {
         y = monitor.top + 2 - cardTopPx;
     }
+    if (cardOriginPinned_)
+    {
+        x = pinnedCardOrigin_.x - cardLeftPx;
+        y = pinnedCardOrigin_.y - cardTopPx;
+    }
     // Rendering must use the same scale the window is sized with: the ui
     // override replaces GetDpiForWindow (144 inside RDP) so DIPs map exactly
     // onto the pixels computed above. Must land before EnsureForComposition —
@@ -1069,8 +1074,15 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     Global::PublishRenderedCandidatePageGeneration(renderedGeneration);
 }
 
+void CandidatePresenter::SetPinnedCardOrigin(const POINT *origin)
+{
+    cardOriginPinned_ = origin != nullptr;
+    pinnedCardOrigin_ = origin ? *origin : POINT{};
+}
+
 void CandidatePresenter::Hide()
 {
+    cardOriginPinned_ = false;
     if (!hwnd_)
     {
         return;

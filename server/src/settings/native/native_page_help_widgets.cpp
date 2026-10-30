@@ -571,7 +571,7 @@ void RunInBackground(HWND hwnd, std::function<std::string()> work, std::function
     // The result comes back as a posted message rather than through a polling timer:
     // Windows holds back WM_TIMER for a window that is covered or minimized, which left
     // the about page's update check hanging until the next input arrived.
-    std::thread([hwnd, id, job, work = std::move(work)]() {
+    std::thread([hwnd, id, job = std::move(job), work = std::move(work)]() {
         std::string result;
         try
         {

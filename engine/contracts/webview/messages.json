@@ -102,6 +102,26 @@
         "settings"
       ]
     },
+    "latticeModelDownload": {
+      "surfaces": [
+        "settings"
+      ]
+    },
+    "latticeModelImport": {
+      "surfaces": [
+        "settings"
+      ]
+    },
+    "latticeModelDelete": {
+      "surfaces": [
+        "settings"
+      ]
+    },
+    "latticeModelStatusRequest": {
+      "surfaces": [
+        "settings"
+      ]
+    },
     "openHandwritingPanel": {
       "surfaces": [
         "settings"

@@ -288,6 +288,11 @@ vector<ShuangpinDictionary::WordItem> ShuangpinDictionary::generateSeries( //
                                               lattice_options, neural_rerankers);
         }
 
+        if (sentence_association_.context_candidate_rerank && !rescoring_context_.empty())
+        {
+            quanpin::rerank_dictionary_candidates(candidate_list, quanpin_segmentation, neural_keyboard_model_.get(),
+                                                  rescoring_context_);
+        }
         /* 缓存起来 */
         _cached_buffer_series.insert(effective_cache_key, candidate_list);
     }
@@ -1313,7 +1318,7 @@ std::vector<std::pair<std::string, std::string>> ShuangpinDictionary::query_sing
 
 void ShuangpinDictionary::reset_sentence_cache()
 {
-    // 词格整句在 generateSeries 里合入，辅助码的三个缓存是从它的结果筛出来的，一起清；
+    // 整句和上文词库重排在 generateSeries 里合入，辅助码的三个缓存从它的结果筛出来，一起清；
     // _cached_buffer 只是当前拼音的词库行，不含整句，留着。
     _cached_buffer_sgl.clear();
     _cached_buffer_sgl_reversed.clear();
@@ -1327,6 +1332,9 @@ void ShuangpinDictionary::set_sentence_association(const SentenceAssociationOpti
     {
         return;
     }
+    // 打字闸门每段输入只翻效果档的模型路径：那种改动只影响 series_cache_，
+    // 见 QuanpinDictionary::set_sentence_association。
+    const bool series_only = sentence_association_.differs_only_in_effect_tier_model(options);
     sentence_association_ = options;
     // 模型路径随开关一起变更时才重新解析，见 QuanpinDictionary::set_sentence_association。
     collocation_db_ =
@@ -1334,8 +1342,20 @@ void ShuangpinDictionary::set_sentence_association(const SentenceAssociationOpti
             ? nullptr
             : gram::shared_gram_db(metasequoia::path_from_utf8(sentence_association_.collocation_model.c_str()));
     neural_desktop_model_ = neural::LazySentenceModel(sentence_association_.neural_desktop_model);
+    // 用户下载的 sc.lm，见 QuanpinDictionary::set_sentence_association。
+    language_model_ =
+        &ngram::shared_language_model(sentence_association_.language_model.empty()
+                                          ? paths_.resource(metasequoia::assets::language_model)
+                                          : metasequoia::path_from_utf8(sentence_association_.language_model.c_str()));
     // 开关变了就清缓存，否则打开/关闭要等缓存过期才见效。见 generateSeries 的整句块。
-    reset_cache();
+    if (series_only)
+    {
+        reset_sentence_cache();
+    }
+    else
+    {
+        reset_cache();
+    }
 }
 
 void ShuangpinDictionary::set_rescoring_context(const std::string &context)
@@ -1346,8 +1366,10 @@ void ShuangpinDictionary::set_rescoring_context(const std::string &context)
     }
     rescoring_context_ = context;
     // 只有神经重排生效时上文才影响候选，理由见 QuanpinDictionary::set_rescoring_context。
-    const bool rescoring_active = (sentence_association_.neural_keyboard && neural_keyboard_model_.get() != nullptr) ||
-                                  (sentence_association_.neural_desktop && neural_desktop_model_.get() != nullptr);
+    const bool rescoring_active =
+        ((sentence_association_.neural_keyboard || sentence_association_.context_candidate_rerank) &&
+         neural_keyboard_model_.get() != nullptr) ||
+        (sentence_association_.neural_desktop && neural_desktop_model_.get() != nullptr);
     if (rescoring_active)
     {
         reset_sentence_cache();

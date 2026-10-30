@@ -73,7 +73,7 @@ Db open_database(const std::string &path, int flags)
             sqlite3_close(raw);
         return {};
     }
-    sqlite3_busy_timeout(raw, 5000);
+    sqlite3_busy_timeout(raw, kJournalBusyTimeoutMs);
     return Db(raw);
 }
 
@@ -105,6 +105,36 @@ bool use_write_ahead_log(sqlite3 *db)
         return false;
     const unsigned char *mode = sqlite3_column_text(stmt.get(), 0);
     return mode != nullptr && std::string(reinterpret_cast<const char *>(mode)) == "wal";
+}
+
+// WAL on its own does not stop a commit from paying for durability. SQLite defaults to synchronous=FULL, which fsyncs
+// the WAL on every COMMIT, and on the spinning disks #1012 reports that fsync queues behind whatever else is reading
+// the disk: measured at 14.4 ms median and 38.8 ms peak for a single 4 KiB write on that machine. Learning writes run
+// at a rate the user controls by typing, so a burst of selections is a burst of fsyncs, and the read on the key path
+// that lands in one of them waits.
+//
+// NORMAL keeps the database consistent and never corrupt, and only gives up durability of the last commits if the
+// machine loses power: a process crash still leaves them on disk. What can be lost is the last few frequency
+// adjustments, which are learning data, not the text the user typed; the text was committed through the pipe long
+// before this write started. Trading that for a twentyfold cut in commit cost is the right way round.
+//
+// The cost moves to the checkpoint, which runs on whichever connection completes the commit that crosses the
+// threshold. The default threshold is 1000 pages, and the WAL of a real install was already sitting at 4,132,392
+// bytes, i.e. the threshold itself, so that checkpoint was landing inside an ordinary keystroke's write. The
+// threshold is lowered so each one copies less, and the writer drains the rest explicitly when it is idle instead
+// (see the checkpoint the dictionary writer runs after its queue empties).
+bool tune_wal(sqlite3 *db)
+{
+    // Both pragmas are cheap and idempotent, and a database that refuses one is still usable at the default, so this
+    // retries once rather than escalating: the engine has no logging channel, and a failure here costs the #1012
+    // optimisation rather than correctness. The retry covers a transient lock the caller cannot do anything about.
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        if (execute_sql(db, "PRAGMA synchronous=NORMAL") &&
+            execute_sql(db, ("PRAGMA wal_autocheckpoint=" + std::to_string(kWalAutocheckpointPages)).c_str()))
+            return true;
+    }
+    return false;
 }
 
 bool bind_text(sqlite3_stmt *stmt, int index, const std::string &value)
@@ -452,7 +482,8 @@ std::shared_ptr<sqlite3> open_shared_database(const std::string &path)
     Db opened = open_database(path, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
     if (!opened)
         return {};
-    (void)use_write_ahead_log(opened.get());
+    if (use_write_ahead_log(opened.get()))
+        (void)tune_wal(opened.get());
     if (!ensure_schema(opened.get()))
         return {};
     return std::shared_ptr<sqlite3>(opened.release(), [](sqlite3 *db) { sqlite3_close(db); });
@@ -534,7 +565,34 @@ void close_default_user_database()
 bool enable_write_ahead_log(const std::string &db_path)
 {
     auto db = open_database(db_path, SQLITE_OPEN_READWRITE);
-    return db && use_write_ahead_log(db.get());
+    if (!db || !use_write_ahead_log(db.get()))
+        return false;
+    // The same durability setting the journal uses: this connection is opened by the writer, and its commits are the
+    // other half of what a selection costs on a slow disk. A database that refuses the setting is still usable, so the
+    // failure is not reported as "not in WAL".
+    (void)tune_wal(db.get());
+    return true;
+}
+
+void checkpoint_user_journal_if_needed()
+{
+    auto db = open_database(default_user_db_path(), SQLITE_OPEN_READWRITE);
+    if (!db)
+        return;
+    // Ask first: this runs every time the writer drains, which is every time the user stops typing, and checkpointing a
+    // log that is already small would still walk its frames for nothing.
+    auto progress = prepare(db.get(), "PRAGMA wal_checkpoint(PASSIVE)");
+    if (!progress || sqlite3_step(progress.get()) != SQLITE_ROW)
+        return;
+    const int blocked = sqlite3_column_int(progress.get(), 0);
+    const int logged = sqlite3_column_int(progress.get(), 1);
+    progress.reset();
+    if (blocked != 0 || logged < kWalAutocheckpointPages)
+        return;
+    // PASSIVE did not manage to move everything, which happens while a read is in progress. TRUNCATE gives the log back
+    // its starting size, which is the point of running this at all; it returns without doing so if a reader is still
+    // holding a frame, and the next drain tries again.
+    (void)execute_sql(db.get(), "PRAGMA wal_checkpoint(TRUNCATE)");
 }
 
 bool ensure_user_database(const std::string &user_db_path)
@@ -659,7 +717,10 @@ bool set_fixed_position(const std::string &user_db_path, const std::string &cont
     UserDatabase db(user_db_path);
     if (!db)
         return false;
-    sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
+    // Checked, not assumed: a short busy timeout means the write lock can be unavailable, and carrying on without a
+    // transaction would apply the two statements as separately auto-committed changes.
+    if (!execute_sql(db.get(), "BEGIN IMMEDIATE"))
+        return false;
     auto clear_slot = prepare(db.get(), "DELETE FROM fixed_candidate_positions WHERE context_key=?1 AND position=?2");
     auto upsert = prepare(
         db.get(), "INSERT INTO fixed_candidate_positions(context_key,entry_key,value,position) VALUES(?1,?2,?3,?4)"
@@ -1564,13 +1625,9 @@ bool adjust_candidate_ranking(const std::string &main_db_path, const std::string
         return committed;
     }
     const size_t target = ranking_target(rank, mode, linear_step, force_top);
-    auto main_db = open_database(main_db_path, SQLITE_OPEN_READWRITE);
-    if (!main_db || !execute_sql(main_db.get(), "BEGIN IMMEDIATE"))
-    {
-        rollback_user();
-        return false;
-    }
-    const auto rollback_main = [&]() { (void)execute_sql(main_db.get(), "ROLLBACK"); };
+    // The weight arithmetic below is pure computation over the candidate list already in memory, so it runs before the
+    // main database's write lock is taken. It used to sit inside the transaction, which held the lock across the whole
+    // sort and midpoint search and made every concurrent read wait for work that never touched the disk.
     // Keep learned weights in the same general range as the shipped dictionary
     // (currently below 77 million). Large spacing is unnecessary and previously
     // caused local rebalances to create values around 10^12. A later bug used a
@@ -1639,6 +1696,13 @@ bool adjust_candidate_ranking(const std::string &main_db_path, const std::string
             }
         }
     }
+    auto main_db = open_database(main_db_path, SQLITE_OPEN_READWRITE);
+    if (!main_db || !execute_sql(main_db.get(), "BEGIN IMMEDIATE"))
+    {
+        rollback_user();
+        return false;
+    }
+    const auto rollback_main = [&]() { (void)execute_sql(main_db.get(), "ROLLBACK"); };
     if (need_rebalance)
     {
         const size_t rebalance_begin = target;

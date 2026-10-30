@@ -4,6 +4,7 @@
 #include "TfTextLayoutSink.h"
 #include "Ipc.h"
 #include "FanyDefines.h"
+#include "CaretAnchorPolicy.h"
 #include <debugapi.h>
 #include <fmt/xchar.h>
 
@@ -40,8 +41,8 @@ STDAPI CGetTextExtentEditSession::DoEditSession(TfEditCookie ec)
 
     if (SUCCEEDED(hr))
     {
-        // Office may set isClipped with a usable rect; ignore only empty extents.
-        if (isClipped && (rc.right <= rc.left || rc.bottom <= rc.top))
+        // Clipping can leave a zero-width caret with a usable position and height
+        if (isClipped && !IsUsableCaretExtent(rc.left, rc.top, rc.right, rc.bottom))
         {
             Global::Point[0] = 0;
             Global::Point[1] = Global::INVALID_Y;

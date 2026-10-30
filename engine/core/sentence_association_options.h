@@ -16,15 +16,20 @@
 // 开关都开时各自独立打分，各出一条首选；两边选中相同文本时合并成一条。
 struct SentenceAssociationOptions
 {
-    bool word_lattice = false;           // kenlm 词格整句，CandidateSource::Generated
-    bool google = false;                 // Google 解码器整句，CandidateSource::Fallback
-    bool neural_desktop = false;         // 用高精度档的神经模型重排词格整句
-    bool neural_keyboard = false;        // 用快速档的神经模型重排词格整句
-    bool show_next_on_duplicate = false; // 某来源首选被去重时，显示该来源下一条不同结果
+    bool word_lattice = false;             // kenlm 词格整句，CandidateSource::Generated
+    bool google = false;                   // Google 解码器整句，CandidateSource::Fallback
+    bool neural_desktop = false;           // 用高精度档的神经模型重排词格整句
+    bool neural_keyboard = false;          // 用快速档的神经模型重排词格整句
+    bool context_candidate_rerank = false; // 实验：用轻量模型按上文重排完整读音的词库候选
+    bool show_next_on_duplicate = false;   // 某来源首选被去重时，显示该来源下一条不同结果
 
     // 高精度档模型不随安装包分发，由宿主按需下载后把 .safetensors 路径（UTF-8）传入；
     // 空 = 模型缺席，neural_desktop 开着也静默不重排，与 collocation_model 的降级范式一致。
     std::string neural_desktop_model;
+
+    // 词格打分的 kenlm 模型（sc.lm）。安装包不带它，宿主在用户下载后把路径（UTF-8）传入；
+    // 空 = 用资源目录里的 sc.lm（开发与测试环境放在那里，产品安装里没有），再缺就退回启发式打分。
+    std::string language_model;
 
     // 万象语法模型（octagram .gram）。宿主按模型包解析出 .gram 的路径传入，空 = 关闭；
     // 路径无效时词格静默退回无搭配打分，与其他整句来源的降级范式一致。
@@ -47,13 +52,30 @@ struct SentenceAssociationOptions
     bool operator==(const SentenceAssociationOptions &other) const
     {
         return word_lattice == other.word_lattice && google == other.google && neural_desktop == other.neural_desktop &&
-               neural_keyboard == other.neural_keyboard && show_next_on_duplicate == other.show_next_on_duplicate &&
-               neural_desktop_model == other.neural_desktop_model && collocation_model == other.collocation_model &&
-               collocation_weight == other.collocation_weight && collocation_rerank == other.collocation_rerank &&
-               collocation_grammar == other.collocation_grammar;
+               neural_keyboard == other.neural_keyboard && context_candidate_rerank == other.context_candidate_rerank &&
+               show_next_on_duplicate == other.show_next_on_duplicate &&
+               neural_desktop_model == other.neural_desktop_model && language_model == other.language_model &&
+               collocation_model == other.collocation_model && collocation_weight == other.collocation_weight &&
+               collocation_rerank == other.collocation_rerank && collocation_grammar == other.collocation_grammar;
     }
     bool operator!=(const SentenceAssociationOptions &other) const
     {
         return !(*this == other);
+    }
+
+    // 只有效果档的模型路径不同。路径只决定词格要不要解 12-best 交给神经重排，影响范围止于
+    // series_cache_；其余字段（尤其开关本身）会牵动词格 LM 与切分歧义仲裁，得清整张缓存。
+    // 打字闸门的节奏只翻这个路径，见 Server 的 EngineInputSession::ApplyConfiguration。
+    bool differs_only_in_effect_tier_model(const SentenceAssociationOptions &other) const
+    {
+        if (*this == other)
+        {
+            return false;
+        }
+        SentenceAssociationOptions mine = *this;
+        SentenceAssociationOptions theirs = other;
+        mine.neural_desktop_model.clear();
+        theirs.neural_desktop_model.clear();
+        return mine == theirs;
     }
 };

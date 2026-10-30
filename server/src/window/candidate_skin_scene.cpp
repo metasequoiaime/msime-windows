@@ -901,7 +901,8 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     if (package && package->schemaVersion >= 2)
     {
         // 内容从面板外缘量起：content_insets_dip，或九宫格边宽加基底内边距，不会压到边框贴图上。
-        card_->SetPadding(ToThickness(CandidateSkinLayers::ResolveContentPadding(*package, tokens.containerPad)));
+        card_->SetPadding(
+            ToThickness(CandidateSkinLayers::ResolveContentPadding(*package, tokens.containerPad, !horizontalLayout)));
     }
     else
     {
@@ -910,12 +911,16 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     card_->SetMinWidth(cardMinWidthDip);
     if (panelImage)
     {
-        // CSS border-image 语义：切片以源图像素计，边宽以 DIP 计，fill 决定是否画中心块。
-        // 浅色主题有 light_source 时换那张图，几何不变。
-        const CandidateSkinLayers::NineSlice nine = CandidateSkinLayers::ResolveNineSlice(*package->borderImage);
+        // CSS border-image 语义：切片以源图像素计，边宽以 DIP 计，fill 决定是否画中心块，
+        // repeat 决定中段是拉伸还是按源图原尺寸平铺。竖排写了 vertical 子表时换那张图和它自己的几何；
+        // 浅色主题有 light_source 时再换主题图。
+        const CandidateSkinCatalog::BorderImage &borderImage =
+            !horizontalLayout && package->borderImageVertical ? *package->borderImageVertical : *package->borderImage;
+        const CandidateSkinLayers::NineSlice nine = CandidateSkinLayers::ResolveNineSlice(borderImage);
         card_->SetBackgroundNineSlice(
-            packageRoot + Widen(CandidateSkinCatalog::BorderImageSource(*package->borderImage, candLight)),
-            msimeui::NineSlice{ToThickness(nine.slice), ToThickness(nine.width), nine.fill}, 1.0f);
+            packageRoot + Widen(CandidateSkinCatalog::BorderImageSource(borderImage, candLight)),
+            msimeui::NineSlice{ToThickness(nine.slice), ToThickness(nine.width), nine.fill, nine.repeatX, nine.repeatY},
+            1.0f);
     }
     else
     {

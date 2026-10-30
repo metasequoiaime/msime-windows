@@ -80,6 +80,32 @@ TEST_CASE(candidate_skin_layers_content_padding_is_measured_from_the_panel_edge)
     REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 4, 130, 14, 55));
 }
 
+TEST_CASE(candidate_skin_layers_vertical_content_padding_prefers_the_vertical_override)
+{
+    CandidateSkinCatalog::Package package;
+    package.schemaVersion = 2;
+    package.base = "canvas";
+    package.contentInsetsDip = CandidateSkinCatalog::InsetsDip{10.0, 150.0, 12.0, 66.0};
+    package.contentInsetsDipVertical = CandidateSkinCatalog::InsetsDip{6.0, 12.0, 8.0, 10.0};
+
+    // 横排不受竖排覆盖影响。
+    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 10, 150, 12, 66));
+    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0, true), 6, 12, 8, 10));
+
+    // 竖排的九宫格边宽仍会把文字推到边框里面。
+    CandidateSkinCatalog::BorderImage vertical;
+    vertical.source = "assets/vertical.png";
+    vertical.sliceDip = {26, 10, 26, 10};
+    vertical.widthDip = {20};
+    package.borderImageVertical = vertical;
+    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 10, 150, 12, 66));
+    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0, true), 20, 20, 20, 20));
+
+    // 没写竖排内边距时竖排沿用横排的值，只换成竖排的边宽。
+    package.contentInsetsDipVertical.reset();
+    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0, true), 20, 150, 20, 66));
+}
+
 TEST_CASE(candidate_skin_layers_split_decorations_around_the_panel)
 {
     const std::vector<CandidateSkinCatalog::FreeDecoration> decorations = {

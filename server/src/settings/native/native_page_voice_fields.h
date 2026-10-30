@@ -67,6 +67,8 @@ class InputBox : public msimeui::Visual
     void SetPlaceholder(const std::wstring &placeholder);
     // Focus left or Enter pressed after an edit: the page's `change` event.
     void SetOnCommit(std::function<void(const std::wstring &)> handler);
+    // User edits only; programmatic SetText calls do not trigger this handler.
+    void SetOnEdited(std::function<void(const std::wstring &)> handler);
     bool IsFocused() const;
     void Focus();
 
@@ -204,9 +206,23 @@ class StatusText : public Hideable
     StatusText();
     void Set(const std::wstring &text, const std::string &kind);
     void Clear();
+    const std::wstring &GetText() const
+    {
+        return text_;
+    }
+    const std::string &GetKind() const
+    {
+        return kind_;
+    }
+    void SetDisplayPrefix(const std::wstring &prefix);
+    void SetOnChanged(std::function<void()> handler);
 
   private:
     std::shared_ptr<Label> label_;
+    std::wstring text_;
+    std::string kind_;
+    std::wstring prefix_;
+    std::function<void()> onChanged_;
 };
 
 // Runs `callback` once after `ms` on the UI thread; returns an id for CancelTimeout.
@@ -220,6 +236,8 @@ class CredentialTest
   public:
     CredentialTest(PageContext &context, std::shared_ptr<PlainButton> button, std::shared_ptr<StatusText> status,
                    std::function<std::string()> service, std::function<Json()> readConfig);
+    // Invalidate UI callbacks and the timeout without cancelling the host's network task.
+    void Reset();
 
   private:
     void Start();

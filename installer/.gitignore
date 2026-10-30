@@ -4,6 +4,7 @@ Output/
 server_exe/
 tsf_dll/
 app_data/
+dictionary_source/
 default_skins/
 bundled_skins/
 bundled_skins.manifest

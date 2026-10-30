@@ -198,6 +198,7 @@ VisualPtr BuildDictionaryPage(PageContext &context)
     hansStyle.lineHeight = 1.45f;
     hansStyle.wrap = true;
     auto hansTitle = std::make_shared<Label>(L"批量导入纯汉字词组(e.g.人名)到拼音词库", hansStyle);
+    IndexSettingTitle(hansTitle, L"批量导入纯汉字词组(e.g.人名)到拼音词库");
     auto hansButton = std::make_shared<Button>(L"导入", ButtonKind::Primary);
     hansButton->SetMinWidth(68.0f);
     hansButton->SetOnClick([panel]() { panel->Import("importHans"); });

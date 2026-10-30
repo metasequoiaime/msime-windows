@@ -1,4 +1,5 @@
 #include "settings/native/native_page_voice_fields.h"
+#include "settings/native/native_page_model_combo.h"
 #include "settings/native/native_settings_pill.h"
 
 #include "ai/jev_client.h"
@@ -21,412 +22,6 @@ using namespace voice_fields;
 
 namespace
 {
-// ---------------------------------------------------------------------------------
-// Model combobox: `.dropdown-toggle.font-combobox.ai-model-combobox` with the model
-// list (`#aiModelMenu.font-dropdown-menu.compact-scroll-menu`) that 查询模型 fills.
-// ---------------------------------------------------------------------------------
-class ModelCombo;
-
-class ModelList : public msimeui::Visual
-{
-  public:
-    static constexpr float kItem = 28.0f;
-    static constexpr float kGap = 2.0f;
-    static constexpr float kInset = 2.0f;
-
-    explicit ModelList(ModelCombo *owner) : owner_(owner)
-    {
-    }
-
-    void SetItems(std::vector<std::wstring> items)
-    {
-        items_ = std::move(items);
-        scroll_ = 0.0f;
-        hovered_ = kNone;
-        InvalidateMeasure();
-    }
-
-    bool Empty() const
-    {
-        return items_.empty();
-    }
-
-    float ContentHeight() const
-    {
-        const float rows = static_cast<float>(items_.size());
-        return kInset * 2.0f + rows * kItem + std::max(rows - 1.0f, 0.0f) * kGap;
-    }
-
-    SizeF Measure(const SizeF &) override
-    {
-        // 6 rows visible (border box 182px).
-        const float visible = 6.0f * 28.0f + 5.0f * 2.0f + 2.0f * 2.0f - 2.0f;
-        // No intrinsic width: the popup matches the combobox (max of this and the anchor).
-        return {0.0f, std::min(ContentHeight(), visible)};
-    }
-
-    void Arrange(const RectF &finalRect) override
-    {
-        bounds_ = finalRect;
-        Clamp();
-    }
-
-    void Render(msimeui::DeviceResources &dr) override
-    {
-        const Palette &p = CurrentPalette();
-        ID2D1RenderTarget *target = dr.GetRenderTarget();
-        target->PushAxisAlignedClip(ToD2D(bounds_), D2D1_ANTIALIAS_MODE_ALIASED);
-        for (size_t i = 0; i < items_.size(); ++i)
-        {
-            const RectF item = ItemRect(i);
-            if (item.y + item.height < bounds_.y || item.y > bounds_.y + bounds_.height)
-                continue;
-            if (i == hovered_)
-                FillRounded(dr, item, 8.0f, p.dropdownItemHover);
-            // white-space: nowrap; text-overflow: ellipsis
-            TextLayout text;
-            TextStyle style = BodyStyle();
-            text.Set(items_[i], style);
-            const float width = item.width - 16.0f;
-            IDWriteTextLayout *layout = text.Get(width);
-            if (layout)
-            {
-                layout->SetMaxWidth(width);
-                DWRITE_TRIMMING trimming = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-                Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis;
-                DWriteFactory()->CreateEllipsisTrimmingSign(layout, ellipsis.GetAddressOf());
-                layout->SetTrimming(&trimming, ellipsis.Get());
-                DWRITE_TEXT_METRICS metrics{};
-                layout->GetMetrics(&metrics);
-                if (ID2D1SolidColorBrush *brush = dr.GetSolidColorBrush(i == hovered_ ? p.text : p.dropdownItem))
-                    target->DrawTextLayout(D2D1::Point2F(item.x + 8.0f, item.y + (item.height - metrics.height) * 0.5f),
-                                           layout, brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            }
-        }
-        target->PopAxisAlignedClip();
-        const float overflow = ContentHeight() - bounds_.height;
-        if (overflow > 0.5f)
-        {
-            const float track = bounds_.height - 8.0f;
-            const float thumb = std::max(24.0f, track * bounds_.height / ContentHeight());
-            FillRounded(dr,
-                        {bounds_.x + bounds_.width - 6.0f, bounds_.y + 4.0f + (track - thumb) * (scroll_ / overflow),
-                         4.0f, thumb},
-                        2.0f, p.scrollbarThumb);
-        }
-    }
-
-    bool OnMouseMove(const POINT &point, WPARAM) override
-    {
-        const size_t hit = window_ ? HitRow(window_->ClientPixelsToDips(point)) : kNone;
-        if (hit != hovered_)
-        {
-            hovered_ = hit;
-            InvalidateVisual();
-        }
-        return true;
-    }
-
-    void OnMouseLeave() override
-    {
-        hovered_ = kNone;
-        InvalidateVisual();
-    }
-
-    bool OnMouseDown(const POINT &point, WPARAM) override
-    {
-        pressed_ = window_ ? HitRow(window_->ClientPixelsToDips(point)) : kNone;
-        return true;
-    }
-
-    bool OnMouseUp(const POINT &point, WPARAM) override;
-
-    bool OnMouseWheel(const POINT &, short delta, WPARAM) override
-    {
-        scroll_ -= static_cast<float>(delta) / WHEEL_DELTA * (kItem + kGap) * 2.0f;
-        Clamp();
-        InvalidateVisual();
-        return true;
-    }
-
-  private:
-    static constexpr size_t kNone = static_cast<size_t>(-1);
-
-    RectF ItemRect(size_t i) const
-    {
-        return {bounds_.x + kInset, bounds_.y + kInset + static_cast<float>(i) * (kItem + kGap) - scroll_,
-                bounds_.width - kInset * 2.0f, kItem};
-    }
-
-    size_t HitRow(const PointF &point) const
-    {
-        if (!Contains(bounds_, point))
-            return kNone;
-        for (size_t i = 0; i < items_.size(); ++i)
-        {
-            if (Contains(ItemRect(i), point))
-                return i;
-        }
-        return kNone;
-    }
-
-    void Clamp()
-    {
-        scroll_ = std::clamp(scroll_, 0.0f, std::max(0.0f, ContentHeight() - bounds_.height));
-    }
-
-    ModelCombo *owner_ = nullptr;
-    std::vector<std::wstring> items_;
-    size_t hovered_ = kNone;
-    size_t pressed_ = kNone;
-    float scroll_ = 0.0f;
-};
-
-class ModelPopup : public msimeui::Popup
-{
-  public:
-    explicit ModelPopup(const std::shared_ptr<ModelList> &list) : msimeui::Popup(list), list_(list.get())
-    {
-        SetPadding(1.0f);
-        SetPlacement(msimeui::PopupPlacement::BelowLeading);
-        SetCornerRadius(10.0f);
-        SetShadowEnabled(true);
-        SetConstrainToViewport(true);
-        SetMatchAnchorWidth(true);
-    }
-
-    void Render(msimeui::DeviceResources &dr) override
-    {
-        ScopedTextAntialias grayscale(dr, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-        msimeui::Popup::Render(dr);
-    }
-
-    bool OnMouseWheel(const POINT &point, short delta, WPARAM keyState) override
-    {
-        if (!window_ || !HitTest(window_->ClientPixelsToDips(point)))
-            return false;
-        list_->OnMouseWheel(point, delta, keyState);
-        return true;
-    }
-
-  private:
-    ModelList *list_ = nullptr;
-};
-
-class ModelCombo : public msimeui::Visual
-{
-  public:
-    using Handler = std::function<void(const std::wstring &)>;
-
-    ModelCombo()
-    {
-        InputBox::Options options;
-        options.bare = true;
-        options.font = FieldTextStyle(kFontBody);
-        input_ = std::make_shared<InputBox>(options);
-        AdoptChild(input_);
-        list_ = std::make_shared<ModelList>(this);
-        popup_ = std::make_shared<ModelPopup>(list_);
-    }
-
-    std::shared_ptr<InputBox> Input() const
-    {
-        return input_;
-    }
-
-    void SetOnPicked(Handler handler)
-    {
-        onPicked_ = std::move(handler);
-    }
-
-    // Arrow click with no list yet: same as 查询模型.
-    void SetOnFetch(std::function<void()> handler)
-    {
-        onFetch_ = std::move(handler);
-    }
-
-    void SetModels(std::vector<std::wstring> models)
-    {
-        Close();
-        list_->SetItems(std::move(models));
-    }
-
-    bool HasModels() const
-    {
-        return !list_->Empty();
-    }
-
-    void Open()
-    {
-        msimeui::Scene *scene = window_ ? window_->GetScene() : nullptr;
-        if (open_ || !scene || list_->Empty())
-            return;
-        scene->ClearPopups(true);
-        const Palette &p = CurrentPalette();
-        popup_->SetBackgroundFill(p.dropdownMenuBg);
-        popup_->SetBorderColor(p.dropdownMenuBorder);
-        popup_->SetTopHighlight(p.dropdownMenuHighlight);
-        popup_->SetShadowPasses({{p.menuShadow[0].sigma, p.menuShadow[0].alpha, 0.0f, p.menuShadow[0].offsetY},
-                                 {p.menuShadow[1].sigma, p.menuShadow[1].alpha, 0.0f, p.menuShadow[1].offsetY}});
-        popup_->SetAnchorRect(bounds_);
-        popup_->SetOffset(0.0f, 2.0f);
-        scene->AddPopup(popup_, [this]() {
-            open_ = false;
-            InvalidateVisual();
-        });
-        popup_->BeginAppearAnimation(140.0, -3.0f, 0.985f);
-        open_ = true;
-        window_->Invalidate();
-    }
-
-    void Close()
-    {
-        if (!open_)
-            return;
-        if (msimeui::Scene *scene = window_ ? window_->GetScene() : nullptr)
-            scene->RemovePopup(popup_.get(), false);
-        open_ = false;
-        InvalidateVisual();
-    }
-
-    void Pick(const std::wstring &model)
-    {
-        Close();
-        input_->SetText(model);
-        if (onPicked_)
-        {
-            const auto handler = onPicked_;
-            handler(model);
-        }
-    }
-
-    SizeF Measure(const SizeF &availableSize) override
-    {
-        input_->MeasureInLayout({std::max(availableSize.width - 12.0f - 6.0f - 18.0f - 2.0f, 0.0f), 40.0f});
-        return {availableSize.width, 40.0f};
-    }
-
-    void Arrange(const RectF &finalRect) override
-    {
-        bounds_ = finalRect;
-        popup_->SetAnchorRect(bounds_);
-        const float border = CssBorder();
-        const float lineHeight = LineHeight(FieldTextStyle(kFontBody)) + 2.0f;
-        input_->ArrangeInLayout({finalRect.x + border + 12.0f, finalRect.y + (finalRect.height - lineHeight) * 0.5f,
-                                 std::max(finalRect.width - border * 2.0f - 12.0f - 6.0f - 18.0f, 0.0f), lineHeight});
-    }
-
-    void Render(msimeui::DeviceResources &dr) override
-    {
-        const Palette &p = CurrentPalette();
-        const bool focused = input_->IsFocused();
-        // :focus-within ring and border, the dropdown look otherwise.
-        if (focused || open_)
-            FillRounded(dr, Inflate(bounds_, 2.0f), 10.0f, p.accentSoft);
-        FillRounded(dr, bounds_, 8.0f, hovered_ || open_ ? p.surfaceRaised : p.dropdownBg);
-        StrokeRounded(dr, bounds_, 8.0f, focused || open_ ? p.accentSoftBorder : (hovered_ ? p.borderStrong : p.border),
-                      1.0f);
-        input_->Render(dr);
-        static const std::string arrow = LoadAssetSvg(L"arrow.svg");
-        static const std::string lightArrow = InvertSvgColors(arrow, 0.25f);
-        const RectF a = ArrowRect();
-        DrawSvg(dr, p.light ? lightArrow : arrow, a);
-    }
-
-    void Attach(msimeui::Window *window) override
-    {
-        msimeui::Visual::Attach(window);
-        input_->Attach(window);
-        popup_->Attach(window);
-    }
-
-    msimeui::Visual *FindVisualAt(const PointF &point) override
-    {
-        if (!HitTest(point))
-            return nullptr;
-        if (Contains(ArrowRect(), point))
-            return this;
-        return input_->FindVisualAt(point) ? input_->FindVisualAt(point) : this;
-    }
-
-    msimeui::Visual *FindFocusableAt(const PointF &point) override
-    {
-        if (!HitTest(point) || Contains(ArrowRect(), point))
-            return nullptr;
-        return input_->FindFocusableAt(point);
-    }
-
-    bool KeepsPopupsOpenOnClick() const override
-    {
-        return true;
-    }
-
-    bool OnMouseDown(const POINT &point, WPARAM) override
-    {
-        pressed_ = window_ && HitTest(window_->ClientPixelsToDips(point));
-        return pressed_;
-    }
-
-    bool OnMouseUp(const POINT &point, WPARAM) override
-    {
-        if (!pressed_ || !window_)
-            return false;
-        pressed_ = false;
-        const PointF dip = window_->ClientPixelsToDips(point);
-        if (!HitTest(dip))
-            return true;
-        if (Contains(ArrowRect(), dip) && list_->Empty())
-        {
-            if (onFetch_)
-            {
-                // A handler may tear down the visual that owns onFetch_ while it runs.
-                const auto handler = onFetch_;
-                handler();
-            }
-            return true;
-        }
-        open_ ? Close() : Open();
-        return true;
-    }
-
-    void OnMouseEnter() override
-    {
-        hovered_ = true;
-        InvalidateVisual();
-    }
-
-    void OnMouseLeave() override
-    {
-        hovered_ = false;
-        InvalidateVisual();
-    }
-
-  private:
-    RectF ArrowRect() const
-    {
-        return {bounds_.x + bounds_.width - CssBorder() - 6.0f - 18.0f, bounds_.y + (bounds_.height - 18.0f) * 0.5f,
-                18.0f, 18.0f};
-    }
-
-    std::shared_ptr<InputBox> input_;
-    std::shared_ptr<ModelList> list_;
-    std::shared_ptr<ModelPopup> popup_;
-    Handler onPicked_;
-    std::function<void()> onFetch_;
-    bool hovered_ = false;
-    bool pressed_ = false;
-    bool open_ = false;
-};
-
-bool ModelList::OnMouseUp(const POINT &point, WPARAM)
-{
-    const size_t hit = window_ ? HitRow(window_->ClientPixelsToDips(point)) : kNone;
-    if (hit != kNone && hit == pressed_)
-        owner_->Pick(items_[hit]);
-    pressed_ = kNone;
-    return true;
-}
-
 // An input in the 40px `.ai-grid` look.
 std::shared_ptr<InputBox> GridInput(bool token = false)
 {
@@ -504,9 +99,11 @@ struct AiPage : std::enable_shared_from_this<AiPage>
     std::shared_ptr<Dropdown> promptSlot;
     std::shared_ptr<InputBox> prompt;
     std::shared_ptr<PlainButton> fetchButton;
+    std::shared_ptr<StatusText> testStatus;
     std::shared_ptr<StatusText> fetchStatus;
     std::unique_ptr<CredentialTest> test;
     std::string pendingFetch;
+    Json feedbackConfig;
     // 切换模式或服务商后，配置要等宿主写盘并推回快照才算落地。这期间状态栏说「保存中」，
     // 免得「界面已经切好、后端还是旧服务商」的那几百毫秒被当成已经可用。
     bool saving = false;
@@ -533,10 +130,27 @@ struct AiPage : std::enable_shared_from_this<AiPage>
     {
         const std::string endpointValue = Trimmed(Narrow(endpoint->GetText()));
         const std::string modelValue = Trimmed(Narrow(model->Input()->GetText()));
+        std::string jsonMode = "auto";
+        if (const Json *stored = context.model.Find("ai_assistant.json_mode"); stored && stored->is_string())
+            jsonMode = stored->get<std::string>();
+        // 探测复用真实联想的请求构造器，thinking、提示词和候选数都会进请求体。
+        // 少传任何一项，探测就会按结构体默认值发请求，测的便不是用户眼前这份配置。
+        // 提示词取页面本地持有的 promptId 与 customPrompts，而不是宿主镜像里已经 resolve 过的
+        // ai_assistant.prompt：刚改完就点测试时镜像还是旧值，会测到改之前的提示词。
+        const auto custom = customPrompts.find(promptId);
+        const std::string promptValue = custom != customPrompts.end() && !custom->second.empty()
+                                            ? custom->second
+                                            : context.model.GetString("ai_assistant.prompt");
         return Json{{"provider", provider},
                     {"token", Trimmed(Narrow(token->GetText()))},
                     {"endpoint", endpointValue},
-                    {"model", modelValue}};
+                    {"model", modelValue},
+                    {"json_mode", jsonMode},
+                    {"thinking", context.model.GetString("ai_assistant.thinking")},
+                    {"prompt", promptValue},
+                    // 兜底与 Sync() 保持一致：快照尚未到达时 GetInt 会回 0，
+                    // 那样探测和 CredentialTest 的配置快照比对会误报「配置已变更」。
+                    {"candidate_limit", std::to_string(context.model.GetInt("ai_assistant.candidate_limit", 3))}};
     }
 
     void RefreshChoices()
@@ -633,7 +247,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         // 选择器不自带模型清单：官方 TypeSafe 只认内置模型名，自建实现的模型名由用户填。
         // 这个按钮在 select 模式下只会返回一句「不提供模型列表」，不如直接关掉。
         if (fetchButton)
-            fetchButton->SetDisabled(select);
+            fetchButton->SetDisabled(select || !pendingFetch.empty());
         RefreshStatus();
     }
 
@@ -662,13 +276,37 @@ struct AiPage : std::enable_shared_from_this<AiPage>
                                   : L"尚未启用；下面的配置保存后，打开总开关才会生效。");
     }
 
-    void ClearModelMenu()
+    void RefreshFeedback()
+    {
+        const bool hasTest = !testStatus->GetText().empty();
+        const bool hasModels = !fetchStatus->GetText().empty();
+        // Each operation keeps its own record; identical messages stay on separate rows so the
+        // attribution is never lost.
+        const bool twoRows = hasTest && hasModels;
+        testStatus->SetDisplayPrefix(twoRows ? L"连接测试：" : L"");
+        fetchStatus->SetDisplayPrefix(twoRows ? L"模型查询：" : L"");
+        testStatus->SetVisible(hasTest);
+        fetchStatus->SetVisible(hasModels);
+        const float topPadding = twoRows ? 4.0f : 0.0f;
+        if (testStatus->GetPadding().top != topPadding)
+            testStatus->SetPadding({0.0f, topPadding, 0.0f, 0.0f});
+    }
+
+    void ClearModelMenu(bool clearModels = true)
     {
         pendingFetch.clear();
-        fetchButton->SetDisabled(false);
+        fetchButton->SetDisabled(mode == "select");
         fetchButton->SetText(L"查询模型");
-        model->SetModels({});
+        if (clearModels)
+            model->SetModels({});
         fetchStatus->Clear();
+    }
+
+    void ClearFeedback(bool clearModels = true)
+    {
+        test->Reset();
+        ClearModelMenu(clearModels);
+        feedbackConfig = CurrentConfig();
     }
 
     void SwitchProvider(const std::string &next)
@@ -680,7 +318,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         saving = true;
         providerDropdown->SetValue(provider);
         ApplyProviderFields();
-        ClearModelMenu();
+        ClearFeedback();
         SyncLayout();
     }
 
@@ -700,7 +338,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         RefreshChoices();
         providerDropdown->SetValue(provider);
         ApplyProviderFields();
-        ClearModelMenu();
+        ClearFeedback();
         SyncLayout();
     }
 
@@ -710,6 +348,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         Write("ai_assistant.prompt_" + promptId, customPrompts[promptId]);
         promptId = id;
         prompt->SetText(Widen(customPrompts[id]));
+        ClearFeedback(false);
     }
 
     void Fetch()
@@ -729,7 +368,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         if (pendingFetch.empty() || message.value("requestId", std::string()) != pendingFetch)
             return;
         pendingFetch.clear();
-        fetchButton->SetDisabled(false);
+        fetchButton->SetDisabled(mode == "select");
         fetchButton->SetText(L"查询模型");
         if (!message.value("ok", false))
         {
@@ -784,6 +423,10 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         customPrompts["custom_3"] = m.GetString("ai_assistant.prompt_custom_3");
         promptSlot->SetValue(promptId);
         prompt->SetText(Widen(customPrompts[promptId]));
+        const Json config = CurrentConfig();
+        if (feedbackConfig != config)
+            ClearFeedback();
+        feedbackConfig = config;
         SyncLayout();
     }
 
@@ -806,8 +449,12 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         providerField = std::make_shared<Hideable>(std::make_shared<Field>(L"服务提供商", providerDropdown));
         grid->Add(providerField);
         model = std::make_shared<ModelCombo>();
-        model->SetOnPicked([this](const std::wstring &value) { WriteProviderValue("model", Narrow(value)); });
+        model->SetOnPicked([this](const std::wstring &value) {
+            WriteProviderValue("model", Narrow(value));
+            ClearFeedback(false);
+        });
         model->SetOnFetch([this]() { Fetch(); });
+        model->Input()->SetOnEdited([this](const std::wstring &) { ClearFeedback(false); });
         model->Input()->SetOnCommit([this](const std::wstring &text) {
             // 空值表示回到默认模型：写空串让后端补默认值，界面上显示占位符。
             WriteProviderValue("model", Trimmed(Narrow(text)));
@@ -819,16 +466,22 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         modelRow->Add(model, 1.0f);
         modelRow->Add(fetchButton);
         auto testButton = std::make_shared<PlainButton>(L"测试连接", CredentialButtonStyle());
-        auto testStatus = std::make_shared<StatusText>();
+        testStatus = std::make_shared<StatusText>();
         auto actions = std::make_shared<Row>(10.0f);
         actions->Add(testButton);
-        actions->Add(testStatus, 1.0f);
         fetchStatus = std::make_shared<StatusText>();
+        testStatus->SetOnChanged([this]() { RefreshFeedback(); });
+        fetchStatus->SetOnChanged([this]() { RefreshFeedback(); });
         auto modelField = std::make_shared<Field>(L"模型", modelRow);
         auto tail = std::make_shared<Column>(0.0f);
         tail->Add(std::make_shared<MinHeight>(actions, 20.0f));
-        fetchStatus->SetMargin({0.0f, 7.0f, 0.0f, 0.0f});
-        tail->Add(fetchStatus);
+        auto feedbackRows = std::make_shared<Column>(0.0f);
+        feedbackRows->Add(fetchStatus);
+        feedbackRows->Add(testStatus);
+        // Reserve one line; distinct records may expand the area to two labelled rows.
+        auto feedback = std::make_shared<MinHeight>(feedbackRows, 20.0f);
+        feedback->SetMargin({0.0f, 7.0f, 0.0f, 0.0f});
+        tail->Add(feedback);
         modelField->Add(tail);
         grid->Add(modelField);
         test = std::make_unique<CredentialTest>(
@@ -840,6 +493,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         });
 
         token = GridInput(true);
+        token->SetOnEdited([this](const std::wstring &) { ClearFeedback(); });
         token->SetOnCommit([this](const std::wstring &text) {
             // 不用 Token 的服务商不落盘，免得留下一个谁都不读的空槽或旧值。
             if (!AiAssistant::ProviderUsesToken(provider))
@@ -866,6 +520,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
             value = std::clamp(value, 1, 10);
             limit->SetText(std::to_wstring(value));
             Write("ai_assistant.candidate_limit", value);
+            ClearFeedback(false);
         });
         auto limitField = std::make_shared<Field>(L"候选数量", limit);
         limitField->Add(MakeDescription(L"每次输入最多生成几个候选，范围 1-10。"));
@@ -880,7 +535,17 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         thinkingDimmable = std::make_shared<Dimmable>(thinkingColumn);
         grid->Add(thinkingDimmable);
 
+        auto jsonMode = BindDropdown(context, "ai_assistant.json_mode",
+                                     Options({{"auto", L"自动"}, {"force", L"强制 JSON"}, {"off", L"兼容模式"}}));
+        jsonMode->SetHeight(40.0f);
+        auto jsonModeColumn = std::make_shared<Field>(L"输出格式", jsonMode);
+        jsonModeColumn->Add(
+            MakeDescription(L"请求里是否带 response_format。自动档对本机地址与未知服务不带，"
+                            L"只对 OpenAI、DeepSeek 这类原生实现带上。本地模型报 400 时改成兼容模式。"));
+        grid->Add(jsonModeColumn);
+
         endpoint = GridInput();
+        endpoint->SetOnEdited([this](const std::wstring &) { ClearFeedback(); });
         endpoint->SetOnCommit([this](const std::wstring &text) {
             WriteProviderValue("endpoint", Trimmed(Narrow(text)));
             // 端点变了，思考强度是否生效也跟着变（后端按域名判定）。
@@ -990,6 +655,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
             prompt->SetOnCommit([this](const std::wstring &text) {
                 customPrompts[promptId] = Narrow(text);
                 Write("ai_assistant.prompt_" + promptId, customPrompts[promptId]);
+                ClearFeedback(false);
             });
             column->Add(prompt);
             auto hint = MakeDescription(
@@ -1001,6 +667,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         page.AddRaw(promptSection, 18.0f);
 
         SyncLayout();
+        feedbackConfig = CurrentConfig();
         context.OnConfig([weak = weak_from_this()]() {
             if (auto page = weak.lock())
                 page->Sync();

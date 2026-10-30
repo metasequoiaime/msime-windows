@@ -139,6 +139,10 @@ struct BorderImage
     std::vector<double> widthDip;
     // 是否画九宫格中心块（CSS border-image-slice 的 fill）
     bool fill = true;
+    // 平铺方式，语义同 CSS border-image-repeat：1 个或 2 个值「横向 纵向」，stretch（默认）/ repeat。
+    // repeat 按源图原尺寸平铺，用来画可以任意加长的花纹边框（如竖向候选窗的侧边）。
+    bool repeatX = false;
+    bool repeatY = false;
 };
 
 struct InsetsDip
@@ -290,8 +294,14 @@ struct Package
     std::optional<ToolbarButtonFlow> toolbarButtonFlow;
     // v2 专有特性：九宫格贴图边框
     std::optional<BorderImage> borderImage;
+    // 竖排（layout == "vertical"）替换用的九宫格；来自 [candidate_window.border_image.vertical]，
+    // 只覆盖它写了的键，其余沿用 borderImage。为空时竖排也用 borderImage。
+    std::optional<BorderImage> borderImageVertical;
     // v2 专有特性：面板内容/文字安全内边距，从面板外缘量起；某一边小于九宫格边框宽度时按边框宽度算。
     std::optional<InsetsDip> contentInsetsDip;
+    // 竖排替换用的内容内边距（[candidate_window.content_insets_dip.vertical]），
+    // 只覆盖它写了的边，其余沿用 contentInsetsDip。为空时竖排也用 contentInsetsDip。
+    std::optional<InsetsDip> contentInsetsDipVertical;
     // v2 专有特性：预编辑行与候选行之间的行距（DIP，0–100）；未设置时沿用 base 的行距。
     std::optional<double> lineGapDip;
     // v2 专有特性：面板之外需要额外预留的窗口空间（上右下左 DIP），给挂在卡片外沿的挂件用。

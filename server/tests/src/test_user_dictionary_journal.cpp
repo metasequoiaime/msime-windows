@@ -1,7 +1,9 @@
+#include "tests/includes/fake_traditional_spelling_index.h"
 #include "tests/includes/test_framework.h"
 #include "tests/includes/test_utf8_path.h"
 #include "engine/local_modes/date_time_query.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 
 #include <sqlite3.h>
 #include <algorithm>
@@ -50,7 +52,70 @@ class TestDatabase
   private:
     sqlite3 *db_ = nullptr;
 };
+
+// TempRoot 下的一个临时目录：构造时清空重建，析构时删掉，断言失败抛异常时也删。
+class ScopedTempDirectory
+{
+  public:
+    explicit ScopedTempDirectory(const std::string &name)
+        : path_(test::TempRoot() / (name + std::to_string(GetCurrentProcessId())))
+    {
+        std::filesystem::remove_all(path_);
+        std::filesystem::create_directories(path_);
+    }
+    ~ScopedTempDirectory()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+    ScopedTempDirectory(const ScopedTempDirectory &) = delete;
+    ScopedTempDirectory &operator=(const ScopedTempDirectory &) = delete;
+    const std::filesystem::path &path() const
+    {
+        return path_;
+    }
+
+  private:
+    std::filesystem::path path_;
+};
 } // namespace
+
+TEST_CASE(DictionaryLockWaitEndsBeforeTheClientGivesUp)
+{
+    // The wait exists to absorb a lock held for one commit. Anything longer than the client's own reply window cannot
+    // end in a reply the client is still listening for, so the reader is better off failing the page than holding a
+    // key until the client resets the composition. windows/src/IPC/Ipc.h owns the numbers; keep this the shorter of
+    // the two.
+    static_assert(user_dictionary::kJournalBusyTimeoutMs < 300,
+                  "must fit inside FANY_IME_COMMIT_REPLY_SESSION_WAIT_MS");
+
+    const auto directory = test::TempRoot() / ("msime-lock-wait-" + std::to_string(GetCurrentProcessId()));
+    std::error_code ec;
+    std::filesystem::remove_all(directory, ec);
+    std::filesystem::create_directories(directory);
+    const auto user_path = directory / "msime_user.db";
+    // A path other than default_user_db_path(): acquire_database only caches the default journal's connection, so this
+    // one is opened per call and closed when the operation returns, which is what lets the directory be deleted below.
+    REQUIRE(user_dictionary::ensure_user_database(test::Utf8(user_path)));
+
+    {
+        // Hold the journal's write lock from a separate connection, the way a learning commit would.
+        TestDatabase holder(user_path);
+        holder.exec("BEGIN IMMEDIATE");
+
+        const ULONGLONG started = GetTickCount64();
+        const bool wrote = user_dictionary::set_fixed_position(test::Utf8(user_path), "ni", "ni", "乙", 1);
+        const ULONGLONG waited = GetTickCount64() - started;
+
+        // The write must lose, and must lose quickly, rather than sit on the lock until the client has already given
+        // up. A write that somehow succeeded would also mean the lock was not real, so neither branch may pass.
+        REQUIRE(!wrote);
+        REQUIRE(waited < 300);
+        holder.exec("ROLLBACK");
+    }
+
+    std::filesystem::remove_all(directory, ec);
+}
 
 // The dictionary writer thread commits learned weights while the key thread
 // builds candidates from the same files. In rollback-journal mode a commit's
@@ -843,6 +908,39 @@ TEST_CASE(UserDictionaryRankingDoesNotJournalRowsMissingFromTheDictionary)
         REQUIRE_EQ(user_db.scalar_int("SELECT COUNT(*) FROM user_dictionary_operations"), 0);
     }
     std::filesystem::remove_all(directory);
+}
+
+// 固定位置作用在已展开的列表上（混输英文回来后重新应用固定位置）：真实的 apply_fixed_positions 经
+// ReorderAsOneItemPerWord 只看到每组一项，固定词的每种写法都留着，插回的位置按组算，不切开别的组。
+TEST_CASE(UserDictionaryFixedPositionsOnAnExpandedListKeepEverySpellingGroupWhole)
+{
+    const ScopedTempDirectory directory("msime-fixed-positions-spellings-");
+    const std::string user_path = test::Utf8(directory.path() / "msime_user.db");
+    const test::FakeTraditionalSpellingIndex index({{"台", {"臺", "台", "檯", "颱"}}, {"为", {"為", "爲"}}});
+    const auto expand = [&](std::vector<WordItem> items) {
+        return FanyImeIpc::ExpandTraditionalVariants(std::move(items), index, FanyImeIpc::TraditionalRegion::Taiwan);
+    };
+    const auto apply_fixed = [&](std::vector<WordItem> &items) {
+        user_dictionary::apply_fixed_positions(user_path, "ni", items, false);
+    };
+    const auto display = [](const std::vector<WordItem> &items) {
+        std::vector<std::string> texts;
+        for (const auto &item : items)
+            texts.push_back(item.output_text);
+        return texts;
+    };
+
+    REQUIRE(user_dictionary::set_fixed_position(user_path, "ni", "ni", "为", 1));
+    const auto to_front = FanyImeIpc::ReorderAsOneItemPerWord(
+        expand({{"ni", "你", 9}, {"tai", "台", 8}, {"wei", "为", 7}}), apply_fixed, expand);
+    REQUIRE_EQ(display(to_front), (std::vector<std::string>{"為", "爲", "你", "臺", "台", "檯", "颱"}));
+    REQUIRE_EQ(to_front[0].fixed_position, 1);
+    REQUIRE_EQ(to_front[1].fixed_position, 1);
+
+    REQUIRE(user_dictionary::set_fixed_position(user_path, "ni", "ni", "为", 3));
+    const auto third = FanyImeIpc::ReorderAsOneItemPerWord(
+        expand({{"ni", "你", 9}, {"wei", "为", 8}, {"tai", "台", 7}}), apply_fixed, expand);
+    REQUIRE_EQ(display(third), (std::vector<std::string>{"你", "臺", "台", "檯", "颱", "為", "爲"}));
 }
 
 // 已经写进日志的那些残留：升级回放要跳过，打开日志时清掉；用户在设置页手动加的带假名词不能动。

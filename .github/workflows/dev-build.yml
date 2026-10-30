@@ -69,7 +69,7 @@ jobs:
   tip:
     name: TSF ${{ matrix.name }}
     if: ${{ (inputs.component || 'all') == 'all' || (inputs.component || 'all') == 'tip' }}
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -139,7 +139,7 @@ jobs:
   server:
     name: Server
     if: ${{ (inputs.component || 'all') == 'all' || (inputs.component || 'all') == 'server' }}
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 90
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -265,7 +265,7 @@ jobs:
     # Only component=all produces an installer: packaging needs both TSF architectures and the
     # Server, so there is no meaningful way to package a single-component run.
     if: ${{ !cancelled() && needs.tip.result == 'success' && needs.server.result == 'success' && (inputs.component || 'all') == 'all' }}
-    runs-on: windows-2025
+    runs-on: depot-windows-2025-8
     timeout-minutes: 60
     steps:
       - name: Check out source

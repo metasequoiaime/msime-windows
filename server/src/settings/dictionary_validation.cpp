@@ -7,6 +7,7 @@
 #include <utf8.h>
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 #include <vector>
 
 namespace SettingsDictionary::Validation
@@ -90,9 +91,14 @@ std::string ComposeWubiPhraseCode(const std::string &word, const WubiCharCodes &
 bool NormalizeFullPinyin(const std::string &input, quanpin::Segments &segments, std::string &normalized,
                          std::size_t expected_syllables)
 {
-    std::string source = input;
-    source.erase(std::remove_if(source.begin(), source.end(), [](unsigned char ch) { return std::isspace(ch); }),
-                 source.end());
+    std::string source;
+    std::istringstream stream(input);
+    for (std::string part; stream >> part;)
+    {
+        if (!source.empty() && source.back() != '\'' && part.front() != '\'')
+            source.push_back('\'');
+        source += part;
+    }
     std::transform(source.begin(), source.end(), source.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
@@ -107,10 +113,9 @@ bool NormalizeFullPinyin(const std::string &input, quanpin::Segments &segments, 
     }
     else
     {
-        const auto cuts = quanpin::cut_pinyin_by_mode(source, "correction", true);
-        if (cuts.empty())
+        segments = quanpin::cut_one_piece_min_segments(source, true);
+        if (segments.empty())
             return false;
-        segments = cuts.front();
         if (expected_syllables != 0 && segments.size() != expected_syllables)
         {
             const auto alternatives = quanpin::enumerate_complete_segmentations(quanpin::build_syllable_graph(source));

@@ -7,6 +7,7 @@
 #include <shared_mutex>
 #include <string>
 #include "config/ai_provider.h"
+#include "ai/chat_request_params.h"
 #include "voice-input/voice_providers.h"
 
 using namespace ime_config_detail;
@@ -445,7 +446,8 @@ void ime_config_detail::PublishTranslationConfig()
         translation_provider,
         slot_value(g_ai_assistant.endpoints, AiAssistant::ProviderStore::BuiltinDefaultEndpoint(translation_provider)),
         token == g_ai_assistant.tokens.end() ? std::string() : token->second,
-        slot_value(g_ai_assistant.models, AiAssistant::ProviderStore::BuiltinDefaultModel(translation_provider))};
+        slot_value(g_ai_assistant.models, AiAssistant::ProviderStore::BuiltinDefaultModel(translation_provider)),
+        g_ai_assistant.json_mode};
     std::lock_guard<std::mutex> lock(g_translation_snapshot_mutex);
     g_translation_snapshot = std::move(snapshot);
 }
@@ -594,6 +596,8 @@ static bool ApplyAiAssistantString(const std::string &key, const std::string &va
     }
     if (key == "thinking" && !VoiceInput::IsValidThinkingLevel(value))
         return false;
+    if (key == "json_mode" && !ChatCompletions::IsValidJsonMode(value))
+        return false;
     if (key == "provider")
     {
         const std::string provider = VoiceInput::NormalizeProviderId(value);
@@ -700,6 +704,8 @@ static bool ApplyAiAssistantString(const std::string &key, const std::string &va
         target = &g_ai_assistant.prompt_id;
     else if (key == "thinking")
         target = &g_ai_assistant.thinking;
+    else if (key == "json_mode")
+        target = &g_ai_assistant.json_mode;
     else if (key == "prompt_custom_1")
         target = &g_ai_assistant.prompt_custom_1;
     else if (key == "prompt_custom_2")

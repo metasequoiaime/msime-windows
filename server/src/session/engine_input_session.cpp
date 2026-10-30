@@ -6,6 +6,8 @@
 #include "engine/core/sentence_association_options.h"
 #include "engine/local_modes/radical_query.h"
 #include "engine/quanpin/quanpin_utils.h"
+#include "session/input_cadence.h"
+#include "settings/lattice_model.h"
 #include "settings/neural_model.h"
 
 #include <filesystem>
@@ -42,6 +44,12 @@ std::string ResolveNeuralDesktopModelPath()
         return {};
     }
     return metasequoia::path_to_utf8(file);
+}
+
+std::string ResolveLatticeLanguageModelPath()
+{
+    const std::filesystem::path file = model_download::ResolveInstalledFile(lattice_model::ModelFile());
+    return file.empty() ? std::string() : metasequoia::path_to_utf8(file);
 }
 
 EngineInputSession::EngineInputSession(SchemeType scheme, const ShuangpinProfile &profile)
@@ -95,10 +103,18 @@ void EngineInputSession::ApplyConfiguration()
     SentenceAssociationOptions association;
     association.word_lattice = GetConfiguredAssocSentenceWordLattice();
     association.google = GetConfiguredAssocSentenceGoogle();
+    // 连续打字期间不跑效果档：只把模型路径收成空串——没有路径就建不出神经重排器，词格退回
+    // 1-best，12-best 解码和下面那次路径 stat 都省掉。开关本身保持配置值：any_sentence_source()
+    // 会牵动词格 LM 与切分歧义仲裁，跟着按键节奏翻转会把逐前缀词库缓存一起拖下水（见
+    // SentenceAssociationOptions::differs_only_in_effect_tier_model）。停手到点后 IPC 线程
+    // 放回路径并排一次重查。速度档和其余整句来源一律不受影响。
     association.neural_desktop = GetConfiguredAssocSentenceNeuralDesktop();
-    // 高精度档模型按需下载：开关开着才去盘上找（每次击键都会走到这里），没下载时路径为空。
-    association.neural_desktop_model = association.neural_desktop ? ResolveNeuralDesktopModelPath() : std::string();
+    // 高精度档模型按需下载：效果档生效时才去盘上找（每次击键都会走到这里），没下载时路径为空。
+    association.neural_desktop_model = EffectiveNeuralDesktop(association.neural_desktop, TypingInProgress())
+                                           ? ResolveNeuralDesktopModelPath()
+                                           : std::string();
     association.neural_keyboard = GetConfiguredAssocSentenceNeuralKeyboard();
+    association.context_candidate_rerank = GetConfiguredAssocContextCandidateRerank();
     association.show_next_on_duplicate = GetConfiguredAssocSentenceShowNextOnDuplicate();
     // octagram 语法模型总开关：开关关时连模型路径都不解析。引擎侧的加成分由 collocation_model
     // 非空隐含开启，没有独立开关，所以路径空即全部能力关闭；模型缺席时同样置空重排，
@@ -115,6 +131,19 @@ void EngineInputSession::ApplyConfiguration()
     association.collocation_grammar.non_collocation_penalty = GetConfiguredAssocSentenceCollocationNonPenalty();
     association.collocation_grammar.weak_collocation_penalty = GetConfiguredAssocSentenceCollocationWeakPenalty();
     association.collocation_grammar.rear_penalty = GetConfiguredAssocSentenceCollocationRearPenalty();
+    // 词格语言模型按需下载：任一整句来源开着时词格才会解码，那时才去盘上找（要在上面的来源都定下来
+    // 之后判断）。Trigram 整句和设置页一致，模型不在时不出：设置页那边开关置灰显示为关。开发与测试
+    // 环境把 sc.lm 放在资源目录里，那份同样算在。
+    if (association.any_sentence_source())
+    {
+        association.language_model = ResolveLatticeLanguageModelPath();
+        if (association.word_lattice && association.language_model.empty())
+        {
+            std::error_code error;
+            association.word_lattice =
+                std::filesystem::is_regular_file(paths_.resource(metasequoia::assets::language_model), error);
+        }
+    }
     session_.set_sentence_association(association);
     session_.set_shuangpin_preedit_uses_raw(GetConfiguredShuangpinPreeditMode() == "shuangpin");
     // 五笔拼音混输与 z 键角色是两个独立设置：混输是「同时给五笔和拼音候选」，z 键角色只管
@@ -135,6 +164,11 @@ void EngineInputSession::recompute_candidates()
 {
     ApplyConfiguration();
     return session_.recompute_candidates();
+}
+
+void EngineInputSession::refresh_configuration()
+{
+    ApplyConfiguration();
 }
 
 SchemeType EngineInputSession::current_scheme_type() const

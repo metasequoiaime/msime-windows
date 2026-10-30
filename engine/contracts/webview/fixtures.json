@@ -807,6 +807,24 @@
     "valid": true
   },
   {
+    "name": "lattice language model download",
+    "message": {
+      "type": "latticeModelDownload"
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "lattice language model delete is a settings-only message",
+    "message": {
+      "type": "latticeModelDelete"
+    },
+    "direction": "client",
+    "surface": "candidate",
+    "valid": false
+  },
+  {
     "name": "neural model delete takes no model id",
     "message": {
       "type": "neuralModelDelete",

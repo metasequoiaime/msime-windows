@@ -1,13 +1,17 @@
 #include "settings/native/native_page_help_widgets.h"
 
 #include "msime_version.h"
+#include "settings/native/native_settings_update_download.h"
+#include "settings/update_channel.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
 
+#include <shellapi.h>
 #include <winhttp.h>
 
 #include <chrono>
+#include <cstdio>
 #include <regex>
 
 // partials/about-settings.html + modules/about-settings.ts + modules/update-manifest.ts;
@@ -270,6 +274,40 @@ struct AboutState
     std::shared_ptr<Hideable> statusBox;
 };
 
+// 收尾：恢复按钮，把结论写给用户看。下载版复用它。
+inline void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const bool ok, const std::wstring &message)
+{
+    state->check->SetDisabled(false);
+    state->check->SetText(L"检查更新");
+    state->status->SetText(message);
+    state->status->SetRole(ok ? TextRole::Accent : TextRole::Danger);
+    state->statusBox->SetVisible(true);
+}
+
+// 下载结束后恢复按钮并给出结果。成功时先用清单摘要重新核对一遍磁盘上的文件，
+// 再交给系统打开：它已经校验过，接下来是 UAC 和 Inno Setup 自己的界面，每一步仍由
+// 用户确认。重核对是为了堵住「校验完成」到「用户点 UAC」之间被替换的窗口。
+void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::string &installer_path,
+                          const std::string &expected_digest, const std::string &message)
+{
+    if (installer_path.empty())
+    {
+        FinishUpdateDownload(state, false, Widen(message.empty() ? "下载失败" : message));
+        return;
+    }
+    const std::filesystem::path path = std::filesystem::u8path(installer_path);
+    if (!update_download::FileMatchesDigest(path, expected_digest))
+    {
+        FinishUpdateDownload(state, false, L"安装包在打开前核对失败，请重试");
+        return;
+    }
+    const HINSTANCE opened = ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(opened) <= 32)
+        FinishUpdateDownload(state, false, L"安装包已下载，但无法自动打开，请重试");
+    else
+        FinishUpdateDownload(state, true, L"安装包已下载并通过校验，已打开安装程序");
+}
+
 void ShowUpdateDialog(PageContext &context, const Version &latest, const std::string &releaseUrl,
                       const std::string &mirrorUrl, const nlohmann::json &manifest)
 {
@@ -337,6 +375,7 @@ void ShowUpdateDialog(PageContext &context, const Version &latest, const std::st
     context.host.ShowModal(column);
 }
 
+// 手动检查：只回答「有没有新版本」，新版本由用户自己决定去哪下载。
 void CheckForUpdate(PageContext &context, const std::shared_ptr<AboutState> &state)
 {
     const auto setStatus = [state](const std::wstring &message, TextRole role) {
@@ -396,6 +435,125 @@ void CheckForUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
             ShowUpdateDialog(*ctx, latest, releaseUrl, mirror, manifest);
         });
 }
+
+// 下载并校验安装包。只在正式版上真正下载，非正式版退回到 CheckForUpdate。
+void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &state)
+{
+    Version current;
+    if (!ParseVersion(kShownVersion, current))
+    {
+        state->status->SetText(L"无法识别当前版本");
+        state->status->SetRole(TextRole::Danger);
+        state->statusBox->SetVisible(true);
+        return;
+    }
+    // 安装包下载只在正式版上开放。nightly 与 dev 构建点这个按钮仍然要能知道有没有
+    // 新版本，但不去下载：它们的清单不由官网提供，下载下来也没有可以比较的版本。
+    // 所以非正式版走 CheckForUpdate，结果落在同一块状态文字里。
+    if (!update_download::IsReleaseVersion(MSIME_PRODUCT_VERSION))
+    {
+        CheckForUpdate(context, state);
+        return;
+    }
+    state->check->SetDisabled(true);
+    state->check->SetText(L"正在检查…");
+    state->status->SetText(L"正在检查更新");
+    state->status->SetRole(TextRole::Muted);
+    state->statusBox->SetVisible(true);
+
+    PageContext *ctx = &context;
+    const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
+    const std::string url = std::string(kUpdateManifestUrl) + "?t=" + std::to_string(stamp);
+    std::weak_ptr<AboutState> weak = state;
+    RunInBackground(
+        context.host.Hwnd(), [url]() { return HttpGet(url); },
+        [ctx, state, weak, current](const std::string &body) {
+            const nlohmann::json manifest = nlohmann::json::parse(body, nullptr, false);
+            Version latest;
+            std::string releaseUrl;
+            bool valid = manifest.is_object() && manifest.contains("version") && manifest["version"].is_string() &&
+                         manifest.contains("releaseUrl") && manifest["releaseUrl"].is_string();
+            if (valid)
+            {
+                releaseUrl = manifest["releaseUrl"].get<std::string>();
+                valid =
+                    (releaseUrl == kReleasesPageUrl || releaseUrl.rfind(std::string(kReleasesPageUrl) + "/", 0) == 0) &&
+                    ParseVersion(manifest["version"].get<std::string>(), latest);
+            }
+            if (!valid)
+            {
+                FinishUpdateDownload(state, false, L"检查更新失败，请稍后重试");
+                return;
+            }
+            if (CompareVersions(latest, current) <= 0)
+            {
+                FinishUpdateDownload(state, true, L"已是最新版本");
+                return;
+            }
+
+            const std::string name = manifest.value("installerName", std::string());
+            const std::string digest = manifest.value("installerSha256", std::string());
+            if (!update_download::IsInstallerName(name) || !update_download::IsSha256Hex(digest))
+            {
+                // 清单没给可用的包装与摘要，退回到原来那条路：让用户自己去下载页。
+                state->check->SetDisabled(false);
+                state->check->SetText(L"检查更新");
+                state->status->SetText(L"发现新版本 v" + Widen(latest.display) + L"，请在弹窗里选择下载方式");
+                state->status->SetRole(TextRole::Accent);
+                state->statusBox->SetVisible(true);
+                ShowUpdateDialog(*ctx, latest, releaseUrl, std::string(), manifest);
+                return;
+            }
+
+            state->check->SetText(L"正在下载…");
+            state->status->SetText(L"正在下载 v" + Widen(latest.display) + L"，稍等几分钟");
+            state->status->SetRole(TextRole::Muted);
+
+            update_download::Request request;
+            request.current_version = MSIME_PRODUCT_VERSION;
+            request.release_url = releaseUrl;
+            request.installer_name = name;
+            request.installer_sha256 = digest;
+            request.directory = update_download::DefaultDirectory();
+            // 下载本身在后台线程上跑，进度只能靠结束后一次性回报，所以把整个下载
+            // 放进 RunInBackground 的 work 里；返回一个编码过的结果串交给窗口线程。
+            RunInBackground(
+                ctx->host.Hwnd(),
+                [request]() {
+                    const update_download::Result result = update_download::Download(request);
+                    if (result.outcome == update_download::Outcome::Ok)
+                    {
+                        update_download::PruneOldInstallers(request.directory, request.installer_name);
+                        // 四段结果：状态、路径、摘要、说明，用换行分隔。
+                        return std::string("ok\n") + result.path.u8string() + "\n" + request.installer_sha256 + "\n";
+                    }
+                    return std::string("err\n\n\n") + result.message;
+                },
+                [weak](const std::string &encoded) {
+                    const std::shared_ptr<AboutState> locked = weak.lock();
+                    if (!locked)
+                        return;
+                    // 四段：状态、路径、摘要、说明。状态不是 ok 时按失败收尾。
+                    const auto next = [&encoded](size_t &start) {
+                        const size_t end = encoded.find('\n', start);
+                        const std::string field =
+                            encoded.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                        start = end == std::string::npos ? encoded.size() : end + 1;
+                        return field;
+                    };
+                    size_t cursor = 0;
+                    const std::string status = next(cursor);
+                    const std::string path = next(cursor);
+                    const std::string digest = next(cursor);
+                    const std::string note = cursor < encoded.size() ? encoded.substr(cursor) : std::string();
+                    if (status == "ok")
+                        FinishUpdateDownload(locked, path, digest, note);
+                    else
+                        FinishUpdateDownload(locked, std::string(), std::string(),
+                                             note.empty() ? std::string("下载失败") : note);
+                });
+        });
+}
 } // namespace
 
 VisualPtr BuildAboutPage(PageContext &context)
@@ -441,9 +599,80 @@ VisualPtr BuildAboutPage(PageContext &context)
         std::weak_ptr<AboutState> weak = state;
         state->check->SetOnClick([ctx, weak]() {
             if (auto locked = weak.lock())
-                CheckForUpdate(*ctx, locked);
+                DownloadUpdate(*ctx, locked);
         });
         links->Add(std::make_shared<AboutRow>(left, state->check, false));
+    }
+    // 自动下载是一个独立设置行，不塞进上面的按钮行：它改的是后台行为，和「现在检查一次」
+    // 是两件事。只有正式版参与自动更新，dev 与 nightly 渲染出来只会是个勾了也没用的开关。
+    if (update_download::IsReleaseVersion(MSIME_PRODUCT_VERSION))
+    {
+        auto left = std::make_shared<Column>(0.0f);
+        left->Add(MakeLabel(L"自动下载更新", DocStyle(13.0f, DWRITE_FONT_WEIGHT_MEDIUM), TextRole::Primary));
+        auto detail =
+            MakeLabel(L"发现新版本时由输入法后台下载并校验，下载完成后询问是否安装", DocStyle(12.0f), TextRole::Muted);
+        detail->SetMargin({0.0f, 5.0f, 0.0f, 0.0f});
+        left->Add(detail);
+        // 后台进度：Server 每收到一块数据就更新一次 progress.txt，这里定时读。
+        // 页面不显示时定时器也会继续跑，但只读一个小文件，不值得为它做启停。
+        auto progressLabel = MakeLabel(L"", DocStyle(11.0f), TextRole::Muted);
+        auto progressBox = std::make_shared<Hideable>(progressLabel, false);
+        progressBox->SetMargin({0.0f, 3.0f, 0.0f, 0.0f});
+        left->Add(progressBox);
+        // 只持有弱引用：timer 每跑一次就拿一次标签，页面没了就不再碰它，也不会拖住页面。
+        std::weak_ptr<Label> weakLabel = progressLabel;
+        std::weak_ptr<Hideable> weakBox = progressBox;
+        const auto refresh = [weakLabel, weakBox]() {
+            const std::shared_ptr<Label> label = weakLabel.lock();
+            const std::shared_ptr<Hideable> box = weakBox.lock();
+            if (!label || !box)
+                return false;
+            const update_channel::DownloadProgress progress = update_channel::ReadProgress();
+            std::wstring text;
+            TextRole role = TextRole::Muted;
+            switch (progress.state)
+            {
+            case update_channel::DownloadProgress::State::Downloading: {
+                text = L"正在下载 v" + Widen(progress.version);
+                if (progress.total > 0)
+                {
+                    const auto percent = static_cast<unsigned>(progress.received * 100 / progress.total);
+                    text += L"：" + std::to_wstring(percent) + L"%";
+                }
+                else if (progress.received > 0)
+                {
+                    text += L"：" + std::to_wstring(progress.received / (1024 * 1024)) + L" MB";
+                }
+                break;
+            }
+            case update_channel::DownloadProgress::State::Ready:
+                text = L"v" + Widen(progress.version) + L" 已下载并通过校验，等待安装";
+                role = TextRole::Accent;
+                break;
+            case update_channel::DownloadProgress::State::Failed:
+                text = L"上次自动下载失败：" + Widen(progress.reason);
+                role = TextRole::Danger;
+                break;
+            case update_channel::DownloadProgress::State::Idle:
+            default:
+                break;
+            }
+            label->SetText(text);
+            label->SetRole(role);
+            box->SetVisible(!text.empty());
+            return true;
+        };
+        refresh();
+        // 每秒读一次进度。tick 里只拿弱引用，页面销毁后下一次触发就自我重置，顺带 KillTimer。
+        auto timer = std::make_shared<std::unique_ptr<UiTimer>>();
+        std::weak_ptr<std::unique_ptr<UiTimer>> weakTimer = timer;
+        *timer = std::make_unique<UiTimer>(context.host.Hwnd(), 1000, [refresh, weakTimer]() {
+            if (refresh())
+                return;
+            if (const auto held = weakTimer.lock())
+                held->reset();
+        });
+        links->Add(std::make_shared<AboutRow>(left, BindToggle(context, "appearance.auto_download_update"), false));
     }
     struct Link
     {
@@ -521,13 +750,21 @@ VisualPtr BuildAboutPage(PageContext &context)
         MakeRow(L"Server 端日志",
                 L"排查 Server "
                 L"通信和输入延迟时开启。记录慢请求阶段、候选窗、悬浮工具栏、菜单、焦点会话和通信状态，不记录按键、输入"
-                L"内容或候选文本。日志默认保存到桌面的“水杉IME诊断日志.log”，复现后可直接发送该文件。",
+                L"内容或候选文本。日志写到数据目录的 logs 文件夹，文件名带生成时间，例如 "
+                L"水杉IME诊断日志-server-20261029-153012.log。",
                 BindToggle(context, "general.diagnostic_log")));
     page.AddSection(MakeRow(L"TSF 端日志",
                             L"排查应用内预编辑和输入延迟时开启。TSF "
-                            L"日志会在内存中限量缓冲，并通过独立管道批量汇总到桌面的“水杉IME诊断日志."
-                            L"log”；不记录按键、输入内容或候选文本。",
+                            L"日志会在内存中限量缓冲，并通过独立管道批量汇总到同一个 logs 文件夹，文件名以 tsf "
+                            L"标识，与 Server 日志分开保存；不记录按键、输入内容或候选文本。",
                             BindToggle(context, "general.tsf_diagnostic_log")));
+    {
+        auto openLogs = std::make_shared<Button>(L"打开日志目录", ButtonKind::Secondary);
+        openLogs->SetOnClick([model]() { model->Post("openLogDirectory"); });
+        page.AddSection(MakeRow(
+            L"日志文件", L"复现一次后打开日志文件夹，发送最近生成的那份文件。最多保留最近 10 个文件，旧的自动删除。",
+            openLogs));
+    }
     // The button's handler only holds the state weakly (the state holds the button), so
     // the page has to own it or the first click finds it gone.
     return std::make_shared<OwnerBox>(page.Build(), state);

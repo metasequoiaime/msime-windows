@@ -22,7 +22,8 @@ QuickPhraseQueryResult query_quick_phrases_by_code(const std::string &code, cons
                                                    int limit = 20);
 
 // 快捷短语组的槽位只数这些候选：词库、用户词库和整句。云/AI/英文/表情/颜文字按各自的
-// 异步槽位插队，固定位置的候选按自己的位置放，都不参与计数。
+// 异步槽位插队，固定位置的候选按自己的位置放，都不参与计数。同一底词的繁体写法只数
+// 第一写法（variant_rank 为 0 的那项）。
 bool counts_toward_quick_phrase_slot(const WordItem &item);
 
 // 把同码快捷短语整组插到第 slot 个普通候选之前（slot 为 0 即首位，固定位置候选仍在它们

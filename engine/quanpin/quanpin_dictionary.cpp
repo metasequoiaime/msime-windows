@@ -856,6 +856,12 @@ std::vector<WordItem> QuanpinDictionary::query_exact(const std::string &raw_inpu
         append_unique_words(literal_mixed, result);
         result = std::move(literal_mixed);
     }
+    if (sentence_association_.context_candidate_rerank && !rescoring_context_.empty() &&
+        remove_delimiters(pinyin_segmentation_) == remove_delimiters(raw_input))
+    {
+        quanpin::rerank_dictionary_candidates(result, pinyin_segmentation_, neural_keyboard_model_.get(),
+                                              rescoring_context_);
+    }
     series_cache_.insert(resolution.cache_key, result);
     current_candidate_list_ = result;
     return current_candidate_list_;
@@ -2043,6 +2049,9 @@ std::vector<WordItem> QuanpinDictionary::arbitrate_fault_slots(const std::string
     // 与 arbitrate_legal_corrections 同判据打纠错标：读音字母不同于敲的字母才标。
     const std::string typed_letters = fold_autocorrect_letters(raw_input);
     const std::string corrected_letters = fold_autocorrect_letters(winner_key);
+    // 胜出读音只把单字母槽展开、合法音节原样保留时，这次改写是简拼本身，不是拼写纠错，
+    // 候选窗不显示纠正标记。纠错标记本身保留，预编辑与排序的分支判断照旧。
+    const bool pure_jianpin = quanpin::fault_winner_is_pure_jianpin(slots, winner_segments);
     if (corrected_letters != typed_letters)
     {
         for (auto &item : corrected)
@@ -2050,6 +2059,7 @@ std::vector<WordItem> QuanpinDictionary::arbitrate_fault_slots(const std::string
             if (item.corrected_from.empty() && fold_autocorrect_letters(item.pinyin) == corrected_letters)
             {
                 item.corrected_from = typed_letters;
+                item.jianpin_expansion = pure_jianpin;
             }
         }
     }
@@ -2485,7 +2495,7 @@ void QuanpinDictionary::set_fuzzy_pinyin(metasequoia::FuzzyPinyinOptions options
 
 void QuanpinDictionary::reset_sentence_cache()
 {
-    // 词格整句只在 query_series 里合入，结果只经 series_cache_ 缓存；cache_ 是逐前缀的
+    // 整句和上文词库重排的结果只经 series_cache_ 缓存；cache_ 是逐前缀的
     // 词库行加 Google 整句，segmentation_cache_ 是纯切分，都不受重排影响。
     series_cache_.clear();
 }
@@ -2496,6 +2506,9 @@ void QuanpinDictionary::set_sentence_association(const SentenceAssociationOption
     {
         return;
     }
+    // 打字闸门每段输入只翻效果档的模型路径：那种改动只影响 series_cache_，
+    // 别把逐前缀词库和词格缓存一起清掉。
+    const bool series_only = sentence_association_.differs_only_in_effect_tier_model(options);
     sentence_association_ = options;
     // 模型路径随开关一起变更时才重新解析：进程内按路径共享（shared_gram_db），
     // 重复解析只是查一次表，路径无效时拿到 valid()==false 的实例，词格静默降级。
@@ -2507,9 +2520,22 @@ void QuanpinDictionary::set_sentence_association(const SentenceAssociationOption
     // 高精度档模型的路径同样随选项下发（模型按需下载，不在资源目录）。重建句柄只是丢掉
     // 已解析的指针，模型本身由 shared_sentence_model 按路径持有，重排线程手里的指针不失效。
     neural_desktop_model_ = neural::LazySentenceModel(sentence_association_.neural_desktop_model);
+    // 词格语言模型同理：用户下载的 sc.lm 路径随选项下发，空则回到资源目录那份。模型由
+    // shared_language_model 按路径永久持有，换指针不会让别处手里的旧指针失效。
+    language_model_ =
+        &ngram::shared_language_model(sentence_association_.language_model.empty()
+                                          ? paths_.resource(metasequoia::assets::language_model)
+                                          : metasequoia::path_from_utf8(sentence_association_.language_model.c_str()));
     // 开关变了，之前缓存的候选列表按旧开关算出，必须清掉，否则打开/关闭后要到缓存过期
     // 才见效。整句候选都进这几个缓存，见 query_series / query_single_path。
-    reset_cache();
+    if (series_only)
+    {
+        reset_sentence_cache();
+    }
+    else
+    {
+        reset_cache();
+    }
 }
 
 void QuanpinDictionary::set_rescoring_context(const std::string &context)
@@ -2523,8 +2549,10 @@ void QuanpinDictionary::set_rescoring_context(const std::string &context)
     // 上文只经神经重排进入候选；没有生效的神经模型时缓存与上文无关，不清。
     // 每次上屏都会换上文，无条件清会让下一个词的前几键都变成冷查询。之后
     // 打开神经重排会经 set_sentence_association 清缓存，不会沿用旧结果。
-    const bool rescoring_active = (sentence_association_.neural_keyboard && neural_keyboard_model_.get() != nullptr) ||
-                                  (sentence_association_.neural_desktop && neural_desktop_model_.get() != nullptr);
+    const bool rescoring_active =
+        ((sentence_association_.neural_keyboard || sentence_association_.context_candidate_rerank) &&
+         neural_keyboard_model_.get() != nullptr) ||
+        (sentence_association_.neural_desktop && neural_desktop_model_.get() != nullptr);
     if (rescoring_active)
     {
         reset_sentence_cache();

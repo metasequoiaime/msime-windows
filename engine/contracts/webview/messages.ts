@@ -15,6 +15,10 @@ export type ClientMessage =
   | { "type": "neuralModelImport"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDelete"; "protocolVersion"?: 1 }
   | { "type": "neuralModelStatusRequest"; "protocolVersion"?: 1 }
+  | { "type": "latticeModelDownload"; "protocolVersion"?: 1 }
+  | { "type": "latticeModelImport"; "protocolVersion"?: 1 }
+  | { "type": "latticeModelDelete"; "protocolVersion"?: 1 }
+  | { "type": "latticeModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "openHandwritingPanel"; "protocolVersion"?: 1 }
   | { "type": "restartServer"; "protocolVersion"?: 1 }
   | { "type": "copyText"; "protocolVersion"?: 1; "data": string }
@@ -91,6 +95,10 @@ export type SettingsMessage =
   | { "type": "neuralModelImport"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDelete"; "protocolVersion"?: 1 }
   | { "type": "neuralModelStatusRequest"; "protocolVersion"?: 1 }
+  | { "type": "latticeModelDownload"; "protocolVersion"?: 1 }
+  | { "type": "latticeModelImport"; "protocolVersion"?: 1 }
+  | { "type": "latticeModelDelete"; "protocolVersion"?: 1 }
+  | { "type": "latticeModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "openHandwritingPanel"; "protocolVersion"?: 1 }
   | { "type": "restartServer"; "protocolVersion"?: 1 }
   | { "type": "copyText"; "protocolVersion"?: 1; "data": string }

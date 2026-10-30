@@ -9,9 +9,9 @@
 std::wstring GetPreedit()
 {
     std::wstring preedit_pinyin = string_to_wstring(GlobalIme::composition.segmented_pinyin);
-    if (!GlobalIme::composition.creating_word.word.empty())
+    if (!GlobalIme::composition.creating_word.prefix_text.empty())
     {
-        preedit_pinyin = string_to_wstring(GlobalIme::composition.creating_word.word) + preedit_pinyin;
+        preedit_pinyin = string_to_wstring(GlobalIme::composition.creating_word.prefix_text) + preedit_pinyin;
     }
     return preedit_pinyin;
 }
@@ -25,7 +25,7 @@ std::wstring GetPreeditWithCaretMarker()
         const ShuangpinQuanpinPreedit quanpin =
             BuildShuangpinQuanpinPreedit(raw, composition.shuangpin_raw_segmentation,
                                          composition.shuangpin_quanpin_segmentation, /*keep_separators=*/true);
-        const std::wstring word = string_to_wstring(composition.creating_word.word);
+        const std::wstring word = string_to_wstring(composition.creating_word.prefix_text);
         std::wstring preedit = word + string_to_wstring(quanpin.text);
         const size_t caret = (std::min)(composition.caret_position, raw.size());
         preedit.insert(word.size() + quanpin.caret_map[caret], 1, L'\uE000');
@@ -44,7 +44,7 @@ std::wstring GetPreeditWithCaretMarker()
         }
     }
 
-    const size_t word_prefix = string_to_wstring(GlobalIme::composition.creating_word.word).size();
+    const size_t word_prefix = string_to_wstring(GlobalIme::composition.creating_word.prefix_text).size();
     size_t display_pos = (std::min)(word_prefix, preedit.size());
     size_t seen_letters = 0;
     while (display_pos < preedit.size() && seen_letters < letters_before_caret)
@@ -93,6 +93,6 @@ std::wstring BuildTsfPreedit(const std::wstring &word, const std::string &raw)
 
 std::wstring GetTsfPreedit()
 {
-    return BuildTsfPreedit(string_to_wstring(GlobalIme::composition.creating_word.word),
+    return BuildTsfPreedit(string_to_wstring(GlobalIme::composition.creating_word.prefix_text),
                            GlobalIme::composition.raw_input_with_cases);
 }

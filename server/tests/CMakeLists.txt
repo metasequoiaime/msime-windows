@@ -4,12 +4,14 @@ add_executable(test_native_settings_controls
     portable/main.cpp
     src/test_native_settings_controls.cpp
     ../src/settings/native/native_settings_controls.cpp
+    ../src/settings/native/native_page_help_widgets.cpp
     ../src/settings/native/native_settings_theme.cpp
     ../src/utils/common_utils.cpp
     ../src/utils/ime_paths.cpp)
 target_include_directories(test_native_settings_controls PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
 target_compile_definitions(test_native_settings_controls PRIVATE NOMINMAX=1)
-target_link_libraries(test_native_settings_controls PRIVATE msimeui Boost::locale shell32 advapi32)
+target_link_libraries(test_native_settings_controls PRIVATE msimeui Boost::locale shell32 advapi32
+    nlohmann_json::nlohmann_json)
 add_test(NAME native_settings_controls COMMAND test_native_settings_controls)
 
 add_executable(test_voice_control_dispatch src/test_voice_control_dispatch.cpp
@@ -51,6 +53,27 @@ target_include_directories(test_voice_target PRIVATE ../src)
 target_compile_features(test_voice_target PRIVATE cxx_std_17)
 add_test(NAME voice_target COMMAND test_voice_target)
 
+# Drives the real process-priority restore against a deliberately lowered
+# process, so the Server startup path is covered without launching the Server.
+add_executable(test_process_priority
+    src/test_process_priority.cpp
+    ../src/utils/process_priority.cpp)
+target_include_directories(test_process_priority PRIVATE ../src)
+target_compile_features(test_process_priority PRIVATE cxx_std_17)
+add_test(NAME process_priority COMMAND test_process_priority)
+set_tests_properties(process_priority PROPERTIES SKIP_RETURN_CODE 77)
+
+# Exercises the scoped thread-priority boost against the real thread APIs: the
+# guard must raise the thread, restore the entry priority, and skip cleanly on
+# hosts whose policy rejects thread priority changes.
+add_executable(test_thread_priority
+    src/test_thread_priority.cpp
+    ../src/utils/thread_priority.cpp)
+target_include_directories(test_thread_priority PRIVATE ../src)
+target_compile_features(test_thread_priority PRIVATE cxx_std_17)
+add_test(NAME thread_priority COMMAND test_thread_priority)
+set_tests_properties(thread_priority PROPERTIES SKIP_RETURN_CODE 77)
+
 set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark_model_path.cpp"
@@ -59,6 +82,8 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_emoji_query.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_kaomoji_query.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_jianpin_query.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_quanpin_jianpin_recall.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_fault_slot_jianpin.cpp"
     "${CMAKE_SOURCE_DIR}/src/clipboard/clipboard_history.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_kaomoji_sql.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_shuangpin_scheme.cpp"
@@ -80,6 +105,8 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/cloud/ai_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/chat_completions.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/jev_client.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_assistant_reply.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant_reply.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_jev_candidates.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_niutrans_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/cloud/niutrans_translation.cpp"
@@ -107,15 +134,25 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_selection_replay_guard.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_serial_task_runner.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/serial_task_runner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_task_classes.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ipc/event_listener_task_class.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_input_cadence.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_sentence_association_options.cpp"
+    "${CMAKE_SOURCE_DIR}/src/session/input_cadence.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_shuangpin_preedit_display.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/shuangpin_preedit_display.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_wheel_paging.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_view_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_text_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_region_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_order_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_expansion_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_performance.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_size_estimator.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/candidate_size_estimator.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ipc_protocol_constants.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_diagnostic_log_naming.cpp"
+    "${CMAKE_SOURCE_DIR}/src/log/diagnostic_log_naming.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_voice_composition_pipe.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_voice_providers.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_vendor.cpp"
@@ -133,7 +170,9 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_config_non_ascii_path.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_collocation_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_neural_model.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_lattice_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_network_proxy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_update_download.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_dictionary_replay_non_ascii_path.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_non_ascii_path.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_colors.cpp"
@@ -142,6 +181,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_page_arrows.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_supports.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_toolbar_image.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_border_image_vertical.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_palette.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_non_ascii_path_contract.cpp"
     "${CMAKE_SOURCE_DIR}/src/skin/candidate_skin_catalog.cpp"
@@ -185,11 +225,17 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/utils/hanzi_pinyin.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/ime_paths.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/network_proxy.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/native/native_settings_update_download.cpp"
+    # 通道判定与安装包落点都要能在没有网络的情况下测，所以链接真实的翻译单元。
+    # update_check.cpp 不进测试：它带轮询线程与 IPC 广播，那两样在测试进程里没有意义。
+    "${CMAKE_SOURCE_DIR}/src/settings/update_channel.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/dictionary_validation.cpp"
     # The catalog/download/delete behaviors under test live in collocation_model.cpp, so the
     # activation-fallback and id-guard cases link the real translation unit.
     "${CMAKE_SOURCE_DIR}/src/settings/collocation_model.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/neural_model.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/lattice_model.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/model_download.cpp"
     # Routing lives in dictionary_manager.cpp's HandleRequest, so the importHans dispatch test has
     # to link the real translation unit rather than restate the branch order.
     "${CMAKE_SOURCE_DIR}/src/settings/dictionary_manager.cpp"
@@ -239,9 +285,65 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     shell32
     advapi32
     ole32
+    # native_settings_update_download.cpp 用 WinHTTP 取包、用 BCrypt 算摘要。
+    winhttp
+    bcrypt
 )
 
 add_test(NAME ${TEST_EXECUTABLE_NAME} COMMAND ${TEST_EXECUTABLE_NAME})
+
+# Settings-window controls driven through a real msimeui::Window. The settings executable's own
+# sources are compiled in, all but its entry point, so the controls under test are the shipped ones
+# and the list cannot fall behind the executable's.
+get_target_property(_settings_sources ${SETTINGS_EXECUTABLE_NAME} SOURCES)
+set(SETTINGS_UI_TEST_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/settings_ui_main.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_dropdown_scroll.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_ai_model_list_scroll.cpp"
+)
+foreach(_source IN LISTS _settings_sources)
+    if(_source MATCHES "settings_app\\.cpp$" OR NOT _source MATCHES "\\.cpp$")
+        continue()
+    endif()
+    get_filename_component(_source "${_source}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+    list(APPEND SETTINGS_UI_TEST_SOURCES "${_source}")
+endforeach()
+add_executable(MetasequoiaImeSettingsUiTests ${SETTINGS_UI_TEST_SOURCES})
+target_include_directories(MetasequoiaImeSettingsUiTests PRIVATE "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/include")
+target_link_libraries(MetasequoiaImeSettingsUiTests PRIVATE
+    msimeui
+    MetasequoiaIme::Engine
+    fmt::fmt
+    Boost::locale
+    Boost::json
+    nlohmann_json::nlohmann_json
+    unofficial::sqlite3::sqlite3
+    spdlog::spdlog
+    cpp-pinyin::cpp-pinyin
+    CURL::libcurl
+    ZLIB::ZLIB
+    bcrypt
+    winhttp
+    dwmapi
+    dcomp
+    d2d1
+    dwrite
+    shell32
+)
+add_test(NAME MetasequoiaImeSettingsUiTests COMMAND MetasequoiaImeSettingsUiTests)
+
+# 繁简转换走真实的 OpenCC。转换器从 exe 所在目录的 assets/opencc 读字典，这个目录由 server 的
+# POST_BUILD 拷出，测试程序与 server 输出到同一个 bin 目录，所以先构建 server。
+# 拷贝清单漏了字典时，只有干净构建会让它失败：增量构建里 copy_if_different 不删除已有的旧文件。
+add_executable(test_chinese_converter
+    portable/main.cpp
+    src/test_chinese_converter.cpp
+    ../src/conversion/chinese_converter.cpp)
+target_include_directories(test_chinese_converter PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+target_compile_definitions(test_chinese_converter PRIVATE NOMINMAX=1)
+target_link_libraries(test_chinese_converter PRIVATE OpenCC::OpenCC)
+add_dependencies(test_chinese_converter MetasequoiaImeServer)
+add_test(NAME chinese_converter COMMAND test_chinese_converter)
 
 # The identical fixture file also runs in Engine's JavaScript contract CI.
 add_executable(test_webview_contract "${MSIME_ENGINE_DIR}/contracts/webview/test.cpp")
@@ -249,6 +351,21 @@ target_link_libraries(test_webview_contract PRIVATE Boost::json)
 add_test(NAME webview_contract COMMAND test_webview_contract
     "${MSIME_ENGINE_DIR}/contracts/webview/fixtures.json")
 
+
+# 繁体写法的转换结果来自真实的 OpenCC 字典：链接产品的 chinese_converter.cpp 与 traditional_spelling_index.cpp，
+# 转换器从 exe 所在目录的 assets/opencc 读字典。这个目录由 server 的 POST_BUILD 拷出，测试程序与 server
+# 输出到同一个 bin 目录，所以先构建 server。拷贝清单漏了字典时，只有干净构建会让它失败：增量构建里
+# copy_if_different 不删除已有的旧文件。
+add_executable(test_traditional_conversion
+    portable/main.cpp
+    src/test_traditional_conversion.cpp
+    ../src/conversion/chinese_converter.cpp
+    ../src/conversion/traditional_spelling_index.cpp)
+target_include_directories(test_traditional_conversion PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+target_compile_definitions(test_traditional_conversion PRIVATE NOMINMAX=1)
+target_link_libraries(test_traditional_conversion PRIVATE OpenCC::OpenCC)
+add_dependencies(test_traditional_conversion MetasequoiaImeServer)
+add_test(NAME traditional_conversion COMMAND test_traditional_conversion)
 
 add_executable(test_voice_result_card src/test_voice_result_card.cpp)
 target_include_directories(test_voice_result_card PRIVATE ../src)

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import string
 import sys
 
 ENGINE_DIR = pathlib.Path(__file__).resolve().parents[2] / "engine"
@@ -125,10 +126,22 @@ inline constexpr Entry kInsertionEntries[] = {{
 {insertion_entries}
 }};
 
+// Far substitutions: a letter replaced by one that is neither itself nor a
+// QWERTY neighbor, e.g. zher -> zhe (r -> e), shatg -> shang (t -> n). These
+// are the "generated shape" family: out of every in-table rule's assumption
+// space, so they carry the most expensive correction weight and rank behind
+// every other table's reads (CorrectionTarget::generated). Emitted here rather
+// than enumerated at startup so the keystroke path and process start do no
+// work beyond building the index.
+inline constexpr Entry kGeneratedShapeEntries[] = {{
+{generated_entries}
+}};
+
 inline constexpr std::size_t kTranspositionCount = sizeof(kTranspositionEntries) / sizeof(kTranspositionEntries[0]);
 inline constexpr std::size_t kNeighborCount = sizeof(kNeighborEntries) / sizeof(kNeighborEntries[0]);
 inline constexpr std::size_t kDeletionCount = sizeof(kDeletionEntries) / sizeof(kDeletionEntries[0]);
 inline constexpr std::size_t kInsertionCount = sizeof(kInsertionEntries) / sizeof(kInsertionEntries[0]);
+inline constexpr std::size_t kGeneratedShapeCount = sizeof(kGeneratedShapeEntries) / sizeof(kGeneratedShapeEntries[0]);
 
 }} // namespace quanpin::autocorrect
 """
@@ -167,7 +180,7 @@ def build_variants(
             variant == correct
             or variant in valid
             or len(variant) < min_length
-            or len(variant) > 6
+            or len(variant) > MAX_KEY_LENGTH
             or "'" in variant
         ):
             return
@@ -189,11 +202,10 @@ def insertion_variants(syllable: str):
     # unrealistic keys, so position anchors are start (right neighbor only),
     # end (left neighbor only), and middle (either side). A double tap (repeat
     # of the adjacent key itself) is deliberately NOT generated: it is rare
-    # enough that the widened false-positive surface is not worth it. The <=6
-    # length cap means 6-letter syllables (zhuang) get no insertion coverage
-    # (their variants would be 7 letters, beyond every legal syllable) --
-    # deliberate, re-evaluate only if evaluation shows a real gap for 6-letter
-    # syllables.
+    # enough that the widened false-positive surface is not worth it. 6-letter
+    # syllables (zhuang) get no insertion coverage: every variant is 7 letters,
+    # past MAX_KEY_LENGTH, so no query can ever look one up -- deliberate,
+    # re-evaluate only if evaluation shows a real gap for them.
     for position in range(len(syllable) + 1):
         candidates: set[str] = set()
         if position > 0:
@@ -206,9 +218,35 @@ def insertion_variants(syllable: str):
             yield syllable[:position] + letter + syllable[position:]
 
 
+def far_substitution_variants(syllable: str):
+    # zher -> zhe (r -> e), shatg -> shang (t -> n): replace one letter with
+    # one that is neither itself nor a QWERTY neighbor. These are the only
+    # shapes no in-table rule covers -- transpositions, deletions and insertions
+    # are exhaustive in the four tables above, because every inserted letter is a
+    # neighbor of an adjacent key -- so this table is the whole out-of-table
+    # space. It is the widest false-positive surface in the set, which is why
+    # these keys carry the expensive correction weight and rank behind every
+    # other table's reads at runtime.
+    #
+    # The syllable floor is 3 (not MAX_KEY_LENGTH): a 2-letter syllable has
+    # 2-letter variants that belong to the jianpin space, and build_variants
+    # drops them on the variant-length check anyway.
+    for index, ch in enumerate(syllable):
+        for key in string.ascii_lowercase:
+            if key == ch or key in QWERTY_NEIGHBORS.get(ch, ()):
+                continue
+            yield syllable[:index] + key + syllable[index + 1 :]
+
+
 def build_entries(
     syllables: list[str],
-) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
+) -> tuple[
+    dict[str, set[str]],
+    dict[str, set[str]],
+    dict[str, set[str]],
+    dict[str, set[str]],
+    dict[str, set[str]],
+]:
     def transposition_variants(syllable: str):
         # sahng -> shang: swap each adjacent letter pair.
         return (
@@ -229,22 +267,61 @@ def build_entries(
         return (syllable[:i] + syllable[i + 1 :] for i in range(len(syllable)))
 
     # 2-letter strings are jianpin space (wj/wh/wk/wl...), never correction keys.
-    transposition = build_variants(syllables, transposition_variants, min_length=3)
-    neighbor = build_variants(syllables, neighbor_variants, min_length=3)
-    deletion = build_variants(syllables, deletion_variants, min_length=3)
-    insertion = build_variants(syllables, insertion_variants, min_length=3)
+    transposition = build_variants(
+        syllables, transposition_variants, min_length=MIN_KEY_LENGTH
+    )
+    neighbor = build_variants(syllables, neighbor_variants, min_length=MIN_KEY_LENGTH)
+    deletion = build_variants(syllables, deletion_variants, min_length=MIN_KEY_LENGTH)
+    insertion = build_variants(syllables, insertion_variants, min_length=MIN_KEY_LENGTH)
+    # Far substitutions are a separate family, not a correction type of their own:
+    # at runtime they hang off the neighbour bit and are marked CorrectionTarget::generated,
+    # which is what makes them rank behind every other table's reads.
+    generated_shape = build_variants(
+        syllables, far_substitution_variants, min_length=MIN_KEY_LENGTH
+    )
 
     # Cross-type conflicts are intentionally kept in every table that produces
     # them: the runtime indexes each table per correction type with its own
     # edge weight, so a pair shared by two rules is what keeps the per-type
-    # toggles independently effective.
-    return transposition, neighbor, deletion, insertion
+    # toggles independently effective. The generated-shape table is excluded
+    # from that rule: it is not a toggle, and a pair it shares with a static
+    # table must stay with the cheaper static table, so those pairs are dropped
+    # here instead of being resolved at runtime.
+    static_pairs = {
+        (variant, correct)
+        for table in (transposition, neighbor, deletion, insertion)
+        for variant, corrects in table.items()
+        for correct in corrects
+    }
+    generated_shape = {
+        variant: {
+            correct for correct in corrects if (variant, correct) not in static_pairs
+        }
+        for variant, corrects in generated_shape.items()
+    }
+    generated_shape = {
+        variant: corrects for variant, corrects in generated_shape.items() if corrects
+    }
+
+    return transposition, neighbor, deletion, insertion, generated_shape
 
 
 # engine/.clang-format pins ColumnLimit: 120; the generator must emit the
 # clang-format-stable bytes itself because CI gates the header twice
 # (generator --check and scripts/format.sh --check) on the same file.
 COLUMN_LIMIT = 120
+
+# Key length window. The 6 ceiling MUST match engine/quanpin/quanpin_utils.h's
+# kAutocorrectMaxKeyLength: the longest legal syllable is 6 letters, so a longer
+# key can never be looked up (the k-best scan caps pieces at that length and
+# every fault slot is <= 6 letters). Emitting a longer key costs table bytes and
+# build-index time for a row no query reaches. Change both sides together; the
+# generator cannot read the C++ constant. The 3 floor exists only here: the
+# runtime has no constant for it because it never rewrites a shorter key at all,
+# and 2-letter strings are the jianpin space (wj/wh/wk/wl...), not correction
+# keys.
+MIN_KEY_LENGTH = 3
+MAX_KEY_LENGTH = 6
 
 
 def render_grid(cells: list[str]) -> str:
@@ -265,20 +342,28 @@ def render_grid(cells: list[str]) -> str:
     if not cells:
         return ""
     for columns in range(min(len(cells), COLUMN_LIMIT - 4), 1, -1):
-        slots = [max(len(cell) for cell in cells[col::columns]) + 1 for col in range(columns - 1)]
+        slots = [
+            max(len(cell) for cell in cells[col::columns]) + 1
+            for col in range(columns - 1)
+        ]
         slots.append(max(len(cell) for cell in cells[columns - 1 :: columns]))
         if 4 + sum(slots) > COLUMN_LIMIT:
             continue
         lines = []
         for i in range(0, len(cells), columns):
             chunk = cells[i : i + columns]
-            lines.append("    " + "".join(cell.ljust(slots[j]) for j, cell in enumerate(chunk)).rstrip())
+            lines.append(
+                "    "
+                + "".join(cell.ljust(slots[j]) for j, cell in enumerate(chunk)).rstrip()
+            )
         return "\n".join(lines)
     # Single-column fallback: one cell per line, nothing to align.
     return "\n".join("    " + cell for cell in cells)
 
 
-def render_entry_lines(entries: dict[str, set[str]], syllable_index: dict[str, int]) -> str:
+def render_entry_lines(
+    entries: dict[str, set[str]], syllable_index: dict[str, int]
+) -> str:
     # Sort by the correct string, not by its index, so the emitted row order
     # -- the runtime's deterministic "table order" tie-break -- stays exactly
     # what the string-keyed tables produced before the index encoding.
@@ -302,6 +387,7 @@ def render_header(
     neighbor: dict[str, set[str]],
     deletion: dict[str, set[str]],
     insertion: dict[str, set[str]],
+    generated_shape: dict[str, set[str]],
 ) -> str:
     syllable_index = {syllable: i for i, syllable in enumerate(syllables)}
     return HEADER_TEMPLATE.format(
@@ -310,6 +396,7 @@ def render_header(
         neighbor_entries=render_entry_lines(neighbor, syllable_index),
         deletion_entries=render_entry_lines(deletion, syllable_index),
         insertion_entries=render_entry_lines(insertion, syllable_index),
+        generated_entries=render_entry_lines(generated_shape, syllable_index),
     )
 
 
@@ -317,17 +404,24 @@ def main() -> int:
     syllables = extract_intact_pinyin_list()
     if not syllables:
         raise SystemExit("ERROR: extracted empty pinyin list")
-    transposition, neighbor, deletion, insertion = build_entries(syllables)
-    rendered = render_header(syllables, transposition, neighbor, deletion, insertion)
+    transposition, neighbor, deletion, insertion, generated_shape = build_entries(
+        syllables
+    )
+    rendered = render_header(
+        syllables, transposition, neighbor, deletion, insertion, generated_shape
+    )
 
     if "--check" in sys.argv[1:]:
         if not OUT_PATH.exists():
             raise SystemExit(f"ERROR: {OUT_PATH} is missing")
         if OUT_PATH.read_text(encoding="utf-8") != rendered:
-            raise SystemExit(f"ERROR: {OUT_PATH} is stale; rerun generate_quanpin_autocorrect.py")
+            raise SystemExit(
+                f"ERROR: {OUT_PATH} is stale; rerun generate_quanpin_autocorrect.py"
+            )
         print(
             f"OK: {OUT_PATH} is up to date ({len(syllables)} syllables + {len(transposition)} transposition + "
-            f"{len(neighbor)} neighbor + {len(deletion)} deletion + {len(insertion)} insertion keys)"
+            f"{len(neighbor)} neighbor + {len(deletion)} deletion + {len(insertion)} insertion + "
+            f"{len(generated_shape)} generated-shape keys)"
         )
         return 0
 
@@ -336,7 +430,8 @@ def main() -> int:
     OUT_PATH.write_text(rendered, encoding="utf-8", newline="\n")
     print(
         f"Wrote {OUT_PATH} with {len(syllables)} syllables + {len(transposition)} transposition + "
-        f"{len(neighbor)} neighbor + {len(deletion)} deletion + {len(insertion)} insertion keys"
+        f"{len(neighbor)} neighbor + {len(deletion)} deletion + {len(insertion)} insertion + "
+        f"{len(generated_shape)} generated-shape keys"
     )
     return 0
 

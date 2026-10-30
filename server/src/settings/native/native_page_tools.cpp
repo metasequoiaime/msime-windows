@@ -54,7 +54,7 @@ class TopAlignedRow : public msimeui::Panel
 VisualPtr QuickTitleBlock(const std::wstring &title, const std::wstring &description)
 {
     auto column = std::make_shared<Column>(0.0f);
-    column->Add(MakeTitle(title));
+    column->Add(MakeTitle(title, description));
     auto desc = MakeDescription(description);
     desc->SetMaxWidth(52.0f * kFontCaption);
     column->Add(desc);
@@ -93,7 +93,7 @@ ToggleSection MakeToggleSection(PageContext &context, const std::wstring &title,
 {
     ToggleSection section;
     section.body = std::make_shared<Column>(0.0f);
-    auto expander = std::make_shared<Expander>(title, false);
+    auto expander = MakeExpander(title);
     auto master = BindToggle(context, masterPath);
     section.body->Add(std::make_shared<SettingRow>(expander, master));
     section.details = std::make_shared<Column>(0.0f);
@@ -102,7 +102,7 @@ ToggleSection MakeToggleSection(PageContext &context, const std::wstring &title,
     section.details->SetMargin({18.0f, 4.0f, 0.0f, 0.0f});
     auto details = std::make_shared<Hideable>(section.details, false);
     section.body->Add(details);
-    expander->SetOnToggled([details](bool expanded) { details->SetVisible(expanded); });
+    BindExpander(expander, details);
     hintOut = std::make_shared<Hideable>(MakeDisabledHint(), false);
     std::weak_ptr<Hideable> hint = hintOut;
     SettingsModel *model = &context.model;
@@ -291,9 +291,10 @@ VisualPtr BuildToolsPage(PageContext &context)
         return std::make_shared<SettingRow>(QuickTitleBlock(title, description), BindToggle(context, path));
     };
     page.AddSection(centered(L"超级简拼(J 模式)",
-                             L"中文模式下按 Shift+J，之后输入的每个字母都作为简拼检索词库。全拼如 nh → "
-                             L"你好；双拼会按当前方案转换声母，例如小鹤 nu → n'sh（你说），与 ns → n's "
-                             L"不同。空格上屏；数字选词。调频规则与全拼 / 双拼相同。",
+                             L"仅双拼下可用。中文模式下按 Shift+J，之后输入的每个字母都作为简拼检索词库，"
+                             L"并按当前双拼方案转换声母。例如小鹤 nu → n'sh（你说），与 ns → n's 不同。"
+                             L"全拼不需要该模式，直接输入声母就是简拼，包括 zh / ch / sh 声母，例如 nh → 你好、"
+                             L"eq → 而且、zhly → 张靓颖。空格上屏；数字选词。",
                              "utility.jianpin_mode"));
     page.AddSection(
         centered(L"临时英文(Y 模式)",

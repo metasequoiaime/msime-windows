@@ -19,6 +19,16 @@ V2_IMAGE_SUFFIXES = (".png", ".apng", ".gif", ".webp")
 
 
 class ManifestTests(unittest.TestCase):
+    def _check_border_image_repeat(self, table):
+        """repeat 同 CSS border-image-repeat：1–2 个 stretch / repeat。"""
+        if "repeat" not in table:
+            return
+        values = table["repeat"]
+        values = [values] if isinstance(values, str) else values
+        self.assertIn(len(values), (1, 2), "border_image.repeat")
+        for value in values:
+            self.assertIn(value, ("stretch", "repeat"), "border_image.repeat")
+
     def test_shipped_skins(self):
         manifests = list(SKINS_DIR.glob("*/skin.toml"))
         self.assertTrue(manifests, "No skin packages found")
@@ -45,18 +55,36 @@ class ManifestTests(unittest.TestCase):
                         assets[f"candidate_window.{table}.image"] = window[table]["image"]
                 v2_images = []
                 if "border_image" in window:
-                    assets["candidate_window.border_image.source"] = window["border_image"]["source"]
-                    v2_images.append(window["border_image"]["source"])
-                    if "light_source" in window["border_image"]:
-                        light_source = window["border_image"]["light_source"]
+                    border_image = window["border_image"]
+                    assets["candidate_window.border_image.source"] = border_image["source"]
+                    v2_images.append(border_image["source"])
+                    if "light_source" in border_image:
+                        light_source = border_image["light_source"]
                         assets["candidate_window.border_image.light_source"] = light_source
                         v2_images.append(light_source)
                     for key in ("slice_dip", "stretch_dip", "width_dip"):
-                        if key in window["border_image"]:
-                            values = window["border_image"][key]
+                        if key in border_image:
+                            values = border_image[key]
                             self.assertIn(len(values), (1, 2, 4), key)
                             self.assertTrue(all(0 <= v <= 500 for v in values), key)
-                    self.assertIsInstance(window["border_image"].get("fill", True), bool, "fill")
+                    self.assertIsInstance(border_image.get("fill", True), bool, "fill")
+                    self._check_border_image_repeat(border_image)
+                    # 竖排覆盖表只写与横排不同的键。
+                    vertical = border_image.get("vertical", {})
+                    if "source" in vertical:
+                        assets["candidate_window.border_image.vertical.source"] = vertical["source"]
+                        v2_images.append(vertical["source"])
+                    if "light_source" in vertical:
+                        assets["candidate_window.border_image.vertical.light_source"] = vertical["light_source"]
+                        v2_images.append(vertical["light_source"])
+                    for key in ("slice_dip", "stretch_dip", "width_dip"):
+                        if key in vertical:
+                            values = vertical[key]
+                            self.assertIn(len(values), (1, 2, 4), key)
+                            self.assertTrue(all(0 <= v <= 500 for v in values), key)
+                    if "fill" in vertical:
+                        self.assertIsInstance(vertical["fill"], bool, "border_image.vertical.fill")
+                    self._check_border_image_repeat(vertical)
                 decorations = window.get("decorations", [])
                 self.assertLessEqual(len(decorations), 32, "decorations")
                 for i, dec in enumerate(decorations):

@@ -155,7 +155,7 @@ jobs:
     name: Load the release product lock
     needs: prepare
     if: ${{ needs.prepare.outputs.should_publish == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 60
     outputs:
       dictionary_tag: ${{ steps.lock.outputs.dictionary_tag }}

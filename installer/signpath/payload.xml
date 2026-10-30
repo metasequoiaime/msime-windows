@@ -11,6 +11,7 @@
         <include path="MetasequoiaImeServer.exe" />
         <include path="MetasequoiaImeWatchdog.exe" />
         <include path="MetasequoiaImeDictionaryReplay.exe" />
+        <include path="MetasequoiaImeDictionaryBuild.exe" />
         <include path="MetasequoiaImeEmojiPanel.exe" />
         <include path="MetasequoiaImeKeyboardPanel.exe" />
         <include path="MetasequoiaImeHandwritingPanel.exe" />

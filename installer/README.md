@@ -110,7 +110,7 @@ pwsh -File ./Prepare-PackageFiles.ps1 -TargetVersion 1.2.3 -RepoRoot .. `
 - **`THIRD_PARTY_NOTICES.txt` 从 `-NoticesDirectory` 指向的目录取，随安装包装到程序目录。** 合仓后这份声明覆盖整个产品、放在仓根，所以它和 `-TsfDirectory` 分成了两个参数。词库主体含 rime-ice（GPL-3.0）内容，其许可要求保留署名，所以这份文件缺失会让打包直接失败，而不是静默跳过
 - **`Sign-PackageBinaries-Local.ps1` 和 `Sign-Installer-Local.ps1` 只用于本地验证，CI 不会调用它们。** 它们创建本机自签名证书并尝试写入受信任存储，正式发布走 workflow 里用仓库 secret 中真实证书的签名步骤
 - 词库不再从相邻的 `MetasequoiaImeDict` 工作目录取，CI 从产品锁指定的 `dict-*` release 下载并校验 SHA256，再放到脚本期望的位置
-- 语言模型 `sc.lm` 不在那个 release 里。它由 `scripts/build-language-model.ps1` 在打包前从 `language-model/lock.json` 钉住的 libime 语料转换出来，下载摘要和产物摘要都要对上。release workflow 里对应的是「Build the word-lattice language model」这一步，缺了它 `Prepare-PackageFiles.ps1` 会直接失败
+- 词格语言模型 `sc.lm` 不随安装包发布（约 24 MB，几乎压不动），用户在设置页「整句候选」按需下载到 `<数据目录>\models\language-model\`（来源是 `metasequoiaime/chinese-ime-lm` 的 `language-model-libime-20260629` release，字节数与 SHA256 钉在 `server/src/settings/lattice_model.cpp`，与 `language-model/lock.json` 一致），未下载时词格整句退回启发式打分。`Prepare-PackageFiles.ps1` 不再读取它，覆盖安装和卸载会删掉旧版装进数据目录根下的 `sc.lm` 与 `libime-lm-NOTICE.md`；`models\` 整目录升级保留
 - `windows-2025` runner 自带 Inno Setup 6.7.1，`Compile-Installer.ps1` 能自己找到 `ISCC.exe`。但它不带 `ChineseSimplified.isl`，`msime_setup.iss` 的 `[Languages]` 段依赖那个文件，所以 workflow 会在编译前按固定 revision 和校验和把它装进去
 
 ## 数据目录
@@ -162,7 +162,7 @@ Windows CI 运行 `installer/tests/cloud-choice.ps1`，用 Inno Setup 跑八个�
 - Windows SDK（提供 `signtool.exe`）
 - 先初始化本仓 submodule，并完成 `windows/`、`server/` 的 Release 编译。Release 构建必须生成同目录 PDB；打包脚本会拒绝缺少匹配符号的产物（符号是否随包安装是另一回事，由 `-IncludeSymbols` 决定）。
 - 本地测试包的词库从与本仓同级的 `msime-dictionary` 检出构建（见下文 `build-dictionary.py`），`Invoke-LocalTest.ps1` 打完整包前会自动调用，不再下载产品锁的 Release；需要复现发布用的词库时再手动运行 `python scripts/product_lock.py fetch-dictionaries --staging-root .`。
-- 词格整句打分用的 `sc.lm` 由 `scripts\build-language-model.ps1` 从 `language-model\lock.json` 钉住的上游语料转换而来。`Invoke-LocalTest.ps1` 打完整包前会自动调它，一般不用手工执行；首次运行要下 ~75 MB 并转换一次，之后摘要对得上就直接跳过。
+- 词格整句打分用的 `sc.lm` 不随包发布，`Invoke-LocalTest.ps1` 不再生成它。本地跑引擎测试或评测需要它时，仍可用 `scripts\build-language-model.ps1` 从 `language-model\lock.json` 钉住的上游语料转换出来。
 - 本地打完整包前，可以直接运行 `scripts\prepare-package-inputs.ps1`，一次准备好神经整句模型、`sc.lm` 和词库。模型按各自的锁校验 SHA256，已就绪的直接跳过；词库用 `build-dictionary.py --if-stale` 从本地 `msime-dictionary` 构建。
 - 想在本地从 msime-dictionary 的文本源数据构建词库，运行 `python scripts\build-dictionary.py [--dictionary <msime-dictionary checkout>]`（默认读与本仓同级的 `msime-dictionary`，需要 `pip install pypinyin`）：它按 msime Rust 构建器的规则读 `sources/` 与 `custom/`，加上 `scripts\dictionary_build\inputs.lock.json` 固定的仓外文件，生成本仓现有的 `msime.db` / `english.db` / `others.db` / `dict_japanese.dat` 布局写到 `MetasequoiaImeDict\out\`（产品锁的旧词库先备份到 `out.bak\`）。加 `--compare-release dict-vX.Y.Z` 会与官方 Release 逐表对比。加 `--if-stale` 时，`out\` 已由当前 `msime-dictionary` 提交和当前构建脚本构建、且工作区干净就跳过，否则重建；`Invoke-LocalTest.ps1` 与 `prepare-package-inputs.ps1` 都这样调用。CI 与正式发布仍按产品锁取词库。
 - `engine/helpcode/helpcodes/` 是本仓的目录，普通检出即有，无需旧 HelpCode 仓库，也无需初始化 submodule。

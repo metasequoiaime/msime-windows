@@ -53,6 +53,48 @@ TEST_CASE(DictionaryFullPinyinPicksSegmentationMatchingSyllableCount)
     REQUIRE_EQ(segments.size(), static_cast<size_t>(7));
 }
 
+TEST_CASE(DictionaryFullPinyinPreservesExplicitSyllableBoundaries)
+{
+    struct Example
+    {
+        const char *input;
+        const char *normalized;
+    };
+    const Example examples[] = {
+        {"gong an", "gong'an"},
+        {"gong an ji guan", "gong'an'ji'guan"},
+        {"gong gong an quan", "gong'gong'an'quan"},
+        {"xi an", "xi'an"},
+        {" \tGONG  an \r\n", "gong'an"},
+        {"gong ' an ji\tguan", "gong'an'ji'guan"},
+        {"gong an'ji guan", "gong'an'ji'guan"},
+    };
+    for (const auto &example : examples)
+    {
+        const auto expected = quanpin::split_segments(example.normalized);
+        for (size_t syllables : {size_t{0}, expected.size()})
+        {
+            quanpin::Segments segments;
+            std::string normalized;
+            REQUIRE(
+                SettingsDictionary::Validation::NormalizeFullPinyin(example.input, segments, normalized, syllables));
+            REQUIRE_EQ(normalized, std::string(example.normalized));
+            REQUIRE_EQ(segments, expected);
+        }
+    }
+}
+
+TEST_CASE(DictionaryFullPinyinSegmentsWithoutCorrectingSpelling)
+{
+    quanpin::Segments segments;
+    std::string normalized;
+    REQUIRE(SettingsDictionary::Validation::NormalizeFullPinyin("gongan", segments, normalized));
+    REQUIRE_EQ(normalized, std::string("gong'an"));
+
+    for (const char *input : {"g an", "gong ann", "gong a1", "'gong an", "gong an'", "gong''an", "shangh"})
+        REQUIRE(!SettingsDictionary::Validation::NormalizeFullPinyin(input, segments, normalized));
+}
+
 TEST_CASE(QuickPhraseValidationMatchesNamedPipeWcharCapacity)
 {
     REQUIRE(SettingsDictionary::Validation::QuickPhraseFitsNamedPipe(std::string(199, 'a')));
@@ -287,6 +329,61 @@ class ScopedWubiDataDir
     ScopedTempDir dir_;
 };
 } // namespace
+
+TEST_CASE(QuanpinImportAndQueryKeepExplicitSyllableBoundaries)
+{
+    const ScopedTempDir dir(L"msime-quanpin-syllable-boundaries");
+    const ScopedDataDir scoped(dir.path());
+    sqlite3 *raw = nullptr;
+    const int opened = sqlite3_open(test::Utf8(dir.path() / L"msime.db").c_str(), &raw);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+    REQUIRE_EQ(opened, SQLITE_OK);
+
+    struct Entry
+    {
+        const char *code;
+        const char *key;
+        const char *word;
+    };
+    const Entry entries[] = {
+        {"gong an", "gong'an", "公安"},
+        {"gong an ji guan", "gong'an'ji'guan", "公安机关"},
+        {"gong gong an quan", "gong'gong'an'quan", "公共安全"},
+        {"xi an", "xi'an", "西安"},
+    };
+    std::string content;
+    for (const auto &entry : entries)
+    {
+        const std::string table = quanpin::build_table_name(quanpin::split_segments(entry.key));
+        const std::string sql = "CREATE TABLE IF NOT EXISTS \"" + table +
+                                "\"(key TEXT NOT NULL,jp TEXT NOT NULL,value TEXT NOT NULL,"
+                                "weight INTEGER NOT NULL,UNIQUE(key,value))";
+        REQUIRE_EQ(sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr), SQLITE_OK);
+        content += std::string(entry.word) + '\t' + entry.code + "\t42\n";
+    }
+
+    const auto imported =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "import"}, {"content", content}});
+    user_dictionary::close_default_user_database();
+    REQUIRE(imported.at("ok").as_bool());
+    REQUIRE_EQ(std::string(imported.at("message").as_string()), std::string("成功导入 4 条"));
+
+    for (const auto &entry : entries)
+    {
+        for (const char *code : {entry.code, entry.key})
+        {
+            const auto response =
+                SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"code", code}});
+            REQUIRE(response.at("ok").as_bool());
+            const auto &rows = response.at("rows").as_array();
+            REQUIRE_EQ(rows.size(), size_t{1});
+            const auto &row = rows.front().as_object();
+            REQUIRE_EQ(std::string(row.at("code").as_string()), std::string(entry.key));
+            REQUIRE_EQ(std::string(row.at("word").as_string()), std::string(entry.word));
+            REQUIRE_EQ(row.at("weight").as_int64(), 42);
+        }
+    }
+}
 
 TEST_CASE(WubiPhraseCodeTakesTwoLettersFromEachOfTwoCharWords)
 {

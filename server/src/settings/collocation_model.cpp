@@ -31,8 +31,9 @@ const std::vector<CatalogEntry> &Catalog()
 {
     static const std::vector<CatalogEntry> kCatalog = {
         {kRecommendedModelId, "万象 LTS（推荐）", "万象", L"github.com",
-         L"/amzxyz/RIME-LMDG/releases/download/LTS/wanxiang-lts-zh-hans.gram", "约 390 MB", "CC-BY-4.0",
-         "© amzxyz / RIME-LMDG 项目", true},
+         L"/amzxyz/rime-wanxiang-data/releases/download/LTS/wanxiang-lts-zh-hans.gram", "约 390 MB", "CC-BY-4.0",
+         "© amzxyz / rime-wanxiang 项目", true, L"cnb.cool",
+         L"/amzxyz/rime-wanxiang/-/releases/download/model/wanxiang-lts-zh-hans.gram"},
         {"zh-hans-t-essay-bgw", "八股文·词级", "八股", L"github.com",
          L"/lotem/rime-octagram-data/releases/download/20260712/zh-hans-t-essay-bgw.gram", "约 197 MB", "LGPL", ""},
         {"zh-hans-t-essay-bgw-compact", "八股文·词级紧凑", "八股", L"github.com",
@@ -121,6 +122,7 @@ bool WriteIdentityFile(const std::filesystem::path &file, const RemoteIdentity &
         };
         write_value("etag", identity.etag);
         write_value("last-modified", identity.last_modified);
+        write_value("source", identity.source);
         output << "length=" << identity.length << '\n';
         if (!output)
             return false;
@@ -137,6 +139,11 @@ bool HasIdentity(const RemoteIdentity &identity)
 {
     return !identity.etag.empty() || !identity.last_modified.empty() || identity.length > 0;
 }
+
+// 停滞阈值。正常速度下两次有效读之间是毫秒级，60 秒已在正常速度千倍以上；这里要检的是
+// 「连接活着但不再给字节」，这种故障不会在 60 秒内自愈。阈值只影响「多久换源」，不改变
+// 「换不换源」，所以取远大于读间隔的值，宁可多等也不把慢网速当坏源。
+constexpr unsigned long long kStallTimeoutMs = 60000;
 
 // 逻辑删除的清扫：.gram 被引擎的内存映射占着时物理删除会失败，DeleteModel 落下的
 // .trash 标记把目录转成「待清扫」。这里在状态查询与重新下载前重试，映射一旦释放
@@ -209,27 +216,40 @@ std::wstring QueryStringHeader(HINTERNET request, const wchar_t *name)
     return value;
 }
 
-// 只取响应头的一次 HEAD 探测。失败（离线、代理不可用、404/403、超时）一律返回 false，
-// 调用方静默保留上一结论；不做 Range 兜底，GitHub 支持 HEAD。
-bool ProbeRemoteIdentity(const CatalogEntry &entry, RemoteIdentity &identity)
+// 条目的镜像是否可用：两个字段都齐才算有镜像，半配置按没有处理。下载源列表与更新探测
+// 的镜像兜底都按这一个口径判断，避免两处各判一遍慢慢走样。
+bool HasMirror(const CatalogEntry &entry)
+{
+    return entry.mirror_host != nullptr && entry.mirror_path != nullptr && *entry.mirror_host != L'\0' &&
+           *entry.mirror_path != L'\0';
+}
+
+// 只取响应头的一次探测。method 是 L"HEAD"（主源，GitHub 支持）或 L"GET"（镜像；cnb 的 HEAD
+// 只回 Content-Length，校验器只有 GET 才给）。range 非空时是镜像兜底那条 GET 的
+// Range: bytes=0-0 头；请求体一律不读，拿到头就关句柄。
+// 失败（离线、代理不可用、404/403、超时、无可用身份）返回 false，调用方静默保留上一结论。
+bool ProbeRemoteIdentity(const wchar_t *host, const wchar_t *path, const wchar_t *method, const wchar_t *range,
+                         std::string &source, RemoteIdentity &identity)
 {
     HINTERNET session = NetworkProxy::OpenWinHttpSession(L"MetasequoiaImeServer/1.0");
     if (session == nullptr)
         return false;
     // 探测必须短：它跑在设置进程的后台线程里，但一次挂住会拖慢「打开设置即可见更新」。
     WinHttpSetTimeouts(session, 10000, 10000, 10000, 10000);
-    HINTERNET connection = WinHttpConnect(session, entry.host, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    HINTERNET connection = WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
     HINTERNET request = nullptr;
     bool ok = false;
     if (connection != nullptr)
     {
-        request = WinHttpOpenRequest(connection, L"HEAD", entry.path, nullptr, WINHTTP_NO_REFERER,
+        request = WinHttpOpenRequest(connection, method, path, nullptr, WINHTTP_NO_REFERER,
                                      WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
         if (request != nullptr)
         {
             DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
             WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
-            ok = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+            ok = WinHttpSendRequest(request, range == nullptr ? WINHTTP_NO_ADDITIONAL_HEADERS : range,
+                                    range == nullptr ? 0 : static_cast<DWORD>(wcslen(range)), WINHTTP_NO_REQUEST_DATA,
+                                    0, 0, 0) &&
                  WinHttpReceiveResponse(request, nullptr);
         }
     }
@@ -237,19 +257,42 @@ bool ProbeRemoteIdentity(const CatalogEntry &entry, RemoteIdentity &identity)
     {
         DWORD status = 0;
         DWORD status_size = sizeof(status);
+        // Range 请求可能被无视，整份回 200，也可能按约回 206 Partial Content，两者都算成功。
         ok = WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                                  WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size, WINHTTP_NO_HEADER_INDEX) &&
-             status == HTTP_STATUS_OK;
+             (status == HTTP_STATUS_OK || status == HTTP_STATUS_PARTIAL_CONTENT);
     }
     if (ok)
     {
         identity.etag = Utf8FromWide(QueryStringHeader(request, L"ETag").c_str());
         identity.last_modified = Utf8FromWide(QueryStringHeader(request, L"Last-Modified").c_str());
-        DWORD length = 0;
-        DWORD length_size = sizeof(length);
-        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &length, &length_size, WINHTTP_NO_HEADER_INDEX))
-            identity.length = length;
+        identity.length = 0;
+        if (range == nullptr)
+        {
+            DWORD length = 0;
+            DWORD length_size = sizeof(length);
+            if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                                    WINHTTP_HEADER_NAME_BY_INDEX, &length, &length_size, WINHTTP_NO_HEADER_INDEX))
+                identity.length = length;
+        }
+        else
+        {
+            // 206 的 Content-Length 是这一段（1 字节）的长度，整份大小只在 Content-Range
+            // 「bytes 0-0/418078764」的斜杠后面；拿不到就只留校验器，长度当未知。
+            // 这里假定镜像不对 .gram 做内容编码（当前 cnb 直返原文件）：下载侧记的是
+            // Content-Length，若将来镜像套了 Content-Encoding，这里的 /total 会与下载侧记的
+            // 字节数不同，跨源比对就会误报一次 Update。真出现时两边要一起改。
+            const std::wstring content_range = QueryStringHeader(request, L"Content-Range");
+            const size_t slash = content_range.rfind(L'/');
+            if (slash != std::wstring::npos)
+            {
+                const wchar_t *total = content_range.c_str() + slash + 1;
+                wchar_t *end = nullptr;
+                const unsigned long long parsed = wcstoull(total, &end, 10);
+                if (end != total && parsed > 0)
+                    identity.length = static_cast<long long>(parsed);
+            }
+        }
         ok = HasIdentity(identity);
     }
     if (request != nullptr)
@@ -257,6 +300,8 @@ bool ProbeRemoteIdentity(const CatalogEntry &entry, RemoteIdentity &identity)
     if (connection != nullptr)
         WinHttpCloseHandle(connection);
     WinHttpCloseHandle(session);
+    if (ok)
+        source = Utf8FromWide(host);
     return ok;
 }
 
@@ -318,6 +363,20 @@ void InstallPart(const CatalogEntry &entry, bool imported, const RemoteIdentity 
 // 在正式位置上。条目按值收进线程：detached 线程的生命周期长于调用栈，host/path/id
 // 必须自持。release 资产与 raw 文件都经 302 跳转到 CDN，显式放开自动重定向。
 // replacing 表示这次下载是针对已就绪旧模型的更新（只有确认有更新时才为 true）。
+// 下载按源列表逐个尝试：首次下载镜像（如有）优先、主源兜底，更新下载主源优先、镜像兜底；
+// 某一源连接失败、非 200、读中断、收完长度不符，或拿到响应头后严格超过 kStallTimeoutMs 收不到
+// 新字节（连接活着但不给数据，TCP 并不报断），都换下一源重下——半截 .part 由 trunc 重写，
+// 无残留；停滞前已收的字节一律作废，不续传。身份按实际成功源的头记录，连同该源的 host
+// 一起写进 .remote。全部源失败才进 error，报最有意义的那个原因。
+//
+// 收头之后的停滞靠两件事配合才能被发现：WinHttpQueryDataAvailable 会阻塞到有数据可读或
+// 底层连接异常终止，对端不再发数据但连接还在时它不会返回 0，只会一直阻塞，所以循环里的
+// 停滞判据根本轮不到执行。唯一的出口是接收超时——WinHttpSetTimeouts 的接收参数取
+// kStallTimeoutMs，阻塞满这么久即以失败返回，控制权回到循环，再由 IsStalled 按「距上次
+// 字节增长是否严格超过同一阈值」区分这次失败是停滞还是读中断。两处必须用同一个常量，
+// 且判据用严格大于：接收超时按「至少等满这么久」触发，正常情况下失败回到循环时距上次
+// 字节增长必然已严格超过阈值，不会因为恰好等于判成普通读中断。接收超时更短会误伤慢速但
+// 持续的传输，更长则停滞迟迟不能被发现。
 void DownloadThread(CatalogEntry entry, bool replacing)
 {
     const std::string model_id = entry.id;
@@ -335,116 +394,190 @@ void DownloadThread(CatalogEntry entry, bool replacing)
     std::error_code cleanup_error;
     std::filesystem::remove(PartFile(model_id), cleanup_error);
 
+    // 每个源必须整段完成才算成功；收完响应头之后失败同样要能换源，所以下载全程
+    // 不在循环里直接进 error，状态留在 Downloading 直到有一个源成功或列表耗尽。
+    // 更新下载优先主源：「有更新」的结论来自主源探测，先拿主源能把结论和字节对齐；
+    // 首次下载仍镜像优先。
+    const std::vector<DownloadSource> sources = DownloadSources(entry, replacing);
+
+    bool ok = false;
+    DWORD status = 0;
+    long long expected = 0;
+    long long received = 0;
+    RemoteIdentity identity;
+    std::ofstream out;
+    // 逐源记录最有意义的失败原因，全部源失败时报它。优先级：HTTP 非 200 > 长度不符 >
+    // 连接/读/停滞失败——HTTP 状态比网络错误更能说明问题，不能被后面源的网络失败覆盖。
+    // 停滞没有单独的原因档（连接是活的、只是不再给字节，与读到一半断掉同类），但它比普通
+    // 读失败更能解释「为什么等了这么久」，所以单独记一个布尔。两者都不是每源重置的：只要
+    // 某个源的失败被判成停滞，就说明这次失败至少有一次是停发而非断连；收尾时若最终原因仍是
+    // 「下载中断」就用更具体的文案，HTTP 异常 / 长度不符仍保留它们自己的原因。
+    std::string failure;
+    bool failure_stalled = false;
+
     HINTERNET session = NetworkProxy::OpenWinHttpSession(L"MetasequoiaImeServer/1.0");
     if (session == nullptr)
     {
         SetState(model_id, DownloadState::Error, 0, "无法初始化网络");
         return;
     }
-    // 400MB 不是快操作：连接阶段给足超时，收发阶段不设上限靠进度与失败兜底。
-    WinHttpSetTimeouts(session, 30000, 30000, 30000, 0);
-    HINTERNET connection = WinHttpConnect(session, entry.host, INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET request = nullptr;
-    if (connection != nullptr)
+    // 400MB 不是快操作：连接、发送各给 30 秒，接收超时取停滞阈值。接收超时是单次接收操作的
+    // 空闲超时——连接活着但不再给字节时，WinHttpQueryDataAvailable 会一直阻塞，只有它能让这次
+    // 调用以失败返回、把控制权交回循环；正常速度下每次接收都远小于 60 秒，慢速但持续的传输
+    // 每次都有新字节，不会因为总时长久而误触发。
+    WinHttpSetTimeouts(session, 30000, 30000, 30000, static_cast<int>(kStallTimeoutMs));
+
+    for (const DownloadSource &source : sources)
     {
-        request = WinHttpOpenRequest(connection, L"GET", entry.path, nullptr, WINHTTP_NO_REFERER,
-                                     WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+        if (source.host == nullptr)
+            continue;
+        HINTERNET connection = WinHttpConnect(session, source.host, INTERNET_DEFAULT_HTTPS_PORT, 0);
+        HINTERNET request = nullptr;
+        if (connection != nullptr)
+        {
+            request = WinHttpOpenRequest(connection, L"GET", source.path, nullptr, WINHTTP_NO_REFERER,
+                                         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+            if (request != nullptr)
+            {
+                DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+                WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
+            }
+        }
+        ok = connection != nullptr && request != nullptr &&
+             WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+             WinHttpReceiveResponse(request, nullptr);
+        status = 0;
+        DWORD status_size = sizeof(status);
+        if (ok)
+        {
+            WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size, WINHTTP_NO_HEADER_INDEX);
+            ok = status == HTTP_STATUS_OK;
+        }
+
+        // 总长取响应自己声明的 Content-Length，不再钉死字节数常量：上游重训会让字节数
+        // 变，而这个值顺带充当截断检测的基准（收完比对一次），比钉常量更贴近实际。
+        expected = 0;
+        received = 0;
+        identity = {};
+        // 停滞计时从拿到响应头的这一刻起算：连接本身有 30 秒超时兜底，收头之后才是唯一
+        // 可能挂死的阶段。每源开始前与 received 一起重置，上一源的进度不带到这一源。
+        unsigned long long last_progress_tick = GetTickCount64();
+        // 本源是否判成停滞，只用于区分失败原因（见循环内的赋值处），每源重置。
+        bool stalled = false;
+        if (ok)
+        {
+            DWORD length = 0;
+            DWORD length_size = sizeof(length);
+            if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                                    WINHTTP_HEADER_NAME_BY_INDEX, &length, &length_size, WINHTTP_NO_HEADER_INDEX))
+            {
+                expected = length;
+                identity.length = length;
+            }
+            // 安装成功时把最终响应的校验器记进 .remote，连同它来自哪个源：两个源对同一份
+            // 文件给的校验器不同，不记来源的话下一次跨源比对必然误报。
+            identity.etag = Utf8FromWide(QueryStringHeader(request, L"ETag").c_str());
+            identity.last_modified = Utf8FromWide(QueryStringHeader(request, L"Last-Modified").c_str());
+            identity.source = Utf8FromWide(source.host);
+        }
+
+        if (ok)
+        {
+            // 换源时进度归零：上一源的百分比对下一源的字节数没有意义，停在那里像卡死。
+            SetState(model_id, DownloadState::Downloading, 0, {});
+            out.open(PartFile(model_id), std::ios::binary | std::ios::trunc);
+            ok = static_cast<bool>(out);
+        }
+
+        while (ok)
+        {
+            DWORD available = 0;
+            // 这里的 0 是「请求已完成、不会再有数据」（比如长度未知的响应收完），按正常结束
+            // 交给下面的长度比对。对端停发但连接还活着时 WinHttpQueryDataAvailable 不返回 0，
+            // 它会一直阻塞，靠接收超时（见 WinHttpSetTimeouts）以失败返回，走下面的失败分支。
+            if (!WinHttpQueryDataAvailable(request, &available))
+            {
+                // 失败分两种：距上次字节增长已严格超过停滞阈值的是「停滞」（连接活着但不给
+                // 字节，通常是接收超时把它打断的），否则按读中断处理。这里只区分原因，两种都
+                // 换源。
+                stalled = IsStalled(last_progress_tick, GetTickCount64());
+                ok = false;
+                break;
+            }
+            if (available == 0)
+                break;
+            std::vector<char> buffer(available);
+            DWORD read = 0;
+            if (!WinHttpReadData(request, buffer.data(), available, &read) || read == 0)
+            {
+                ok = false;
+                break;
+            }
+            out.write(buffer.data(), static_cast<std::streamsize>(read));
+            if (!out)
+            {
+                ok = false;
+                break;
+            }
+            received += read;
+            last_progress_tick = GetTickCount64();
+            if (expected > 0)
+            {
+                const int progress = static_cast<int>((std::min)(100LL, received * 100LL / expected));
+                SetState(model_id, DownloadState::Downloading, progress, {});
+            }
+        }
         if (request != nullptr)
+            WinHttpCloseHandle(request);
+        if (connection != nullptr)
+            WinHttpCloseHandle(connection);
+        out.close();
+        // 传输完整性：收完的字节数必须等于响应声明的 Content-Length。声明缺失时跳过，
+        // 交给 InstallPart 的格式校验兜底。
+        std::string reason;
+        if (ok && expected > 0 && received != expected)
         {
-            DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
-            WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
-        }
-    }
-    bool ok = connection != nullptr && request != nullptr &&
-              WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-              WinHttpReceiveResponse(request, nullptr);
-    DWORD status = 0;
-    DWORD status_size = sizeof(status);
-    if (ok)
-    {
-        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                            WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size, WINHTTP_NO_HEADER_INDEX);
-        ok = status == HTTP_STATUS_OK;
-    }
-
-    // 总长取响应自己声明的 Content-Length，不再钉死字节数常量：上游重训会让字节数
-    // 变，而这个值顺带充当截断检测的基准（收完比对一次），比钉常量更贴近实际。
-    long long expected = 0;
-    RemoteIdentity identity;
-    if (ok)
-    {
-        DWORD length = 0;
-        DWORD length_size = sizeof(length);
-        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &length, &length_size, WINHTTP_NO_HEADER_INDEX))
-        {
-            expected = length;
-            identity.length = length;
-        }
-        // 安装成功时把最终响应的校验器记进 .remote，下一次探测只比这几百字节的头。
-        identity.etag = Utf8FromWide(QueryStringHeader(request, L"ETag").c_str());
-        identity.last_modified = Utf8FromWide(QueryStringHeader(request, L"Last-Modified").c_str());
-    }
-
-    std::ofstream out;
-    if (ok)
-    {
-        out.open(PartFile(model_id), std::ios::binary | std::ios::trunc);
-        ok = static_cast<bool>(out);
-    }
-
-    long long received = 0;
-    while (ok)
-    {
-        DWORD available = 0;
-        if (!WinHttpQueryDataAvailable(request, &available))
-        {
+            reason = "下载字节数与响应声明不符";
             ok = false;
-            break;
         }
-        if (available == 0)
+        if (ok)
             break;
-        std::vector<char> buffer(available);
-        DWORD read = 0;
-        if (!WinHttpReadData(request, buffer.data(), available, &read) || read == 0)
+        // 本源的失败原因只在它比已记录的原因更「有意义」时才覆盖：HTTP 非 200 > 长度不符 >
+        // 连接/读/停滞失败。后一源的连接超时不该把前面源那次的 404 或长度不符盖掉。
+        if (reason.empty())
         {
-            ok = false;
-            break;
+            if (status != 0 && status != HTTP_STATUS_OK)
+                reason = "下载响应异常";
+            else
+                reason = "下载中断";
         }
-        out.write(buffer.data(), static_cast<std::streamsize>(read));
-        if (!out)
-        {
-            ok = false;
-            break;
-        }
-        received += read;
-        if (expected > 0)
-        {
-            const int progress = static_cast<int>((std::min)(100LL, received * 100LL / expected));
-            SetState(model_id, DownloadState::Downloading, progress, {});
-        }
+        // 停滞没有单独的原因档：连接是活的、只是不再给字节，与读到一半断掉同类，本源先按
+        // 「下载中断」记，是否把文案换成「下载停滞中断」留到收尾时按最终原因判断。
+        if (reason == "下载中断" && stalled)
+            failure_stalled = true;
+        // 长度不符与连接/读/停滞同档（都不是 HTTP 层问题），只替换掉同样非 HTTP 的旧原因；
+        // 已经记下的 HTTP 异常优先级最高，不被后面的源覆盖。
+        const bool http_reason = reason == "下载响应异常";
+        const bool recorded_http = failure == "下载响应异常";
+        if (failure.empty() || !http_reason || recorded_http)
+            failure = reason;
+        // 本源失败（含停滞）：清掉半截 .part 再试下一源。不保留进度续传——另一个源的
+        // 校验器与字节范围都不保证一致，留半截反而是错位的风险。
+        std::error_code cleanup;
+        std::filesystem::remove(PartFile(model_id), cleanup);
     }
-    if (request != nullptr)
-        WinHttpCloseHandle(request);
-    if (connection != nullptr)
-        WinHttpCloseHandle(connection);
     WinHttpCloseHandle(session);
-    out.close();
 
     if (!ok)
     {
-        SetState(model_id, DownloadState::Error, 0,
-                 status != 0 && status != HTTP_STATUS_OK ? "下载响应异常" : "下载中断");
-        std::error_code cleanup;
-        std::filesystem::remove(PartFile(model_id), cleanup);
-        return;
-    }
-
-    // 传输完整性：收完的字节数必须等于响应声明的 Content-Length。声明缺失时跳过，
-    // 交给下面的格式校验兜底。
-    if (expected > 0 && received != expected)
-    {
-        SetState(model_id, DownloadState::Error, 0, "下载字节数与响应声明不符");
+        // 停滞说明连接活着却彻底不给字节，比一次普通读失败更能解释「为什么等了这么久」。
+        // 只有在最终原因就是「下载中断」时才用它——HTTP 异常 / 长度不符都是更具体的诊断；
+        // 这一档本身仍是「连接/读/停滞」，优先级不变。
+        std::string reported = failure.empty() ? "下载中断" : failure;
+        if (reported == "下载中断" && failure_stalled)
+            reported = "下载停滞中断";
+        SetState(model_id, DownloadState::Error, 0, std::move(reported));
         std::error_code cleanup;
         std::filesystem::remove(PartFile(model_id), cleanup);
         return;
@@ -647,6 +780,18 @@ std::string SourceUrl(const CatalogEntry &entry)
     return "https://" + Utf8FromWide(entry.host) + Utf8FromWide(entry.path);
 }
 
+std::vector<DownloadSource> DownloadSources(const CatalogEntry &entry, bool prefer_primary)
+{
+    const DownloadSource mirror{entry.mirror_host, entry.mirror_path};
+    const DownloadSource primary{entry.host, entry.path};
+    // 首次下载镜像优先：国内直连更快。更新下载反过来，理由见头文件。
+    if (!HasMirror(entry))
+        return {primary};
+    if (prefer_primary)
+        return {primary, mirror};
+    return {mirror, primary};
+}
+
 RemoteIdentity ReadRemoteIdentity(const std::filesystem::path &model_directory)
 {
     RemoteIdentity identity;
@@ -672,6 +817,10 @@ RemoteIdentity ReadRemoteIdentity(const std::filesystem::path &model_directory)
         {
             identity.last_modified = value;
         }
+        else if (key == "source")
+        {
+            identity.source = value;
+        }
         else if (key == "length")
         {
             char *end = nullptr;
@@ -690,7 +839,8 @@ bool WriteRemoteIdentity(const std::filesystem::path &model_directory, const Rem
 }
 
 UpdateVerdict CompareRemoteIdentity(const RemoteIdentity &installed, long long local_bytes,
-                                    const RemoteIdentity &remote)
+                                    const RemoteIdentity &remote, const std::string &installed_source,
+                                    const std::string &remote_source)
 {
     // 远端一个信号都没有：本次探测失败或头被中间层剥掉，不改结论、不误报更新。
     if (!HasIdentity(remote))
@@ -703,6 +853,15 @@ UpdateVerdict CompareRemoteIdentity(const RemoteIdentity &installed, long long l
             return UpdateVerdict::Unknown;
         return remote.length == local_bytes ? UpdateVerdict::Current : UpdateVerdict::Update;
     }
+    // 两个源对同一份文件给出完全不同的校验器（GitHub 的 ETag 是 CDN 的标记，cnb 的是自己
+    // 算的摘要），跨源比校验器必然误报更新，所以换源时只认长度。空 source 是旧版本写的
+    // 记录，按主源理解、照常比校验器：它本就是为了让老记录不必等一次重下才生效。
+    if (!installed_source.empty() && !remote_source.empty() && installed_source != remote_source)
+    {
+        if (installed.length > 0 && remote.length > 0)
+            return installed.length == remote.length ? UpdateVerdict::Current : UpdateVerdict::Update;
+        return UpdateVerdict::Unknown;
+    }
     if (!installed.etag.empty() && !remote.etag.empty() && installed.etag != remote.etag)
         return UpdateVerdict::Update;
     if (!installed.last_modified.empty() && !remote.last_modified.empty() &&
@@ -711,6 +870,49 @@ UpdateVerdict CompareRemoteIdentity(const RemoteIdentity &installed, long long l
     if (installed.length > 0 && remote.length > 0 && installed.length != remote.length)
         return UpdateVerdict::Update;
     return UpdateVerdict::Current;
+}
+
+bool ShouldBackfillIdentity(const RemoteIdentity &installed, const std::string &installed_source,
+                            const RemoteIdentity &remote, const std::string &remote_source)
+{
+    // 远端一个信号都没有时本次本就判不出 Current（CompareRemoteIdentity 回 Unknown），这里
+    // 再挡一次：宁可不写，也不要拿空身份覆盖掉一份可能还有用的记录。
+    if (!HasIdentity(remote))
+        return false;
+    // 旧记录没有 source：本次探测的源就是它的来源，按同源处理（与 CompareRemoteIdentity 的
+    // 口径一致），否则旧记录会被当成永远「换源」而每轮重写。
+    const std::string probe_source = remote_source.empty() ? installed_source : remote_source;
+    return probe_source != installed_source || installed.etag.empty() || remote.etag.empty();
+}
+
+RemoteIdentity MergeIdentityForBackfill(const RemoteIdentity &installed, const std::string &installed_source,
+                                        const RemoteIdentity &remote, const std::string &remote_source)
+{
+    RemoteIdentity merged = installed;
+    merged.length = remote.length > 0 ? remote.length : installed.length;
+    // 旧记录没有 source 时它来自主源，与探测源比较时要按同源算，才对得上
+    // CompareRemoteIdentity 与 ShouldBackfillIdentity 的口径。
+    const std::string previous_source = installed_source.empty() ? remote_source : installed_source;
+    const bool same_source = previous_source.empty() || remote_source.empty() || previous_source == remote_source;
+    // 跨源时探测源给的是另一套校验器，写进去会让「记录来源」与「校验器出处」错位：下次探测
+    // 主源拿回真 etag，反而被判成「etag 变了」。只换 source，校验器原样留着等主源回来再说。
+    if (same_source)
+    {
+        if (!remote.etag.empty())
+            merged.etag = remote.etag;
+        if (!remote.last_modified.empty())
+            merged.last_modified = remote.last_modified;
+    }
+    if (!remote_source.empty())
+        merged.source = remote_source;
+    return merged;
+}
+
+bool IsStalled(unsigned long long last_progress_tick, unsigned long long now_tick)
+{
+    // 只看「距上次字节增长过去了多久」：调用方只在字节数增长时刷新 last_progress_tick，
+    // 所以这个差值就是空闲时长。必须严格超过阈值——恰好等于属于边界，按未停滞处理。
+    return now_tick > last_progress_tick && now_tick - last_progress_tick > kStallTimeoutMs;
 }
 
 std::map<std::string, ModelStatus> GetModelStatuses()
@@ -802,14 +1004,32 @@ void CheckForUpdates()
         }
 
         const RemoteIdentity installed = ReadRemoteIdentity(ModelDirectory(model_id));
-        RemoteIdentity remote;
-        if (!ProbeRemoteIdentity(entry, remote))
-            continue; // 离线 / 代理不可用 / 4xx：静默保留上一结论
+        // 旧记录没有 source：按主源理解，记录里没有别的东西能说明它来自哪。
+        const std::string installed_source = installed.source.empty() ? Utf8FromWide(entry.host) : installed.source;
 
         std::error_code size_error;
         const auto file_bytes = std::filesystem::file_size(ModelFile(model_id), size_error);
         const long long local_bytes = size_error ? 0 : static_cast<long long>(file_bytes);
-        const UpdateVerdict verdict = CompareRemoteIdentity(installed, local_bytes, remote);
+
+        // 先探主源；连不上 GitHub 的国内用户正是加镜像要服务的那批人，主源失败时用镜像
+        // 的 Range 兜底，否则 track_updates 对他们完全失效。
+        RemoteIdentity remote;
+        std::string remote_source;
+        UpdateVerdict verdict = UpdateVerdict::Unknown;
+        if (ProbeRemoteIdentity(entry.host, entry.path, L"HEAD", nullptr, remote_source, remote))
+        {
+            verdict = CompareRemoteIdentity(installed, local_bytes, remote, installed_source, remote_source);
+        }
+        // 主源失败、或主源给的信号判不了（例如跨源只剩一侧长度）时试镜像。记录来自镜像而
+        // 主源突然不给校验器时，不退到镜像就只会得到「未知」，镜像兜底等于没做。
+        // 镜像用的是自己的校验器口径，所以比对用镜像自己的 source，不与主源记录混比。
+        if (verdict == UpdateVerdict::Unknown && HasMirror(entry) &&
+            ProbeRemoteIdentity(entry.mirror_host, entry.mirror_path, L"GET", L"Range: bytes=0-0", remote_source,
+                                remote))
+        {
+            verdict = CompareRemoteIdentity(installed, local_bytes, remote, installed_source, remote_source);
+        }
+        // 两条路都没给出结论：离线 / 代理不可用 / 4xx / 无可用身份，静默保留上一结论。
         if (verdict == UpdateVerdict::Unknown)
             continue;
         // 探测要几百毫秒到几秒，期间用户可能已经删掉这个模型：删除意愿优先。这里再看一眼，
@@ -820,14 +1040,26 @@ void CheckForUpdates()
         if (std::filesystem::exists(ModelDirectory(model_id) / ".trash", fs_error) && !fs_error)
             continue;
 
-        const bool write_legacy_record = !HasIdentity(installed) && verdict == UpdateVerdict::Current;
+        // 补记录：判「当前」时，只要记录里那组校验器不足以支持这个结论，就写回本次探测的
+        // 身份（含 source）。三种情况由 ShouldBackfillIdentity 判定，各漏掉一个就会永远
+        // 重复探测或让老记录空着。同源且两边都有 ETag 时不写——ETag 已相同，主源长期不给
+        // ETag 的机器不该每次打开设置都重写 .remote。判 Update 时不写：下一次更新下载成功
+        // 会记下新字节的身份。写入用 MergeIdentityForBackfill 而不是整体覆盖探测结果：
+        // 镜像兜底判出的 Current 是弱口径，跨源时只校准 source、留住旧校验器，弱结论才不会被
+        // 固化成「同源纯长度」，主源恢复后仍按 ETag 比。
+        const bool backfill = verdict == UpdateVerdict::Current &&
+                              ShouldBackfillIdentity(installed, installed_source, remote, remote_source);
         // 网络 I/O 已结束，改内存结论很快；补记录放到锁外，避免磁盘操作拖住状态查询。
         {
             std::lock_guard lock(g_mutex);
             g_updates[model_id] = verdict == UpdateVerdict::Update;
         }
-        if (write_legacy_record)
-            WriteRemoteIdentity(ModelDirectory(model_id), remote);
+        // 这里的补记录发生在任何下载开始之前：StartDownload 是用户后续动作，下载成功时
+        // InstallPart 会用实际成功源的身份整体覆盖 .remote，失败时 .remote 不动。
+        // 因此不存在「新身份配旧字节」——挪动这段顺序（例如挪到下载之后再写）要先重判这一点。
+        if (backfill)
+            WriteRemoteIdentity(ModelDirectory(model_id),
+                                MergeIdentityForBackfill(installed, installed_source, remote, remote_source));
     }
 }
 

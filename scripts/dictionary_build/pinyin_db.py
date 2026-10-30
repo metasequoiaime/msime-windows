@@ -1,7 +1,8 @@
-"""msime.db：全拼表、地名补充与自定义词条、读音纠错、86 五笔、空的快捷短语表（出厂不带内置快捷短语），以及日文直出候选表 japanese_lexicon。
+"""msime.db：全拼表、自定义词条、读音纠错、86 五笔、空的快捷短语表（出厂不带内置快捷短语），以及日文直出候选表 japanese_lexicon。
 
-对应 Rust 构建器 msime.rs 的 quanpin / places-supplement / custom-words / reading-corrections / wubi / quick-phrases
-阶段。Release 把五笔拆进了 msime-wubi.db，Windows 端仍然一个库：这里全建在 msime.db 里。98 五笔 Windows 端不读，不建。
+对应 Rust 构建器 msime.rs 的 quanpin / custom-words / reading-corrections / wubi / quick-phrases 阶段，但全拼表
+不再读 sources/pinyin/ 下的 rime-ice 系列与地名补充，只读 sources/pinyin/wanxiang/ 的万象词库。Release 把五笔
+拆进了 msime-wubi.db，Windows 端仍然一个库：这里全建在 msime.db 里。98 五笔 Windows 端不读，不建。
 """
 
 from __future__ import annotations
@@ -60,15 +61,31 @@ def is_quanpin(key: str) -> bool:
 
 # ---- 全拼表 ----
 
-def build_quanpin(connection: sqlite3.Connection, single_chars: Path, phrases: list[Path]) -> int:
-    """单字表在前，词表按给定顺序在后；同一 (拼音, 词) 只留一行：权重高的，平手留先读到的。"""
+WANXIANG = "sources/pinyin/wanxiang"
+# 没有权重列（fangyan、mixed 整份都没有）或权重列不是整数的词条取这个权重。
+WANXIANG_DEFAULT_WEIGHT = 1
+
+
+def wanxiang_files(directory: Path) -> list[Path]:
+    paths = sorted(directory.glob("*.dict.yaml"))
+    if not paths:
+        raise ValueError(f"{directory} 下没有 *.dict.yaml")
+    return paths
+
+
+def build_quanpin(connection: sqlite3.Connection, paths: list[Path]) -> str:
+    """万象词库按给定顺序读入；同一 (拼音, 词) 只留一行：权重高的，平手留先读到的。"""
     with connection:
         for table in QUANPIN_TABLES:
             connection.execute(f"\ndrop table if exists {table};\n")
             connection.execute(CREATE_QUANPIN_TABLE.format(table))
-        count = 0
-        for path in [single_chars, *phrases]:
-            count += _insert_quanpin_file(connection, path)
+        count = defaulted = skipped = 0
+        for path in paths:
+            rows, file_defaulted, file_skipped = read_wanxiang(path)
+            _insert_quanpin_rows(connection, rows)
+            count += len(rows)
+            defaulted += file_defaulted
+            skipped += file_skipped
         for table in QUANPIN_TABLES:
             suffix = table.removeprefix("tbl_")
             connection.execute(f"\ncreate index idx_key_{suffix} on {table}(key);\n")
@@ -77,33 +94,81 @@ def build_quanpin(connection: sqlite3.Connection, single_chars: Path, phrases: l
                 f"\ndelete from {table} where exists (select 1 from {table} as kept where kept.key = {table}.key "
                 f"and kept.value = {table}.value and (kept.weight > {table}.weight or "
                 f"(kept.weight = {table}.weight and kept.rowid < {table}.rowid)));\n").rowcount
-    return count
+    return (f"{count} rows from {len(paths)} files, {defaulted} without a weight set to {WANXIANG_DEFAULT_WEIGHT}, "
+            f"{skipped} readings that are not quanpin left out")
 
 
-def _insert_quanpin_file(connection: sqlite3.Connection, path: Path) -> int:
-    """`词<TAB>拼音<TAB>权重`。只按 \\n 切行（Python 时代按二进制读），# 开头的行在 strip 之前判断。"""
-    rows: dict[str, list[tuple[str, str, str, str]]] = {}
-    count = 0
-    for number, line in enumerate(textutil.newline_lines(textutil.read(path)), start=1):
-        if line.startswith("#"):
-            continue
-        fields = line.strip().split("\t")
-        if len(fields) < 3:
-            raise ValueError(f"{path}:{number}: expected value, pinyin and weight")
-        value, key, weight = fields[0], fields[1], fields[2]
-        # 跳过 ê 这类不以普通字母开头的读音。
-        if not (key[:1].isascii() and key[:1].islower()):
-            continue
-        table = pinyin_table(key)
-        if table is None:
-            raise ValueError(f"{path}:{number}: {key!r} maps to no quanpin table")
-        # 权重按文本绑定，交给列的整数亲和性转换，和 Python 时代一样。
-        rows.setdefault(table, []).append((key, jianpin(key), value, weight))
-        count += 1
-    for table, table_rows in rows.items():
+def _insert_quanpin_rows(connection: sqlite3.Connection, rows: list[tuple[str, str, int]]) -> None:
+    by_table: dict[str, list[tuple[str, str, str, int]]] = {}
+    for value, key, weight in rows:
+        by_table.setdefault(pinyin_table(key), []).append((key, jianpin(key), value, weight))
+    for table, table_rows in by_table.items():
         connection.executemany(f"\ninsert into {table} (\n    key,\n    jp,\n    value,\n    weight\n) values (?, ?, ?, ?);\n",
                                table_rows)
-    return count
+
+
+# 万象词库把嗯、呣记成 n、ng、m，靠方案的拼写运算（wanxiang_algebra.yaml 的 xform/^ng(\d)/eng$1/、
+# xform/^n(\d)/en$1/、xform/^m(\d)/me$1/）改写成 eng、en、me，双拼才打得出来。引擎没有拼写运算，入库时照做。
+_ZERO_INITIAL = {"n": "en", "ng": "eng", "m": "me"}
+
+
+def _toneless():
+    try:
+        from pypinyin.contrib.tone_convert import to_normal
+    except ImportError as error:
+        raise SystemExit("读万象词库需要 pypinyin：python -m pip install pypinyin") from error
+    cache: dict[str, str] = {}
+
+    def convert(syllable: str) -> str:
+        # 音节种类有限，按音节缓存；ü 写成 v（lǜ -> lv，lüè -> lve），和原先的全拼表一致。
+        plain = cache.get(syllable)
+        if plain is None:
+            plain = cache[syllable] = to_normal(syllable)
+        return plain
+
+    return convert
+
+
+def read_wanxiang(path: Path) -> tuple[list[tuple[str, str, int]], int, int]:
+    """Rime 的 `.dict.yaml`：`...` 之后是 `词<TAB>带调拼音（空格分隔）[<TAB>权重[<TAB>...]]`。
+
+    拼音用 pypinyin 去掉声调，音节改用 `'` 连接。返回 ([(词, 全拼, 权重)], 补了默认权重的行数, 跳过的行数)；
+    跳过的是没有读音列、或去调后不是全拼的读音（ê、mixed 里的 `A'ban`、`2B` 这类）。
+    """
+    convert = _toneless()
+    rows: list[tuple[str, str, int]] = []
+    defaulted = skipped = 0
+    in_body = False
+    for line in textutil.universal_lines(textutil.without_bom(textutil.read(path))):
+        if not in_body:
+            in_body = line.strip() == "..."
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        fields = line.split("\t")
+        value = fields[0].strip()
+        reading = fields[1].strip() if len(fields) > 1 else ""
+        if not value or not reading:
+            skipped += 1
+            continue
+        syllables = reading.replace("'", " ").split()
+        # to_normal 把数字当声调去掉（mixed 的 `7z` 会变成 `z`），带数字的读音先挡掉。
+        plain = [convert(syllable) for syllable in syllables] if all(s.isalpha() for s in syllables) else [""]
+        key = "'".join(_ZERO_INITIAL.get(syllable, syllable) for syllable in plain)
+        if not is_quanpin(key):
+            skipped += 1
+            continue
+        weight = textutil.parse_int(fields[2].strip()) if len(fields) > 2 else None
+        if weight is None:
+            weight = WANXIANG_DEFAULT_WEIGHT
+            defaulted += 1
+        rows.append((value, key, weight))
+        # 单字另留原读音，全拼打 n、ng 仍出嗯。
+        if len(plain) == 1 and plain[0] != key and is_quanpin(plain[0]):
+            rows.append((value, plain[0], weight))
+    if not in_body:
+        raise ValueError(f"{path}: 没有 `...`，不是 Rime 词库")
+    return rows, defaulted, skipped
 
 
 # ---- 地名补充与自定义词条 ----
@@ -193,32 +258,23 @@ def parse_reading_corrections(text: str, name: str) -> list[tuple[str, str, str]
     return entries
 
 
-def apply_reading_corrections(connection: sqlite3.Connection, entries: list[tuple[str, str, str]], name: str) -> int:
-    """删掉错误读音的行。某条删不到任何行（输入变了，条目过时）或删完后词在正确读音下没有行，整个阶段失败、不改表。"""
-    removed = 0
-    stale, missing = [], []
-    # 抛出异常时 with 回滚，失败的阶段不改表。
+def apply_reading_corrections(connection: sqlite3.Connection, entries: list[tuple[str, str, str]]) -> tuple[int, int, int]:
+    """删掉错误读音的行。纠错表是对着 rime-ice 写的，换成万象后多数条目删不到行，跳过即可；
+    词在正确读音下没有行时也不删，免得词打不出来。返回 (删掉的行, 删不到行的条目, 缺正确读音而保留的条目)。"""
+    removed = stale = kept = 0
     with connection:
-        for value, wrong, _ in entries:
-            deleted = connection.execute(f"delete from {pinyin_table(wrong)} where key = ? and value = ?",
-                                         (wrong, value)).rowcount
-            if deleted == 0:
-                stale.append(f"{value} {wrong}")
-            removed += deleted
-        for value, _, correct in entries:
-            present = connection.execute(
-                f"select exists(select 1 from {pinyin_table(correct)} where key = ? and value = ?)",
-                (correct, value)).fetchone()[0]
-            if not present:
-                missing.append(f"{value} {correct}")
-        if stale or missing:
-            problems = []
-            if stale:
-                problems.append(f"no row to remove for {', '.join(stale)} (drop the entry if its input no longer has the wrong reading)")
-            if missing:
-                problems.append(f"no row at the correct reading for {', '.join(missing)} (add it to custom/words.txt)")
-            raise ValueError(f"{name}: {'; '.join(problems)}")
-    return removed
+        for value, wrong, correct in entries:
+            if not connection.execute(f"select exists(select 1 from {pinyin_table(wrong)} where key = ? and value = ?)",
+                                      (wrong, value)).fetchone()[0]:
+                stale += 1
+                continue
+            if not connection.execute(f"select exists(select 1 from {pinyin_table(correct)} where key = ? and value = ?)",
+                                      (correct, value)).fetchone()[0]:
+                kept += 1
+                continue
+            removed += connection.execute(f"delete from {pinyin_table(wrong)} where key = ? and value = ?",
+                                          (wrong, value)).rowcount
+    return removed, stale, kept
 
 
 # ---- 编码表：86 五笔与快捷短语 ----

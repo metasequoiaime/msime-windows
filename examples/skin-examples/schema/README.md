@@ -65,7 +65,7 @@
 
 ### `[candidate_window.border_image]`（v2 可选）
 
-九宫格面板图，语义同 CSS `border-image`（`border-image-repeat: stretch`）：四角按边宽缩放，四边沿长度方向拉伸，中心双向拉伸。
+九宫格面板图，语义同 CSS `border-image`：四角按边宽缩放，四边与中心默认拉伸，写 `repeat` 时改为按源图原尺寸平铺。
 
 - `source`：图片路径，`.png`、`.apng`、`.gif` 或 `.webp`
 - `light_source`：可选，浅色主题换用的面板图，格式要求同 `source`。切片、边宽和 `fill` 与 `source` 共用，所以两张图要按同一套几何画；不写时深浅主题都用 `source`
@@ -73,14 +73,44 @@
 - `stretch_dip`：可选，同为源图像素，给出时代替 `slice_dip`。**面板图里画死的装饰必须落在切片之内（可拉伸区之外）**，否则会被拉长；例如帆船画在右侧，就把右侧切片放到船身左侧
 - `width_dip`：可选，四边在屏幕上画多宽，**按 DIP 计**（同 CSS `border-image-width`），写法同上。不写时取切片的数值当 DIP。给 2 倍图时写成切片的一半，200% 缩放下逐像素清晰、100% 下是缩小一半的同一张图。两条对边加起来比面板还宽时四边按同一比例缩小
 - `fill`：可选，布尔值，是否画中心块，默认 `true`；`false` 时中心留空、透出桌面
+- `repeat`：可选，横向/纵向怎么铺，同 CSS `border-image-repeat`，`stretch`（默认）或 `repeat`。写 1 个值两轴相同，写 2 个值是「横向 纵向」。`repeat` 按源图原尺寸平铺，适合花纹边框（例如竖向候选窗两侧重复的铆钉）；四角永远不铺
 
 面板图画在卡片的底色之上、文字之下，不按圆角裁剪（同 CSS）。动图面板也会播放，但面板一般建议用静态图，把动画留给挂件。
+
+### `[candidate_window.border_image.vertical]`（v2 可选）
+
+竖排（`layout == "vertical"`）换用的九宫格面板图。只写与横排不同的键，其余沿用 `[candidate_window.border_image]` 的值。横排和竖排的图尺寸不同时，`slice_dip` 一般要各写一份。`light_source` 不继承——横排那张浅色图是按横排几何画的，竖排要浅色变体就自己写一张。
+
+```toml
+[candidate_window.border_image]
+source = "assets/horizontal.png"
+slice_dip = [8, 45, 6, 66]
+
+[candidate_window.border_image.vertical]
+source = "assets/vertical.png"
+slice_dip = [26, 10, 26, 10]
+repeat = ["stretch", "repeat"]   # 横向拉伸，纵向平铺
+```
 
 ### `[candidate_window.content_insets_dip]`（v2 可选）
 
 候选框内容与文字的安全内边距，**从面板外缘量起**，用来避开贴图四周自带的花纹或立绘。某一边小于九宫格该边的边宽（`width_dip`）时按边宽算，文字不会压在边框上（同 CSS 的 `border + padding`）。不写时是边宽再加 5 DIP。
 
 - `top` / `right` / `bottom` / `left`：四边内边距，`top` / `bottom` `0`–`200`，`left` / `right` `0`–`500`
+
+竖排面板比横排窄很多时，右、左边距往往没法共用，可以另写一份 `[candidate_window.content_insets_dip.vertical]`：只写要覆盖的边，其余沿用上面的值。
+
+```toml
+[candidate_window.content_insets_dip]
+left = 66
+top = 10
+right = 150
+bottom = 12
+
+[candidate_window.content_insets_dip.vertical]
+left = 10
+right = 12
+```
 
 ### `[candidate_window]` 的 `line_gap_dip`（v2 可选）
 

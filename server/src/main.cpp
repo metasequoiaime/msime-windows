@@ -8,6 +8,7 @@
 #include <utility>
 #include "ipc/ipc.h"
 #include "config/ime_config.h"
+#include "conversion/chinese_converter.h"
 #include "clipboard/clipboard_history.h"
 #include <windows.h>
 #include <fmt/xchar.h>
@@ -24,9 +25,11 @@
 #include "global/globals.h"
 #include "utils/common_utils.h"
 #include "utils/hanzi_pinyin.h"
+#include "utils/process_priority.h"
 #include "utils/single_instance.h"
 #include "session/session_factory.h"
 #include "settings/collocation_model.h"
+#include "settings/update_check.h"
 #include "statistics/stats_pipe.h"
 #include "voice-input/voice_input_service.h"
 
@@ -118,6 +121,19 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     // Initialize for logging
     InitializeSpdLog();
     // #endif
+
+    // 登录任务的默认 Priority 是 7（Below normal），watchdog 和它拉起的 Server 会继承这个
+    // 优先级；TSF、手工启动和以后的拉起路径也可能带进来。启动时统一复位，失败只记 warning，
+    // 不阻止 Server 启动。SetPriorityClass 不会恢复内存优先级，两项必须分开设置。
+    const ProcessPriority::PriorityRestoreResult priority_result = ProcessPriority::RestoreInteractiveProcessPriority();
+    if (!priority_result.cpu_ok)
+    {
+        spdlog::warn("Failed to restore NORMAL_PRIORITY_CLASS (Win32 error {})", priority_result.cpu_error);
+    }
+    if (!priority_result.memory_ok)
+    {
+        spdlog::warn("Failed to restore MEMORY_PRIORITY_NORMAL (Win32 error {})", priority_result.memory_error);
+    }
 
     // Initialize config
     InitImeConfig();
@@ -215,9 +231,19 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
         });
     }
 
+    // 繁体模式的候选要按 s2t、t2tw、t2hk 与单字字表展开写法，几份字典第一次载入同样不该落在按键上。
+    // 运行中切到繁体时也走同一条后台线程，进程内只起一次。
+    if (GetConfiguredCharacterSet() == "traditional")
+        ChineseConverter::PreloadInBackground();
+
     int ret = CreateCandidateWindow(hInstance);
     if (radical_warmup.joinable())
         radical_warmup.join();
+    ChineseConverter::JoinBackgroundPreload();
+
+    // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
+    // 这正是把下载放在 Server 而不是设置进程的原因。
+    update_check::StartPolling();
 
     FanyNamedPipe::RegisterStatusSnapshotWindow(nullptr);
 

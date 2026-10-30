@@ -1,0 +1,60 @@
+// Container for the checks that do not need Windows.
+//
+// Scope: this container runs everything in CONTRIBUTING.md's "提交前" section except the parts that
+// must talk to Windows. It deliberately does not build the TSF DLL, the Server or msimeui. Those
+// include windows.h across 60-odd files and link against user32/gdi32/d2d1, so a Linux toolchain
+// cannot compile them, and GitHub Codespaces offers no Windows container. Compile verification stays
+// on the Dev build workflow (dev-build.yml), which runs on a windows-2025 runner and returns a
+// signed installer. See CONTRIBUTING.md.
+//
+// What this container is for: reading the engine and the contracts as one tree, running the
+// product-level Python suites, the developer-path guard, and, given a PR number, the review gate in
+// .devcontainer/check-pr.sh. All inside the sandbox, with no local toolchain and no Windows
+// install.
+{
+  "name": "MSIME-Windows 检查容器",
+  // The universal image ships cmake, gcc/clang, python3, git with submodule support and ripgrep. It
+  // is Ubuntu noble, the same base as the quality.yml runner, so a green run here means what a green
+  // run there means. The tag is the version this repository was fixed to; a major-version drift
+  // would change the interpreter under the tests without anyone deciding to.
+  "image": "mcr.microsoft.com/devcontainers/universal:6.1.10-noble",
+  // gh is not in the image. Pinned rather than "latest": check-pr.sh calls the Releases API and
+  // reads PR metadata, and a silent major-version drift is a bad way to discover a broken gate.
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "version": "2.103.2"
+    }
+  },
+  "hostRequirements": {
+    "cpus": 4
+  },
+  // Submodules are vendor/opencc and vendor/cpp-pinyin. Nothing here builds them, but a checkout
+  // that is missing them looks broken to anyone reading `git submodule status`. The command must
+  // end in a success exit code or the container creation reports a failure, so a fetch problem on a
+  // fresh machine is printed rather than thrown -- nothing in this container needs the submodules.
+  "postCreateCommand": "git submodule update --init --recursive || echo 'WARN: submodules not initialized; this container does not build vendor/, see .devcontainer/devcontainer.json'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.powershell",
+        "editorconfig.editorconfig",
+        "timonwong.shellcheck",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        // .clangd files are generated per machine by each component's prepare_env.py and hold that
+        // machine's absolute paths. With no Windows headers in this container, IntelliSense would
+        // only produce phantom errors, so it is off. Read code here and compile in CI.
+        "C_Cpp.intelliSenseEngine": "disabled",
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true
+      }
+    }
+  },
+  "containerEnv": {
+    // Nothing in this container is allowed to believe it is a Windows checkout. Any script that
+    // branches on the host without a Windows fallback should fail loudly rather than guess.
+    "MSIME_DEVCONTAINER_OS": "linux"
+  }
+}

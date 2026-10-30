@@ -832,6 +832,24 @@ TEST_CASE(nine_slice_follows_css_border_image)
     REQUIRE(dc != nullptr);
     ID2D1Bitmap *bitmap = resources.GetImageFrame(file.path);
     REQUIRE(bitmap != nullptr);
+    // Same image with a white line inside the middle of the left and top strips: a tiled axis
+    // repeats that line every 3 DIPs, a stretched axis shows it once.
+    std::vector<Rgba> marked = pixels;
+    for (uint32_t x = 0; x < 3; ++x)
+    {
+        marked[4 * 9 + x] = kWhite;
+    }
+    for (uint32_t y = 0; y < 3; ++y)
+    {
+        marked[y * 9 + 4] = kWhite;
+    }
+    std::vector<uint8_t> markedPng = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    PutChunk(markedPng, "IHDR", Ihdr(9, 9));
+    PutChunk(markedPng, "IDAT", RgbaScanlines(9, 9, marked));
+    PutChunk(markedPng, "IEND", {});
+    const TempFile markedFile(markedPng, L".png");
+    ID2D1Bitmap *markedBitmap = resources.GetImageFrame(markedFile.path);
+    REQUIRE(markedBitmap != nullptr);
 
     for (const float dpi : {96.0f, 120.0f, 144.0f, 192.0f})
     {
@@ -905,5 +923,45 @@ TEST_CASE(nine_slice_follows_css_border_image)
         REQUIRE(Near(at(out, 6.0f, 6.0f), kRed, 2));
         REQUIRE(Near(at(out, 13.5f, 6.0f), kRed, 2));
         REQUIRE(Near(at(out, 10.0f, 25.0f), kGreen, 2));
+
+        // Counts the separate white bands along one axis: a tiled 3-DIP strip repeats the marker
+        // row three or more times, a stretched strip shows it once.
+        const auto whiteBands = [&](const std::vector<uint8_t> &image, bool vertical) {
+            int bands = 0;
+            bool inside = false;
+            for (float position = 13.0f; position < 27.0f; position += 0.25f)
+            {
+                const Rgba pixel = vertical ? at(image, 7.0f, position) : at(image, position, 7.0f);
+                const bool white = pixel.r > 90 && pixel.g > 200 && pixel.b > 90;
+                if (white && !inside)
+                {
+                    ++bands;
+                }
+                inside = white;
+            }
+            return bands;
+        };
+
+        // repeatY tiles the left, middle and right strips vertically at the source size.
+        bitmap = markedBitmap;
+        msimeui::NineSlice tiledY;
+        tiledY.slice = {3.0f, 3.0f, 3.0f, 3.0f};
+        tiledY.width = {8.0f, 8.0f, 8.0f, 8.0f};
+        tiledY.repeatY = true;
+        out = render(tiledY, {5.0f, 5.0f, 40.0f, 30.0f});
+        REQUIRE(whiteBands(out, true) >= 3);
+        // The same strip stretched shows the marker once.
+        REQUIRE(whiteBands(render(nineSlice, {5.0f, 5.0f, 40.0f, 30.0f}), true) == 1);
+
+        // repeatX tiles the top, middle and bottom strips horizontally; corners never tile.
+        msimeui::NineSlice tiledX;
+        tiledX.slice = {3.0f, 3.0f, 3.0f, 3.0f};
+        tiledX.width = {8.0f, 8.0f, 8.0f, 8.0f};
+        tiledX.repeatX = true;
+        out = render(tiledX, {5.0f, 5.0f, 40.0f, 30.0f});
+        REQUIRE(whiteBands(out, false) >= 3);
+        REQUIRE(whiteBands(render(nineSlice, {5.0f, 5.0f, 40.0f, 30.0f}), false) == 1);
+        REQUIRE(Near(at(out, 9.0f, 9.0f), kRed, 2));
+        bitmap = resources.GetImageFrame(file.path);
     }
 }

@@ -10,6 +10,27 @@ using std::min;
 constexpr UINT CONNECT_NAMEDPIPE_RETRY_INTERVAL_MS = 50;
 constexpr UINT CONNECT_NAMEDPIPE_MAX_RETRY_INTERVAL_MS = 2000;
 constexpr UINT TIMER_CONNECT_ALL_NAMEDPIPE = 1;
+constexpr UINT WM_IpcReconnect = 2;
+
+#define SUCCEEDED(result) ((result) >= 0)
+
+struct ITfDocumentMgr
+{
+    void Release()
+    {
+    }
+};
+
+struct FakeThreadMgr
+{
+    bool hasDocument = true;
+    ITfDocumentMgr document;
+    int GetFocus(ITfDocumentMgr **focused)
+    {
+        *focused = hasDocument ? &document : nullptr;
+        return 0;
+    }
+};
 
 namespace Global
 {
@@ -22,6 +43,31 @@ bool transportReady = false;
 int handshakeAttempts = 0;
 int stoppedTimers = 0;
 int armedTimers = 0;
+bool threadFocused = true;
+bool ownsFocusState = true;
+int reconnectMessages = 0;
+int activationRequests = 0;
+
+bool IsNamedpipeThreadFocused()
+{
+    return threadFocused;
+}
+
+bool IsNamedpipeFocusStateOwner(const void *)
+{
+    return ownsFocusState;
+}
+
+void RequireNamedpipeFocusActivation()
+{
+    ++activationRequests;
+}
+
+void PostMessage(HWND, UINT message, int, int)
+{
+    if (message == WM_IpcReconnect)
+        ++reconnectMessages;
+}
 
 bool EnsureNamedpipeFocusSessionActivated()
 {
@@ -44,6 +90,7 @@ class CMetasequoiaIME
 {
   public:
     bool _serverUnavailableFallbackActive = true;
+    bool _focusLostToWindowsTextInputHost = false;
     bool composing = false;
     bool releaseReset = false;
     std::atomic<uint64_t> _expectedWorkerFocusToken{42};
@@ -57,6 +104,19 @@ class CMetasequoiaIME
     int drains = 0;
     bool fallbackAtSnapshot = true;
     bool fallbackAtDrain = true;
+    FakeThreadMgr threadMgr;
+
+    FakeThreadMgr *_GetThreadMgr()
+    {
+        return &threadMgr;
+    }
+
+    void _RefreshLanguageBarThemeIcons()
+    {
+    }
+    void _ClearSmartPunctuationAction()
+    {
+    }
 
     bool _IsComposing()
     {
@@ -171,6 +231,54 @@ int main()
     CHECK(unfocused._serverUnavailableFallbackActive);
     CHECK(unfocused.snapshots == 0 && unfocused.drains == 0);
     CHECK(handshakeAttempts == attemptsBeforeFocusLoss);
+
+    // Document focus can remain set on a background thread. Neither a queued
+    // reconnect message nor a retry timer may activate that thread's session.
+    Global::g_connected = true;
+    threadFocused = false;
+    CMetasequoiaIME background;
+    const int timersBeforeBackground = armedTimers;
+    RunReconnectMessage(background);
+    RunReconnectTimer(background);
+    CHECK(handshakeAttempts == attemptsBeforeFocusLoss);
+    CHECK(armedTimers == timersBeforeBackground);
+    CHECK(background.snapshots == 0 && background.drains == 0);
+
+    // A delayed thread-focus message cannot claim input focus after it moved on.
+    Global::g_connected = false;
+    RunThreadFocusMessage(background);
+    CHECK(!Global::g_connected && reconnectMessages == 0 && activationRequests == 0);
+
+    // A background document's first real thread-focus return need not produce
+    // another document notification. It resumes activation without a keypress.
+    threadFocused = true;
+    ownsFocusState = false;
+    RunThreadFocusMessage(background);
+    CHECK(!Global::g_connected && reconnectMessages == 0 && activationRequests == 0);
+    ownsFocusState = true;
+    RunThreadFocusMessage(background);
+    CHECK(Global::g_connected && reconnectMessages == 1 && activationRequests == 1);
+    RunReconnectMessage(background);
+    CHECK(handshakeAttempts == attemptsBeforeFocusLoss + 1);
+    CHECK(!background._serverUnavailableFallbackActive);
+
+    // Returning with an existing session resumes retries without rotating its
+    // activation token. A non-editable/no-document return starts no session.
+    RunThreadFocusMessage(background);
+    CHECK(reconnectMessages == 2 && activationRequests == 1);
+    Global::g_connected = false;
+    background.threadMgr.hasDocument = false;
+    RunThreadFocusMessage(background);
+    CHECK(!Global::g_connected && reconnectMessages == 2 && activationRequests == 1);
+
+    // TextInputHost owns a separate client. A return with no repeated document
+    // notification still needs a fresh activation even if our pipes are live.
+    Global::g_connected = true;
+    background.threadMgr.hasDocument = true;
+    background._focusLostToWindowsTextInputHost = true;
+    RunThreadFocusMessage(background);
+    CHECK(reconnectMessages == 3 && activationRequests == 2);
+    CHECK(!background._focusLostToWindowsTextInputHost);
 
     std::cout << "Reconnect recovery and offline-composition guards passed\n";
     return 0;

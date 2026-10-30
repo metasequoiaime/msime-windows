@@ -768,8 +768,10 @@ Exit:
 STDAPI CMetasequoiaIME::OnSetFocus(BOOL fForeground)
 {
     // Activation can precede keystroke focus (Notepad TIP reload). TSF need
-    // not send another document-focus callback before delivering keys.
-    if (ShouldRecoverNamedpipeOnKeyFocus(fForeground != FALSE, Global::g_connected, IsNamedpipeFocusStateOwner(this)))
+    // not send another document-focus callback before delivering keys. A
+    // background thread waits for WM_ThreadFocus instead.
+    if (ShouldRecoverNamedpipeOnKeyFocus(fForeground != FALSE, IsNamedpipeThreadFocused(), Global::g_connected,
+                                         IsNamedpipeFocusStateOwner(this)))
     {
         Global::g_connected = true;
         _workerCommitReady.store(false, std::memory_order_release);

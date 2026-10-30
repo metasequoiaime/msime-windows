@@ -11,6 +11,7 @@
 #include "ipc.h"
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/candidate_ui_owner.h"
+#include "ipc/traditional_variant_expansion_policy.h"
 #include "global/globals.h"
 #include "engine/japanese/romaji_converter.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
@@ -95,11 +96,10 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
         return;
 
     auto &items = Global::candidate_ui.items;
-    // Same word already visible (dict / prior cloud): keep page and skip re-cache.
-    if (std::any_of(items.begin(), items.end(), [&](const WordItem &item) { return item.word == candidate; }))
-    {
+    // 同一底词或同一种写法已经显示（词库、上一条云候选）：不动页面，也不让引擎再缓存一次。
+    if (!FanyImeIpc::ShouldInsertAsyncCandidate(items, pinyin, candidate, CandidateSource::CloudSuggestion,
+                                                CandidateListSpellingSettings()))
         return;
-    }
 
     // The engine checks the original session and composition before caching the result.
     if (!g_inputSession->apply_online_candidate(*query, candidate, CandidateSource::CloudSuggestion))
@@ -117,7 +117,7 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
                 items.end());
 
     size_t insert_index = items.size() >= 1 ? 1 : 0;
-    items.insert(items.begin() + insert_index, *accepted);
+    items.insert(items.begin() + insert_index, WithFirstTraditionalSpelling(*accepted));
     const bool preserve_single_kana_pair =
         g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji &&
         japanese::IsSingleKanaConversion(japanese::ConvertRomaji(g_inputSession->get_pinyin_sequence()));
@@ -132,28 +132,11 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     PushUiLessCandidatesToOwner();
 }
 
-// 候选列表当初是按词格的静态顺序发出去的，因为打分那会儿还没算完。现在算完了：把引擎的候选缓存
-// 丢掉重查一次，这一次 quanpin::make_neural_reranker 能在结果表里查到顺序，整句就落到它该在的位
-// 置上。重查本身不碰模型，走的还是词格那条快路。
-//
-// 后台线程算的可能已经是上一次输入的了（用户没停手），所以这里不认「哪一批」，只看重查出来的词
-// 序有没有真的变：没变就一个字节都不动 UI。这既挡掉了过期结果，也挡掉了模型弃权的情况。
-void ApplyRescoredOrder()
+bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner)
 {
-    if (!g_inputSession || !CanMergeAsyncCandidates())
-        return;
-    // 造词界面和译文页各自占着 items，重排不该去动它们。
-    if (GlobalIme::composition.creating_word.active)
-        return;
-    if (Global::candidate_ui.items.empty())
-        return;
-    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
-    if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
-        return;
-
     const std::vector<WordItem> before = g_inputSession->get_candidates();
     // 云/AI 候选只活在 series cache 里，reset_cache 会把它们一起清掉，而它们的请求早已回来、不会
-    // 再发一次——不补回来，重排一落地它们就从列表里消失了。重查不推进在线请求的 generation，
+    // 再发一次——不补回来，重查一落地它们就从列表里消失了。重查不推进在线请求的 generation，
     // 所以用当前的 online_query 原样回填即可；回填时若同一句已被整句候选占了，引擎自己会拒绝。
     std::vector<WordItem> online_items;
     std::copy_if(before.begin(), before.end(), std::back_inserter(online_items), [](const WordItem &item) {
@@ -175,11 +158,33 @@ void ApplyRescoredOrder()
     if (after.size() == before.size() &&
         std::equal(before.begin(), before.end(), after.begin(),
                    [](const WordItem &a, const WordItem &b) { return a.word == b.word; }))
-        return;
+        return false;
 
     PrepareCandidateList(owner.client_id, owner.activation_epoch);
     RequestShowCandidateWindow();
     PushUiLessCandidatesToOwner();
+    return true;
+}
+
+// 候选列表当初是按词格的静态顺序发出去的，因为打分那会儿还没算完。现在算完了：把引擎的候选缓存
+// 丢掉重查一次，这一次 quanpin::make_neural_reranker 能在结果表里查到顺序，整句就落到它该在的位
+// 置上。重查本身不碰模型，走的还是词格那条快路。
+//
+// 后台线程算的可能已经是上一次输入的了（用户没停手），所以这里不认「哪一批」，只看重查出来的词
+// 序有没有真的变：没变就一个字节都不动 UI。这既挡掉了过期结果，也挡掉了模型弃权的情况。
+void ApplyRescoredOrder()
+{
+    if (!g_inputSession || !CanMergeAsyncCandidates())
+        return;
+    // 造词界面和译文页各自占着 items，重排不该去动它们。
+    if (GlobalIme::composition.creating_word.active)
+        return;
+    if (Global::candidate_ui.items.empty())
+        return;
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+        return;
+    (void)RequeryCandidatesPreservingOnline(owner);
 }
 
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,
@@ -219,12 +224,11 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
         PushUiLessCandidatesToOwner();
         return;
     }
-    // Align with cloud: if the word is already in the list, do not erase / reinsert /
-    // reset page_index / re-cache. This stops cache-hit reapply from breaking paging.
-    if (std::any_of(items.begin(), items.end(), [&](const WordItem &item) { return item.word == candidate; }))
-    {
+    // 与云候选一致：同一底词或同一种写法已经显示时，不删、不重插、不重置页码、不让引擎再缓存一次；
+    // 缓存命中后再次应用时才不会把翻页打乱。
+    if (!FanyImeIpc::ShouldInsertAsyncCandidate(items, identity, candidate, CandidateSource::AiSuggestion,
+                                                CandidateListSpellingSettings()))
         return;
-    }
 
     if (!g_inputSession->apply_online_candidate(*engine_query, candidate, CandidateSource::AiSuggestion))
         return;
@@ -240,7 +244,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
                                [](const WordItem &item) { return item.source == CandidateSource::AiSuggestion; }),
                 items.end());
     const size_t insert_index = std::min<size_t>(2, items.size());
-    items.insert(items.begin() + insert_index, *accepted);
+    items.insert(items.begin() + insert_index, WithFirstTraditionalSpelling(*accepted));
     FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, CurrentEnglishPlacement(items));
     (void)0;
     Global::ai_candidate = {true, candidate, query.committed_pinyin};
@@ -447,8 +451,12 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
                                                    english, false);
             const size_t insert_index = std::min<size_t>(1, items.size());
             items.insert(items.begin() + static_cast<std::ptrdiff_t>(insert_index), std::move(english.front()));
-            user_dictionary::apply_fixed_positions(user_dictionary::default_user_db_path(), CurrentRankingContextKey(),
-                                                   items, false, {}, g_inputSession->has_active_helpcode());
+            // items 已按写法展开过，固定位置要作用在每组一项的列表上。
+            ReorderCandidatesAsOneItemPerWord(items, [](std::vector<WordItem> &collapsed) {
+                user_dictionary::apply_fixed_positions(user_dictionary::default_user_db_path(),
+                                                       CurrentRankingContextKey(), collapsed, false, {},
+                                                       g_inputSession->has_active_helpcode());
+            });
             for (size_t index = 1; index < english.size(); ++index)
                 items.push_back(std::move(english[index]));
         }

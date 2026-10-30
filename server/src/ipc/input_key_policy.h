@@ -66,6 +66,17 @@ inline std::string EnteredPinyinText(const std::string &raw, std::string quanpin
     return quanpin;
 }
 
+// Shift+- and Shift+= insert the ASCII underscore and plus instead of changing
+// pages. Only a bare Shift qualifies: Ctrl and Alt combinations keep their
+// meaning, and the unshifted keys stay paging keys. The UI-less bit sits outside
+// kKeyModifierMask, so host-drawn candidates still match.
+constexpr bool IsShiftedPagingSymbolKey(uint32_t keycode, uint32_t character, uint32_t modifiers)
+{
+    if ((modifiers & kKeyModifierMask) != kModifierShift)
+        return false;
+    return (keycode == 0xBD && character == '_') || (keycode == 0xBB && character == '+');
+}
+
 // Return -1 / +1 for the first / last Han character, or zero for an ordinary key.
 constexpr int WordToCharacterDirection(uint32_t keycode, uint32_t character, uint32_t modifiers, bool enabled,
                                        bool minus_equal, bool japanese_long_vowel = false)

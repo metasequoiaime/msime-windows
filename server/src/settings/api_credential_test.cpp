@@ -1,4 +1,6 @@
 #include "api_credential_test.h"
+#include "ai/ai_assistant_reply.h"
+#include "ai/chat_completions.h"
 #include "ai/jev_client.h"
 #include "api_credential_test_request.h"
 
@@ -13,16 +15,18 @@
 #include "config/ime_config.h"
 #include "voice-input/doubao_asr_client.h"
 #include "voice-input/voice_providers.h"
-
 #include "utils/network_proxy.h"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
 #include <string_view>
 #include <vector>
 
+namespace ApiCredentialTest
+{
 namespace
 {
 constexpr long kConnectTimeoutMs = 5000;
@@ -166,21 +170,151 @@ std::string ModelListEndpoint(const std::string &endpoint)
     return path + query;
 }
 
-ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
+// AI 联想与候选词翻译复用的接口探测。测试发什么，正式请求就发什么，失败原因也原样透出，
+// 不再把网络错误、鉴权失败和回复格式问题折叠成一句「测试失败」。
+// 这里已经在外层匿名命名空间里，不能再套 namespace ApiCredentialTest，否则本地的
+// Result / Request 会被解析成那个内层命名空间里并不存在的类型。
+AiAssistantConfig ChatProbeConfig(const ApiCredentialTest::Request &request)
+{
+    AiAssistantConfig config;
+    config.provider = Value(request, "provider");
+    config.endpoint = Value(request, "endpoint");
+    config.token = Value(request, "token");
+    config.model = Value(request, "model");
+    // 这几项以前在链路上被整条丢掉，探测于是按结构体默认值发请求，测的东西和用户配的不是一回事。
+    // 空着说明是只发四个字段的旧客户端，保留默认值即可。
+    const std::string json_mode = Value(request, "json_mode");
+    if (!json_mode.empty())
+        config.json_mode = ChatCompletions::NormalizeJsonMode(json_mode);
+    const std::string thinking = Value(request, "thinking");
+    if (!thinking.empty())
+        config.thinking = thinking;
+    const std::string prompt = Value(request, "prompt");
+    if (!prompt.empty())
+        config.prompt = prompt;
+    if (const std::string limit = Value(request, "candidate_limit"); !limit.empty())
+    {
+        const int parsed = std::atoi(limit.c_str());
+        if (parsed >= 1 && parsed <= 10)
+            config.candidate_limit = parsed;
+    }
+    return config;
+}
+
+ApiCredentialTest::Result TestChatOnce(const std::string &provider, const ApiCredentialTest::Request &request)
+{
+    const std::string endpoint = Value(request, "endpoint");
+    const std::string model = Value(request, "model");
+    const std::string request_token = AiAssistant::RequestToken(provider, Value(request, "token"));
+    if (provider == "jev")
+    {
+        if (model.empty())
+            return {false, "请先填写有效的模型名；Token 留空或填写有效值。"};
+        if (!request_token.empty() && !CloudTranslation::IsUsableSecret(request_token))
+            return {false, "Token 格式不对。"};
+        InitCurl();
+        const std::vector<std::string> candidates{"实施", "事实"};
+        const auto body = Jev::BuildRequest(model, "方案已经通过，明天开始", {"shi", "shi"}, candidates);
+        const auto response = Jev::Fetch(endpoint, request_token, body.dump());
+        if (response && !Jev::ParseChoice(*response, candidates).empty())
+            return {true, "连接成功，选择器已返回有效的候选选择。"};
+        return {false, "选择器未返回有效选择，请检查地址、Token、模型名和网络。"};
+    }
+    if (AiAssistant::ProviderUsesToken(provider) && !CloudTranslation::IsUsableSecret(request_token))
+        return {false, "请先填写有效的 API Key。"};
+    if (!IsHttpEndpoint(endpoint))
+        return {false, "请填写以 http:// 或 https:// 开头的完整接口地址。"};
+    if (model.empty())
+        return {false, "请先填写模型名。"};
+
+    const AiAssistantConfig config = ChatProbeConfig(request);
+    const auto fetched = ChatCompletions::FetchContent(
+        endpoint, request_token, ApiCredentialTest::detail::BuildChatProbeRequestBody(config).dump(),
+        ApiCredentialTest::detail::ChatProbeTimeoutMs(config));
+    if (!fetched.content)
+    {
+        // 提示里带上具体原因。用户反馈本地服务报错时，这一句就是全部线索。
+        return {false, "测试失败：" + ChatCompletions::DescribeFailure(fetched.failure, fetched.detail)};
+    }
+    // 请求现在就是真实联想请求，按 candidates 验收才站得住：200 只说明连得上，
+    // 模型答的不是 JSON 的话正式使用同样出不了候选，这里提前暴露出来。
+    {
+        const auto reply = AiAssistant::detail::ParseSuggestion(*fetched.content);
+        if (reply.candidate.empty())
+            return {false, "连接成功，但回复格式不对：" + AiAssistant::detail::DescribeReplyFailure(reply)};
+    }
+    return {true, "连接成功，API Key 和模型配置有效。"};
+}
+
+ApiCredentialTest::Result TestPolish(const ApiCredentialTest::Request &request)
 {
     const std::string provider = Value(request, "provider");
     const std::string token = AiAssistant::RequestToken(provider, Value(request, "token"));
     const std::string endpoint = Value(request, "endpoint");
-    const std::string model = Value(request, "model");
+    if (provider == "jev")
+        return {false, "Jev 只能从已有候选中挑选，不能用于语音润色。"};
     if (AiAssistant::ProviderUsesToken(provider) && !CloudTranslation::IsUsableSecret(token))
         return {false, "请先填写有效的 API Key。"};
-    if (!IsHttpEndpoint(endpoint) || model.empty())
-        return {false, "请填写有效的 HTTPS 接口地址和模型名。"};
-    const std::string payload = ApiCredentialTest::detail::BuildChatProbeRequestBody(provider, model, endpoint).dump();
-    const HttpResponse response = PerformJsonRequest(endpoint, token, &payload);
-    if (response.code == CURLE_OK && response.status >= 200 && response.status < 300)
-        return {true, "连接成功，API Key 和模型配置有效。"};
-    return {false, "测试失败：" + ErrorDetail(response)};
+    if (!IsHttpEndpoint(endpoint))
+        return {false, "请填写以 http:// 或 https:// 开头的完整接口地址。"};
+
+    // 润色的真实请求只有 system 与 user 两条消息、不带 response_format，回复按纯文本解析。
+    // 探测过去和联想共用 TestChat，被要求返回 candidates JSON，对纯文本服务是必然误报
+    // （issue #1265）。这里按真实请求的形状发、按纯文本验收；提示词走与正式润色同一个
+    // ResolvePolishSystemPrompt，用户换预设或自定义提示词后测的也是那一份。
+    VoiceInputConfig config;
+    config.polish_provider = provider;
+    config.polish_endpoint = endpoint;
+    config.polish_model = Value(request, "model");
+    config.polish_prompt = Value(request, "polish_prompt");
+    config.polish_prompt_id = Value(request, "polish_prompt_id");
+    config.polish_prompt_custom_1 = Value(request, "polish_prompt_custom_1");
+    config.polish_prompt_custom_2 = Value(request, "polish_prompt_custom_2");
+    config.polish_prompt_custom_3 = Value(request, "polish_prompt_custom_3");
+    config.polish_thinking = Value(request, "polish_thinking");
+    const std::string model = VoiceInput::ResolvePolishModel(config);
+    if (model.empty())
+        return {false, "请先填写模型名。"};
+    const std::string prompt = VoiceInput::ResolvePolishSystemPrompt(config);
+
+    const nlohmann::json body =
+        ApiCredentialTest::detail::BuildPolishProbeRequestBody(model, prompt, provider, endpoint, config);
+    const auto fetched = ChatCompletions::FetchContent(endpoint, token, body.dump(),
+                                                       ApiCredentialTest::detail::PolishProbeTimeoutMs(config));
+    if (!fetched.content)
+        return {false, "测试失败：" + ChatCompletions::DescribeFailure(fetched.failure, fetched.detail)};
+    if (ApiCredentialTest::detail::ParsePolishedText(*fetched.content).empty())
+        return {false, "连接成功，但回复不是可用的润色文本，请检查该模型能否正常返回纯文本。"};
+    return {true, "连接成功，API Key 和模型配置有效。"};
+}
+
+ApiCredentialTest::Result TestTranslationOnce(const ApiCredentialTest::Request &request)
+{
+    // 页面把当前生效的服务商、地址、Token 与模型原样传上来，测的就是用户眼前这一份。
+    // 字段全空说明是只发 service 的旧客户端，才回落到已保存的配置。
+    const auto configured = GetConfiguredTranslation();
+    const auto config =
+        Value(request, "provider").empty() && Value(request, "endpoint").empty() && Value(request, "token").empty() &&
+                Value(request, "model").empty()
+            ? AiTranslation::FromConfiguredTranslation(*configured)
+            : AiTranslation::FromFields(Value(request, "provider"), Value(request, "endpoint"), Value(request, "token"),
+                                        Value(request, "model"), Value(request, "json_mode"));
+    if (!AiTranslation::IsUsableConfig(config))
+    {
+        if (config.provider == "jev")
+            return {false, "Jev 只能从已有候选中挑选，不能用于翻译；请在「AI 与云联想」页换成生成式服务商。"};
+        return {false, "请先在「AI 与云联想」页面填写有效的接口地址、Token（Ollama 不需要）和模型。"};
+    }
+    std::string failure;
+    const auto translated = AiTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en", &failure);
+    if (!translated.empty() && !translated.front().empty())
+        return {true, "连接成功，翻译服务配置有效。"};
+    return {false, "测试失败：" + (failure.empty() ? std::string("服务返回的译文无法解析") : failure)};
+}
+
+ApiCredentialTest::Result TestChat(const ApiCredentialTest::Request &request)
+{
+    return TestChatOnce(Value(request, "provider"), request);
 }
 
 void AppendLe16(std::vector<unsigned char> &out, std::uint16_t value)
@@ -225,7 +359,7 @@ ApiCredentialTest::Result TestBatchAsr(const ApiCredentialTest::Request &request
     if (!CloudTranslation::IsUsableSecret(token))
         return {false, "请先填写有效的 API Key。"};
     if (!IsHttpEndpoint(endpoint) || model.empty())
-        return {false, "请填写有效的 HTTPS 接口地址和模型名。"};
+        return {false, "请填写以 http:// 或 https:// 开头的接口地址和模型名。"};
 
     InitCurl();
     HttpResponse response;
@@ -276,25 +410,7 @@ ApiCredentialTest::Result TestBatchAsr(const ApiCredentialTest::Request &request
 ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &request)
 {
     std::vector<std::string> translated;
-    if (request.service == "translation.ai")
-    {
-        // 页面把当前生效的服务商、地址、Token 与模型原样传上来，测的就是用户眼前这一份。
-        // 字段全空说明是只发 service 的旧客户端，才回落到已保存的配置。
-        const auto configured = GetConfiguredTranslation();
-        const auto config = Value(request, "provider").empty() && Value(request, "endpoint").empty() &&
-                                    Value(request, "token").empty() && Value(request, "model").empty()
-                                ? AiTranslation::FromConfiguredTranslation(*configured)
-                                : AiTranslation::FromFields(Value(request, "provider"), Value(request, "endpoint"),
-                                                            Value(request, "token"), Value(request, "model"));
-        if (!AiTranslation::IsUsableConfig(config))
-        {
-            if (config.provider == "jev")
-                return {false, "Jev 只能从已有候选中挑选，不能用于翻译；请在「AI 与云联想」页换成生成式服务商。"};
-            return {false, "请先在「AI 与云联想」页面填写有效的接口地址、Token（Ollama 不需要）和模型。"};
-        }
-        translated = AiTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en");
-    }
-    else if (request.service == "translation.tencent")
+    if (request.service == "translation.tencent")
     {
         const TencentTmt::Credentials credentials{Value(request, "secretId"), Value(request, "secretKey"),
                                                   "ap-guangzhou"};
@@ -347,30 +463,16 @@ ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &requ
 }
 } // namespace
 
-namespace ApiCredentialTest
-{
 Result Run(const Request &request)
 {
-    if (request.service == "ai.assistant" && Value(request, "provider") == "jev")
-    {
-        // 与真实请求路径保持一致：模型为空时 ai_assistant.cpp 根本不发请求，这里如果放过就会
-        // 给出「连接成功」的假阳性。Token 可以留空（免 Key 的自建或转发服务），官方端点缺 Key
-        // 时由 Jev::Fetch 拒绝；填了就必须是可用的值。
-        const std::string token = Value(request, "token");
-        if ((!token.empty() && !CloudTranslation::IsUsableSecret(token)) || Value(request, "model").empty())
-            return {false, "请先填写有效的模型名；Token 留空或填写有效值。"};
-        InitCurl();
-        const std::vector<std::string> candidates{"实施", "事实"};
-        const auto body =
-            Jev::BuildRequest(Value(request, "model"), "方案已经通过，明天开始", {"shi", "shi"}, candidates);
-        const auto response = Jev::Fetch(Value(request, "endpoint"), token, body.dump());
-        if (response && !Jev::ParseChoice(*response, candidates).empty())
-            return {true, "连接成功，选择器已返回有效的候选选择。"};
-        return {false, "选择器未返回有效选择，请检查地址、Token、模型名和网络。"};
-    }
+    // 翻译和联想的探测体都只构建一个匿名命名空间里的函数，Run 只做分发。
+    if (request.service == "translation.ai")
+        return TestTranslationOnce(request);
     if (request.service.rfind("translation.", 0) == 0)
         return TestTranslation(request);
-    if (request.service == "voice.polish" || request.service == "ai.assistant")
+    if (request.service == "voice.polish")
+        return TestPolish(request);
+    if (request.service == "ai.assistant")
         return TestChat(request);
     if (request.service == "voice.asr")
     {

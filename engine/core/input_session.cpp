@@ -136,8 +136,9 @@ KeyResult InputSession::handle_character(char character, bool shift_only)
         local_candidates_.clear();
         return {true, std::nullopt, std::nullopt};
     }
+    // 超级简拼只保留给双拼：全拼直接打声母就是简拼，Shift+J 留作普通大写 J。
     if (shift_only && character == 'J' && local_mode_options_.super_jianpin && !has_composition() &&
-        (scheme() == SchemeType::Quanpin || scheme() == SchemeType::Shuangpin))
+        scheme() == SchemeType::Shuangpin)
     {
         local_input_mode_ = LocalInputMode::SuperJianpin;
         local_preedit_ = "J";

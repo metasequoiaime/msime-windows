@@ -51,12 +51,10 @@ try {
     try { & $serverCompile -Reconfigure:$Reconfigure } finally { Pop-Location }
 
 
-    # 轻量包不带任何数据文件，所以只有完整包需要语言模型。脚本是幂等的：摘要对得上时
-    # 直接返回，不重下也不重转，因此这里无条件调用不会让日常 test.ps1 变慢。首次运行
-    # 要下 ~75 MB 并转换一次，之后都是秒回。
+    # 轻量包不带任何数据文件，所以只有完整包需要准备数据。词格语言模型 sc.lm 不随包发布，
+    # 这里不再生成它。
     if (-not $Light) {
-        & (Join-Path $repoRoot 'scripts\build-language-model.ps1')
-        # 词库同理：从本仓同级的 msime-dictionary 构建，不下载 Release。源数据提交和构建脚本
+        # 词库从本仓同级的 msime-dictionary 构建，不下载 Release。源数据提交和构建脚本
         # 都没变、工作区干净时直接跳过；有变化就整套重建（约 45 秒）。
         # 词库构建需要 pypinyin，首次运行时自动安装。
         python -m pip install -q pypinyin

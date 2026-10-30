@@ -1,10 +1,12 @@
 #pragma once
 
+#include "settings/native/native_settings_search.h"
 #include "settings/native/native_settings_theme.h"
 
 #include "msimeui/Animation.h"
 #include "msimeui/Controls.h"
 #include "msimeui/Layout.h"
+#include "msimeui/ScrollAxis.h"
 
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -194,8 +196,10 @@ TextStyle BodyStyle();         // 14px text in the page font
 TextStyle ControlStyle();      // 14px form-control text in the system font (no `font: inherit`)
 TextStyle CaptionStyle();      // the shared *-description rule
 
-std::shared_ptr<Label> MakeTitle(std::wstring text);
-std::shared_ptr<Label> MakeSubTitle(std::wstring text);
+// Setting titles. Both enter the search index (see IndexSettingTitle); `searchDescription` is the
+// text shown under the title, matched as a secondary hit.
+std::shared_ptr<Label> MakeTitle(std::wstring text, std::wstring searchDescription = {});
+std::shared_ptr<Label> MakeSubTitle(std::wstring text, std::wstring searchDescription = {});
 // Muted 12px / 1.6 description that wraps.
 std::shared_ptr<Label> MakeDescription(std::wstring text);
 
@@ -285,6 +289,11 @@ class Hideable : public msimeui::Container
     {
         return visible_;
     }
+    // How something outside the user's click can open this, e.g. the expander that owns it.
+    // Without a handler the Hideable stays hidden when asked to reveal: its visibility then
+    // follows a setting, and showing it would contradict that setting.
+    void SetOnReveal(std::function<void()> handler);
+    void Reveal();
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
@@ -295,6 +304,7 @@ class Hideable : public msimeui::Container
 
   private:
     bool visible_ = true;
+    std::function<void()> onReveal_;
     // The margin given to the Hideable, taken over as inner spacing so that it disappears
     // with the child: `display: none` takes no room, margins included.
     Thickness spacing_ = {};
@@ -391,11 +401,47 @@ class SettingRow : public msimeui::Panel
     SizeF controlSize_ = {};
 };
 
+// Opens every collapsed group between `visual` and the page root that can be opened, so a row
+// found by search is on screen. Returns false when some ancestor stays hidden.
+bool RevealInAncestors(msimeui::Visual &visual);
+
 // Title (+ description) block used on the left of a SettingRow.
 VisualPtr MakeTitleBlock(std::wstring title, std::wstring description = {}, bool subItem = false);
 // The common row: section title, optional description, control on the right.
 std::shared_ptr<SettingRow> MakeRow(std::wstring title, std::wstring description, VisualPtr control,
                                     bool subItem = false);
+
+// Puts a setting title into the search index of the page being built. `title` is the visual that
+// shows it; a search hit scrolls to and highlights the SettingRow around it, or its block when it
+// heads one of its own. MakeTitle, MakeSubTitle and MakeExpander call this, so a setting built from
+// them is searchable however its row is put together; a page that draws a title some other way
+// calls it directly.
+void IndexSettingTitle(const std::shared_ptr<msimeui::Visual> &title, std::wstring text, std::wstring description = {});
+
+// Scope that tells IndexSettingTitle which page is being built, so every title created in it lands
+// in that page's slice of the search index. Set by the window around a PageInfo::build call;
+// nested scopes restore the previous one. Without it titles still build, they are just not indexed,
+// which is what happens in the control tests.
+class SettingsIndexScope
+{
+  public:
+    struct Row
+    {
+        std::wstring title;
+        std::wstring description;
+        std::weak_ptr<msimeui::Visual> target;
+    };
+
+    // `collector` is called once per title created inside the scope, in build order.
+    SettingsIndexScope(std::string pageId, std::function<void(const Row &)> collector);
+    ~SettingsIndexScope();
+    SettingsIndexScope(const SettingsIndexScope &) = delete;
+    SettingsIndexScope &operator=(const SettingsIndexScope &) = delete;
+};
+
+// One indexed settings row, plus the matcher that ranks it. Defined in native_settings_search.h
+// because that header and its .cpp stay free of D2D so they can run in the portable test target.
+// (including the header here re-exports them to every page, which is what the pages want)
 
 // `.content-header` + sections, wrapped in the page column (max 900, centered).
 class PageBuilder
@@ -454,6 +500,65 @@ class ToggleSwitch : public msimeui::Visual
     bool disabled_ = false;
     msimeui::Tween knob_{0.0f};
     ChangeHandler onChanged_;
+};
+
+// The scrollbar of a `.compact-scroll-menu` list (dropdown menus, the AI model list): a
+// 4 DIP thumb 2 DIPs from the list's right edge and 4 from each end, at least 24 long. A
+// band along the right edge, wider than the thumb, takes presses and hover while the
+// content overflows. It owns the list's scroll offset; the list draws its rows at
+// GetPlacedOffset and forwards the mouse here first.
+//
+// The list calls Layout whenever its content or box changes, before any other call.
+class CompactMenuScrollbar
+{
+  public:
+    // `contentHeight` covers the rows and their inset. `viewport` is the height shown, or
+    // the height the list asks for while it is not arranged yet. `bounds` is the list's
+    // box.
+    void Layout(float contentHeight, float viewport, const RectF &bounds);
+    // Back to the top, with no drag or hover.
+    void Reset();
+
+    bool CanScroll() const;
+    float GetOffset() const;
+    // The offset rounded to whole device pixels at `dpi`: scrolled rows keep the pixel
+    // phase they have unscrolled.
+    float GetPlacedOffset(float dpi) const;
+    // The following return whether the list has to be redrawn.
+    bool SetOffset(float offset);
+    // Scrolls as little as possible to show content [start, start + length).
+    bool Reveal(float start, float length);
+    bool Wheel(short delta);
+
+    bool IsOnScrollbar(const PointF &point) const;
+    bool IsDragging() const;
+    // Drawn in the hot color: the pointer is over the scrollbar, or dragging the thumb
+    // wherever it is.
+    bool IsHot() const;
+    // A press on the scrollbar starts a drag that lasts until Release; the pointer may
+    // leave the list meanwhile.
+    bool Press(const PointF &point);
+    // Pointer moves: drags while dragging with the left button held, otherwise tracks
+    // hover.
+    bool Move(const PointF &point, WPARAM keyState);
+    bool Release(const PointF &point);
+    bool Leave();
+
+    // `hotColor` while IsHot.
+    void Render(msimeui::DeviceResources &dr, const D2D1_COLOR_F &color, const D2D1_COLOR_F &hotColor) const;
+
+  private:
+    msimeui::ScrollExtent Extent() const;
+    msimeui::ScrollTrack Track() const;
+
+    float contentHeight_ = 0.0f;
+    float viewport_ = 0.0f;
+    RectF bounds_ = {};
+    float offset_ = 0.0f;
+    bool hovered_ = false;
+    bool dragging_ = false;
+    // Where along the thumb the pointer holds it while dragging.
+    float grip_ = 0.0f;
 };
 
 // One entry of a dropdown menu.
@@ -804,6 +909,7 @@ class Expander : public msimeui::Visual
 {
   public:
     explicit Expander(std::wstring title, bool subItem = false);
+    Expander(std::wstring title, const TextStyle &style);
     void SetOnToggled(std::function<void(bool expanded)> handler);
     void SetExpanded(bool expanded);
     bool IsExpanded() const;
@@ -822,6 +928,14 @@ class Expander : public msimeui::Visual
     msimeui::Tween rotation_{0.0f};
     std::function<void(bool)> onToggled_;
 };
+
+// An expander whose title is indexed for search.
+std::shared_ptr<Expander> MakeExpander(std::wstring title, bool subItem = false);
+std::shared_ptr<Expander> MakeExpander(std::wstring title, const TextStyle &style);
+
+// Wires an expander to the details it opens: a click toggles them, and a search hit inside
+// them expands both, so the chevron never disagrees with what is shown.
+void BindExpander(const std::shared_ptr<Expander> &expander, const std::shared_ptr<Hideable> &details);
 
 // `.shortcut-keys` / <kbd>: key caps joined by "+".
 class KeyCaps : public msimeui::Visual

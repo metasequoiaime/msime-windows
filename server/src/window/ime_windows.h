@@ -29,6 +29,10 @@ void SetCandidateHostCloaked(bool cloaked);
 // whole class of bugs here is "nothing ever called this", so the caller has to
 // be recoverable from the log.
 void ApplyConfiguredFloatingToolbarVisibility(const wchar_t *reason = L"unspecified");
+// Re-decide toolbar visibility once the new foreground window has settled.
+// Needed because "use a different input method for each app window" never sends a
+// terminal deactivation when focus moves to a window that uses another IME.
+void ScheduleFloatingToolbarForegroundReconcile();
 // Use instead of ShowWindow(SW_HIDE) on the toolbar host: a toolbar whose
 // presenter never came up is only cloaked, never hidden.
 void HideFloatingToolbarHost();

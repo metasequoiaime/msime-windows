@@ -1,4 +1,5 @@
 #include "settings/native/native_page_voice_fields.h"
+#include "settings/native/native_page_model_combo.h"
 
 #include <algorithm>
 #include <iterator>
@@ -115,9 +116,12 @@ VisualPtr BasicRow(VisualPtr left, VisualPtr right, float minHeight = 44.0f, flo
     return std::make_shared<MinHeight>(row, minHeight, Thickness{0.0f, paddingY, 0.0f, paddingY});
 }
 
-std::shared_ptr<Label> RowText(std::wstring text)
+// A row's title; indexed for search like MakeTitle.
+std::shared_ptr<Label> RowText(std::wstring text, std::wstring searchDescription = {})
 {
-    return std::make_shared<Label>(std::move(text), BodyStyle());
+    auto label = std::make_shared<Label>(text, BodyStyle());
+    IndexSettingTitle(label, std::move(text), std::move(searchDescription));
+    return label;
 }
 
 // `.voice-section > .voice-description { margin: -6px 0 16px }`
@@ -206,11 +210,14 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
     std::shared_ptr<Dropdown> doubaoEndpoint;
 
     std::shared_ptr<Dropdown> polishProviderDropdown;
-    std::shared_ptr<InputBox> polishModel;
+    std::shared_ptr<ModelCombo> polishModel;
+    std::shared_ptr<PlainButton> polishFetchButton;
+    std::shared_ptr<StatusText> polishFetchStatus;
     std::shared_ptr<InputBox> polishToken;
     std::shared_ptr<InputBox> polishEndpoint;
     std::shared_ptr<Dropdown> promptDropdown;
     std::shared_ptr<InputBox> prompt;
+    std::string pendingModelFetch;
 
     std::unique_ptr<CredentialTest> asrTest;
     std::unique_ptr<CredentialTest> polishTest;
@@ -301,9 +308,9 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         const auto it = PolishDefaults().find(provider);
         if (it == PolishDefaults().end())
             return;
-        polishModel->SetPlaceholder(Widen(it->second.model));
+        polishModel->Input()->SetPlaceholder(Widen(it->second.model));
         FillIfDefault(polishEndpoint, it->second.endpoint, PolishDefaults(), false, "voice_input.polish_endpoint");
-        FillIfDefault(polishModel, it->second.model, PolishDefaults(), true, "voice_input.polish_model");
+        FillIfDefault(polishModel->Input(), it->second.model, PolishDefaults(), true, "voice_input.polish_model");
     }
 
     void OnPromptSelected(const std::string &id)
@@ -366,12 +373,68 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
     {
         const auto it = PolishDefaults().find(polishProvider);
         const std::string endpoint = Value(polishEndpoint);
-        const std::string model = Value(polishModel);
+        const std::string model = Value(polishModel->Input());
+        const SettingsModel &config = context.model;
+        // 提示词相关字段一并带上：润色探测按用户当前选中的预设或自定义提示词发请求，
+        // 少了这些就只能在探测里用默认提示词，测的不是用户配的那一份。
         return Json{
             {"provider", polishProvider},
             {"token", Value(polishToken)},
             {"endpoint", !endpoint.empty() ? endpoint : (it != PolishDefaults().end() ? it->second.endpoint : "")},
-            {"model", !model.empty() ? model : (it != PolishDefaults().end() ? it->second.model : "")}};
+            {"model", !model.empty() ? model : (it != PolishDefaults().end() ? it->second.model : "")},
+            {"polish_thinking", config.GetString("voice_input.polish_thinking")},
+            {"polish_prompt_id", config.GetString("voice_input.polish_prompt_id")},
+            {"polish_prompt", config.GetString("voice_input.polish_prompt")},
+            {"polish_prompt_custom_1", config.GetString("voice_input.polish_prompt_custom_1")},
+            {"polish_prompt_custom_2", config.GetString("voice_input.polish_prompt_custom_2")},
+            {"polish_prompt_custom_3", config.GetString("voice_input.polish_prompt_custom_3")}};
+    }
+
+    // 查询模型清单。端点只认 Token 与接口地址，所以直接复用 PolishTestConfig 里那几项，
+    // 与「测试连接」拿到的是同一份配置。
+    void FetchPolishModels()
+    {
+        if (!pendingModelFetch.empty())
+            return;
+        pendingModelFetch = context.model.NewRequestId("models");
+        polishFetchButton->SetDisabled(true);
+        polishFetchButton->SetText(L"获取中…");
+        polishFetchStatus->Set(L"正在向服务商查询模型列表…", "pending");
+        context.model.Post(
+            "apiModelList",
+            Json{{"requestId", pendingModelFetch}, {"service", "voice.polish"}, {"config", PolishTestConfig()}});
+    }
+
+    void OnPolishModels(const Json &message)
+    {
+        if (pendingModelFetch.empty() || message.value("requestId", std::string()) != pendingModelFetch)
+            return;
+        pendingModelFetch.clear();
+        polishFetchButton->SetDisabled(false);
+        polishFetchButton->SetText(L"查询模型");
+        if (!message.value("ok", false))
+        {
+            polishFetchStatus->Set(Widen(message.value("message", std::string())), "error");
+            return;
+        }
+        std::vector<std::wstring> names;
+        if (message.contains("models") && message["models"].is_array())
+        {
+            for (const auto &item : message["models"])
+            {
+                if (item.is_string() && !Trim(Widen(item.get<std::string>())).empty())
+                    names.push_back(Widen(item.get<std::string>()));
+            }
+        }
+        polishModel->SetModels(names);
+        if (names.empty())
+        {
+            const std::string text = message.value("message", std::string());
+            polishFetchStatus->Set(text.empty() ? L"服务商没有返回可用模型" : Widen(text), "error");
+            return;
+        }
+        polishFetchStatus->Set(L"获取到 " + std::to_wstring(names.size()) + L" 个模型", "success");
+        polishModel->Open();
     }
 
     // applyVoiceConfig
@@ -386,7 +449,7 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         asrModel->SetText(Widen(model.GetString("voice_input.asr_model")));
         boostingTableId->SetText(Widen(model.GetString("voice_input.doubao_boosting_table_id")));
         polishEndpoint->SetText(Widen(model.GetString("voice_input.polish_endpoint")));
-        polishModel->SetText(Widen(model.GetString("voice_input.polish_model")));
+        polishModel->Input()->SetText(Widen(model.GetString("voice_input.polish_model")));
         // A missing Resource ID must not leave a stale value from an earlier load.
         const std::string resource = model.GetString("voice_input.asr_resource_id");
         resourceId->SetText(Widen(Narrow(Trim(Widen(resource))).empty() ? kDoubaoDefaultResourceId : resource));
@@ -421,7 +484,7 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         asrToken->SetText(Widen(asrTokens[asrProvider]));
         polishToken->SetText(Widen(polishTokens[polishProvider]));
         if (const auto it = PolishDefaults().find(polishProvider); it != PolishDefaults().end())
-            polishModel->SetPlaceholder(Widen(it->second.model));
+            polishModel->Input()->SetPlaceholder(Widen(it->second.model));
 
         promptId = model.GetString("voice_input.polish_prompt_id", "cleanup");
         if (promptId == "custom")
@@ -454,6 +517,11 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         auto self = shared_from_this();
         std::weak_ptr<VoicePage> weak = self;
 
+        context.OnMessage("apiModelListResult", [weak](const Json &message) {
+            if (auto page = weak.lock())
+                page->OnPolishModels(message);
+        });
+
         // 启用语音输入. The snapshot reports `enabled`; the setter takes `voice_input`.
         enabled = std::make_shared<ToggleSwitch>(false);
         enabled->SetOnChanged([this](bool on) { Write("voice_input.voice_input", on); });
@@ -462,6 +530,7 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         // 录音提示音
         {
             auto expander = std::make_shared<PlainExpander>(L"录音提示音", BodyStyle());
+            IndexSettingTitle(expander, L"录音提示音");
             soundMaster = std::make_shared<ToggleSwitch>(true);
             startSound = std::make_shared<ToggleSwitch>(true);
             endSound = std::make_shared<ToggleSwitch>(true);
@@ -633,7 +702,9 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
             auto endpointRow = std::make_shared<Row>(4.0f);
             TextStyle inherited = BodyStyle();
             inherited.size = kFontDefault;
-            endpointRow->Add(std::make_shared<Label>(L"流式接口", inherited));
+            auto endpointLabel = std::make_shared<Label>(L"流式接口", inherited);
+            IndexSettingTitle(endpointLabel, L"流式接口");
+            endpointRow->Add(endpointLabel);
             endpointRow->Add(doubaoEndpoint);
             options->Add(endpointRow);
             options->Add(
@@ -641,7 +712,7 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
                                 L"双向流式返回增量结果，实时上屏刷新更频繁。选择后会同步写入上方“接口地址”。"));
             auto optionRow = [this](const wchar_t *title, const wchar_t *description, const char *path) {
                 auto left = std::make_shared<Column>(0.0f);
-                left->Add(RowText(title));
+                left->Add(RowText(title, description));
                 auto desc = MakeDescription(description);
                 desc->SetMargin({0.0f, 2.0f, 0.0f, 0.0f});
                 left->Add(desc);
@@ -683,12 +754,29 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
                 [this](size_t, const DropdownOption &option) { SwitchPolishProvider(option.value); });
             grid->Add(std::make_shared<Field>(L"服务提供商", polishProviderDropdown));
 
-            InputBox::Options modelOptions;
-            modelOptions.placeholder = L"Qwen/Qwen3-8B";
-            polishModel = std::make_shared<InputBox>(modelOptions);
-            polishModel->SetOnCommit(
-                [this](const std::wstring &text) { Write("voice_input.polish_model", Narrow(Trim(text))); });
-            grid->Add(std::make_shared<Field>(L"模型", polishModel));
+            // 模型下拉复用 AI 联想页的同一个控件：模型清单端点只依赖 Token 与地址，
+            // 这里的差别只是选中后写 voice_input.polish_model。
+            polishModel = std::make_shared<ModelCombo>();
+            polishModel->SetOnPicked(
+                [this](const std::wstring &value) { Write("voice_input.polish_model", Narrow(Trim(value))); });
+            polishModel->SetOnFetch([this]() { FetchPolishModels(); });
+            if (const auto it = PolishDefaults().find(polishProvider); it != PolishDefaults().end())
+                polishModel->Input()->SetPlaceholder(Widen(it->second.model));
+            polishModel->Input()->SetOnCommit([this](const std::wstring &text) {
+                // 空值表示回到默认模型：写空串让后端补默认值，界面上显示占位符。
+                Write("voice_input.polish_model", Narrow(Trim(text)));
+            });
+            polishFetchButton = std::make_shared<PlainButton>(L"查询模型", ModelFetchButtonStyle());
+            polishFetchButton->SetOnClick([this]() { FetchPolishModels(); });
+            auto polishModelRow = std::make_shared<Row>(8.0f);
+            polishModelRow->SetAlign(Row::Align::Stretch);
+            polishModelRow->Add(polishModel, 1.0f);
+            polishModelRow->Add(polishFetchButton);
+            polishFetchStatus = std::make_shared<StatusText>();
+            polishFetchStatus->SetMargin({0.0f, 7.0f, 0.0f, 0.0f});
+            auto polishModelField = std::make_shared<Field>(L"模型", polishModelRow);
+            polishModelField->Add(polishFetchStatus);
+            grid->Add(polishModelField);
 
             auto thinking = BindDropdown(
                 context, "voice_input.polish_thinking",

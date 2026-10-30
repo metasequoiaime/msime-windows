@@ -19,7 +19,7 @@ permissions:
 jobs:
   base:
     name: Base branch
-    runs-on: ubuntu-24.04
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check the head branch may target main

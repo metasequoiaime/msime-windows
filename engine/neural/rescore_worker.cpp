@@ -5,6 +5,10 @@
 #include <cstdlib>
 #include <utility>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace neural
 {
 namespace
@@ -14,17 +18,28 @@ namespace
 constexpr std::size_t kMaxResults = 128;
 constexpr std::size_t kWorkerCount = 2;
 
-std::string make_key(const SentenceModel &model, const std::string &context, const std::vector<std::string> &sentences)
+std::string make_key(const SentenceModel &model, const std::string &context, const std::vector<std::string> &sentences,
+                     const std::vector<double> &static_scores, const RerankOptions &options)
 {
-    // \x01 不会出现在 UTF-8 文本里，拿它当分隔符就不会把两批不同的候选拼成同一个键。
-    std::string key = std::to_string(reinterpret_cast<std::uintptr_t>(&model));
-    key.push_back('\x01');
-    key += context;
-    for (const std::string &sentence : sentences)
-    {
-        key.push_back('\x01');
-        key += sentence;
-    }
+    std::string key;
+    const auto append_value = [&key](const auto &value) {
+        key.append(reinterpret_cast<const char *>(&value), sizeof(value));
+    };
+    const auto append_text = [&key, &append_value](const std::string &value) {
+        append_value(value.size());
+        key += value;
+    };
+    append_value(reinterpret_cast<std::uintptr_t>(&model));
+    append_text(context);
+    append_value(sentences.size());
+    for (const auto &sentence : sentences)
+        append_text(sentence);
+    append_value(static_scores.size());
+    for (double score : static_scores)
+        append_value(score);
+    append_value(options.lambda);
+    append_value(options.max_paths);
+    append_value(options.context_chars);
     return key;
 }
 } // namespace
@@ -55,7 +70,7 @@ std::optional<std::vector<std::size_t>> RescoreWorker::order_for(const SentenceM
                                                                  const std::vector<double> &static_scores,
                                                                  const RerankOptions &options)
 {
-    std::string key = make_key(model, context, sentences);
+    std::string key = make_key(model, context, sentences, static_scores, options);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_)
@@ -117,6 +132,13 @@ void RescoreWorker::ensure_threads()
 
 void RescoreWorker::run()
 {
+#if defined(_WIN32)
+    // These scoring threads compete with the key thread for CPU while a user is typing. At
+    // normal priority a loaded machine splits a core 1:1, so the key path is slowed by the
+    // rerank that is supposed to help it. Below-normal matches the dictionary writer's
+    // background thread and leaves the foreground thread first claim on a core.
+    (void)::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
     for (;;)
     {
         // 线程是 detach 出来的，异常逃出线程函数没人接，直接 std::terminate，一个只在后台改

@@ -12,7 +12,7 @@
 #include <fmt/xchar.h>
 #include <winuser.h>
 
-void OnWinEvent(HWND hwnd);
+void OnWinEvent(HWND hwnd, DWORD event);
 
 namespace
 {
@@ -189,13 +189,13 @@ void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG idObject,
 
     if (event == EVENT_OBJECT_LOCATIONCHANGE || event == EVENT_SYSTEM_FOREGROUND)
     {
-        OnWinEvent(hwnd);
+        OnWinEvent(hwnd, event);
     }
 }
 
 static bool g_isHiddenDueToFullscreen = false;
 
-void OnWinEvent(HWND hwnd)
+void OnWinEvent(HWND hwnd, DWORD event)
 {
     if (!IsWindow(hwnd) || !IsWindowVisible(hwnd))
         return;
@@ -238,6 +238,13 @@ void OnWinEvent(HWND hwnd)
             ApplyConfiguredFloatingToolbarVisibility(L"fullscreen-exit");
             g_isHiddenDueToFullscreen = false;
         }
+    }
+
+    // Ownership belongs to the focused window, so only a real foreground change
+    // can answer it. Location changes fire per caret move and stay cheap.
+    if (event == EVENT_SYSTEM_FOREGROUND)
+    {
+        ScheduleFloatingToolbarForegroundReconcile();
     }
 
     // g_fullscreen_states[hwnd] = nowFullscreen;

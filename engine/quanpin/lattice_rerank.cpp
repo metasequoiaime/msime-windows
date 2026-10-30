@@ -1,7 +1,11 @@
 #include "lattice_rerank.h"
 
 #include "../neural/rescore_worker.h"
+#include "quanpin_utils.h"
+#include "quanpin_query.h"
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <vector>
 
@@ -51,6 +55,44 @@ LatticeReranker make_neural_reranker(const neural::SentenceModel *model, const s
         paths = std::move(reordered);
         return true;
     };
+}
+
+void rerank_dictionary_candidates(std::vector<WordItem> &candidates, const std::string &key,
+                                  const neural::SentenceModel *model, const std::string &context)
+{
+    if (context.empty() || model == nullptr || key.empty() || !has_only_complete_pinyin_segments(split_segments(key)))
+        return;
+
+    neural::RerankOptions options;
+    options.max_paths = 32;
+    // Dictionary frequency is already the initial order; context needs room to overturn common homophones.
+    options.lambda = 0.8;
+    std::vector<std::size_t> slots;
+    std::vector<std::string> texts;
+    std::vector<double> priors;
+    for (std::size_t i = 0; i < candidates.size() && slots.size() < options.max_paths; ++i)
+    {
+        const WordItem &item = candidates[i];
+        if ((item.source != CandidateSource::Database && item.source != CandidateSource::UserDatabase) ||
+            item.canonical_pinyin != key || item.fuzzy || !item.corrected_from.empty() || item.word.empty())
+            continue;
+        slots.push_back(i);
+        texts.push_back(item.word);
+        // Word frequencies are counts, not lattice log probabilities. Only their ratios matter.
+        priors.push_back(std::log10(static_cast<double>(std::max<std::int64_t>(item.weight, 1))));
+    }
+    if (slots.size() < 2)
+        return;
+    const auto order = neural::RescoreWorker::instance().order_for(
+        *model, neural::last_characters(context, options.context_chars), texts, priors, options);
+    if (!order || order->size() != slots.size())
+        return;
+    std::vector<WordItem> ranked;
+    ranked.reserve(slots.size());
+    for (std::size_t index : *order)
+        ranked.push_back(std::move(candidates[slots[index]]));
+    for (std::size_t i = 0; i < slots.size(); ++i)
+        candidates[slots[i]] = std::move(ranked[i]);
 }
 
 } // namespace quanpin

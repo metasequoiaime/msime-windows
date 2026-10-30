@@ -13,11 +13,13 @@
 // METASEQUOIA_IME_DATA_DIR 指到备好资源的目录来实际跑通。
 
 #include "core/sentence_association_options.h"
+#include "core/input_session.h"
 #include "core/word_item.h"
 #include "neural/neural_decoder.h"
 #include "neural/rescore_worker.h"
 #include "neural/sentence_model.h"
 #include "quanpin/quanpin_dictionary.h"
+#include "shuangpin/shuangpin_dictionary.h"
 
 #include <algorithm>
 #include <chrono>
@@ -450,6 +452,189 @@ int run_test()
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cold_start).count() / kRuns;
 
         std::printf("12 candidates, 34-char context: %.2f ms cached, %.2f ms recomputed\n", cached_ms, cold_ms);
+    }
+
+    // Sharing texts between sentence and dictionary scoring must not reuse incompatible results.
+    {
+        auto &worker = neural::RescoreWorker::instance();
+        const std::vector<std::string> texts = {"学", "雪"};
+        const auto wait_order = [&](const std::vector<double> &priors, const neural::RerankOptions &options) {
+            std::optional<std::vector<std::size_t>> order;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            do
+            {
+                order = worker.order_for(*model, "冬天会下大", texts, priors, options);
+                if (order)
+                    return *order;
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            } while (std::chrono::steady_clock::now() < deadline);
+            return std::vector<std::size_t>{};
+        };
+        expect(wait_order({0.0, 0.0}, {}) == std::vector<std::size_t>({1, 0}), "flat priors should favor snow");
+        expect(wait_order({1000000.0, 0.0}, {}) == std::vector<std::size_t>({0, 1}),
+               "changed priors must not reuse an earlier cached order");
+        neural::RerankOptions one;
+        one.max_paths = 1;
+        expect(wait_order({0.0, 0.0}, one).empty(), "changed options must not reuse an earlier cached order");
+    }
+
+    for (const char *context :
+         {"冬天会下大", "我们正在学校里上", "他对我造成了很大的", "我明天要上", "冬天会下大雪我明天要上"})
+    {
+        const std::vector<std::string> words = {"学", "雪", "血", "上海", "伤害"};
+        const auto scores = model->score_sentences(context, words);
+        std::printf("Context %s:", context);
+        for (std::size_t i = 0; i < scores.size(); ++i)
+            std::printf(" %s=%.4f", words[i].c_str(), scores[i]);
+        std::printf("\n");
+        if (desktop_model != nullptr)
+        {
+            const auto desktop_scores = desktop_model->score_sentences(context, words);
+            std::printf("Desktop %s:", context);
+            for (std::size_t i = 0; i < desktop_scores.size(); ++i)
+                std::printf(" %s=%.4f", words[i].c_str(), desktop_scores[i]);
+            std::printf("\n");
+        }
+    }
+
+    // Dictionary reranking must move existing rows, preserving their identity and other sources.
+    {
+        std::vector<WordItem> original = {
+            {"xue", "学", 10000, CandidateSource::Database, "xue"},
+            {"xue", "额外候选", 1, CandidateSource::CloudSuggestion, "xue"},
+            {"xue", "雪", 8000, CandidateSource::Database, "xue"},
+            {"xue", "血", 1000, CandidateSource::Database, "xue"},
+            {"x", "下", 10000, CandidateSource::Database, "xia"},
+        };
+        original[2].fixed_position = 3;
+        const auto unchanged = [&](const std::string &key, const neural::SentenceModel *selected,
+                                   const std::string &context) {
+            auto rows = original;
+            quanpin::rerank_dictionary_candidates(rows, key, selected, context);
+            for (std::size_t i = 0; i < rows.size(); ++i)
+                expect(rows[i].word == original[i].word, "ineligible request should keep the original order");
+        };
+        unchanged("xue", model, "");
+        unchanged("xue", nullptr, "冬天会下大");
+        unchanged("x", model, "冬天会下大");
+        std::vector<WordItem> rows;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        do
+        {
+            rows = original;
+            quanpin::rerank_dictionary_candidates(rows, "xue", model, "冬天会下大");
+            if (rows.front().word == "雪")
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() < deadline);
+        std::printf("Dictionary helper winner: %s\n", rows.front().word.c_str());
+        expect(rows.front().word == "雪", "committed winter context should promote dictionary 雪 over 学");
+        expect(rows[1].word == original[1].word && rows[4].word == original[4].word,
+               "online and prefix rows must retain their slots");
+        for (const auto &row : rows)
+        {
+            const auto before =
+                std::find_if(original.begin(), original.end(), [&](const auto &item) { return item.word == row.word; });
+            expect(before != original.end() && row.weight == before->weight && row.source == before->source &&
+                       row.pinyin == before->pinyin && row.canonical_pinyin == before->canonical_pinyin &&
+                       row.fixed_position == before->fixed_position,
+                   "reranking must preserve dictionary metadata and stored weights");
+        }
+    }
+
+    // Real dictionary paths: both full pinyin and shuangpin, including a cached requery.
+    {
+        QuanpinDictionary dictionary;
+        ShuangpinDictionary shuangpin;
+        SentenceAssociationOptions options;
+        const auto baseline = dictionary.query("xue");
+        expect(!baseline.empty(), "dictionary fixture must contain xue");
+        options.context_candidate_rerank = true;
+        dictionary.set_sentence_association(options);
+        shuangpin.set_sentence_association(options);
+        dictionary.set_rescoring_context("冬天会下大");
+        shuangpin.set_rescoring_context("冬天会下大");
+        const auto wait_first = [&](auto query, auto reset, const std::string &wanted) {
+            std::vector<WordItem> rows;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            do
+            {
+                reset(); // Same invalidation used by the server's ready callback.
+                rows = query();
+                if (!rows.empty() && rows.front().word == wanted)
+                    return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            } while (std::chrono::steady_clock::now() < deadline);
+            return false;
+        };
+        expect(wait_first([&] { return dictionary.query("xue"); }, [&] { dictionary.reset_sentence_cache(); }, "雪"),
+               "quanpin xue should promote 雪 after winter context");
+        // Default shuangpin profile: xt = xue.
+        expect(wait_first([&] { return shuangpin.generateSeries("xt", "xt"); },
+                          [&] { shuangpin.reset_sentence_cache(); }, "雪"),
+               "shuangpin xt should promote 雪 after winter context");
+        dictionary.set_rescoring_context("我明天要上");
+        expect(wait_first([&] { return dictionary.query("xue"); }, [&] { dictionary.reset_sentence_cache(); }, "学"),
+               "a fresh tomorrow-school context should promote 学");
+        dictionary.set_rescoring_context("我们正在学校里上");
+        expect(wait_first([&] { return dictionary.query("xue"); }, [&] { dictionary.reset_sentence_cache(); }, "学"),
+               "a changed context should replace the cached snow order with 学");
+        dictionary.set_rescoring_context("我今天想去");
+        expect(wait_first([&] { return dictionary.query("shanghai"); }, [&] { dictionary.reset_sentence_cache(); },
+                          "上海"),
+               "multi-syllable dictionary words should also use context");
+        dictionary.set_rescoring_context("他对我造成了很大的");
+        expect(wait_first([&] { return dictionary.query("shanghai"); }, [&] { dictionary.reset_sentence_cache(); },
+                          "伤害"),
+               "the same word candidates should follow changed context");
+        dictionary.set_rescoring_context("");
+        auto no_context = dictionary.query("xue");
+        expect(no_context.size() == baseline.size(), "clearing context must restore the full baseline list");
+        for (std::size_t i = 0; i < std::min(no_context.size(), baseline.size()); ++i)
+            expect(no_context[i].word == baseline[i].word, "empty context should restore frequency order");
+        options.context_candidate_rerank = false;
+        dictionary.set_sentence_association(options);
+        dictionary.set_rescoring_context("冬天会下大");
+        const auto disabled = dictionary.query("xue");
+        expect(disabled.size() == baseline.size(), "disabling reranking must preserve all candidates");
+        for (std::size_t i = 0; i < std::min(disabled.size(), baseline.size()); ++i)
+            expect(disabled[i].word == baseline[i].word, "disabled reranking must restore frequency order");
+    }
+
+    // The product uses InputSession; fixed positions must still override contextual ranking.
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0, false, true, false);
+        SentenceAssociationOptions options;
+        options.context_candidate_rerank = true;
+        session.set_sentence_association(options);
+        session.set_rescoring_context("冬天会下大");
+        for (char c : std::string("xue"))
+            session.handle_character(c);
+        const auto started = std::chrono::steady_clock::now();
+        do
+        {
+            session.reset_sentence_cache();
+            session.recompute_candidates();
+            if (!session.candidates().empty() && session.candidates().front().word == "雪")
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() - started < std::chrono::seconds(10));
+        expect(!session.candidates().empty() && session.candidates().front().word == "雪",
+               "the product input session should expose contextual dictionary order");
+        session.enable_fixed_positions();
+        const auto found = std::find_if(session.candidates().begin(), session.candidates().end(),
+                                        [](const auto &item) { return item.word == "学"; });
+        expect(found != session.candidates().end(), "the frequency favorite must remain selectable");
+        if (found != session.candidates().end())
+        {
+            const auto index = static_cast<std::size_t>(found - session.candidates().begin());
+            expect(session.set_candidate_position(index, 1).handled, "pinning a dictionary candidate should succeed");
+            expect(session.candidates().front().word == "学", "a manual first position must override the model");
+            session.reset_sentence_cache();
+            session.recompute_candidates();
+            expect(session.candidates().front().word == "学", "an async requery must preserve a manual first position");
+            expect(session.set_candidate_position(0, 0).handled, "the test pin should be removed");
+        }
     }
 
     // ---- 集成：两种神经模式可同时提交重排，且不泄漏词格自己的首选 ----

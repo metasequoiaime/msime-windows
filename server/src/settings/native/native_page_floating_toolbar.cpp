@@ -249,8 +249,8 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
         skinpreview::ToolbarPreview::Options options;
         const double scale = model->GetNumber("general.floating_toolbar_scale", 1.0);
         options.scale = std::isfinite(scale) && scale > 0.0 ? static_cast<float>(scale) : 1.0f;
-        const double iconSize = model->GetNumber("general.floating_toolbar_font_size", 24.0);
-        options.iconSize = iconSize > 0.0 ? static_cast<float>(iconSize) : 24.0f;
+        const double iconSize = model->GetNumber("general.floating_toolbar_font_size", 22.0);
+        options.iconSize = iconSize > 0.0 ? static_cast<float>(iconSize) : 22.0f;
         options.shadow = model->GetBool("general.floating_toolbar_shadow", true);
         options.centered = true;
         for (int i = 0; i < 6; ++i)

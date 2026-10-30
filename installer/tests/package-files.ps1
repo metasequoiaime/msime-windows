@@ -17,6 +17,8 @@ try {
         'server/build-release/bin/Release/MetasequoiaImeServer.pdb',
         'server/build-release/bin/Release/MetasequoiaImeDictionaryReplay.exe',
         'server/build-release/bin/Release/MetasequoiaImeDictionaryReplay.pdb',
+        'server/build-release/bin/Release/MetasequoiaImeDictionaryBuild.exe',
+        'server/build-release/bin/Release/MetasequoiaImeDictionaryBuild.pdb',
         'server/build-release/bin/Release/MetasequoiaImeServerTests.exe',
         'server/build-release/bin/Release/MetasequoiaImeServerTests.pdb',
         'server/build-release/bin/Release/test_webview_contract.exe',
@@ -33,10 +35,8 @@ try {
         'engine/helpcode/helpcodes/helpcode.txt',
         'engine/radical/decomposition.txt',
         'engine/googlepinyinime-rev/data/dict_pinyin.dat',
-        'MetasequoiaImeDict/out/msime.db',
-        'MetasequoiaImeDict/out/others.db',
-        'MetasequoiaImeDict/out/dict_japanese.dat',
         'MetasequoiaImeDict/source/mozc_dictionary_oss/README.txt',
+        # 仓库里有 sc.lm 也不能进安装包，见下面的断言。
         'language-model/sc.lm',
         'language-model/NOTICE.md',
         'neural-model/sentence-model-desktop.safetensors',
@@ -52,13 +52,29 @@ try {
     Write-Fixture 'skins/unverified/skin.toml' "schema_version = 1`nid = `"unverified`"`n[license]`nassets = `"UNVERIFIED-DEMO-ONLY`"`n"
     Write-Fixture 'server/assets/tables/pinyin.txt' 'xing'
     Write-Fixture 'MetasequoiaImeDict/out/dictionary-manifest.json' '{"manifest_version":1}'
-    $english = Join-Path $fixture 'MetasequoiaImeDict/out/english.db'
-    python -c "import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute('CREATE TABLE english_words(word TEXT,display TEXT,weight INTEGER,PRIMARY KEY(word,display))')" $english
+    # 词库以文本源进包，导出脚本要读真正的 SQLite 文件和 MSJPDT1 模型，所以这几个夹具得是真的。
+    Copy-Item (Join-Path $PSScriptRoot '../../scripts/pack-dictionary-source.py') (New-Item -ItemType Directory -Force -Path (Join-Path $fixture 'scripts'))
+    python -c @'
+import sqlite3, struct, sys
+from pathlib import Path
+out = Path(sys.argv[1])
+with sqlite3.connect(out / "english.db") as db:
+    db.execute("CREATE TABLE english_words(word TEXT,display TEXT,weight INTEGER,PRIMARY KEY(word,display))")
+with sqlite3.connect(out / "msime.db") as db:
+    db.execute("CREATE TABLE tbl_1_n(key TEXT, jp TEXT, value TEXT, weight INTEGER DEFAULT 0)")
+    db.execute("INSERT INTO tbl_1_n VALUES ('ni', 'n', '你', 100)")
+with sqlite3.connect(out / "others.db") as db:
+    db.execute("CREATE TABLE emoji(emoji TEXT NOT NULL, category TEXT NOT NULL)")
+strings = "あ亜".encode()
+(out / "dict_japanese.dat").write_bytes(b"MSJPDT1\0" + struct.pack("<IIII", 1, 1, 1, 0)
+    + struct.pack("<QQQQ", 56, 76, 78, len(strings)) + struct.pack("<IHIHHHi", 0, 3, 3, 3, 0, 0, 10)
+    + struct.pack("<h", 0) + strings)
+'@ (Join-Path $fixture 'MetasequoiaImeDict/out')
     if ($LASTEXITCODE -ne 0) { throw 'Failed to create packaging fixture' }
     & (Join-Path $installer 'Prepare-PackageFiles.ps1') -RepoRoot $fixture -TargetVersion '2026.9.1' -IncludeSymbols
     foreach ($file in @('app_data/assets/settings/arrow.svg', 'app_data/assets/settings/sidebar/about.svg',
                          'app_data/dictionary-manifest.json',
-                         'app_data/sc.lm', 'app_data/libime-lm-NOTICE.md', 'app_data/dict_pinyin.dat',
+                         'app_data/dict_pinyin.dat',
                          'app_data/sentence-model.safetensors', 'app_data/chinese-ime-lm-NOTICE.md',
                          'tsf_dll/32/MetasequoiaImeTsf.dll', 'tsf_dll/32/MetasequoiaImeTsf.pdb',
                          'tsf_dll/64/MetasequoiaImeTsf.dll', 'tsf_dll/64/MetasequoiaImeTsf.pdb',
@@ -68,6 +84,23 @@ try {
                          'default_skins/fluent/skin.toml',
                          'THIRD_PARTY_NOTICES.txt', 'LICENSE.txt', 'MetasequoiaImeTip.ico')) {
         if (-not (Test-Path (Join-Path $installer $file))) { throw "Missing packaged file: $file" }
+    }
+    # 词库以文本源进包，安装时由 MetasequoiaImeDictionaryBuild.exe 还原；SQLite 文件本身不能再进 app_data。
+    foreach ($file in @('dictionary_source/msime.dump', 'dictionary_source/english.dump', 'dictionary_source/others.dump',
+                         'dictionary_source/dict_japanese.tokens', 'dictionary_source/dict_japanese.connection',
+                         'server_exe/MetasequoiaImeDictionaryBuild.exe')) {
+        if (-not (Test-Path (Join-Path $installer $file))) { throw "Missing packaged file: $file" }
+    }
+    foreach ($file in @('msime.db', 'english.db', 'others.db', 'dict_japanese.dat')) {
+        if (Test-Path (Join-Path $installer "app_data/$file")) { throw "Packaged the built dictionary file $file instead of its text source" }
+    }
+    $issForBuild = [IO.File]::ReadAllText((Join-Path $installer 'msime_setup.iss'))
+    if ($issForBuild -notmatch 'Source: "\{#MySourceRoot\}\\dictionary_source\\\*";\s*DestDir: "\{tmp\}\\dictionary_source"') {
+        throw 'dictionary_source must be extracted to {tmp}\dictionary_source'
+    }
+    # 回放往新词库里写，必须排在还原之后。
+    if ($issForBuild -notmatch '(?s)BuildDictionaries;\s*ReplayUserDictionary;') {
+        throw 'BuildDictionaries must run right before ReplayUserDictionary in ssPostInstall'
     }
     # 语言配置图标必须在 TSF DLL 的 regserver 之前装好：DLL 注册时才看得到它，否则又会把图标
     # 注册成随版本目录变化的 DLL 路径。32 位、64 位 DLL 各自找自己的上一级目录，两份都要有。
@@ -89,6 +122,10 @@ try {
     }
     if ($issForIcon -notmatch '#define MyTsfRoot64\s+"\{sys\}\\IME\\' -or $issForIcon -notmatch '#define MyTsfRoot32\s+"\{syswow64\}\\IME\\') {
         throw 'MyTsfRoot32/MyTsfRoot64 must point into the system directories'
+    }
+    # 词格语言模型 sc.lm 不随包发布（约 24 MB，几乎压不动），本地生成过也不能进安装包。
+    foreach ($file in @('app_data/sc.lm', 'app_data/libime-lm-NOTICE.md')) {
+        if (Test-Path (Join-Path $installer $file)) { throw "Packaged the retired language model file $file" }
     }
     # 神经整句效果档模型由设置页按需下载，仓库的 neural-model/ 里有它也不能进安装包。
     if (Test-Path (Join-Path $installer 'app_data/sentence-model-desktop.safetensors')) {
@@ -120,6 +157,15 @@ try {
     }
     if ($issText -notmatch '(?s)Source: "\{#MySourceRoot\}\\bundled_skins\\\*";[^\r\n]*\\\s*DestDir: "\{code:GetDataDir\}\\skins";[^\r\n]*\\\s*Flags: ignoreversion') {
         throw 'Bundled skins must overwrite skins\<id> in the data directory'
+    }
+    # 安装期间占住的 Server 启动锁必须和 TSF DLL 用的是同一个名字，否则 DLL 照样能在词库生成前拉起 Server，
+    # 引擎建出空的 msime.db 并占着，生成程序替换时拒绝访问。
+    $dllSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../../windows/src/IME/MetasequoiaIME.cpp'))
+    $dllMutex = [regex]::Match($dllSource, 'SERVER_LAUNCH_MUTEX_NAME\[\]\s*=\s*L"([^"]+)"').Groups[1].Value.Replace('\\', '\')
+    $issMutex = [regex]::Match($issText, '(?m)^#define\s+MyServerLaunchMutex\s+"([^"]+)"').Groups[1].Value
+    if (-not $dllMutex -or $dllMutex -cne $issMutex) { throw "Installer launch mutex '$issMutex' does not match the TSF DLL's '$dllMutex'" }
+    if ($issText -notmatch "(?s)CreateMutex\('\{#MyServerLaunchMutex\}'\);\s*StopImeProcesses;") {
+        throw 'PrepareToInstall must take the Server launch mutex before stopping IME processes'
     }
     # 数据目录不整个归输入法时（旧版安装器把标记写进了用户原有的文件夹，#537），卸载只按
     # IsShippedAppDataItem 等名单删。包里新增了顶层条目而名单没跟上，卸载就会把它漏在用户目录里。
@@ -176,16 +222,7 @@ try {
     if ([IO.File]::ReadAllText($database) -ne 'preserved user data') { throw 'Light package replaced dictionary data' }
     if (-not (Test-Path (Join-Path $installer 'app_data/assets/settings/sidebar/about.svg'))) { throw 'Light package lost settings assets' }
     if (Test-Path (Join-Path $installer 'app_data/html')) { throw 'Light package kept the retired html directory' }
-    # 完整包必须带 sc.lm。缺了它引擎是静默降级的：整句候选只是变差，不会报错，所以打包
-    # 这一步是唯一能挡住它的地方。轻量包本来就不带数据文件，不受影响。
-    $languageModelFixture = Join-Path $fixture 'language-model/sc.lm'
-    Remove-Item $languageModelFixture -Force
-    & (Join-Path $installer 'Prepare-PackageFiles.ps1') -RepoRoot $fixture -TsfDirectory windows -ServerDirectory server -NoticesDirectory . -Light
-    $rejected = $false
-    try { & (Join-Path $installer 'Prepare-PackageFiles.ps1') -RepoRoot $fixture } catch { $rejected = $_.Exception.Message -match 'sc\.lm' }
-    if (-not $rejected) { throw 'Missing language model was accepted' }
-    [IO.File]::WriteAllText($languageModelFixture, 'fixture')
-    # dict_pinyin.dat 同理：缺了它 im_open_decoder 返回 false，Google 那条 Fallback 整句
+    # dict_pinyin.dat 是静默失败：缺了它 im_open_decoder 返回 false，Google 那条 Fallback 整句
     # 候选悄无声息地消失。它长期没被打包进去，测试却是绿的，因为测试用的是
     # server/assets/tables 那份开发副本 —— 所以这条断言要盯的是安装包，不是数据目录。
     $pinyinModelFixture = Join-Path $fixture 'engine/googlepinyinime-rev/data/dict_pinyin.dat'

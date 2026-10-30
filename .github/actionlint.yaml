@@ -1,5 +1,9 @@
 self-hosted-runner:
   labels:
+    - depot-ubuntu-24.04
+    - depot-ubuntu-24.04-4
+    - depot-ubuntu-24.04-8
+    - depot-windows-2025-8
     - msime-windows
 
 # Configuration variables in array of strings defined in your repository or

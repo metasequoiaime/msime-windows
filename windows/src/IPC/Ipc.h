@@ -18,6 +18,8 @@
 #include "../../../engine/contracts/temporary_japanese_input.h"
 #include "../../../engine/contracts/trilingual_input.h"
 
+class CMetasequoiaIME;
+
 int InitIpc();
 int InitNamedpipe();
 int ConnectToAllNamedpipe();
@@ -27,7 +29,7 @@ int CloseNamedpipe();
 void ResetNamedpipeReplyState();
 HANDLE GetToTsfWorkerThreadNamedpipe();
 void BindNamedpipeFocusState(
-    _In_ const void *owner, _In_opt_ bool *focusResetPending, _In_opt_ bool *activationRequired,
+    _In_ CMetasequoiaIME *owner, _In_opt_ bool *focusResetPending, _In_opt_ bool *activationRequired,
     _In_opt_ std::atomic<uint64_t> *expectedWorkerFocusToken, _In_opt_ std::atomic<bool> *localSessionResetPending,
     _In_opt_ std::atomic<UINT> *localSessionResetToken, _In_opt_ std::atomic<bool> *workerCommitReady,
     _In_opt_ std::atomic<uint64_t> *acknowledgedWorkerFocusToken, _In_opt_ std::atomic<HANDLE> *workerPipeHandle,
@@ -44,6 +46,9 @@ void BindNamedpipeWakeEvents(_In_ const void *owner, _In_opt_ HANDLE workerAckEv
                              _In_opt_ HANDLE workerPipePublishedEvent);
 void UnbindNamedpipeFocusState(_In_ const void *owner);
 bool IsNamedpipeFocusStateOwner(_In_ const void *owner);
+bool IsCurrentThreadForegroundInput();
+bool IsNamedpipeThreadFocused();
+void QueueNamedpipeFocusGateDiagnostic(bool allowed);
 UINT BeginNamedpipeLocalSessionReset();
 void InvalidateNamedpipeWorkerGeneration();
 void MarkNamedpipeFocusLost();
@@ -125,6 +130,10 @@ int SendLangbarRightClickEventToUIProcessViaNamedPipe(const RECT *prcArea);
 // separated). Used in UILess mode so ITfCandidateListUIElement::GetString can
 // return real candidates after PrepareCandidateList has written shared memory.
 bool TryReadCandidatePageFromSharedMemory(_Out_ std::wstring *candidatePage);
+// 自动下载的安装包已经下好并校验通过。由 Server 通过 worker 管道广播，内容全来自本机
+// 写下的状态；这里只负责询问用户，不联网、不读文件、不启动任何程序。确认后发 Aux 的
+// InstallUpdate 通知，由 Server 拉起安装程序并退出。
+bool PromptUpdateInstaller(const std::wstring &payload);
 // When abortTransportOnTimeout is false, a missed reply leaves the pipe up and
 // returns a non-TransportUnavailable empty frame for the caller to fall back.
 struct FanyImeNamedpipeDataToTsf *TryReadDataFromServerPipeWithTimeout(uint64_t expectedRequestId,

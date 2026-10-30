@@ -3,6 +3,7 @@
 #include "ai/chat_completions.h"
 #include "ai/chat_request_params.h"
 #include "config/ai_provider.h"
+#include "voice-input/voice_providers.h"
 #include "translation_gloss.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -165,7 +166,7 @@ Config FromConfiguredTranslation(const TranslationConfig &config)
 {
     return {config.ai.provider, CloudTranslation::TrimSecret(config.ai.endpoint),
             AiAssistant::RequestToken(config.ai.provider, CloudTranslation::TrimSecret(config.ai.token)),
-            CloudTranslation::TrimSecret(config.ai.model)};
+            CloudTranslation::TrimSecret(config.ai.model), ChatCompletions::NormalizeJsonMode(config.ai.json_mode)};
 }
 
 bool IsUsableConfig(const Config &config)
@@ -177,14 +178,14 @@ bool IsUsableConfig(const Config &config)
 }
 
 Config FromFields(const std::string &provider, const std::string &endpoint, const std::string &token,
-                  const std::string &model)
+                  const std::string &model, const std::string &json_mode)
 {
     std::string url = CloudTranslation::TrimSecret(endpoint);
     // 设置页输入框里允许只写主机名：补 https，其余原样交给 IsUsableConfig 判断。
     if (!url.empty() && url.find("://") == std::string::npos)
         url = "https://" + url;
     return {CloudTranslation::TrimSecret(provider), std::move(url), CloudTranslation::TrimSecret(token),
-            CloudTranslation::TrimSecret(model)};
+            CloudTranslation::TrimSecret(model), ChatCompletions::NormalizeJsonMode(json_mode)};
 }
 
 namespace detail
@@ -194,15 +195,19 @@ nlohmann::json BuildRequestBody(const Config &config, const std::vector<std::str
 {
     nlohmann::json body = {{"model", config.model},
                            {"stream", false},
-                           {"response_format", {{"type", "json_object"}}},
                            {"messages",
                             {{{"role", "system"}, {"content", BuildSystemPrompt(source, target)}},
                              {{"role", "user"}, {"content", nlohmann::json(texts).dump()}}}}};
+    // 本地部署与未知服务默认不带，见 ChatCompletions::JsonMode。
+    if (ChatCompletions::UsesJsonResponseFormat(config.json_mode, config.endpoint))
+        body["response_format"] = {{"type", "json_object"}};
     if (ChatCompletions::IsOpenAiReasoningRequest(config.provider, config.model))
         body["reasoning_effort"] = ChatCompletions::kOpenAiReasoningEffort;
     else
         body["temperature"] = 0.0;
-    if (config.provider == "deepseek")
+    // 标签写着 deepseek、地址却是别家时也会走到这里，所以按接口地址判断，理由同 AI 联想侧：
+    // 把 thinking.type 发给不认识它的服务会让整次请求被拒。
+    if (VoiceInput::VendorForRequest(config.provider, config.endpoint) == VoiceInput::ChatVendor::DeepSeek)
     {
         // 与 AI 辅助保持一致，避免推理模型的思考内容拖慢候选翻译。
         body["thinking"] = {{"type", "disabled"}};
@@ -218,16 +223,30 @@ long RequestTimeoutMs(const Config &config)
 }
 } // namespace detail
 
-std::vector<std::string> TextTranslateBatch(const Config &config, const std::vector<std::string> &texts,
-                                            const std::string &source, const std::string &target)
+std::vector<std::string> TextTranslateBatch(const AiTranslation::Config &config, const std::vector<std::string> &texts,
+                                            const std::string &source, const std::string &target,
+                                            std::string *failure_detail)
 {
     std::vector<std::string> results(texts.size());
+    if (failure_detail != nullptr)
+        failure_detail->clear();
     if (texts.empty() || !IsUsableConfig(config) || source.empty() || target.empty())
+    {
+        // 配置不完整时调用方早就该拦住了；这里留一句原因，免得测试按钮显示「未返回译文」这种空话。
+        if (failure_detail != nullptr && !IsUsableConfig(config))
+            *failure_detail = "接口地址、Token 或模型不完整";
         return results;
+    }
 
     const auto body = detail::BuildRequestBody(config, texts, source, target);
-    const auto content =
+    const auto fetched =
         ChatCompletions::FetchContent(config.endpoint, config.token, body.dump(), detail::RequestTimeoutMs(config));
-    return content ? ParseTranslations(*content, texts.size()) : results;
+    if (!fetched.content)
+    {
+        if (failure_detail != nullptr)
+            *failure_detail = ChatCompletions::DescribeFailure(fetched.failure, fetched.detail);
+        return results;
+    }
+    return ParseTranslations(*fetched.content, texts.size());
 }
 } // namespace AiTranslation

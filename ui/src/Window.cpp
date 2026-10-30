@@ -251,6 +251,12 @@ LRESULT Window::OnLeftButtonDown(WPARAM wParam, LPARAM lParam)
             SetFocus(hwnd_);
         }
     }
+    else if (!focusTarget)
+    {
+        // A non-focusable mouse target can retain the current keyboard focus (e.g. a searchable menu).
+        // Only a click with no such target ends the previous control's edit session.
+        SetFocusedVisual(nullptr);
+    }
     capturedVisual_ = dispatchTarget;
     if (dispatchTarget && dispatchTarget->OnMouseDown(point, wParam))
     {

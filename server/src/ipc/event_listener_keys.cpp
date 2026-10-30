@@ -23,6 +23,7 @@
 #include "window/caret_state_indicator_policy.h"
 #include "utils/ime_utils.h"
 #include "config/ime_config.h"
+#include "conversion/chinese_converter.h"
 #include "session/session_factory.h"
 #include "mixed/date_time_candidates.h"
 #include "log/candidate_diag_log.h"
@@ -498,6 +499,16 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         {
             input = '-';
         }
+        else if (keycode == VK_OEM_MINUS && (wch == L'-' || wch == L'_'))
+        {
+            // Page-boundary minus and its Shift variant become literal input.
+            input = static_cast<char>(wch);
+        }
+        else if (keycode == VK_OEM_PLUS && wch == L'+')
+        {
+            // Shift+= becomes a literal plus.
+            input = static_cast<char>(wch);
+        }
         else if (IsDateTimeInputKey(keycode, wch, raw) || IsVModeInputKey(wch, raw))
         {
             input = static_cast<char>(wch);
@@ -555,6 +566,49 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         g_inputSession->recompute_candidates();
     }
     composition.raw_input_with_cases = raw;
+    return true;
+}
+
+// A literal character that would otherwise be swallowed as a candidate-navigation
+// key becomes part of the raw spelling. The engine cannot split a spelling that
+// carries it, so the candidate list collapses to the single fallback entry
+// showing the typed string, and Space commits exactly that string.
+//
+// Only hosts that negotiated composition restore can apply the frame. Callers
+// decide which keys qualify; this helper only checks that the append itself is
+// meaningful.
+bool AppendLiteralToComposition(WCHAR literal, uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
+{
+    const std::string raw = g_inputSession->get_pinyin_sequence_with_cases();
+    if (raw.empty() || GlobalIme::composition.caret_position < raw.size() || g_english_input_mode || IsUiLessMode() ||
+        IsJapaneseInputMode() || IsSpecialModeCompositionActive(raw) || IsCandidateSubPageActive() ||
+        !ClientNegotiatedCompositionRestore(client_id))
+    {
+        return false;
+    }
+
+    // Reuse the ordinary edit-key path so the engine sequence, the literal-input
+    // flag, wubi truncation and the caret rule all match a normal typed letter.
+    const UINT keycode = literal == L'+' ? VK_OEM_PLUS : VK_OEM_MINUS;
+    bool composition_restored = false;
+    if (!ApplyCompositionEditKey(keycode, literal, Global::ModifiersDown, true, composition_restored))
+    {
+        return false;
+    }
+    if (composition_restored)
+    {
+        return false;
+    }
+
+    // PrepareCandidateList emits the same single fallback for an unsplittable
+    // spelling, so later rebuilds keep the entry instead of dropping it right
+    // before Space.
+    FanyNamedPipe::PrepareCandidateList(client_id, activation_epoch);
+
+    Global::MsgTypeToTsf = Global::DataFromServerMsgType::CompositionRestored;
+    Global::candidate_ui.selected_text = BuildCreateWordPipePayload(g_inputSession->get_pinyin_sequence_with_cases(),
+                                                                    GlobalIme::composition.creating_word.word);
+    FanyNamedPipe::SendCurrentDataToClient(client_id, activation_epoch, request_id);
     return true;
 }
 
@@ -632,7 +686,8 @@ struct ScopedServerKeyLatency
 };
 
 // 把候选框换回 Ctrl+Enter 或选中「📅日期」之前的那一屏。子页期间输入串一个字都没动，session
-// 里的候选还是原来那批，所以这里直接把存下来的 items / 页码 / 高亮位放回去即可；随后这颗按键
+// 里的候选还是原来那批，所以这里直接把存下来的 items / 页码 / 高亮位放回去。子页期间切过字形时，
+// 放回的列表还是按旧字形展开的写法，要按当前字形换写法，显示与上屏才跟得上切换。随后这颗按键
 // 继续走它本来的流程，就像子页从来没出现过一样。
 void ExitCandidateSubPage()
 {
@@ -653,6 +708,8 @@ void ExitCandidateSubPage()
     g_translation_saved_selected_index = 0;
     g_translation_saved_selection_started = false;
     RefreshCandidatePageUi(false);
+    if (CandidateListCharacterSet() != GetConfiguredCharacterSet())
+        RespellCandidatesForCharacterSetChange();
 }
 
 // 混输里的「📅日期」入口：把候选框换成这组的全部格式（顺序与 Shift+T 模式同一份），空格/数字键
@@ -854,7 +911,7 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
         composition.restored_selection_highlight = {};
         Global::MsgTypeToTsf = Global::DataFromServerMsgType::CompositionRestored;
         Global::candidate_ui.selected_text =
-            BuildCreateWordPipePayload(std::string{}, composition.creating_word.word) + L"\t0";
+            BuildCreateWordPipePayload(std::string{}, composition.creating_word.prefix_text) + L"\t0";
         SendCurrentDataToClient(client_id, activation_epoch, request_id);
         if (GetConfiguredCandidateWindowPreeditStyle() == "empty")
         {
@@ -910,8 +967,8 @@ void HandleTrilingualCycleKey(uint64_t client_id, uint64_t activation_epoch, uin
     // prefix, then commit the remaining raw spelling without choosing or
     // learning a candidate.
     const std::string raw = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
-    const std::wstring commit_text = string_to_wstring(
-        CandidateTextForOutput(GlobalIme::composition.creating_word.word) + (g_r_mode_triggered ? "R" + raw : raw));
+    const std::wstring commit_text =
+        string_to_wstring(GlobalIme::composition.creating_word.prefix_text + (g_r_mode_triggered ? "R" + raw : raw));
 
     bool native_mode_changed = false;
     if (destination != Mode::English)
@@ -1043,13 +1100,17 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             // The packet's point[] is this key's badge anchor, not the
             // candidate anchor: read it locally and leave Global::Point alone.
             // Legacy clients leave the struct-default point there instead.
-            if (SetConfiguredCharacterSet(next) && GetConfiguredCharacterSet() != previous &&
-                ClientNegotiatedCaretStateIndicator(client_id))
+            const bool changed = SetConfiguredCharacterSet(next) && GetConfiguredCharacterSet() != previous;
+            if (changed && GetConfiguredCharacterSet() == "traditional")
+                ChineseConverter::PreloadInBackground();
+            if (changed && ClientNegotiatedCaretStateIndicator(client_id))
             {
                 PostCaretStateBadge(FanyImeUi::SingleStateBadge(FanyImeUi::CaretStateKind::CharacterSet,
                                                                 GetConfiguredCharacterSet() == "traditional"),
                                     namedpipeData.point[0], namedpipeData.point[1]);
             }
+            if (changed)
+                RespellCandidatesForCharacterSetChange();
         }
         return;
     }
@@ -1126,6 +1187,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     const std::optional<SchemeType> scheme =
         g_inputSession ? std::optional<SchemeType>(g_inputSession->current_scheme_type()) : std::nullopt;
     const bool chinese_scheme = scheme == SchemeType::Quanpin || scheme == SchemeType::Shuangpin;
+    const bool shuangpin_scheme = scheme == SchemeType::Shuangpin;
     // T 模式对五笔同样开放，但五笔不能并进 chinese_scheme：那个变量还给 K/U/E/M/S/J/Y/R 触发与
     // ShouldLearnEnteredEnglishWord 用，并进去会让五笔连带打开其它本地模式（R7）。
     const bool date_time_scheme = chinese_scheme || scheme == SchemeType::Wubi;
@@ -1151,7 +1213,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         const std::string raw = g_r_mode_triggered ? "R" + input_before_key : input_before_key;
         const std::string text = FanyImeIpc::EnteredPinyinText(
             raw, convert_shuangpin ? g_inputSession->get_quanpin() : std::string{}, convert_shuangpin);
-        Global::candidate_ui.selected_text = string_to_wstring(GlobalIme::composition.creating_word.word + text);
+        Global::candidate_ui.selected_text = string_to_wstring(GlobalIme::composition.creating_word.prefix_text + text);
         Global::MsgTypeToTsf = Global::DataFromServerMsgType::CommitExactText;
         SendCurrentDataToClient(client_id, activation_epoch, request_id);
         return;
@@ -1174,7 +1236,8 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     if (chinese_scheme && !g_english_input_mode && GetConfiguredSymbolModeEnabled() && input_before_key.empty() &&
         Global::Keycode == 'S' && Global::Wch == L'S' && shift_only)
         g_symbol_mode_triggered = true;
-    if (chinese_scheme && !g_english_input_mode && GetConfiguredJianpinModeEnabled() && input_before_key.empty() &&
+    // 超级简拼只留给双拼：全拼直接打声母就是简拼，Shift+J 在全拼下按普通大写 J 处理。
+    if (shuangpin_scheme && !g_english_input_mode && GetConfiguredJianpinModeEnabled() && input_before_key.empty() &&
         Global::Keycode == 'J' && Global::Wch == L'J' && shift_only)
         g_jianpin_mode_triggered = true;
     if (chinese_scheme && !g_english_input_mode && GetConfiguredYModeEnabled() && input_before_key.empty() &&
@@ -1290,8 +1353,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
                 {
                     const auto edge = word_character_direction < 0 ? FanyImeIpc::HanCharacterEdge::First
                                                                    : FanyImeIpc::HanCharacterEdge::Last;
-                    const auto character =
-                        FanyImeIpc::ExtractHanCharacter(CandidateTextForOutput(highlighted_item.word), edge);
+                    const auto character = FanyImeIpc::ExtractHanCharacter(CandidateOutputText(highlighted_item), edge);
                     if (character)
                     {
                         Global::MsgTypeToTsf = Global::DataFromServerMsgType::CommitExactText;
@@ -1658,9 +1720,10 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             // ApplyCompositionEditKey ran -- which is what the hold applies in
             // every outcome. The candidate page follows it below.
             Global::MsgTypeToTsf = Global::DataFromServerMsgType::CompositionRestored;
-            Global::candidate_ui.selected_text = BuildCreateWordPipePayload(GlobalIme::composition.raw_input_with_cases,
-                                                                            GlobalIme::composition.creating_word.word) +
-                                                 L'\t' + std::to_wstring(GlobalIme::composition.caret_position);
+            Global::candidate_ui.selected_text =
+                BuildCreateWordPipePayload(GlobalIme::composition.raw_input_with_cases,
+                                           GlobalIme::composition.creating_word.prefix_text) +
+                L'\t' + std::to_wstring(GlobalIme::composition.caret_position);
             SendCurrentDataToClient(client_id, activation_epoch, request_id);
             ScopedKeyStage publish_restored{client_id, activation_epoch, request_id, L"handle-candidates"};
             PublishRestoredCompositionCandidates(client_id, activation_epoch);
@@ -1778,9 +1841,29 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         };
 
         const bool shift_down = (Global::ModifiersDown & 0b00000001u) != 0;
+        // Shift+- / Shift+= append the ASCII symbol to the raw spelling. The key
+        // stays claimed by the IME, so the reply has to rebuild the composition;
+        // MoveCandidatePage would otherwise swallow it as a page turn. Hosts that
+        // cannot apply the frame fall through to the ordinary paging path.
+        if (GetConfiguredPagingMinusEqualEnabled() &&
+            FanyImeIpc::IsShiftedPagingSymbolKey(Global::Keycode, Global::Wch, Global::ModifiersDown) &&
+            AppendLiteralToComposition(Global::Wch, client_id, activation_epoch, request_id))
+        {
+            return;
+        }
         if (Global::Keycode == VK_OEM_MINUS && GetConfiguredPagingMinusEqualEnabled())
         {
-            move_page(-1, Global::DataFromServerMsgType::MovePagePrevious);
+            const PageMoveResult moved = MoveCandidatePage(-1);
+            // The first page has no previous page, so the key becomes a literal
+            // '-' in the raw spelling instead of a page turn that swallows it.
+            // Ctrl and Alt combinations keep the old no-op paging behavior.
+            if (moved == PageMoveResult::Unchanged && (Global::ModifiersDown & FanyImeIpc::kKeyModifierMask) == 0 &&
+                AppendLiteralToComposition(L'-', client_id, activation_epoch, request_id))
+            {
+                return;
+            }
+            result = Global::DataFromServerMsgType::MovePagePrevious;
+            refresh = moved != PageMoveResult::Unchanged;
         }
         else if (Global::Keycode == VK_OEM_PLUS && GetConfiguredPagingMinusEqualEnabled())
         {

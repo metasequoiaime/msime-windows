@@ -1280,6 +1280,83 @@ bool IsPipeActivationCurrent(uint64_t client_id, uint64_t activation_epoch)
     return g_active_client_state.matches(client_id, activation_epoch);
 }
 
+namespace
+{
+// client_id is pid << 32 | tid of the TSF thread. A match against the foreground
+// window's thread, or the thread owning its keyboard focus, means the user is
+// looking at this TIP.
+//
+// The focused control does not have to live in the foreground window's process.
+// UWP-style apps are framed by ApplicationFrameHost, so GetForegroundWindow()
+// returns the frame while the TSF client sits in the app process: Settings is the
+// frame from ApplicationFrameHost with the focused control in SystemSettings.exe.
+// Thread ids are unique per system, so the focus match compares the thread alone.
+bool ClientOwnsForegroundInput(HWND foreground, uint64_t client_id)
+{
+    DWORD process_id = 0;
+    const DWORD thread_id = GetWindowThreadProcessId(foreground, &process_id);
+    if (thread_id == 0)
+    {
+        return false;
+    }
+
+    const DWORD client_process_id = static_cast<DWORD>(client_id >> 32);
+    const DWORD client_thread_id = static_cast<DWORD>(client_id & 0xFFFFFFFFull);
+    if (client_thread_id == thread_id && client_process_id == process_id)
+    {
+        return true;
+    }
+
+    GUITHREADINFO info{sizeof(info)};
+    if (!GetGUIThreadInfo(thread_id, &info) || !info.hwndFocus)
+    {
+        return false;
+    }
+    return GetWindowThreadProcessId(info.hwndFocus, nullptr) == client_thread_id;
+}
+} // namespace
+
+bool IsForegroundInputThreadConnectedPipeClient()
+{
+    const HWND foreground = GetForegroundWindow();
+    if (!foreground)
+    {
+        return false;
+    }
+
+    // Snapshot under the lock, then ask Windows about each thread outside it:
+    // GUITHREADINFO crosses into another process, and the pipe threads must not
+    // queue behind that.
+    std::vector<uint64_t> clients;
+    {
+        std::lock_guard lock(g_pipe_clients_mutex);
+        clients.reserve(g_pipe_clients.size());
+        for (const auto &entry : g_pipe_clients)
+        {
+            clients.push_back(entry.first);
+        }
+    }
+
+    for (const uint64_t client_id : clients)
+    {
+        if (ClientOwnsForegroundInput(foreground, client_id))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PipeClientOwnsForegroundInput(uint64_t client_id)
+{
+    const HWND foreground = GetForegroundWindow();
+    if (!foreground || client_id == 0)
+    {
+        return false;
+    }
+    return ClientOwnsForegroundInput(foreground, client_id);
+}
+
 void ShutdownPipeClients()
 {
     std::vector<std::shared_ptr<PipeControlHandle>> handler_controls;

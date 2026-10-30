@@ -1,5 +1,6 @@
 #include "tests/includes/test_framework.h"
 
+#include "ai/chat_request_params.h"
 #include "cloud/ai_translation.h"
 
 TEST_CASE(AiTranslationValidatesConfig)
@@ -46,7 +47,7 @@ TEST_CASE(AiTranslationBuildsConfigFromTranslationSnapshot)
 
 TEST_CASE(AiTranslationOmitsSamplingForOpenAiReasoningModels)
 {
-    AiTranslation::Config config{"OpenAI", "https://example.test", "sk-test", "GPT-5.6-Luna"};
+    AiTranslation::Config config{"OpenAI", "https://example.test", "sk-test", "GPT-5.6-Luna", "force"};
     const auto body = AiTranslation::detail::BuildRequestBody(config, {"你好", "世界"}, "zh", "en");
     REQUIRE_EQ(body["model"].get<std::string>(), config.model);
     REQUIRE_EQ(body["stream"].get<bool>(), false);
@@ -68,7 +69,13 @@ TEST_CASE(AiTranslationOmitsSamplingForOpenAiReasoningModels)
 
 TEST_CASE(AiTranslationKeepsOtherProviderRequestShape)
 {
+    // 地址是本机服务上的 DeepSeek 兼容实现，靠标签认不出厂商，thinking 按接口地址判断。
     AiTranslation::Config config{"deepseek", "https://example.test", "sk-test", "deepseek-chat"};
+    const auto unknown_host = AiTranslation::detail::BuildRequestBody(config, {"你好"}, "zh", "en");
+    REQUIRE_EQ(unknown_host["temperature"].get<double>(), 0.0);
+    REQUIRE(!unknown_host.contains("thinking"));
+
+    config.endpoint = "https://api.deepseek.com/chat/completions";
     const auto deepseek = AiTranslation::detail::BuildRequestBody(config, {"你好"}, "zh", "en");
     REQUIRE_EQ(deepseek["temperature"].get<double>(), 0.0);
     REQUIRE_EQ(deepseek["thinking"]["type"].get<std::string>(), "disabled");
@@ -76,10 +83,58 @@ TEST_CASE(AiTranslationKeepsOtherProviderRequestShape)
     REQUIRE(!deepseek.contains("max_completion_tokens"));
 
     config.provider = "custom";
+    config.endpoint = "https://example.test";
     config.model = "GPT-5.6-Luna";
     const auto custom = AiTranslation::detail::BuildRequestBody(config, {"你好"}, "zh", "en");
     REQUIRE_EQ(custom["temperature"].get<double>(), 0.0);
     REQUIRE(!custom.contains("thinking"));
+}
+
+TEST_CASE(AiTranslationFollowsJsonModeStrategy)
+{
+    const auto body_for = [](const std::string &mode, const std::string &endpoint) {
+        AiTranslation::Config config{"custom", endpoint, "sk-test", "qwen3:8b", mode};
+        return AiTranslation::detail::BuildRequestBody(config, {"你好"}, "zh", "en");
+    };
+
+    // 强制档不看地址，一律带上。
+    REQUIRE(body_for("force", "http://127.0.0.1:11434/v1/chat/completions").contains("response_format"));
+    // 兼容档不看地址，一律不带。
+    REQUIRE(!body_for("off", "https://api.deepseek.com/chat/completions").contains("response_format"));
+    // 自动档只对原生实现带上。
+    REQUIRE(body_for("auto", "https://api.deepseek.com/chat/completions").contains("response_format"));
+    REQUIRE(body_for("auto", "https://api.openai.com/v1/chat/completions").contains("response_format"));
+    REQUIRE(!body_for("auto", "http://127.0.0.1:1234/v1/chat/completions").contains("response_format"));
+    REQUIRE(!body_for("auto", "https://relay.example.com/v1/chat/completions").contains("response_format"));
+
+    // 空串与未知取值按自动档处理，旧配置不会因为缺键就变回强制。
+    REQUIRE(!body_for("", "http://localhost:8000/v1/chat/completions").contains("response_format"));
+    REQUIRE(!body_for("nonsense", "localhost:8000/v1/chat/completions").contains("response_format"));
+}
+
+TEST_CASE(AiTranslationDetectsLocalEndpoints)
+{
+    for (const char *endpoint :
+         {"http://localhost:11434/v1/chat/completions", "http://127.0.0.1:1234/v1/chat/completions",
+          "http://[::1]:8080/v1/chat/completions", "http://192.168.1.20:8000/v1/chat/completions",
+          "http://10.0.0.5:8000/v1/chat/completions", "http://172.16.0.9:8000/v1/chat/completions",
+          "http://172.31.255.1:8000/v1/chat/completions"})
+    {
+        REQUIRE(ChatCompletions::IsLocalChatEndpoint(endpoint));
+    }
+    for (const char *endpoint :
+         {"https://api.deepseek.com/chat/completions", "https://api.openai.com/v1/chat/completions",
+          "http://172.32.0.9:8000/v1/chat/completions", "http://172.15.0.9:8000/v1/chat/completions",
+          "https://notlocalhost.example.com/v1",
+          // 数字开头的公网域名不能被前缀匹配误判成本机。
+          "https://172.16.example.com/v1/chat/completions", "https://10.evil.com/v1/chat/completions",
+          "https://127.evil.com/v1/chat/completions", "https://192.168.evil.com/v1/chat/completions",
+          "http://172.16abc.example.com/v1/chat/completions", "http://127.0.0.1.example.com/v1/chat/completions",
+          // 越界的点分段同样不合法。
+          "http://300.1.1.1/v1/chat/completions"})
+    {
+        REQUIRE(!ChatCompletions::IsLocalChatEndpoint(endpoint));
+    }
 }
 
 TEST_CASE(AiTranslationRejectsRepliesThatDoNotLineUp)

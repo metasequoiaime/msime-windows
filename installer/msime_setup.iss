@@ -36,6 +36,9 @@
 #define MyWatchdogName "MetasequoiaImeWatchdog.exe"
 #define MyWatchdogTaskName "Metasequoia IME Watchdog"
 #define MyReplayName   "MetasequoiaImeDictionaryReplay.exe"
+#define MyDictionaryBuildName "MetasequoiaImeDictionaryBuild.exe"
+; 与 windows\src\IME\MetasequoiaIME.cpp 的 SERVER_LAUNCH_MUTEX_NAME 是同一个名字（installer/tests/package-files.ps1 核对）。
+#define MyServerLaunchMutex "Local\MetasequoiaImeServer.Launch"
 #define MyVersionDirBase "msime_v" + MyAppVersion
 #define MySourceRoot   "."
 ; TSF DLL 装在系统目录下：CS2 等开启 Trusted Mode 的游戏只放行「位于系统目录且有代码签名」的
@@ -168,6 +171,11 @@ Source: "{#MySourceRoot}\app_data\assets\settings\*"; \
 Source: "{#MySourceRoot}\app_data\*"; DestDir: "{code:GetDataDir}"; \
     Excludes: "\config.toml,\config.base.toml,\config.default.toml"; \
     Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
+
+; msime.db、english.db、others.db、dict_japanese.dat 以文本源进包（SQLite 页和索引压不动，这样小约 40 MB），
+; 只在安装过程中用：解到 {tmp}，ssPostInstall 的 BuildDictionaries 还原进数据目录，安装程序退出时随 {tmp} 删掉。
+Source: "{#MySourceRoot}\dictionary_source\*"; DestDir: "{tmp}\dictionary_source"; \
+    Flags: ignoreversion deleteafterinstall
 
 ; 用户配置只在首次安装时从出厂模板生成。升级时绝不覆盖已有 config.toml；
 ; Server 启动时再以 config.default.toml 合并：保留用户改过的值，带入新版新增项。
@@ -844,7 +852,8 @@ begin
 end;
 
 { app_data 里随包装进数据目录根下的条目。installer/tests/package-files.ps1 拿真正打出来的
-  app_data 对这份名单，打包新增文件而漏改这里会红。}
+  app_data 对这份名单，打包新增文件而漏改这里会红。msime.db、english.db、others.db、dict_japanese.dat
+  不经 app_data，由 BuildDictionaries 在安装时生成，但同样是出厂文件，覆盖安装和卸载要能删掉。}
 function IsShippedAppDataItem(const FileName: String): Boolean;
 begin
   Result :=
@@ -856,8 +865,6 @@ begin
     (CompareText(FileName, 'MOZC_DICTIONARY_LICENSE.txt') = 0) or
     (CompareText(FileName, 'english.db') = 0) or
     (CompareText(FileName, 'others.db') = 0) or
-    (CompareText(FileName, 'sc.lm') = 0) or
-    (CompareText(FileName, 'libime-lm-NOTICE.md') = 0) or
     (CompareText(FileName, 'sentence-model.safetensors') = 0) or
     (CompareText(FileName, 'chinese-ime-lm-NOTICE.md') = 0) or
     (CompareText(FileName, 'config.default.toml') = 0) or
@@ -879,6 +886,11 @@ begin
     (CompareText(FileName, 'others.db-wal') = 0) or
     (CompareText(FileName, 'others.db-shm') = 0) or
     (CompareText(FileName, 'others.db-journal') = 0) or
+    { BuildDictionaries 的中间文件，正常结束时已改名；安装被强行中断才会留下。}
+    (CompareText(FileName, 'msime.db.building') = 0) or
+    (CompareText(FileName, 'english.db.building') = 0) or
+    (CompareText(FileName, 'others.db.building') = 0) or
+    (CompareText(FileName, 'dict_japanese.dat.building') = 0) or
     (CompareText(FileName, 'user_dict.dat') = 0) or
     (CompareText(FileName, 'clipboard_history.json') = 0) or
     (CompareText(FileName, 'voice_system_audio_mute_state.txt') = 0) or
@@ -896,11 +908,14 @@ end;
 { 旧版随包装进数据目录根下、现已不再分发的条目。留在名单里，覆盖安装与卸载才会继续清掉它们。
   神经整句效果档模型改为设置页按需下载到 models\neural-desktop\（归 IsCollocationModelDirectory 保留）。
   html\webview2\ 是旧版 WebView2 界面的页面，界面改由 Direct2D 绘制后不再分发；设置窗口
-  用到的图片改装在 assets\settings\。}
+  用到的图片改装在 assets\settings\。词格语言模型 sc.lm 及其授权声明不再随包发布（约 24 MB，
+  几乎压不动），改由设置页按需下载到 models\language-model\（随 models 整目录升级保留）。}
 function IsRetiredAppDataItem(const FileName: String): Boolean;
 begin
   Result :=
     (CompareText(FileName, 'sentence-model-desktop.safetensors') = 0) or
+    (CompareText(FileName, 'sc.lm') = 0) or
+    (CompareText(FileName, 'libime-lm-NOTICE.md') = 0) or
     (CompareText(FileName, 'html') = 0);
 end;
 
@@ -909,32 +924,41 @@ begin
   Result := IsShippedAppDataItem(FileName) or IsRuntimeAppDataItem(FileName) or IsRetiredAppDataItem(FileName);
 end;
 
-{ 0.9.x 把效果档模型随包装在数据目录根下，现在 Server 只认 models\neural-desktop\。根下那份和
-  设置页下载的是同一个 model-v1 发布文件，在清理把它当退役文件删掉之前挪过去，升级用户就不用重下
-  （下载走 GitHub，不少用户连不上）。校验和对不上、或新位置已有文件时什么都不做，留给清理删。}
-procedure AdoptRetiredDesktopModel(const ExpectedSha256: String);
+{ 旧版把模型随包装在数据目录根下，现在改由设置页按需下载，Server 只认 models\<ModelDir>\。
+  根下那份和设置页下载的是同一个发布文件，在清理把它当退役文件删掉之前挪过去，升级用户就不用重下
+  （下载走 GitHub，不少用户连不上）。校验和对不上、或新位置已有文件时什么都不做，留给清理删。
+  NoticeName 是旧版随包的授权声明，挪成新位置的 NOTICE.md，和设置页下载落位的布局一致。}
+procedure AdoptRetiredModel(const FileName, ModelDir, NoticeName, ExpectedSha256: String);
 var
-  OldPath, NewDir, NewPath: String;
+  OldPath, NewDir, NewPath, OldNotice, NewNotice: String;
 begin
-  OldPath := AddBackslash(GetDataDir('')) + 'sentence-model-desktop.safetensors';
-  NewDir := AddBackslash(GetDataDir('')) + 'models\neural-desktop';
-  NewPath := AddBackslash(NewDir) + 'sentence-model-desktop.safetensors';
+  OldPath := AddBackslash(GetDataDir('')) + FileName;
+  NewDir := AddBackslash(GetDataDir('')) + 'models\' + ModelDir;
+  NewPath := AddBackslash(NewDir) + FileName;
   if (not FileExists(OldPath)) or FileExists(NewPath) then
     exit;
   try
     if CompareText(GetSHA256OfFile(OldPath), ExpectedSha256) <> 0 then
     begin
-      Log('Retired desktop model does not match model-v1; leaving it to cleanup.');
+      Log('Retired ' + FileName + ' does not match its release; leaving it to cleanup.');
       exit;
     end;
   except
-    Log('Cannot hash retired desktop model: ' + GetExceptionMessage);
+    Log('Cannot hash retired ' + FileName + ': ' + GetExceptionMessage);
     exit;
   end;
-  if ForceDirectories(NewDir) and RenameFile(OldPath, NewPath) then
-    Log('Moved retired desktop model to ' + NewPath)
-  else
-    Log('Could not move retired desktop model to ' + NewPath);
+  if not (ForceDirectories(NewDir) and RenameFile(OldPath, NewPath)) then
+  begin
+    Log('Could not move retired ' + FileName + ' to ' + NewPath);
+    exit;
+  end;
+  Log('Moved retired ' + FileName + ' to ' + NewPath);
+  if NoticeName = '' then
+    exit;
+  OldNotice := AddBackslash(GetDataDir('')) + NoticeName;
+  NewNotice := AddBackslash(NewDir) + 'NOTICE.md';
+  if FileExists(OldNotice) and (not FileExists(NewNotice)) then
+    RenameFile(OldNotice, NewNotice);
 end;
 
 function InitializeUninstall(): Boolean;
@@ -1077,10 +1101,72 @@ begin
       IntToStr(ResultCode) + '）。');
 end;
 
+{ 登录任务的 Priority 默认是 7（Below normal），watchdog 和它拉起的 Server 会一起被降级；
+  任务还会默认在电池上不启动/被停止，并在 72 小时后强制结束。schtasks /Create 没有这些参数，
+  这里用 Set-ScheduledTask 补齐并读回校验。配置失败必须让安装明确失败，不能静默留下旧设置。}
+procedure ConfigureWatchdogLogonTask;
+var
+  Script: String;
+  Params: String;
+  ResultCode: Integer;
+begin
+  ResultCode := -1;
+  Script :=
+    '$ErrorActionPreference=''Stop''; ' +
+    '$n=''{#MyWatchdogTaskName}''; ' +
+    '$s=(Get-ScheduledTask -TaskName $n).Settings; ' +
+    '$s.Priority=4; ' +
+    '$s.DisallowStartIfOnBatteries=$false; ' +
+    '$s.StopIfGoingOnBatteries=$false; ' +
+    '$s.ExecutionTimeLimit=''PT0S''; ' +
+    'Set-ScheduledTask -TaskName $n -Settings $s | Out-Null; ' +
+    '$c=(Get-ScheduledTask -TaskName $n).Settings; ' +
+    'if ($c.Priority -ne 4 -or $c.DisallowStartIfOnBatteries -or ' +
+    '$c.StopIfGoingOnBatteries -or $c.ExecutionTimeLimit -ne ''PT0S'') ' +
+    '{ exit 1 }';
+  Params := '-NoProfile -NonInteractive -Command "' + Script + '"';
+  if
+    (not Exec(
+      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Params,
+      '',
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode
+    )) or
+    (ResultCode <> 0)
+  then
+    RaiseException(
+      '无法配置输入法登录任务（退出码：' +
+      IntToStr(ResultCode) + '）。');
+end;
+
 procedure TryDeleteTree(const Path: String);
 begin
   { 忽略返回值：被占用文件保留，其他能删除的文件仍继续清理。}
   DelTree(Path, True, True, True);
+end;
+
+{ 诊断日志每个会话一个文件，文件名前缀 水杉IME诊断日志- 是安装器与写入方唯一的契约，
+  见 server/src/log/diagnostic_log_naming.h。这里只删带前缀的文件，logs 目录里的
+  dictionary-build.log 和用户自己放进去的东西都留下。固定名是旧版留下的，升级时一并清掉。}
+procedure DeleteDiagnosticLogs(const Directory: String);
+var
+  FindRec: TFindRec;
+begin
+  DeleteFile(AddBackslash(Directory) + '水杉IME诊断日志.log');
+  DeleteFile(AddBackslash(Directory) + '水杉IME诊断日志.log.1');
+  if FindFirst(AddBackslash(Directory) + '水杉IME诊断日志-*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+          DeleteFile(AddBackslash(Directory) + FindRec.Name);
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
 end;
 
 { 不独占的数据目录里删一个名单上的子目录。名字通用的几个只删我们写进去的内容，
@@ -1098,10 +1184,7 @@ begin
     { 旧版的 WebView2 页面，见 IsRetiredAppDataItem。}
     TryDeleteTree(AddBackslash(ItemPath) + 'webview2')
   else if CompareText(FileName, 'logs') = 0 then
-  begin
-    DeleteFile(AddBackslash(ItemPath) + '水杉IME诊断日志.log');
-    DeleteFile(AddBackslash(ItemPath) + '水杉IME诊断日志.log.1');
-  end
+    DeleteDiagnosticLogs(ItemPath)
   else
   begin
     TryDeleteTree(ItemPath);
@@ -1309,6 +1392,66 @@ begin
     end;
   end;
   Result := True;
+end;
+
+{ 把临时目录下 dictionary_source 的文本源还原成数据目录里的 msime.db、english.db、others.db、dict_japanese.dat。
+  旧词库已在 PrepareToInstall 里删掉，这一步失败新版本就没有词库可用。
+  还原程序先全部建成 .building，整套成功才替换，失败不留半套文件；明细追加在数据目录的 logs\dictionary-build.log。
+  注意 ssPostInstall 里抛异常并不会中止安装：Inno 只弹「Runtime error」，安装照样算成功，CurStepChanged
+  后面的步骤（回放、登录任务、目录权限）全被跳过。所以失败先让用户就地重试，放弃了才抛。}
+procedure BuildDictionaries;
+var
+  BuildPath: String;
+  DataPath: String;
+  LogPath: String;
+  ResultCode: Integer;
+  Started: Boolean;
+begin
+  DataPath := GetDataDir('');
+  LogPath := AddBackslash(DataPath) + 'logs\dictionary-build.log';
+  BuildPath := ExpandConstant(
+    '{commonpf64}\metasequoiaime\server\{#MyDictionaryBuildName}');
+  repeat
+    { PrepareToInstall 已经占住启动锁，正常不会有 Server；仍在跑的（比如锁生效前就被拉起的）会占着
+      数据目录里的词库，替换必然失败，先请走。}
+    StopProcess('{#MyWatchdogName}');
+    StopProcess('{#MyAppExeName}');
+    Log('Starting dictionary build.');
+    WizardForm.StatusLabel.Caption := '正在生成词库，可能需要十几秒到一分钟……';
+    WizardForm.FilenameLabel.Caption := '';
+    WizardForm.ProgressGauge.Style := npbstMarquee;
+    try
+      Started := Exec(
+        BuildPath,
+        '--source "' + ExpandConstant('{tmp}\dictionary_source') + '" ' +
+        '--data-dir "' + DataPath + '" --log "' + LogPath + '"',
+        '',
+        SW_HIDE,
+        ewWaitUntilTerminated,
+        ResultCode
+      );
+    finally
+      WizardForm.ProgressGauge.Style := npbstNormal;
+    end;
+    if not Started then
+      RaiseException(
+        '无法启动词库生成程序。请确认安装文件完整后重试。');
+    if ResultCode = 0 then
+    begin
+      Log('Dictionary build completed successfully.');
+      exit;
+    end;
+    Log('Dictionary build failed with exit code ' + IntToStr(ResultCode) + '.');
+  { 静默安装没人点按钮，默认取消，不能无限重试。}
+  until SuppressibleMsgBox(
+    '生成词库失败（退出码：' + IntToStr(ResultCode) + '）。' + #13#10 + #13#10 +
+    '原因写在 ' + LogPath + ' 的最后一行。常见的是数据目录里的词库文件正被其他程序占用，' +
+    '或磁盘空间不足（约需 350 MB）。' + #13#10 + #13#10 +
+    '点「重试」重新生成；点「取消」放弃，输入法将没有词库可用。',
+    mbError, MB_RETRYCANCEL, IDCANCEL) <> IDRETRY;
+  RaiseException(
+    '生成词库失败（退出码：' + IntToStr(ResultCode) + '），详情见 ' + LogPath + '。' + #13#10 +
+    '请重新运行安装程序。');
 end;
 
 procedure ReplayUserDictionary;
@@ -1622,6 +1765,11 @@ begin
 
   { 先锁定本次目录名，再清理能够释放的旧版本 DLL。}
   VersionDirName := GetVersionDir('');
+  { 占住 TSF DLL 拉起 Server 用的那把锁，直到安装程序退出：[Files] 一注册 DLL，输入法就可能在某个
+    宿主里被激活并拉起 Server，而那时词库还没生成——引擎打开 msime.db 会先建一个空库并一直占着，
+    BuildDictionaries 就替换不了它（拒绝访问，新机器首次安装必现）。DLL 拿不到这把锁时不启动 Server；
+    完成页的 LaunchInstalledComponents 直接启动，不经过这把锁。}
+  CreateMutex('{#MyServerLaunchMutex}');
   StopImeProcesses;
   { 进程停了才能动数据文件：msime_user.db 会被 Server 打开着。}
   DataDirProblem := MigrateUserDataDir(ResolvePreviousDataDir, GetDataDir(''));
@@ -1637,8 +1785,12 @@ begin
     Result := DataDirProblem;
     exit;
   end;
-  { 轻量包不清根目录，但新 Server 同样只认 models\neural-desktop\，所以两种包都要挪。}
-  AdoptRetiredDesktopModel('0a6ecba69bf1d39c7eb49549c716477dd6c03fdf05757773e1f50435262fb469');
+  { 轻量包不清根目录，但新 Server 同样只认 models\ 下的位置，所以两种包都要挪。
+    哈希分别对应 neural-model/lock.json 和 language-model/lock.json，installer/tests/retired-models.ps1 核对。}
+  AdoptRetiredModel('sentence-model-desktop.safetensors', 'neural-desktop', '',
+    '0a6ecba69bf1d39c7eb49549c716477dd6c03fdf05757773e1f50435262fb469');
+  AdoptRetiredModel('sc.lm', 'language-model', 'libime-lm-NOTICE.md',
+    '3588b3942c8fd62e1a6bd3bae8c7cadc0faf928c175b245224ed475862218387');
 #ifdef LightPackage
   { 轻量包不替换词库：只清设置窗口图片资源和 Server/TSF，保留本机 msime.db 等。
     旧版留下的 html（WebView2 页面）也一并清掉。}
@@ -1673,16 +1825,40 @@ begin
   Result := '';
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+{ TSF 的语言配置要以原用户身份装进键盘列表：提权进程的 HKCU 指向管理员账户，写进去当前用户看不到
+  （见 server/src/settings/input_method_install.h）。放在最后，失败也不影响装好的文件。}
+procedure RegisterProfileForUser;
+var
+  ErrorCode: Integer;
+  Executable: String;
 begin
+  Executable := ExpandConstant(
+    '{commonpf64}\metasequoiaime\server\MetasequoiaImeSettings.exe');
+  if not FileExists(Executable) then
+  begin
+    Log('settings program missing, skipping keyboard list registration');
+    Exit;
+  end;
+  if not ShellExecAsOriginalUser('', Executable, '--register-profile', '', SW_HIDE,
+    ewWaitUntilTerminated, ErrorCode) then
+    Log('could not start the settings program as the original user: ' +
+      IntToStr(ErrorCode))
+  else
+    Log('keyboard list registration exit code: ' + IntToStr(ErrorCode));
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);begin
   if CurStep = ssPostInstall then
   begin
     { 先打标记，再调整权限：之后的覆盖安装和卸载靠它判断这个目录是不是我们建的。}
     WriteDataDirMarker(GetDataDir(''), DataDirAdoptedEmpty);
 #ifndef LightPackage
+    { 回放要往新词库里写，所以先还原词库。}
+    BuildDictionaries;
     ReplayUserDictionary;
 #endif
     CreateWatchdogLogonTask;
+    ConfigureWatchdogLogonTask;
     EnsureImeUserDataDir;
     { Keep the old autostart intact until its scheduled-task replacement has
       been created successfully, then remove the Explorer-delayed Run entry. }
@@ -1695,6 +1871,9 @@ begin
     { 偏好写入放在最后：它失败只弹提示，不能挡住上面这些必需步骤。}
     ApplyNetworkChoiceToUserConfig;
 #endif
+    { TSF 的语言配置要以原用户身份装进键盘列表：提权进程的 HKCU 指向管理员账户，写进去当前用户
+      看不到（见 server/src/settings/input_method_install.h）。放在最后，失败也不影响装好的文件。}
+    RegisterProfileForUser;
   end;
 end;
 

@@ -169,6 +169,7 @@ include_directories("${MSIME_ENGINE_DIR}/utfcpp/source/")
 set(MY_EXECUTABLE_NAME "MetasequoiaImeServer")
 set(WATCHDOG_EXECUTABLE_NAME "MetasequoiaImeWatchdog")
 set(DICTIONARY_REPLAY_EXECUTABLE_NAME "MetasequoiaImeDictionaryReplay")
+set(DICTIONARY_BUILD_EXECUTABLE_NAME "MetasequoiaImeDictionaryBuild")
 
 add_executable(${WATCHDOG_EXECUTABLE_NAME} WIN32
     "./src/watchdog/main.cpp"
@@ -195,6 +196,8 @@ set(SRC_FILES
     "./src/ai/ai_assistant_cache_key.h"
     "./src/ai/ai_assistant_request.cpp"
     "./src/ai/ai_assistant_request.h"
+    "./src/ai/ai_assistant_reply.cpp"
+    "./src/ai/ai_assistant_reply.h"
     "./src/ai/ai_provider_store.cpp"
     "./src/ai/ai_provider_store.h"
     "./src/config/ai_provider.h"
@@ -259,6 +262,10 @@ set(SRC_FILES
     "./src/config/ime_config_write.cpp"
     "./src/conversion/chinese_converter.cpp"
     "./src/conversion/chinese_converter.h"
+    "./src/conversion/opencc_character_tables.h"
+    "./src/conversion/traditional_forms.h"
+    "./src/conversion/traditional_spelling_index.cpp"
+    "./src/conversion/traditional_spelling_index.h"
     "./src/defines/defines.h"
     "./src/english/english_ime.cpp"
     "./src/english/english_ime.h"
@@ -272,6 +279,7 @@ set(SRC_FILES
     "./src/ipc/event_listener_keys.cpp"
     "./src/ipc/event_listener_pipes.cpp"
     "./src/ipc/event_listener_selection.cpp"
+    "./src/ipc/event_listener_task_class.cpp"
     "./src/ipc/event_listener_worker.cpp"
     "./src/ipc/ipc.cpp"
     "./src/ipc/ipc.h"
@@ -285,6 +293,8 @@ set(SRC_FILES
     "./src/log/fanylog.h"
     "./src/log/candidate_diag_log.cpp"
     "./src/log/candidate_diag_log.h"
+    "./src/log/diagnostic_log_naming.cpp"
+    "./src/log/diagnostic_log_naming.h"
     "./src/log/ftb_diag_log.h"
     "./src/resource/resource.h"
     "./src/resource/resource.rc"
@@ -295,10 +305,19 @@ set(SRC_FILES
     "./src/settings/api_credential_test_request.h"
     "./src/settings/collocation_model.cpp"
     "./src/settings/collocation_model.h"
+    # 后台检查更新与自动下载：轮询跑在常驻的 Server 上，关掉设置窗口也不中断。
+    "./src/settings/update_channel.cpp"
+    "./src/settings/update_channel.h"
+    "./src/settings/update_check.cpp"
+    "./src/settings/update_check.h"
+    "./src/settings/native/native_settings_update_download.cpp"
+    "./src/settings/native/native_settings_update_download.h"
     "./src/skin/candidate_skin_catalog.cpp"
     "./src/skin/candidate_skin_catalog.h"
     "./src/session/engine_input_session.cpp"
     "./src/session/engine_input_session.h"
+    "./src/session/input_cadence.cpp"
+    "./src/session/input_cadence.h"
     "./src/session/input_session.h"
     "./src/session/session_factory.cpp"
     "./src/session/session_factory.h"
@@ -324,14 +343,20 @@ set(SRC_FILES
     "./src/utils/ime_utils.h"
     "./src/utils/network_proxy.cpp"
     "./src/utils/network_proxy.h"
+    "./src/utils/process_priority.cpp"
+    "./src/utils/process_priority.h"
     "./src/utils/serial_task_runner.cpp"
     "./src/utils/serial_task_runner.h"
     "./src/utils/shuangpin_preedit_display.cpp"
     "./src/utils/shuangpin_preedit_display.h"
+    "./src/utils/thread_priority.cpp"
+    "./src/utils/thread_priority.h"
     "./src/utils/window_utils.cpp"
     "./src/utils/window_utils.h"
     "./src/window/candidate_presenter.cpp"
     "./src/window/candidate_presenter.h"
+    "./src/window/caret_fallback.cpp"
+    "./src/window/caret_fallback.h"
     "./src/window/candidate_skin_layers.cpp"
     "./src/window/candidate_skin_layers.h"
     "./src/window/candidate_skin_overlay.cpp"
@@ -408,7 +433,7 @@ add_dependencies(${PROJECT_NAME} Dictionaries)
 target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
-target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 bcrypt)
+target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 oleaut32 oleacc bcrypt)
 target_link_libraries(${PROJECT_NAME} PRIVATE oleaut32)
 
 # The helper executables below already build at /W4. The server itself -- the process that owns
@@ -428,6 +453,19 @@ target_link_libraries(${DICTIONARY_REPLAY_EXECUTABLE_NAME} PRIVATE
 )
 target_compile_definitions(${DICTIONARY_REPLAY_EXECUTABLE_NAME} PRIVATE NOMINMAX=1)
 add_dependencies(${PROJECT_NAME} ${DICTIONARY_REPLAY_EXECUTABLE_NAME})
+
+# 安装时把 scripts/pack-dictionary-source.py 导出的文本源还原成词库，安装包因此不必带 SQLite 文件。
+add_executable(${DICTIONARY_BUILD_EXECUTABLE_NAME}
+    "./src/dictionary-build/main.cpp"
+    "./src/resource/resource.h"
+    "./src/resource/resource.rc"
+)
+target_link_libraries(${DICTIONARY_BUILD_EXECUTABLE_NAME} PRIVATE unofficial::sqlite3::sqlite3 bcrypt)
+target_compile_definitions(${DICTIONARY_BUILD_EXECUTABLE_NAME} PRIVATE NOMINMAX=1 WIN32_LEAN_AND_MEAN=1)
+if(MSVC)
+    target_compile_options(${DICTIONARY_BUILD_EXECUTABLE_NAME} PRIVATE /W4 /permissive-)
+endif()
+add_dependencies(${PROJECT_NAME} ${DICTIONARY_BUILD_EXECUTABLE_NAME})
 
 # msimeui stays a separately built GUI framework component at ../ui. The product-owned emoji panel
 # lives under src/emoji-panel so it can evolve separately from the framework's example applications.
@@ -531,10 +569,19 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/collocation_model.h"
     "./src/settings/neural_model.cpp"
     "./src/settings/neural_model.h"
+    "./src/settings/lattice_model.cpp"
+    "./src/settings/lattice_model.h"
+    "./src/settings/model_download.cpp"
+    "./src/settings/model_download.h"
     "./src/settings/default_input_method.cpp"
     "./src/settings/default_input_method.h"
     "./src/settings/game_compat_name.cpp"
     "./src/settings/game_compat_name.h"
+    "./src/settings/input_method_install.cpp"
+    "./src/settings/input_method_install.h"
+    # 设置页要判断通道、读后台下载的结果，只用到通道判定与状态文件，不引轮询线程。
+    "./src/settings/update_channel.cpp"
+    "./src/settings/update_channel.h"
     "./src/settings/settings_launcher.cpp"
     "./src/settings/settings_launcher.h"
     "./src/settings/native/native_settings_bindings.cpp"
@@ -543,6 +590,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/native/native_settings_model.cpp"
     "./src/settings/native/native_settings_model.h"
     "./src/settings/native/native_settings_pages.h"
+    "./src/settings/native/native_settings_search.cpp"
+    "./src/settings/native/native_settings_search.h"
     "./src/settings/native/native_settings_pill.cpp"
     "./src/settings/native/native_settings_pill.h"
     "./src/settings/native/native_settings_theme.cpp"
@@ -552,6 +601,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/native/native_page_appearance.cpp"
     "./src/settings/native/native_page_input.cpp"
     "./src/settings/native/native_page_helpcode.cpp"
+    "./src/settings/native/native_page_model_combo.cpp"
+    "./src/settings/native/native_page_model_combo.h"
     "./src/settings/native/native_page_shortcut.cpp"
     "./src/settings/native/native_page_dictionary.cpp"
     "./src/settings/native/native_page_dictionary_panel.cpp"
@@ -573,6 +624,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/native/native_page_help_widgets.cpp"
     "./src/settings/native/native_page_help_widgets.h"
     "./src/settings/native/native_page_about.cpp"
+    "./src/settings/native/native_settings_update_download.cpp"
+    "./src/settings/native/native_settings_update_download.h"
     "./src/settings/native/native_page_feedback.cpp"
     "./src/skin/candidate_skin_catalog.cpp"
     "./src/skin/candidate_skin_catalog.h"
@@ -620,6 +673,10 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/ai/chat_completions.cpp"
     "./src/ai/jev_client.cpp"
     "./src/ai/chat_completions.h"
+    "./src/ai/ai_assistant_reply.cpp"
+    "./src/ai/ai_assistant_reply.h"
+    "./src/ai/ai_assistant_request.cpp"
+    "./src/ai/ai_assistant_request.h"
     "./src/cloud/ai_translation.cpp"
     "./src/cloud/ai_translation.h"
     "./src/cloud/ai_wire.cpp"
@@ -685,6 +742,26 @@ add_custom_command(TARGET ${SETTINGS_EXECUTABLE_NAME} POST_BUILD
         "$<TARGET_FILE_DIR:${SETTINGS_EXECUTABLE_NAME}>/dict"
 )
 
+# OpenCC 配置与它们引用的字典：s2t 做标准繁体转换，t2tw、t2hk 在 s2t 结果上取台湾、香港写法，
+# t2s 把繁体转回简体，STCharacters 同时给单字的全部写法。tests/ 的真数据测试读这里拷出的目录。
+set(MSIME_OPENCC_RUNTIME_FILES
+    ${MSIME_VENDOR_DIR}/opencc/data/config/s2t.json
+    ${MSIME_VENDOR_DIR}/opencc/data/config/t2tw.json
+    ${MSIME_VENDOR_DIR}/opencc/data/config/t2hk.json
+    ${CMAKE_BINARY_DIR}/opencc/data/CJK_Compatibility_Ideographs.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/STCharacters.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/STPhrases.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/STPhrases_GeneratedFromRegionalPhrases.ocd2
+    ${MSIME_VENDOR_DIR}/opencc/data/config/t2s.json
+    ${CMAKE_BINARY_DIR}/opencc/data/TSCharacters.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/TSCharactersExt.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/TSPhrases.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/TWVariants.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/TWVariantsPhrases.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/HKVariants.ocd2
+    ${CMAKE_BINARY_DIR}/opencc/data/HKVariantsPhrases.ocd2
+)
+
 # Runtime assets next to the executable
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -696,11 +773,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/opencc
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${MSIME_VENDOR_DIR}/opencc/data/config/s2t.json
-        ${CMAKE_BINARY_DIR}/opencc/data/CJK_Compatibility_Ideographs.ocd2
-        ${CMAKE_BINARY_DIR}/opencc/data/STCharacters.ocd2
-        ${CMAKE_BINARY_DIR}/opencc/data/STPhrases.ocd2
-        ${CMAKE_BINARY_DIR}/opencc/data/STPhrases_GeneratedFromRegionalPhrases.ocd2
+        ${MSIME_OPENCC_RUNTIME_FILES}
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/opencc
 )
 

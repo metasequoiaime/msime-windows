@@ -648,7 +648,7 @@ VisualPtr BuildAppearancePage(PageContext &context)
     // 主题模式
     {
         auto column = std::make_shared<Column>(0.0f);
-        auto expander = std::make_shared<Expander>(L"主题模式");
+        auto expander = MakeExpander(L"主题模式");
         column->Add(std::make_shared<SettingRow>(
             expander, BindDropdown(context, "appearance.theme_mode",
                                    Options({{"dark", L"深色"}, {"light", L"浅色"}, {"system", L"跟随系统"}}))));
@@ -664,7 +664,7 @@ VisualPtr BuildAppearancePage(PageContext &context)
         // .theme-surface-details { margin: 4px 0 0 18px }
         details->SetMargin({18.0f, 4.0f, 0.0f, 0.0f});
         auto hideable = std::make_shared<Hideable>(details, false);
-        expander->SetOnToggled([hideable](bool expanded) { hideable->SetVisible(expanded); });
+        BindExpander(expander, hideable);
         column->Add(hideable);
         page.AddSection(column);
     }
