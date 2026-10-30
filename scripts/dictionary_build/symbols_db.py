@@ -37,8 +37,11 @@ DIGIT_CODES = {"0": "ling", "1": "yi", "2": "er", "3": "san", "4": "si", "5": "w
 _VISUAL_DUPLICATES = ((0x2780, 0x2793),)
 # 数字别名混进普通候选时只取序号写法：带圈 ①–⑩、带括号 ⑴–⑽、带点 ⒈–⒑、带圈零 ⓪。
 _SEQUENCE_NUMBERS = ((0x2460, 0x2469), (0x2474, 0x247D), (0x2488, 0x2491), (0x24EA, 0x24EA))
-# 单音节中文名称默认不收（见 parse_readings），这里列出的照收：打 dian 要出间隔号 ·，接受它在混输时紧跟首选。
-SINGLE_SYLLABLE_NAMES = frozenset({"点"})
+# 单音节中文名称默认不收（见 parse_readings），这里列出的照收，接受它们在混输时紧跟首选：打 dian 出间隔号 ·，
+# 以及 #928 列出的运算、方位与图形单字（jia +、cheng ×、du °、zuo ←、yuan ○ 等）。
+SINGLE_SYLLABLE_NAMES = frozenset({
+    "点", "度", "加", "正", "乘", "叉", "错", "角", "分", "秒", "左", "右", "上", "下", "圆", "圈",
+})
 
 # 万象的 /a…/z 里也收了数学字母（𝐚 𝑎 𝒂…），面板的「拉丁扩展」不重复列出，它们在「数学字母」标签页。
 _MATH_ALPHANUMERIC = (0x1D400, 0x1D7FF)
@@ -192,7 +195,7 @@ def parse_readings(text: str) -> list[tuple[str, str]]:
     中文名称的编码是全拼去掉 `'`（逗号 dou'hao → douhao），拉丁名称（拼音列是 `-`）的编码就是名称本身（gamma）。
     单音节的中文名称（派 pai、度 du、套 tao、一 yi）不收：msime 引擎只让它们跟在那个字后面、最早排第 4 位，
     这里的混输把第一行放在首选后面，收进来就会在打常用音节时冒出符号；数字序号仍由万象分组与 DIGIT_CODES 给出。
-    SINGLE_SYLLABLE_NAMES 里的名称（点 dian → ·）例外。
+    SINGLE_SYLLABLE_NAMES 里的名称（点 dian → ·、加 jia → ＋ 等）例外。
     """
     entries = []
     for number, line in enumerate(textutil.universal_lines(textutil.without_bom(text)), start=1):
