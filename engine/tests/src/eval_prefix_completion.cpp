@@ -64,9 +64,11 @@ void report(const char *label, const std::string &key, const std::string &word, 
 {
     const bool prefix_is_word = is_dictionary_word(db, key, word);
     const double start = now_ms();
-    auto rows = quanpin::query_prefix_completion_rows(db, statements, key, word);
+    // 与会话一致：前缀是词库词时按字补，否则只按读音补。
+    auto rows = quanpin::query_prefix_completion_rows(db, statements, key, prefix_is_word ? word : std::string());
     const double queried = now_ms();
-    quanpin::score_prefix_completions(rows, word, prefix_is_word, model);
+    const std::size_t syllables = static_cast<std::size_t>(std::count(key.begin(), key.end(), '\'')) + 1;
+    quanpin::score_prefix_completions(rows, syllables, prefix_is_word, model);
     const double scored = now_ms();
     std::size_t shown = 0;
     for (const auto &row : rows)

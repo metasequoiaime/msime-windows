@@ -102,6 +102,9 @@ void prepare_dictionary(const std::filesystem::path &directory)
             "CREATE TABLE tbl_5_b(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
             // 出厂平线上的切词残片：没有模型时不显示。
             "INSERT INTO tbl_5_b VALUES('bei''jing''da''xue''xing','bjdxx','北京大学星',10);"
+            // 诗句：前四个字不是词库里的词，首选只能是整句猜的，字还可能猜错。
+            "CREATE TABLE tbl_5_c(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+            "INSERT INTO tbl_5_c VALUES('chuang''qian''ming''yue''guang','cqmyg','床前明月光',10);"
             "COMMIT;");
 }
 
@@ -128,7 +131,7 @@ void test_query_rows(const std::filesystem::path &directory)
     sqlite3 *database = open(directory / "msime.db");
     std::unordered_map<std::string, sqlite3_stmt *> statements;
     auto rows = quanpin::query_prefix_completion_rows(database, statements, "zhong'hua'ren'min", "中华人民");
-    quanpin::score_prefix_completions(rows, "中华人民", true, nullptr);
+    quanpin::score_prefix_completions(rows, 4, true, nullptr);
     for (auto &entry : statements)
         sqlite3_finalize(entry.second);
     sqlite3_close(database);
@@ -137,6 +140,36 @@ void test_query_rows(const std::filesystem::path &directory)
             "A row above the shipped flat weight must rank first and be shown.");
     require(rows[1].value == "中华人民银行" && !rows[1].confident,
             "A row at the shipped flat weight must not be shown without a language model.");
+}
+
+// 首选是整句猜的（chuangqianmingyue 猜成「窗前明月」）：只按读音补，平线权重也补。
+void test_guessed_head(const std::filesystem::path &directory)
+{
+    sqlite3 *database = open(directory / "msime.db");
+    std::unordered_map<std::string, sqlite3_stmt *> statements;
+    quanpin::PrefixCompletionCache cache;
+    const auto guessed = [] {
+        std::vector<WordItem> result;
+        WordItem head("chuang'qian'ming'yue", "窗前明月", 1, CandidateSource::Fallback, "chuang'qian'ming'yue");
+        head.sentence_association = true;
+        result.push_back(head);
+        result.emplace_back("chuang'qian", "窗前", 500, CandidateSource::Database, "chuang'qian");
+        return result;
+    };
+    auto result = guessed();
+    quanpin::insert_prefix_completion(result, "chuang'qian'ming'yue", enabled(), database, statements, cache, nullptr);
+    const bool completed = result.size() == 3 && result[1].word == "床前明月光" && result[1].prefix_completion &&
+                           result[1].pinyin == "chuang'qian'ming'yue";
+    // 同一读音、首选是词库词时仍按字补：「窗前明月」开头的词没有，不补。
+    auto word_head = guessed();
+    word_head[0].source = CandidateSource::Database;
+    quanpin::insert_prefix_completion(word_head, "chuang'qian'ming'yue", enabled(), database, statements, cache,
+                                      nullptr);
+    for (auto &entry : statements)
+        sqlite3_finalize(entry.second);
+    sqlite3_close(database);
+    require(completed, "A guessed head must be completed by its reading even when its characters are wrong.");
+    require(word_head.size() == 2, "A dictionary-word head must still be completed by its characters.");
 }
 
 void test_quanpin(const metasequoia::RuntimePaths &paths, const std::filesystem::path &directory)
@@ -225,6 +258,7 @@ int main()
         prepare_dictionary(directory);
         const auto paths = paths_for(directory);
         test_query_rows(directory);
+        test_guessed_head(directory);
         test_quanpin(paths, directory);
         test_shuangpin(paths);
     }

@@ -139,7 +139,7 @@ std::vector<PrefixCompletionRow> query_prefix_completion_rows(
 {
     std::vector<PrefixCompletionRow> rows;
     const std::size_t prefix_syllables = syllable_count(prefix_key);
-    if (db == nullptr || prefix_syllables == 0 || prefix_word.empty())
+    if (db == nullptr || prefix_syllables == 0)
         return rows;
     // 分隔符 ' 是 0x27，( 是 0x28：[key', key( ) 正好是「key 后面还有音节」的全部键，不会捞到
     // zhong'hua'ren'ming 这种最后一个音节只是前缀的键。
@@ -156,7 +156,8 @@ std::vector<PrefixCompletionRow> query_prefix_completion_rows(
             continue;
         for (auto &row : query_key_range_keyed(db, statement_cache, table, lower, upper, per_table_limit))
         {
-            if (row.value.size() <= prefix_word.size() || row.value.compare(0, prefix_word.size(), prefix_word) != 0)
+            if (!prefix_word.empty() &&
+                (row.value.size() <= prefix_word.size() || row.value.compare(0, prefix_word.size(), prefix_word) != 0))
                 continue;
             if (han_codepoints(row.value).size() != syllable_count(row.key))
                 continue;
@@ -181,28 +182,41 @@ std::vector<PrefixCompletionRow> query_prefix_completion_rows(
     return rows;
 }
 
-void score_prefix_completions(std::vector<PrefixCompletionRow> &rows, const std::string &prefix_word,
-                              bool prefix_is_word, const ngram::LanguageModel *language_model)
+void score_prefix_completions(std::vector<PrefixCompletionRow> &rows, std::size_t prefix_chars, bool prefix_is_word,
+                              const ngram::LanguageModel *language_model)
 {
     const bool has_model = language_model != nullptr && language_model->valid();
-    const std::size_t prefix_chars = han_codepoints(prefix_word).size();
-    const double prefix_log10 =
-        has_model ? read_with_language_model(*language_model, han_codepoints(prefix_word)).log10 : 0.0;
     for (auto &row : rows)
     {
         const std::u32string value = han_codepoints(row.value);
         std::optional<LanguageModelReading> reading;
-        if (has_model)
+        double prefix_log10 = 0.0;
+        if (has_model && value.size() > prefix_chars)
+        {
             reading = read_with_language_model(*language_model, value);
+            // 条件概率的分母取这一行自己的前几个字：按拼音补的行，前缀的字和首选（整句猜的）未必一样。
+            prefix_log10 = read_with_language_model(*language_model, value.substr(0, prefix_chars)).log10;
+        }
         row.prior = std::log10(static_cast<double>((std::max<std::int64_t>)(row.weight, 1)));
         row.tail = reading ? reading->log10 - prefix_log10 : 0.0;
         row.score = row.prior + row.tail;
-        // 用户选过、或者带着真实词频的词，不看模型也可以显示；其余的只有模型认得它、又不像切词残片
-        // 才显示，否则在一串同权重的词里挑出来的只是字典序第一个。
         const bool trusted_weight = row.weight > kShippedFlatWeight;
         const bool fragment =
             looks_like_fragment(prefix_chars, value.size(), prefix_is_word, reading ? &*reading : nullptr);
-        row.confident = trusted_weight || (has_model && !fragment && row.tail >= kMinimumTailLog10);
+        if (has_model)
+        {
+            // 不像切词残片才显示；前缀是词库词时还要模型认得它。前缀不是词库词时，以这串读音开头的行
+            // 本来就少而准，模型只管排序：诗句的条件概率常常很低（春眠不觉晓 的「晓」），卡门槛会把它挡掉。
+            // 用户选过或带着真实词频的词照样显示。
+            row.confident = trusted_weight || (!fragment && (!prefix_is_word || row.tail >= kMinimumTailLog10));
+        }
+        else
+        {
+            // 没有模型时，前缀是词库词的（人工智能）只补权重高过出厂平线的：以它开头的平线行多是
+            // 「人工智能能」这类残片，挑出来的只会是字典序第一个。前缀不是词库词的（床前明月、马克思主）
+            // 以这串读音开头的行通常只有一两条，就是用户正在打的那个长词或诗句，平线也照补。
+            row.confident = trusted_weight || !prefix_is_word;
+        }
     }
     std::stable_sort(rows.begin(), rows.end(), [](const PrefixCompletionRow &left, const PrefixCompletionRow &right) {
         if (left.score != right.score)
@@ -262,8 +276,11 @@ void insert_prefix_completion(std::vector<WordItem> &result, const std::string &
     const std::vector<PrefixCompletionRow> *rows = cache.find(cache_key);
     if (rows == nullptr)
     {
-        auto queried = query_prefix_completion_rows(db, statement_cache, prefix_key, head.word);
-        score_prefix_completions(queried, head.word, prefix_is_word, language_model);
+        // 首选是词库词时按它的字补；是整句猜的时只按读音补：猜出来的字常常不对（chuangqianmingyue 猜成
+        // 「窗前明月」），按字补就补不出「床前明月光」。
+        auto queried =
+            query_prefix_completion_rows(db, statement_cache, prefix_key, prefix_is_word ? head.word : std::string());
+        score_prefix_completions(queried, syllable_count(prefix_key), prefix_is_word, language_model);
         cache.insert(cache_key, std::move(queried));
         rows = cache.find(cache_key);
     }
