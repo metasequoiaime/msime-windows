@@ -63,6 +63,7 @@ set(METASEQUOIA_IME_ENGINE_SOURCES
     providers/provider_registry.cpp
     providers/wubi_candidate_provider.cpp
     quanpin/engine.cpp
+    quanpin/latin_words.cpp
     quanpin/quanpin_dictionary.cpp
     quanpin/quanpin_query.cpp
     quanpin/quanpin_utils.cpp
@@ -76,6 +77,7 @@ set(METASEQUOIA_IME_ENGINE_SOURCES
     shuangpin/shuangpin_custom_profile.cpp
     shuangpin/shuangpin_dictionary.cpp
     shuangpin/shuangpin_profile.cpp
+    shuangpin/shuangpin_latin_words.cpp
     shuangpin/shuangpin_query.cpp
     shuangpin/shuangpin_utils.cpp
     user_dictionary/user_dictionary_journal.cpp
@@ -308,6 +310,13 @@ if(BUILD_TESTING)
     add_executable(test_local_modes tests/src/test_local_modes.cpp)
     target_link_libraries(test_local_modes PRIVATE MetasequoiaIme::Engine)
     add_test(NAME local_modes COMMAND test_local_modes)
+
+    add_executable(test_latin_words tests/src/test_latin_words.cpp)
+    if(MSVC)
+        target_compile_options(test_latin_words PRIVATE /utf-8)
+    endif()
+    target_link_libraries(test_latin_words PRIVATE MetasequoiaIme::Engine)
+    add_test(NAME latin_words COMMAND test_latin_words)
 
     # Per-keystroke latency against the real dictionaries; run by hand, not by ctest.
     add_executable(bench_input_session tests/src/bench_input_session.cpp)

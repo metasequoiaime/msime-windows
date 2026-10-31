@@ -130,6 +130,8 @@ std::vector<WordItem> ShuangpinEngine::query(const QueryRequest &request)
     dictionary_.set_fuzzy_pinyin(request.fuzzy_pinyin);
     auto candidates = query_unfiltered(request);
     dictionary_.filter_by_syllable_helpcodes(candidates);
+    // 放在辅助码各条路径之后：奇数个键的 txu 开着单码辅助时会被读成「tx + 辅码 u」，T恤 照样要有。
+    dictionary_.insert_latin_words(candidates, request.raw_input);
     return candidates;
 }
 

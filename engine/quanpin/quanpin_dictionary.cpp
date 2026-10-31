@@ -978,7 +978,12 @@ std::vector<WordItem> QuanpinDictionary::query_series(const std::string &raw_inp
         result.insert(result.end(), partial_result.begin(), partial_result.end());
     }
 
-    if (segments.size() >= 2 && quanpin::has_only_complete_pinyin_segments(segments))
+    // 含 t、k 这类单字母段的切分（maiyijiantxu 的 mai'yi'jian't'xu）平时不解整句：那些段只是简拼，
+    // 词格查不出能覆盖它们的词。它们都落在某个字母词里时，词格能借字母词把整串解通。
+    // Google 解码器会把这些字母当声母另行猜读音，只给全是完整音节的输入用。
+    const bool complete_segments = quanpin::has_only_complete_pinyin_segments(segments);
+    const bool latin_segments = !complete_segments && latin_words().covers_incomplete_segments(segments);
+    if (segments.size() >= 2 && (complete_segments || latin_segments))
     {
         // 两条整句来源各出一句：词格（kenlm 三元模型打分）在前，Google 解码器在后。
         // 词格换成 sc.lm 之后整体比 Google 那条准，所以由它占首位；Google 那条保留，
@@ -998,7 +1003,7 @@ std::vector<WordItem> QuanpinDictionary::query_series(const std::string &raw_inp
         // 不管走哪条，送进去之前都要把 ü 换成它认的写法：它的音节表里只有 nue/lue，
         // nve 会被拆成 nv + e。见 quanpin::to_google_spelling。
         // Google 整句（Fallback）：仅在开关打开时才解码、才出候选。
-        if (sentence_association_.google)
+        if (sentence_association_.google && complete_segments)
         {
             const std::string google_input =
                 raw_input.find('\'') != std::string::npos
@@ -1049,6 +1054,7 @@ std::vector<WordItem> QuanpinDictionary::query_series(const std::string &raw_inp
         lattice_options.include_collocation_best = sentence_association_.collocation_rerank && has_collocation;
         lattice_options.show_next_on_duplicate = sentence_association_.show_next_on_duplicate;
         lattice_options.language_model = language_model_;
+        lattice_options.allow_latin_segments = latin_segments;
         // 万象语法模型的搭配项：逐边叠加字级搭配分，与三元模型在同一 Viterbi 里竞争。
         // query() 是自然对数域，乘 kLnToLog10 换到词格的 log10 域；六参数来自配置。
         if (has_collocation)
@@ -2457,8 +2463,14 @@ quanpin::WordLatticeLookup QuanpinDictionary::lattice_lookup(int limit, bool wit
     {
         char_reading_totals_ = quanpin::load_char_reading_totals(db_);
     }
-    return [this, lookup = quanpin::make_lattice_db_lookup(db_, statement_cache_, limit, fuzzy, char_reading_totals_),
-            limit, fuzzy](const quanpin::Segments &span) {
+    auto db_lookup = quanpin::make_lattice_db_lookup(db_, statement_cache_, limit, fuzzy, char_reading_totals_);
+    // 字母词按跨度里拼起来的字母匹配：ka'lao'k 一样认出 ka'la'o'k 的卡拉OK。表在这里（查询线程上）载好。
+    auto lookup = [this, &latin = latin_words(), db_lookup = std::move(db_lookup)](const quanpin::Segments &span) {
+        auto rows = db_lookup(span);
+        quanpin::prepend_latin_lexemes(latin, span, language_model_, rows);
+        return rows;
+    };
+    return [this, lookup = std::move(lookup), limit, fuzzy](const quanpin::Segments &span) {
         // 超过上限整体清掉，免得一次长时间输入把内存撑大（同双拼的 direct_span_cache_）。
         constexpr std::size_t kLatticeSpanCacheLimit = 8192;
         std::string key = quanpin::join_segments(span);
@@ -2894,6 +2906,34 @@ std::vector<WordItem> QuanpinDictionary::query(const std::string &raw_input, con
     if (fuzzy.rules)
         keep_literal_mixed_words_first(result, raw_input);
     mark_autocorrect_candidates(result, raw_input);
+    if (!raw_input.empty())
+    {
+        const auto segments = resolve_segments(raw_input, segmentation, correction_aliases_enabled_);
+        insert_latin_words(result, raw_input, segments,
+                           segmentation.empty() ? quanpin::join_segments(segments) : segmentation);
+    }
     current_candidate_list_ = result;
     return result;
+}
+
+const quanpin::LatinWords &QuanpinDictionary::latin_words()
+{
+    if (!latin_words_)
+    {
+        latin_words_.emplace();
+        latin_words_->load(db_);
+    }
+    return *latin_words_;
+}
+
+void QuanpinDictionary::insert_latin_words(std::vector<WordItem> &result, const std::string &raw_input,
+                                           const quanpin::Segments &segments, const std::string &code_for_selection)
+{
+    const std::string code = quanpin::latin_code(raw_input);
+    if (code.size() < quanpin::kLatinWordMinimumCode || latin_words().empty())
+        return;
+    const auto completions = code.size() >= quanpin::kLatinWordMinimumCompletionCode
+                                 ? latin_words().completions(code, quanpin::kLatinWordCompletionLimit)
+                                 : std::vector<const quanpin::LatinWord *>{};
+    quanpin::insert_latin_candidates(result, latin_words().exact(code), completions, code_for_selection, segments);
 }

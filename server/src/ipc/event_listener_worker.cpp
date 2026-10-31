@@ -815,7 +815,7 @@ void WorkerThread()
             }
             if (item.source == CandidateSource::QuickPhrase || item.source == CandidateSource::Emoji ||
                 item.source == CandidateSource::Kaomoji || item.source == CandidateSource::Symbol ||
-                item.source == CandidateSource::Generated)
+                item.source == CandidateSource::Generated || item.latin_word)
             {
                 break;
             }

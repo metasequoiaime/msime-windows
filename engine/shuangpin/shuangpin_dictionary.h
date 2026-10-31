@@ -14,6 +14,7 @@
 #include "../quanpin/lattice_rerank.h"
 #include "../quanpin/quanpin_query.h"
 #include "engine/ngram/language_model.h"
+#include "shuangpin_latin_words.h"
 #include "shuangpin_profile.h"
 #include <shared_mutex>
 #include <array>
@@ -99,6 +100,9 @@ class ShuangpinDictionary
     }
     // 词格跨度查询带的模糊音规则，见 QuanpinDictionary::set_fuzzy_pinyin。变化时清缓存。
     void set_fuzzy_pinyin(metasequoia::FuzzyPinyinOptions options);
+    // 原始按键整串等于某个字母词在本方案下的敲法时（小鹤 txu 是 T恤），把它排在整串精确命中的词库行
+    // 之后；三个键起再补两条以它开头的更长的词。见 QuanpinDictionary::insert_latin_words。
+    void insert_latin_words(std::vector<WordItem> &candidates, const std::string &raw_input);
 
     explicit ShuangpinDictionary(const ShuangpinProfile &profile = GetXiaoheShuangpinProfile(),
                                  metasequoia::RuntimePaths paths = metasequoia::RuntimePaths::legacy());
@@ -147,6 +151,16 @@ class ShuangpinDictionary
     std::unordered_map<std::string, std::vector<quanpin::LatticeLexeme>> direct_span_cache_;
     // 见 QuanpinDictionary::char_reading_totals_。
     std::shared_ptr<const quanpin::CharReadingTotals> char_reading_totals_;
+    // 字母词与它们在本方案下的敲法，第一次用到时载入；后者存着指向前者的指针，两者一起建、不再重载。
+    std::optional<quanpin::LatinWords> latin_words_;
+    std::optional<ShuangpinLatinWords> latin_codes_;
+    const quanpin::LatinWords &latin_words();
+    const ShuangpinLatinWords &latin_codes();
+    // 贪心切分把字母词拆坏（tx'u 读成 tie 加声母 sh）时，在贪心切分的边界上找字母词的敲法，命中就换一条
+    // 切分：命中前照旧，命中段按字母词的键切，命中后从命中结尾重新贪心切。这条切分解出的整句比贪心
+    // 切分的好才合并进来，排在整句的最前面。
+    void merge_latin_sentence(std::vector<WordItem> &candidates, const std::string &pinyin_sequence,
+                              const quanpin::Segments &greedy_syllables, const quanpin::WordLatticeOptions &options);
     void reset_cache_if_database_changed();
     // 这个字能不能落在 helpcode 约束的音节上。
     bool accepts_syllable_char(const SyllableHelpcode &helpcode, const std::string &hanzi) const;
