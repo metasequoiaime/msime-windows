@@ -96,12 +96,9 @@ class QuanpinDictionary
 
     // 设置整句候选来源与去重补位选项。值发生变化时清一次缓存，避免旧候选被继续复用。
     void set_sentence_association(const SentenceAssociationOptions &options);
-    // 长词前缀补全（#1343）的开关，随每次查询下发。补全在 query() 末尾现插，不进任何候选缓存，
-    // 开关变了不必清缓存。
-    void set_prefix_completion(const metasequoia::PrefixCompletionOptions &options)
-    {
-        prefix_completion_ = options;
-    }
+    // 长词前缀补全（#1343）的开关，随每次查询下发。补全在 query() 末尾现插，不进任何候选缓存，开关变了
+    // 不必清；打分用的万象模型换了路径时重新解析，按前缀缓存的补全排序作废。
+    void set_prefix_completion(const metasequoia::PrefixCompletionOptions &options);
 
     // 光标前已上屏的文本，作为神经重排给模型看的上下文。宿主能拿到应用里的前文就给它，
     // 拿不到就不设——空上下文照样能排，只是模型只看句子本身、看不到上文。
@@ -244,6 +241,10 @@ class QuanpinDictionary
     // 见 set_prefix_completion。缓存按前缀存打过分的补全，随 reset_cache 清（调频改了权重）。
     metasequoia::PrefixCompletionOptions prefix_completion_;
     quanpin::PrefixCompletionCache prefix_completion_cache_;
+    // 补全打分用的万象模型，路径来自 prefix_completion_.collocation_model（与整句加成的 collocation_db_
+    // 分开：整句加成关着时补全照样用它）。进程内按路径共享映射，不重复占内存。
+    std::shared_ptr<const gram::GramDb> prefix_completion_gram_;
+    quanpin::PrefixCompletionScorers prefix_completion_scorers();
     sqlite3 *db_ = nullptr;
     sqlite3_int64 data_version_ = -1;
     metasequoia::RuntimePaths paths_;

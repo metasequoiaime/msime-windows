@@ -1714,8 +1714,25 @@ void ShuangpinDictionary::insert_prefix_completion(std::vector<WordItem> &candid
     if (!options.enabled)
         return;
     reset_cache_if_database_changed();
+    if (options.collocation_model != prefix_completion_gram_path_)
+    {
+        prefix_completion_gram_path_ = options.collocation_model;
+        prefix_completion_gram_ =
+            options.collocation_model.empty()
+                ? nullptr
+                : gram::shared_gram_db(metasequoia::path_from_utf8(options.collocation_model.c_str()));
+        prefix_completion_cache_.clear();
+    }
+    quanpin::PrefixCompletionScorers scorers;
+    scorers.collocation =
+        prefix_completion_gram_ && prefix_completion_gram_->valid() ? prefix_completion_gram_.get() : nullptr;
+    scorers.grammar = sentence_association_.collocation_grammar;
+    scorers.language_model = language_model_;
+    // 神经模型只在前两个都没有时才取：取一次就要把 25 MB 的权重载进来。
+    if (scorers.collocation == nullptr && (language_model_ == nullptr || !language_model_->valid()))
+        scorers.neural = neural_keyboard_model_.get();
     quanpin::insert_prefix_completion(candidates, raw_input, options, quanpin_db_, quanpin_statement_cache_,
-                                      prefix_completion_cache_, language_model_);
+                                      prefix_completion_cache_, scorers);
 }
 
 void ShuangpinDictionary::merge_latin_sentence(std::vector<WordItem> &candidates, const std::string &pinyin_sequence,

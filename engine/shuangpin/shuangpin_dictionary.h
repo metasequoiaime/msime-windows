@@ -161,6 +161,9 @@ class ShuangpinDictionary
     std::optional<ShuangpinLatinWords> latin_codes_;
     // 见 insert_prefix_completion，随 reset_cache 清。
     quanpin::PrefixCompletionCache prefix_completion_cache_;
+    // 补全打分用的万象模型与它的路径，见 QuanpinDictionary::prefix_completion_gram_。
+    std::string prefix_completion_gram_path_;
+    std::shared_ptr<const gram::GramDb> prefix_completion_gram_;
     const quanpin::LatinWords &latin_words();
     const ShuangpinLatinWords &latin_codes();
     // 贪心切分把字母词拆坏（tx'u 读成 tie 加声母 sh）时，在贪心切分的边界上找字母词的敲法，命中就换一条

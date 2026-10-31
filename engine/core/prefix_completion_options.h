@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 
 namespace metasequoia
 {
@@ -10,10 +11,14 @@ struct PrefixCompletionOptions
     bool enabled = false;
     // 首选至少要有这么多个字才补。字太少时以它开头的词太多，补出来的多半不是用户要的。
     std::size_t minimum_chars = 4;
+    // 给补全打分的 octagram 语法模型（万象等，.gram 路径，UTF-8）。设置页激活了哪个模型就用哪个，
+    // 与整句加成开没开无关；空表示没有，打分退到 sc.lm、再退到随包的神经模型。
+    std::string collocation_model;
 
     bool operator==(const PrefixCompletionOptions &other) const
     {
-        return enabled == other.enabled && minimum_chars == other.minimum_chars;
+        return enabled == other.enabled && minimum_chars == other.minimum_chars &&
+               collocation_model == other.collocation_model;
     }
 };
 

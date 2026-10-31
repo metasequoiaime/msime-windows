@@ -138,7 +138,7 @@ void test_query_rows(const std::filesystem::path &directory)
     sqlite3 *database = open(directory / "msime.db");
     std::unordered_map<std::string, sqlite3_stmt *> statements;
     auto rows = quanpin::query_prefix_completion_rows(database, statements, "zhong'hua'ren'min", "中华人民");
-    quanpin::score_prefix_completions(rows, 4, true, nullptr);
+    quanpin::score_prefix_completions(rows, 4, true, quanpin::PrefixCompletionScorers{});
     for (auto &entry : statements)
         sqlite3_finalize(entry.second);
     sqlite3_close(database);
@@ -164,14 +164,15 @@ void test_guessed_head(const std::filesystem::path &directory)
         return result;
     };
     auto result = guessed();
-    quanpin::insert_prefix_completion(result, "chuang'qian'ming'yue", enabled(), database, statements, cache, nullptr);
+    quanpin::insert_prefix_completion(result, "chuang'qian'ming'yue", enabled(), database, statements, cache,
+                                      quanpin::PrefixCompletionScorers{});
     const bool completed = result.size() == 3 && result[1].word == "床前明月光" && result[1].prefix_completion &&
                            result[1].pinyin == "chuang'qian'ming'yue";
     // 同一读音、首选是词库词时仍按字补：「窗前明月」开头的词没有，不补。
     auto word_head = guessed();
     word_head[0].source = CandidateSource::Database;
     quanpin::insert_prefix_completion(word_head, "chuang'qian'ming'yue", enabled(), database, statements, cache,
-                                      nullptr);
+                                      quanpin::PrefixCompletionScorers{});
     for (auto &entry : statements)
         sqlite3_finalize(entry.second);
     sqlite3_close(database);

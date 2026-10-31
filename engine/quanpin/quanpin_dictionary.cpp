@@ -2913,11 +2913,38 @@ std::vector<WordItem> QuanpinDictionary::query(const std::string &raw_input, con
         const std::string code = segmentation.empty() ? quanpin::join_segments(segments) : segmentation;
         insert_latin_words(result, raw_input, segments, code);
         // 放在最后：首选要是这次查询最终的首选（模糊音合并、字母词插入都可能换掉它）。
-        quanpin::insert_prefix_completion(result, code, prefix_completion_, db_, statement_cache_,
-                                          prefix_completion_cache_, language_model_);
+        if (prefix_completion_.enabled)
+            quanpin::insert_prefix_completion(result, code, prefix_completion_, db_, statement_cache_,
+                                              prefix_completion_cache_, prefix_completion_scorers());
     }
     current_candidate_list_ = result;
     return result;
+}
+
+void QuanpinDictionary::set_prefix_completion(const metasequoia::PrefixCompletionOptions &options)
+{
+    if (options.collocation_model != prefix_completion_.collocation_model)
+    {
+        prefix_completion_gram_ =
+            options.collocation_model.empty()
+                ? nullptr
+                : gram::shared_gram_db(metasequoia::path_from_utf8(options.collocation_model.c_str()));
+        prefix_completion_cache_.clear();
+    }
+    prefix_completion_ = options;
+}
+
+quanpin::PrefixCompletionScorers QuanpinDictionary::prefix_completion_scorers()
+{
+    quanpin::PrefixCompletionScorers scorers;
+    scorers.collocation =
+        prefix_completion_gram_ && prefix_completion_gram_->valid() ? prefix_completion_gram_.get() : nullptr;
+    scorers.grammar = sentence_association_.collocation_grammar;
+    scorers.language_model = language_model_;
+    // 神经模型只在前两个都没有时才取：取一次就要把 25 MB 的权重载进来。
+    if (scorers.collocation == nullptr && (language_model_ == nullptr || !language_model_->valid()))
+        scorers.neural = neural_keyboard_model_.get();
+    return scorers;
 }
 
 const quanpin::LatinWords &QuanpinDictionary::latin_words()
