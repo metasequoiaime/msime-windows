@@ -446,6 +446,7 @@ constexpr const char *kMidTrigger = "helpcode.shuangpin_mid_sentence_helpcode";
 constexpr const char *kMidDirect = "helpcode.shuangpin_direct_helpcode";
 constexpr const char *kDirectSlash = "helpcode.shuangpin_direct_helpcode_slash";
 constexpr const char *kDirectUppercase = "helpcode.shuangpin_direct_helpcode_uppercase";
+constexpr const char *kDirectEndTrigger = "helpcode.shuangpin_direct_helpcode_end_trigger";
 
 // 末尾辅助码 and 句中辅助码, in the order of their segments.
 enum class EndMode
@@ -469,6 +470,8 @@ struct HelpcodeModes
     // What the page shows: the engine ignores the end helpcode while the direct one is on.
     EndMode end = EndMode::Off;
     MidMode mid = MidMode::Off;
+    // 句中直接紧跟式下用引导键进入末尾辅助码：末尾引导键（反引号、分号）这时也有用。
+    bool directEndTrigger = false;
 };
 
 HelpcodeModes ReadModes(const SettingsModel &model)
@@ -481,7 +484,14 @@ HelpcodeModes ReadModes(const SettingsModel &model)
     else if (model.GetBool(kMidTrigger))
         modes.mid = MidMode::Trigger;
     modes.end = modes.mid == MidMode::Direct ? EndMode::Off : modes.storedEnd;
+    modes.directEndTrigger = modes.mid == MidMode::Direct && model.GetBool(kDirectEndTrigger);
     return modes;
+}
+
+// 反引号、分号能不能当末尾引导键：末尾辅助码是引导键式，或句中直接紧跟式下开了用引导键进入末尾辅助码。
+bool EndTriggerKeysInUse(const HelpcodeModes &modes)
+{
+    return modes.end == EndMode::Trigger || modes.directEndTrigger;
 }
 
 // The one pair that may be on together: the end helpcode read from the input's shape and the
@@ -564,6 +574,9 @@ void ChooseMid(SettingsModel &model, MidMode target, std::wstring &notice)
 
 std::wstring EndHint(const HelpcodeModes &modes)
 {
+    if (modes.directEndTrigger)
+        return L"句中直接紧跟式开着时，末尾的辅码也由直接紧跟式识别；在输入末尾敲末尾引导键，可以先整理成纯双拼，再按"
+               L"末尾辅助码筛候选。";
     if (modes.mid == MidMode::Direct)
         return L"句中直接紧跟式开着时末尾辅助码不生效，末尾的辅码也由直接紧跟式识别。";
     switch (modes.end)
@@ -691,7 +704,7 @@ KeyChoices ChoicesFor(const SettingsModel &model, const HelpcodeModes &modes, co
         choices.options.push_back(KeyOption(use));
         return choices;
     }
-    const bool end = modes.end == EndMode::Trigger && model.GetBool(key.endPath);
+    const bool end = EndTriggerKeysInUse(modes) && model.GetBool(key.endPath);
     const bool mid = modes.mid == MidMode::Trigger && model.GetBool(key.midPath);
     const bool doubleCode = key.kind == KeyKind::Uppercase && modes.end == EndMode::Trailing;
     choices.value = mid ? "mid" : end ? "end" : doubleCode ? "double" : "none";
@@ -700,7 +713,7 @@ KeyChoices ChoicesFor(const SettingsModel &model, const HelpcodeModes &modes, co
     // The host keeps one end trigger key at least: the last one can only move to the other side.
     else if (!end || EndTriggerCount(model) > 1)
         choices.options.push_back(KeyOption("none"));
-    if (modes.end == EndMode::Trigger)
+    if (EndTriggerKeysInUse(modes))
         choices.options.push_back(KeyOption("end"));
     if (modes.mid == MidMode::Trigger)
         choices.options.push_back(KeyOption("mid"));
@@ -731,7 +744,7 @@ void ApplyKeyChoice(SettingsModel &model, const KeySpec &key, const std::string 
     }
     Set(model, key.midPath, false);
     // An end trigger key that does nothing now stays as it is.
-    if (value == "none" && modes.end == EndMode::Trigger)
+    if (value == "none" && EndTriggerKeysInUse(modes))
         Set(model, key.endPath, false);
 }
 
@@ -783,7 +796,7 @@ std::wstring KeyWarnings(const HelpcodeModes &modes, const std::vector<KeyChoice
         return std::any_of(keys.begin(), keys.end(), [use](const KeyChoices &key) { return key.value == use; });
     };
     std::wstring warnings;
-    if (modes.end == EndMode::Trigger && !assigned("end"))
+    if (EndTriggerKeysInUse(modes) && !assigned("end"))
         warnings += L"没有键分给末尾引导键，末尾辅助码不会生效。";
     if (modes.mid == MidMode::Trigger && !assigned("mid"))
         warnings += L"没有键分给句中引导键，句中辅助码不会生效。";
@@ -838,6 +851,8 @@ VisualPtr ShuangpinHelpcodeSection(PageContext &context)
         std::shared_ptr<Hideable> keyNotesBox;
         std::shared_ptr<Label> keyWarnings;
         std::shared_ptr<Hideable> keyWarningsBox;
+        // 用引导键进入末尾辅助码：只在句中辅助码选直接紧跟式时生效，其余时候置灰。
+        std::shared_ptr<Dimmable> endTrigger;
         // Shown after a choice turned the other side off, until the next choice.
         std::wstring noticeText;
     };
@@ -906,6 +921,18 @@ VisualPtr ShuangpinHelpcodeSection(PageContext &context)
     c->keys = std::make_shared<Hideable>(keys, false);
     column->Add(c->keys);
 
+    auto endTrigger = std::make_shared<Column>(0.0f);
+    endTrigger->Add(std::make_shared<Divider>());
+    endTrigger->Add(MakeRow(L"用引导键进入末尾辅助码",
+                            L"句中辅助码选直接紧跟式时，在输入末尾敲末尾引导键（在上面的按键分配里把反引号或分号设成"
+                            L"末尾引导键）会删掉各音节上的辅码、整理成纯双拼（如 uixulpb 敲 ; 变成 uiulpb;），再接一到"
+                            L"两个辅码按末尾辅助码筛候选；退格删掉这个引导键时恢复原来的输入。前面每一节都要能看成"
+                            L"「完整双拼 + 0~2 个辅码」，否则引导键仍当标点。微软、搜狗、紫光双拼里分号跟在字母后面时是"
+                            L" ing 韵母，请改用反引号",
+                            BindToggle(context, "helpcode.shuangpin_direct_helpcode_end_trigger")));
+    c->endTrigger = std::make_shared<Dimmable>(endTrigger);
+    column->Add(c->endTrigger);
+
     context.OnConfig([model, c]() {
         const HelpcodeModes modes = ReadModes(*model);
         c->end->SetSelected(static_cast<size_t>(modes.end));
@@ -954,6 +981,7 @@ VisualPtr ShuangpinHelpcodeSection(PageContext &context)
         const std::wstring warnings = KeyWarnings(modes, keys);
         c->keyWarnings->SetText(warnings);
         c->keyWarningsBox->SetVisible(!warnings.empty());
+        c->endTrigger->SetDisabled(modes.mid != MidMode::Direct);
     });
     return column;
 }

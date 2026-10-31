@@ -56,6 +56,7 @@ class EngineInputSession : public IInputSession
     bool accepts_mid_sentence_helpcode_marker(std::size_t caret) const override;
     bool accepts_end_helpcode_marker(std::size_t caret) const override;
     bool accepts_direct_helpcode_slash(std::size_t caret) const override;
+    std::optional<std::string> direct_helpcode_end_trigger_prefix(const std::string &typed) override;
     bool has_mid_sentence_helpcode() const override;
     std::vector<WordItem> candidates_without_mid_sentence_helpcode() override;
 

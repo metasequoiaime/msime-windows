@@ -451,6 +451,28 @@ void InputSession::set_direct_helpcode_markers(bool slash, bool uppercase)
     online_requests_.invalidate();
 }
 
+void InputSession::set_direct_helpcode_end_trigger_enabled(bool enabled)
+{
+    if (direct_helpcode_end_trigger_enabled_ == enabled)
+    {
+        return;
+    }
+    direct_helpcode_end_trigger_enabled_ = enabled;
+    engine_.set_direct_helpcode_end_trigger_enabled(enabled);
+    update_mixed_candidates();
+    online_requests_.invalidate();
+}
+
+std::optional<std::string> InputSession::direct_helpcode_end_trigger_prefix(const std::string &typed)
+{
+    if (!direct_helpcode_enabled_ || !direct_helpcode_end_trigger_enabled_ || !is_shuangpin() ||
+        dedicated_english_mode_ || local_input_mode_ != LocalInputMode::None)
+    {
+        return std::nullopt;
+    }
+    return engine_.direct_helpcode_end_trigger_prefix(typed);
+}
+
 bool InputSession::accepts_direct_helpcode_slash_at(std::size_t caret) const
 {
     if (!direct_helpcode_enabled_ || !direct_helpcode_slash_marker_ || !is_shuangpin() || dedicated_english_mode_ ||

@@ -695,6 +695,43 @@ bool SetConfiguredShuangpinDirectHelpcodeUppercase(bool enabled)
     return true;
 }
 
+bool GetConfiguredShuangpinDirectHelpcodeEndTrigger()
+{
+    return g_shuangpin_direct_helpcode_end_trigger;
+}
+
+bool SetConfiguredShuangpinDirectHelpcodeEndTrigger(bool enabled)
+{
+    if (!WriteConfiguredValue("helpcode", "shuangpin_direct_helpcode_end_trigger", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_shuangpin_direct_helpcode_end_trigger = enabled;
+    return true;
+}
+
+bool IsConfiguredDirectHelpcodeEndTriggerActive()
+{
+    return g_shuangpin_direct_helpcode_enabled && g_shuangpin_direct_helpcode_end_trigger &&
+           GetConfiguredActiveInputScheme() == SchemeType::Shuangpin;
+}
+
+bool IsConfiguredDirectHelpcodeEndTriggerKey(wchar_t ch)
+{
+    if (!IsConfiguredDirectHelpcodeEndTriggerActive())
+    {
+        return false;
+    }
+    return ch == L'`' ? g_shuangpin_helpcode_trigger_backtick : ch == L';' && g_shuangpin_helpcode_trigger_semicolon;
+}
+
+std::wstring FormatDirectHelpcodeEndTriggerWorkerPayload()
+{
+    return std::wstring(1,
+                        FanyImeEndHelpcode::PayloadFor<wchar_t>(IsConfiguredDirectHelpcodeEndTriggerKey(L'`'),
+                                                                IsConfiguredDirectHelpcodeEndTriggerKey(L';'), false));
+}
+
 std::wstring FormatDirectHelpcodeWorkerPayload()
 {
     const bool enabled =

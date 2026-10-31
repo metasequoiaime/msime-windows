@@ -165,6 +165,7 @@ extern bool g_shuangpin_mid_sentence_helpcode_uppercase;
 extern bool g_shuangpin_direct_helpcode_enabled;
 extern bool g_shuangpin_direct_helpcode_slash;
 extern bool g_shuangpin_direct_helpcode_uppercase;
+extern bool g_shuangpin_direct_helpcode_end_trigger;
 extern bool g_quanpin_helpcode_enabled;
 extern std::string g_shuangpin_helpcode_schema;
 extern std::string g_quanpin_helpcode_schema;

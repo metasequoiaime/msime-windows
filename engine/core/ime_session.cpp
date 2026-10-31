@@ -5,7 +5,9 @@
 #include "../schemes/japanese_romaji_scheme.h"
 #include "../quanpin/quanpin_utils.h"
 #include "../shuangpin/shuangpin_query.h"
+#include "../contracts/direct_helpcode.h"
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -102,12 +104,80 @@ void ImeSession::set_mid_sentence_uppercase_trigger_enabled(bool enabled)
     bind_shuangpin_scheme();
 }
 
+void ImeSession::set_direct_helpcode_end_trigger_enabled(bool enabled)
+{
+    enable_direct_helpcode_end_trigger_ = enabled;
+}
+
+bool ImeSession::direct_helpcode_end_block_active(const QueryRequest &request) const
+{
+    return enable_direct_helpcode_ && enable_direct_helpcode_end_trigger_ && request.scheme == SchemeType::Shuangpin &&
+           request.raw_input_with_syllable_helpcodes.find(FanyImeMidSentenceHelpcode::kEndMarker) != std::string::npos;
+}
+
 void ImeSession::resolve_direct_helpcode(QueryRequest &request)
 {
-    if (enable_direct_helpcode_ && request.valid && request.scheme == SchemeType::Shuangpin)
+    if (enable_direct_helpcode_ && request.valid && request.scheme == SchemeType::Shuangpin &&
+        !direct_helpcode_end_block_active(request))
     {
         provider_registry_.resolve_direct_helpcode(request);
     }
+}
+
+std::optional<std::string> ImeSession::direct_helpcode_end_trigger_prefix(const std::string &typed)
+{
+    if (!enable_direct_helpcode_ || !enable_direct_helpcode_end_trigger_ || scheme_->type() != SchemeType::Shuangpin ||
+        !FanyImeDirectHelpcode::AcceptsEndTriggerAt(typed.data(), typed.size(), typed.size()))
+    {
+        return std::nullopt;
+    }
+    // 和 query_raw_candidates 一样用临时方案建请求：解析器按原串缓存切分，这次查询与当前组合看到的是同一个切分。
+    const std::unique_ptr<IInputScheme> query_scheme = create_scheme(SchemeType::Shuangpin);
+    configure_shuangpin_scheme(query_scheme.get());
+    std::string lowered = typed;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    query_scheme->set_raw_input(lowered, typed);
+    QueryRequest request = query_scheme->build_request();
+    apply_request_options(request);
+    if (!request.valid)
+    {
+        return std::nullopt;
+    }
+    if (!provider_registry_.resolve_direct_helpcode(request))
+    {
+        // 解析器没改写：整串本来就是不带辅码的普通双拼，或者按辅码切不通。前者每一节都得是完整音节。
+        if (!shuangpin::is_complete_input(lowered, shuangpin_profile_))
+        {
+            return std::nullopt;
+        }
+        return typed;
+    }
+    // 改写后的 raw_input_with_cases 是去掉辅码与 / 的双拼码，解析器在带辅码的音节、单键声母后面插了 '。
+    // 单键声母说明那个音节不完整，这一节就不是一个个完整音节。
+    const std::string &clean = request.raw_input_with_cases;
+    if (!shuangpin::is_complete_input(clean, shuangpin_profile_) ||
+        request.syllable_helpcode_source_index.size() != clean.size() + 1)
+    {
+        return std::nullopt;
+    }
+    // 解析器为隔开辅码插的 ' 不要；用户自己敲的 ' 留着（映射回原串正是那个 '）。
+    std::string prefix;
+    prefix.reserve(clean.size());
+    for (std::size_t index = 0; index < clean.size(); ++index)
+    {
+        if (clean[index] == '\'')
+        {
+            const std::size_t source = request.syllable_helpcode_source_index[index];
+            if (source < typed.size() && typed[source] == '\'' && !prefix.empty() && prefix.back() != '\'')
+            {
+                prefix.push_back('\'');
+            }
+            continue;
+        }
+        prefix.push_back(clean[index]);
+    }
+    return prefix;
 }
 
 void ImeSession::bind_wubi_scheme()
@@ -385,14 +455,23 @@ bool ImeSession::expand_initial_candidates()
 
 void ImeSession::apply_request_options(QueryRequest &request) const
 {
+    // 直接辅助码下由引导键进入的末尾段：前面已经整理成纯双拼，末尾段的辅码按引导键式末尾辅助码筛，
+    // 与末尾辅助码自己的开关无关。
+    const bool direct_end_block = direct_helpcode_end_block_active(request);
     // 末尾辅助码直接触发时按输入形状认辅码；改成引导键触发后，辅码只来自方案层解析出的末尾段。
     request.enable_shuangpin_helpcode = enable_shuangpin_helpcode_ && shuangpin_helpcode_direct_;
-    if (!enable_shuangpin_helpcode_ || shuangpin_helpcode_direct_)
+    if ((!enable_shuangpin_helpcode_ || shuangpin_helpcode_direct_) && !direct_end_block)
     {
         request.end_helpcodes.clear();
     }
     request.enable_mid_sentence_helpcode = enable_mid_sentence_helpcode_;
-    if (enable_direct_helpcode_ && request.scheme == SchemeType::Shuangpin)
+    if (direct_end_block)
+    {
+        // 不按输入形状认辅码，也不交给直接辅助码的解析器与它的词格缓存（resolve_direct_helpcode 同样跳过）。
+        request.enable_shuangpin_helpcode = false;
+        request.enable_mid_sentence_helpcode = false;
+    }
+    else if (enable_direct_helpcode_ && request.scheme == SchemeType::Shuangpin)
     {
         // 直接辅助码接管辅码：末尾单码/双码那套判断会把辅码字母当成别的东西，关掉；约束由解析器
         // 改写请求时再打开。

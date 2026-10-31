@@ -111,6 +111,7 @@ bool g_shuangpin_mid_sentence_helpcode_uppercase = false;
 bool g_shuangpin_direct_helpcode_enabled = false;
 bool g_shuangpin_direct_helpcode_slash = true;
 bool g_shuangpin_direct_helpcode_uppercase = false;
+bool g_shuangpin_direct_helpcode_end_trigger = false;
 bool g_quanpin_helpcode_enabled = true;
 std::string g_shuangpin_helpcode_schema = "lantian";
 std::string g_quanpin_helpcode_schema = "lantian";
@@ -557,6 +558,8 @@ bool LoadImeConfig()
         g_shuangpin_direct_helpcode_enabled = tbl["helpcode"]["shuangpin_direct_helpcode"].value_or(false);
         g_shuangpin_direct_helpcode_slash = tbl["helpcode"]["shuangpin_direct_helpcode_slash"].value_or(true);
         g_shuangpin_direct_helpcode_uppercase = tbl["helpcode"]["shuangpin_direct_helpcode_uppercase"].value_or(false);
+        g_shuangpin_direct_helpcode_end_trigger =
+            tbl["helpcode"]["shuangpin_direct_helpcode_end_trigger"].value_or(false);
         // 至少留一个（设置页取消不掉最后一个）；手改成两个都关时按默认的 / 生效，不改写配置文件。
         if (!g_shuangpin_direct_helpcode_slash && !g_shuangpin_direct_helpcode_uppercase)
         {

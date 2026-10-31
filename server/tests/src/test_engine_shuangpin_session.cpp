@@ -1853,6 +1853,96 @@ TEST_CASE(EngineShuangpinDirectHelpcodeDecodesWithoutGuideKey)
     REQUIRE_EQ(FormatDirectHelpcodeWorkerPayload(), std::wstring(L"0"));
 }
 
+TEST_CASE(EngineShuangpinDirectHelpcodeEndTriggerRewritesToPlainShuangpin)
+{
+    // 直接辅助码下用 ; 进入末尾辅助码：Server 先问会话能不能改写，再把整串换成「纯双拼 + 末尾段」交回会话。
+    struct ReloadConfigOnExit
+    {
+        ~ReloadConfigOnExit()
+        {
+            InitImeConfig();
+        }
+    } reload;
+    ScopedConfigRoot config_root;
+    InitImeConfig();
+    REQUIRE(SetConfiguredInputScheme("shuangpin"));
+    REQUIRE(SetConfiguredShuangpinDirectHelpcodeEnabled(true));
+    REQUIRE(SetConfiguredShuangpinHelpcodeSchema("ziranma"));
+    // 开关默认关：TSF 收到 "0"，会话也不改写。
+    REQUIRE(!GetConfiguredShuangpinDirectHelpcodeEndTrigger());
+    REQUIRE_EQ(FormatDirectHelpcodeEndTriggerWorkerPayload(), std::wstring(L"0"));
+
+    EngineInputSession session(SchemeType::Shuangpin, GetXiaoheShuangpinProfile());
+    const auto first_code = [&session](const std::string &hanzi) {
+        const std::string annotation = session.get_helpcode_annotation(hanzi, false);
+        return annotation.size() > 1 ? static_cast<char>(std::tolower(static_cast<unsigned char>(annotation[1])))
+                                     : '\0';
+    };
+    const auto apply = [&session](const std::string &raw) {
+        session.set_pinyin_sequence(raw);
+        session.set_pinyin_sequence_with_cases(raw);
+        session.recompute_candidates();
+    };
+    const auto has_word = [&session](const char *word) {
+        const auto &candidates = session.get_candidates();
+        return std::any_of(candidates.begin(), candidates.end(),
+                           [word](const auto &item) { return item.word == word; });
+    };
+    const char stone = first_code("石");
+    const char lion = first_code("狮");
+    REQUIRE(stone != '\0' && lion != '\0');
+
+    // 小鹤 shi = ui：uiX uiY 按直接辅助码切成 uiX'uiY（石狮）。
+    const std::string typed = std::string("ui") + stone + "ui" + lion;
+    apply(typed);
+    REQUIRE(!session.direct_helpcode_end_trigger_prefix(typed).has_value());
+
+    REQUIRE(SetConfiguredShuangpinDirectHelpcodeEndTrigger(true));
+    // 引导键来自末尾辅助码的触发键设置：出厂只勾了分号（位 2）；再勾上反引号（位 1）。大写字母不算。
+    REQUIRE_EQ(FormatDirectHelpcodeEndTriggerWorkerPayload(), std::wstring(L"2"));
+    REQUIRE(IsConfiguredDirectHelpcodeEndTriggerKey(L';') && !IsConfiguredDirectHelpcodeEndTriggerKey(L'`'));
+    REQUIRE(SetConfiguredShuangpinHelpcodeTriggerBacktick(true));
+    REQUIRE(SetConfiguredShuangpinHelpcodeTriggerUppercase(true));
+    REQUIRE_EQ(FormatDirectHelpcodeEndTriggerWorkerPayload(), std::wstring(L"3"));
+    REQUIRE(IsConfiguredDirectHelpcodeEndTriggerKey(L'`'));
+    apply(typed);
+    // 每个音节上的辅码删掉，剩下纯双拼；本来就不带辅码的原样返回。
+    REQUIRE_EQ(session.direct_helpcode_end_trigger_prefix(typed).value_or("?"), std::string("uiui"));
+    REQUIRE_EQ(session.direct_helpcode_end_trigger_prefix("uiui").value_or("?"), std::string("uiui"));
+    // 半个音节、已经有末尾段、大写开头（特殊模式）、光标前不是字母或 / 的都不收。
+    REQUIRE(!session.direct_helpcode_end_trigger_prefix("u").has_value());
+    REQUIRE(!session.direct_helpcode_end_trigger_prefix("uiui|").has_value());
+    REQUIRE(!session.direct_helpcode_end_trigger_prefix("Uiui").has_value());
+    REQUIRE(!session.direct_helpcode_end_trigger_prefix("uiui'").has_value());
+
+    // 改写后的整串：末尾段不再交给直接辅助码的解析器，前面按纯双拼出候选，末尾段的码按末尾辅助码筛。
+    apply("uiui|");
+    REQUIRE_EQ(session.get_pinyin_sequence_with_cases(), std::string("uiui|"));
+    REQUIRE(has_word("石狮"));
+    apply(std::string("uiui|") + stone);
+    const auto &reordered = session.get_candidates();
+    REQUIRE(!reordered.empty());
+    const std::string &front = reordered.front().word;
+    REQUIRE(first_code(HelpcodeUtils::get_first_han_char(front)) == stone ||
+            first_code(HelpcodeUtils::get_last_han_char(front)) == stone);
+    // 两码筛：多字词的首字第一码、末字第一码分别对上。
+    apply(std::string("uiui|") + stone + lion);
+    REQUIRE(has_word("石狮"));
+    for (const auto &item : session.get_candidates())
+    {
+        if (item.source != CandidateSource::Database || HelpcodeUtils::count_han_chars(item.word) < 2)
+            continue;
+        REQUIRE(first_code(HelpcodeUtils::get_first_han_char(item.word)) == stone);
+        REQUIRE(first_code(HelpcodeUtils::get_last_han_char(item.word)) == lion);
+    }
+
+    // 直接辅助码关掉时开关也跟着不生效。
+    REQUIRE(SetConfiguredShuangpinDirectHelpcodeEnabled(false));
+    REQUIRE_EQ(FormatDirectHelpcodeEndTriggerWorkerPayload(), std::wstring(L"0"));
+    apply(typed);
+    REQUIRE(!session.direct_helpcode_end_trigger_prefix(typed).has_value());
+}
+
 TEST_CASE(EngineShuangpinMidSentenceHelpcodeConstrainsSentenceSources)
 {
     // 句中辅助码走 Server 的真实路径：整串写回会话再重算。词格和 Google 整句都打开，约束要在

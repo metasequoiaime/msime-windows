@@ -1371,6 +1371,20 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
         Global::Keycode = code;
         Global::wch = wch;
         Global::ModifiersDown = capturedModifiers;
+        if (KeystrokeState.Function == FUNCTION_SERVER_COMPOSITION_REWRITE)
+        {
+            // Same re-check as the horizontal arrows below: the flag is what makes the Server answer this key with
+            // the rewritten composition. Without it -- or without the message window whose async path applies that
+            // answer -- both sides fall back to the plain key.
+            if (UsesDirectHelpcodeEndTrigger() && _msgWndHandle)
+            {
+                Global::ModifiersDown |= FanyImePipeFlags::DirectHelpcodeEndTriggerRewrite;
+            }
+            else
+            {
+                KeystrokeState.Function = code == VK_BACK ? FUNCTION_BACKSPACE : FUNCTION_PUNCTUATION;
+            }
+        }
         if (KeystrokeState.Function == FUNCTION_MOVE_LEFT_CANDIDATE ||
             KeystrokeState.Function == FUNCTION_MOVE_RIGHT_CANDIDATE)
         {
@@ -1457,7 +1471,12 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
             return KeyDownDispatchResult::Complete;
         }
 
-        if (KeystrokeState.Function == FUNCTION_SERVER_CANDIDATE_KEY && _msgWndHandle)
+        // FUNCTION_SERVER_COMPOSITION_REWRITE shares the path: its reply is either the rewritten composition
+        // (CompositionRestored, applied by the handler) or, for a guide key the Server cannot rewrite, the
+        // punctuation commit -- both with the committing reply budget, since that punctuation may commit.
+        if ((KeystrokeState.Function == FUNCTION_SERVER_CANDIDATE_KEY ||
+             KeystrokeState.Function == FUNCTION_SERVER_COMPOSITION_REWRITE) &&
+            _msgWndHandle)
         {
             _PostAsyncKeyRequest(WM_AsyncServerCandidateKey, code, wch, requestId, {}, 0, 0, deferredReplayToken);
             return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion

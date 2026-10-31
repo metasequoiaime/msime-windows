@@ -84,6 +84,11 @@ class InputSession
     // 宿主在决定是否把 / 当作编码键（四码后的终止键）之前问这一句，规则见
     // FanyImeDirectHelpcode::AcceptsSlashAt。不满足时 / 仍按标点处理。
     bool accepts_direct_helpcode_slash_at(std::size_t caret) const;
+    // 直接辅助码下用 ; 进入末尾辅助码，见 ImeSession::set_direct_helpcode_end_trigger_enabled。默认关闭。
+    void set_direct_helpcode_end_trigger_enabled(bool enabled);
+    // 宿主在把 ; 和它前面的输入 typed 改写成「纯双拼 + kEndMarker」之前问这一句：返回去掉辅码后的纯双拼，
+    // 不能改写时返回空。规则见 ImeSession::direct_helpcode_end_trigger_prefix；本地模式、专用英文时也返回空。
+    std::optional<std::string> direct_helpcode_end_trigger_prefix(const std::string &typed);
     // 当前输入带着生效的句中辅助码约束：候选是筛过的，排位不能当调频的参照。
     bool has_mid_sentence_helpcode() const;
     // 同一输入去掉句中辅助码约束后的引擎候选。用户下次不敲辅助码时看到的就是这份排序，
@@ -391,6 +396,7 @@ class InputSession
     bool direct_helpcode_enabled_ = false;
     bool direct_helpcode_slash_marker_ = true;
     bool direct_helpcode_uppercase_marker_ = false;
+    bool direct_helpcode_end_trigger_enabled_ = false;
     bool mid_sentence_uppercase_trigger_enabled_ = false;
     bool chinese_punctuation_enabled_ = true;
     bool candidate_learning_enabled_ = true;

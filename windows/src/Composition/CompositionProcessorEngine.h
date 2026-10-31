@@ -53,6 +53,11 @@ class CCompositionProcessorEngine
     // engine/contracts/direct_helpcode.h。
     static bool IsDirectHelpcodeInputKey(UINT uCode, WCHAR wch, _In_reads_opt_(length) const WCHAR *buffer,
                                          DWORD_PTR length, DWORD_PTR caret);
+    // 直接辅助码下用引导键进入末尾辅助码时交给 Server 改写输入串的键（FUNCTION_SERVER_COMPOSITION_REWRITE）：输入
+    // 末尾形状合适的引导键（反引号、分号），以及删掉它留下的末尾段开头的退格。规则见
+    // engine/contracts/direct_helpcode.h。
+    static bool IsDirectHelpcodeEndTriggerRewriteKey(UINT uCode, WCHAR wch, _In_reads_opt_(length) const WCHAR *buffer,
+                                                     DWORD_PTR length, DWORD_PTR caret);
     // Shift+T 指定日期时间收的编码键：buffer 以 T 开头、插入后还能接成某种日期时间形状的数字、/ 和 :。
     // 规则见 engine/contracts/date_time_input.h。接不上的数字仍是选词键，Shift+数字始终选词。
     static bool IsDateTimeInputKey(UINT uCode, WCHAR wch, _In_reads_opt_(length) const WCHAR *buffer, DWORD_PTR length,
