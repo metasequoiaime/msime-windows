@@ -32,6 +32,11 @@
           <authenticode-sign />
         </pe-file>
       </directory>
+      <directory path="arm64">
+        <pe-file path="MetasequoiaImeTsf.dll">
+          <authenticode-sign />
+        </pe-file>
+      </directory>
     </directory>
   </zip-file>
 </artifact-configuration>

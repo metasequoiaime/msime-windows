@@ -65,6 +65,11 @@ $tsf32Release = Join-Path $RepoRoot (Join-Path $TsfDirectory 'build32-release\Re
 $tsf64Release = Join-Path $RepoRoot (Join-Path $TsfDirectory 'build64-release\Release\MetasequoiaImeTsf.dll')
 $tsf32Pdb = Join-Path $RepoRoot (Join-Path $TsfDirectory 'build32-release\Release\MetasequoiaImeTsf.pdb')
 $tsf64Pdb = Join-Path $RepoRoot (Join-Path $TsfDirectory 'build64-release\Release\MetasequoiaImeTsf.pdb')
+# 原生 Arm64 与 x64 仿真宿主共用同一个 64 位注册表视图，所以这两类宿主由同一个 Arm64X 文件覆盖。
+# Arm64X 由 Arm64EC 那一遍链接出来，产物因此落在 buildarm64x-release；buildarm64-release 只是
+# 它的链接输入，单独拿出来没有意义。见 windows/cmake/arm64x.cmake。
+$tsfArm64Release = Join-Path $RepoRoot (Join-Path $TsfDirectory 'buildarm64x-release\Release\MetasequoiaImeTsf.dll')
+$tsfArm64Pdb = Join-Path $RepoRoot (Join-Path $TsfDirectory 'buildarm64x-release\Release\MetasequoiaImeTsf.pdb')
 # 原生（Direct2D）设置窗口用到的图标与图片，按原相对路径装到数据目录的 assets\settings\。
 $settingsAssets = Join-Path $RepoRoot (Join-Path $ServerDirectory 'assets\settings')
 $defaultSkinsSource = Join-Path $RepoRoot 'skins\default'
@@ -98,6 +103,8 @@ Assert-PathExists -LiteralPath $tsf32Release -Description '32 位 TSF Release DL
 Assert-PathExists -LiteralPath $tsf64Release -Description '64 位 TSF Release DLL'
 Assert-PathExists -LiteralPath $tsf32Pdb -Description '32 位 TSF Release PDB'
 Assert-PathExists -LiteralPath $tsf64Pdb -Description '64 位 TSF Release PDB'
+Assert-PathExists -LiteralPath $tsfArm64Release -Description 'Arm64X TSF Release DLL'
+Assert-PathExists -LiteralPath $tsfArm64Pdb -Description 'Arm64X TSF Release PDB'
 $serverExecutables = @(
     Get-ChildItem -LiteralPath $serverRelease -Recurse -File -Filter '*.exe' |
         Where-Object { $_.BaseName -notlike '*Tests' -and $_.BaseName -notlike 'test_*' }
@@ -318,12 +325,15 @@ else {
 Reset-Directory -LiteralPath $targetTsf
 $targetTsf32 = Join-Path $targetTsf '32'
 $targetTsf64 = Join-Path $targetTsf '64'
-New-Item -ItemType Directory -Path $targetTsf32, $targetTsf64 -Force | Out-Null
+$targetTsfArm64 = Join-Path $targetTsf 'arm64'
+New-Item -ItemType Directory -Path $targetTsf32, $targetTsf64, $targetTsfArm64 -Force | Out-Null
 Copy-Item -LiteralPath $tsf32Release -Destination $targetTsf32 -Force
 Copy-Item -LiteralPath $tsf64Release -Destination $targetTsf64 -Force
+Copy-Item -LiteralPath $tsfArm64Release -Destination $targetTsfArm64 -Force
 if ($IncludeSymbols) {
     Copy-Item -LiteralPath $tsf32Pdb -Destination $targetTsf32 -Force
     Copy-Item -LiteralPath $tsf64Pdb -Destination $targetTsf64 -Force
+    Copy-Item -LiteralPath $tsfArm64Pdb -Destination $targetTsfArm64 -Force
 }
 Copy-Item -LiteralPath $appIcon -Destination (Join-Path $PSScriptRoot 'MetasequoiaIME.ico') -Force
 Copy-Item -LiteralPath $tipIcon -Destination (Join-Path $PSScriptRoot 'MetasequoiaImeTip.ico') -Force
