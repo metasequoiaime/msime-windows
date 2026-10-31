@@ -186,6 +186,9 @@ void score_prefix_completions(std::vector<PrefixCompletionRow> &rows, std::size_
                               const ngram::LanguageModel *language_model)
 {
     const bool has_model = language_model != nullptr && language_model->valid();
+    // 以前缀开头的只有这一行：没得挑，就是它。「海内存知」只补得出「海内存知己」，不能因为它只多一个字、
+    // 权重又在出厂平线上就挡掉；「人工智能能」那类残片出在以它开头的行有几十条的前缀上。
+    const bool only_choice = rows.size() == 1;
     for (auto &row : rows)
     {
         const std::u32string value = han_codepoints(row.value);
@@ -217,6 +220,7 @@ void score_prefix_completions(std::vector<PrefixCompletionRow> &rows, std::size_
             // 以这串读音开头的行通常只有一两条，就是用户正在打的那个长词或诗句，平线也照补。
             row.confident = trusted_weight || !prefix_is_word;
         }
+        row.confident = row.confident || only_choice;
     }
     std::stable_sort(rows.begin(), rows.end(), [](const PrefixCompletionRow &left, const PrefixCompletionRow &right) {
         if (left.score != right.score)

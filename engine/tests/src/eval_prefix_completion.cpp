@@ -6,14 +6,18 @@
 //   eval_prefix_completion --session <拼音> [<拼音> ...]
 // 在 METASEQUOIA_IME_DATA_DIR 指向的数据目录（要是一份副本）上开一个全拼会话，逐键敲入每串拼音，打印前三个
 // 候选和开、关补全时的每键耗时。只敲不选，不写词库。
+//   eval_prefix_completion --neural <msime.db> <sentence-model.safetensors> [sc.lm]
+// 用随包的神经模型（字级 Transformer）同步给同一批前缀的补全打分，和 sc.lm 并排对比条件概率与耗时。
 #include "../../contracts/dictionary/format.h"
 #include "../../core/input_session.h"
+#include "../../neural/sentence_model.h"
 #include "../../quanpin/prefix_completion.h"
 
 #include <sqlite3.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <memory>
@@ -82,8 +86,122 @@ void report(const char *label, const std::string &key, const std::string &word, 
                     row.value.c_str(), static_cast<long long>(row.weight), row.prior, row.tail, row.score);
     }
 }
+std::string first_chars(const std::string &text, std::size_t count)
+{
+    // 词库值都是合法 UTF-8：跳过续字节（10xxxxxx）就是按字数截。
+    std::size_t end = 0;
+    for (std::size_t i = 0; i < count && end < text.size(); ++i)
+    {
+        ++end;
+        while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80)
+            ++end;
+    }
+    return text.substr(0, end);
+}
+
+// 神经模型给每一行的「补出部分」打的条件概率（log10）：log P(整行) - log P(这一行自己的前缀)，各一次批量调用。
+int run_neural(int argc, char **argv)
+{
+    if (argc < 4)
+        return 2;
+    sqlite3 *db = nullptr;
+    const std::string uri = std::string("file:") + argv[2] + "?mode=ro";
+    if (sqlite3_open_v2(uri.c_str(), &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nullptr) != SQLITE_OK)
+        return 2;
+    double load = now_ms();
+    const auto model = neural::SentenceModel::load_file(argv[3]);
+    load = now_ms() - load;
+    if (!model)
+    {
+        std::fprintf(stderr, "cannot load %s\n", argv[3]);
+        return 2;
+    }
+    std::unique_ptr<ngram::LanguageModel> lm;
+    if (argc >= 5)
+        lm = std::make_unique<ngram::LanguageModel>(argv[4]);
+    std::printf("neural model loaded in %.1fms\n", load);
+    auto prefixes = kDefaultPrefixes;
+    for (const auto &extra : std::vector<std::pair<std::string, std::string>>{{"chuang'qian'ming'yue", "床前明月"},
+                                                                              {"bai'ri'yi'shan", "白日依山"},
+                                                                              {"chun'mian'bu'jue", "春眠不觉"},
+                                                                              {"hai'nei'cun'zhi", "海内存知"},
+                                                                              {"hui'dang'ling'jue", "会当凌绝"}})
+        prefixes.push_back(extra);
+    std::unordered_map<std::string, sqlite3_stmt *> statements;
+    constexpr std::size_t kBatch = 32;
+    for (const auto &[key, word] : prefixes)
+    {
+        const bool prefix_is_word = is_dictionary_word(db, key, word);
+        auto rows = quanpin::query_prefix_completion_rows(db, statements, key, prefix_is_word ? word : std::string());
+        if (rows.empty())
+            continue;
+        const std::size_t chars = static_cast<std::size_t>(std::count(key.begin(), key.end(), '\'')) + 1;
+        quanpin::score_prefix_completions(rows, chars, prefix_is_word, lm && lm->valid() ? lm.get() : nullptr);
+        if (rows.size() > kBatch)
+            rows.resize(kBatch);
+        std::vector<std::string> values, heads;
+        for (const auto &row : rows)
+        {
+            values.push_back(row.value);
+            heads.push_back(first_chars(row.value, chars));
+        }
+        const double start = now_ms();
+        const auto full = model->score_sentences("", values);
+        const auto head = model->score_sentences("", heads);
+        const double elapsed = now_ms() - start;
+        std::vector<std::pair<double, std::size_t>> ranked;
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            ranked.emplace_back((full[i] - head[i]) / std::log(10.0), i);
+        std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+        std::printf("%s%s rows=%zu neural=%.2fms\n", word.c_str(), prefix_is_word ? "" : " (not a word)", rows.size(),
+                    elapsed);
+        for (std::size_t r = 0; r < ranked.size() && r < 4; ++r)
+        {
+            const auto &row = rows[ranked[r].second];
+            std::printf("    %-26s neural_tail=%6.2f  sc.lm_tail=%6.2f  w=%lld\n", row.value.c_str(), ranked[r].first,
+                        row.tail, static_cast<long long>(row.weight));
+        }
+    }
+    for (auto &entry : statements)
+        sqlite3_finalize(entry.second);
+    sqlite3_close(db);
+    return 0;
+}
+
+// 批量版：文件里每行一串拼音，逐行输出「拼音<Tab>首选<Tab>首选来源是否为词库<Tab>第二位<Tab>第二位是否补全」。
+int run_session_file(const char *path)
+{
+    metasequoia::InputSession session(SchemeType::Quanpin);
+    SentenceAssociationOptions association;
+    association.google = true;
+    session.set_sentence_association(association);
+    metasequoia::PrefixCompletionOptions options;
+    options.enabled = true;
+    session.set_prefix_completion_options(options);
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line))
+    {
+        if (line.empty())
+            continue;
+        session.reset_state();
+        for (const char character : line)
+            session.handle_character(character);
+        const auto &candidates = session.candidates();
+        const bool head_is_word = !candidates.empty() && (candidates[0].source == CandidateSource::Database ||
+                                                          candidates[0].source == CandidateSource::UserDatabase);
+        std::printf("%s\t%s\t%d\t%s\t%d\n", line.c_str(), candidates.empty() ? "" : candidates[0].word.c_str(),
+                    head_is_word ? 1 : 0, candidates.size() > 1 ? candidates[1].word.c_str() : "",
+                    candidates.size() > 1 && candidates[1].prefix_completion ? 1 : 0);
+    }
+    session.reset_state();
+    return 0;
+}
+
 int run_session(int argc, char **argv)
 {
+    if (argc == 4 && std::string(argv[2]) == "--file")
+        return run_session_file(argv[3]);
     metasequoia::InputSession session(SchemeType::Quanpin);
     // 产品默认的整句来源：Unigram（Google）开、Trigram 关。sc.lm 在数据目录里时补全照样用它打分。
     SentenceAssociationOptions association;
@@ -127,6 +245,8 @@ int main(int argc, char **argv)
 {
     if (argc >= 2 && std::string(argv[1]) == "--session")
         return run_session(argc, argv);
+    if (argc >= 2 && std::string(argv[1]) == "--neural")
+        return run_neural(argc, argv);
     if (argc < 2)
     {
         std::fprintf(stderr, "usage: eval_prefix_completion <msime.db> [sc.lm] [prefixes.tsv]\n");

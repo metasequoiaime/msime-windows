@@ -102,6 +102,13 @@ void prepare_dictionary(const std::filesystem::path &directory)
             "CREATE TABLE tbl_5_b(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
             // 出厂平线上的切词残片：没有模型时不显示。
             "INSERT INTO tbl_5_b VALUES('bei''jing''da''xue''xing','bjdxx','北京大学星',10);"
+            "CREATE TABLE tbl_6_b(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+            "INSERT INTO tbl_6_b VALUES('bei''jing''da''xue''xiao''shi','bjdxxs','北京大学校史',10);"
+            // 前缀是词库词、以它开头的只有一行：只多一个字、权重在平线上也补。
+            "CREATE TABLE tbl_4_h(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+            "INSERT INTO tbl_4_h VALUES('hai''nei''cun''zhi','hncz','海内存知',576);"
+            "CREATE TABLE tbl_5_h(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+            "INSERT INTO tbl_5_h VALUES('hai''nei''cun''zhi''ji','hnczj','海内存知己',10);"
             // 诗句：前四个字不是词库里的词，首选只能是整句猜的，字还可能猜错。
             "CREATE TABLE tbl_5_c(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
             "INSERT INTO tbl_5_c VALUES('chuang''qian''ming''yue''guang','cqmyg','床前明月光',10);"
@@ -219,6 +226,15 @@ void test_quanpin(const metasequoia::RuntimePaths &paths, const std::filesystem:
         require(session.candidates().front().word == "北京大学" &&
                     completion_index(session) == session.candidates().size(),
                 "Rows at the shipped flat weight must not be offered without a language model.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        session.set_prefix_completion_options(enabled());
+        type(session, "haineicunzhi");
+        const auto &candidates = session.candidates();
+        require(candidates.size() >= 2 && candidates[0].word == "海内存知" && candidates[1].word == "海内存知己" &&
+                    candidates[1].prefix_completion,
+                "The only longer word starting with the head must be offered even one character longer.");
     }
     {
         // 置顶会拿别的键当阶梯，补全行不接受。
