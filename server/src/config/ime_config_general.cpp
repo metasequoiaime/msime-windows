@@ -92,6 +92,146 @@ bool SetConfiguredCandidateTranslationsEnabled(bool enabled)
     return true;
 }
 
+bool GetConfiguredCandidateExpansionPanelEnabled()
+{
+    return g_candidate_expansion_panel_enabled;
+}
+
+bool SetConfiguredCandidateExpansionPanelEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_enabled", enabled ? "true" : "false"))
+        return false;
+    g_candidate_expansion_panel_enabled = enabled;
+    return true;
+}
+
+bool GetConfiguredCandidateExpansionPanelTranslationEnabled()
+{
+    return g_candidate_expansion_panel_translation;
+}
+
+bool SetConfiguredCandidateExpansionPanelTranslationEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_translation", enabled ? "true" : "false"))
+        return false;
+    g_candidate_expansion_panel_translation = enabled;
+    return true;
+}
+
+bool GetConfiguredCandidateExpansionPanelEmojiEnabled()
+{
+    return g_candidate_expansion_panel_emoji;
+}
+
+bool SetConfiguredCandidateExpansionPanelEmojiEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_emoji", enabled ? "true" : "false"))
+        return false;
+    g_candidate_expansion_panel_emoji = enabled;
+    return true;
+}
+
+bool GetConfiguredCandidateExpansionPanelKaomojiEnabled()
+{
+    return g_candidate_expansion_panel_kaomoji;
+}
+
+bool SetConfiguredCandidateExpansionPanelKaomojiEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_kaomoji", enabled ? "true" : "false"))
+        return false;
+    g_candidate_expansion_panel_kaomoji = enabled;
+    return true;
+}
+
+bool GetConfiguredCandidateExpansionPanelSymbolsEnabled()
+{
+    return g_candidate_expansion_panel_symbols;
+}
+
+bool SetConfiguredCandidateExpansionPanelSymbolsEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_symbols", enabled ? "true" : "false"))
+        return false;
+    g_candidate_expansion_panel_symbols = enabled;
+    return true;
+}
+
+int GetConfiguredCandidateExpansionPanelTranslationMaxCount()
+{
+    return g_candidate_expansion_panel_translation_max_count;
+}
+
+bool SetConfiguredCandidateExpansionPanelTranslationMaxCount(int count)
+{
+    if (count < kCandidateExpansionPanelMaxCountMin || count > kCandidateExpansionPanelMaxCountMax)
+        return false;
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_translation_max_count", std::to_string(count)))
+        return false;
+    g_candidate_expansion_panel_translation_max_count = count;
+    return true;
+}
+
+int GetConfiguredCandidateExpansionPanelEmojiMaxCount()
+{
+    return g_candidate_expansion_panel_emoji_max_count;
+}
+
+bool SetConfiguredCandidateExpansionPanelEmojiMaxCount(int count)
+{
+    if (count < kCandidateExpansionPanelMaxCountMin || count > kCandidateExpansionPanelMaxCountMax)
+        return false;
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_emoji_max_count", std::to_string(count)))
+        return false;
+    g_candidate_expansion_panel_emoji_max_count = count;
+    return true;
+}
+
+int GetConfiguredCandidateExpansionPanelKaomojiMaxCount()
+{
+    return g_candidate_expansion_panel_kaomoji_max_count;
+}
+
+bool SetConfiguredCandidateExpansionPanelKaomojiMaxCount(int count)
+{
+    if (count < kCandidateExpansionPanelMaxCountMin || count > kCandidateExpansionPanelMaxCountMax)
+        return false;
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_kaomoji_max_count", std::to_string(count)))
+        return false;
+    g_candidate_expansion_panel_kaomoji_max_count = count;
+    return true;
+}
+
+int GetConfiguredCandidateExpansionPanelSymbolsMaxCount()
+{
+    return g_candidate_expansion_panel_symbols_max_count;
+}
+
+bool SetConfiguredCandidateExpansionPanelSymbolsMaxCount(int count)
+{
+    if (count < kCandidateExpansionPanelMaxCountMin || count > kCandidateExpansionPanelMaxCountMax)
+        return false;
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_symbols_max_count", std::to_string(count)))
+        return false;
+    g_candidate_expansion_panel_symbols_max_count = count;
+    return true;
+}
+
+const std::string &GetConfiguredCandidateExpansionPanelPlacement()
+{
+    return g_candidate_expansion_panel_placement;
+}
+
+bool SetConfiguredCandidateExpansionPanelPlacement(const std::string &placement)
+{
+    if (placement != kCandidateExpansionPanelPlacementDown && placement != kCandidateExpansionPanelPlacementRight)
+        return false;
+    if (!WriteConfiguredValue("general", "candidate_expansion_panel_placement", EscapeTomlBasicString(placement)))
+        return false;
+    g_candidate_expansion_panel_placement = placement;
+    return true;
+}
+
 bool GetConfiguredCandidateTranslationShowPos()
 {
     return g_candidate_translation_show_pos.load(std::memory_order_relaxed);

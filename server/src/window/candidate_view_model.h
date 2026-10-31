@@ -132,12 +132,40 @@ inline std::string CandidatePageSignature(const std::vector<CandidateViewItem> &
     return signature;
 }
 
+// 面板条目文本进帧签名：译文分两波返回、词性显示切换都是「条数不变、文本变」，只带条数会让
+// 250ms 去抖窗口内的重绘被吞掉，面板停在旧文本。与 CandidatePageSignature 同理，每个字段带长度
+// 前缀，相邻条目之间、tag 与 display 之间都不会串位。commit 不参与：它不上屏，presenter 不画它。
+template <typename Item> inline std::wstring CandidateExpansionPanelSignature(const std::vector<Item> &items)
+{
+    std::wstring signature;
+    for (const Item &item : items)
+    {
+        signature += std::to_wstring(item.tag.size());
+        signature += L':';
+        signature += item.tag;
+        signature += std::to_wstring(item.display.size());
+        signature += L':';
+        signature += item.display;
+    }
+    return signature;
+}
+
 struct CandidateFramePageState
 {
     int selected_index = 0;
     int page_index = 0;
     bool has_previous_page = false;
     bool has_next_page = false;
+    // 候选展开面板的内部状态也必须进签名：面板内 ↑↓ 只改 expansion_panel_selected，主列表的
+    // selected_index/page_views/caret 全不变。少了这几项，快速移动面板高亮会撞上 250ms 去抖窗口、
+    // 被判成「与屏上同一帧」而跳过重绘，于是面板高亮停在上一项、而服务端真实选中已经到下一项
+    // （空格上屏的是下一项）。条目文本用 expansion_panel_signature 整段带进签名（见
+    // CandidateExpansionPanelSignature）：译文回填、词性切换改文本不改条数，只带条数会停在旧文本；
+    // 改「每类最多显示」这类改变条目数的配置，文本签名自然也不同。
+    bool expansion_panel_active = false;
+    int expansion_panel_anchor = 0;
+    int expansion_panel_selected = 0;
+    std::wstring expansion_panel_signature;
 };
 
 inline std::wstring CandidateFrameSignature(const std::wstring &preedit, const std::vector<CandidateViewItem> &views,
@@ -162,5 +190,13 @@ inline std::wstring CandidateFrameSignature(const std::wstring &preedit, const s
     signature += pageState.has_previous_page ? L'1' : L'0';
     signature += L',';
     signature += pageState.has_next_page ? L'1' : L'0';
+    signature += L'|';
+    signature += pageState.expansion_panel_active ? L'1' : L'0';
+    signature += L',';
+    signature += std::to_wstring(pageState.expansion_panel_anchor);
+    signature += L',';
+    signature += std::to_wstring(pageState.expansion_panel_selected);
+    signature += L',';
+    signature += pageState.expansion_panel_signature;
     return signature;
 }

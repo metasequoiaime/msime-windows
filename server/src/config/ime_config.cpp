@@ -1,6 +1,7 @@
 #include "window/caret_state_indicator_policy.h"
 #include "window/candidate_view_model.h"
 #include "ime_config.h"
+#include "config/candidate_panel_move_key.h"
 #include "config/ime_config_internal.h"
 #include <Windows.h>
 #include <algorithm>
@@ -57,6 +58,9 @@ bool g_switch_language_ctrl_enabled = false;
 bool g_switch_language_ctrl_alt_space_enabled = true;
 bool g_character_set_shortcut_enabled = true;
 bool g_commit_pinyin_shift_enter_enabled = true;
+std::string g_candidate_expansion_key = "Backquote";
+std::string g_candidate_expansion_move_prev_key = "Up";
+std::string g_candidate_expansion_move_next_key = "Down";
 InputStateShortcutValues g_input_state_shortcuts = [] {
     InputStateShortcutValues values;
     const auto defaults = FanyImeInputStateShortcuts::Defaults();
@@ -148,6 +152,16 @@ int g_floating_toolbar_auto_hide_delay = kFloatingToolbarAutoHideDelayDefault;
 bool g_floating_toolbar_shadow = true;
 bool g_english_candidates_enabled = false;
 bool g_candidate_translations_enabled = false;
+bool g_candidate_expansion_panel_enabled = true;
+bool g_candidate_expansion_panel_translation = true;
+bool g_candidate_expansion_panel_emoji = true;
+bool g_candidate_expansion_panel_kaomoji = true;
+bool g_candidate_expansion_panel_symbols = true;
+int g_candidate_expansion_panel_translation_max_count = kCandidateExpansionPanelMaxCountDefault;
+int g_candidate_expansion_panel_emoji_max_count = kCandidateExpansionPanelMaxCountDefault;
+int g_candidate_expansion_panel_kaomoji_max_count = kCandidateExpansionPanelMaxCountDefault;
+int g_candidate_expansion_panel_symbols_max_count = kCandidateExpansionPanelMaxCountDefault;
+std::string g_candidate_expansion_panel_placement = kCandidateExpansionPanelPlacementDefault;
 std::atomic_bool g_candidate_translation_show_pos{true};
 std::atomic_bool g_candidate_translation_single_sense{false};
 int g_english_mixed_input_min_chars = kEnglishMixedInputMinCharsDefault;
@@ -645,6 +659,33 @@ bool LoadImeConfig()
         }
         g_english_candidates_enabled = tbl["general"]["cn_en_mixed_input"].value_or(false);
         g_candidate_translations_enabled = tbl["general"]["candidate_translations"].value_or(false);
+        g_candidate_expansion_panel_enabled = tbl["general"]["candidate_expansion_panel_enabled"].value_or(true);
+        g_candidate_expansion_panel_translation =
+            tbl["general"]["candidate_expansion_panel_translation"].value_or(true);
+        g_candidate_expansion_panel_emoji = tbl["general"]["candidate_expansion_panel_emoji"].value_or(true);
+        g_candidate_expansion_panel_kaomoji = tbl["general"]["candidate_expansion_panel_kaomoji"].value_or(true);
+        g_candidate_expansion_panel_symbols = tbl["general"]["candidate_expansion_panel_symbols"].value_or(true);
+        {
+            auto read_panel_max = [&](const char *key) {
+                const int value = tbl["general"][key].value_or(kCandidateExpansionPanelMaxCountDefault);
+                return value >= kCandidateExpansionPanelMaxCountMin && value <= kCandidateExpansionPanelMaxCountMax
+                           ? value
+                           : kCandidateExpansionPanelMaxCountDefault;
+            };
+            g_candidate_expansion_panel_translation_max_count =
+                read_panel_max("candidate_expansion_panel_translation_max_count");
+            g_candidate_expansion_panel_emoji_max_count = read_panel_max("candidate_expansion_panel_emoji_max_count");
+            g_candidate_expansion_panel_kaomoji_max_count =
+                read_panel_max("candidate_expansion_panel_kaomoji_max_count");
+            g_candidate_expansion_panel_symbols_max_count =
+                read_panel_max("candidate_expansion_panel_symbols_max_count");
+            // 面板位置：非法值一律归一化到默认的下方。
+            const std::string placement = tbl["general"]["candidate_expansion_panel_placement"].value_or(
+                std::string(kCandidateExpansionPanelPlacementDefault));
+            g_candidate_expansion_panel_placement = placement == kCandidateExpansionPanelPlacementRight
+                                                        ? kCandidateExpansionPanelPlacementRight
+                                                        : kCandidateExpansionPanelPlacementDown;
+        }
         g_candidate_translation_show_pos.store(tbl["general"]["candidate_translation_show_pos"].value_or(true),
                                                std::memory_order_relaxed);
         g_candidate_translation_single_sense.store(tbl["general"]["candidate_translation_single_sense"].value_or(false),
@@ -785,6 +826,22 @@ bool LoadImeConfig()
                 tbl["keybindings"]["switch_language_ctrl_alt_space"].value_or(legacy_ctrl_alt_space);
             g_character_set_shortcut_enabled = tbl["keybindings"]["toggle_character_set_ctrl_shift_f"].value_or(true);
             g_commit_pinyin_shift_enter_enabled = tbl["keybindings"]["commit_pinyin_shift_enter"].value_or(true);
+            g_candidate_expansion_key =
+                tbl["keybindings"]["candidate_expansion_key"].value_or(std::string("Backquote"));
+            // 移动键：空串 = 未绑定（合法）；非法值回落到默认的 ↑ / ↓。
+            const std::string move_prev =
+                tbl["keybindings"]["candidate_expansion_move_prev_key"].value_or(std::string("Up"));
+            const std::string move_next =
+                tbl["keybindings"]["candidate_expansion_move_next_key"].value_or(std::string("Down"));
+            {
+                FanyImeKeyChord::Binding parsed;
+                g_candidate_expansion_move_prev_key = CandidatePanelMoveKey::Parse(move_prev, parsed)
+                                                          ? move_prev
+                                                          : std::string(CandidatePanelMoveKey::DefaultPrev);
+                g_candidate_expansion_move_next_key = CandidatePanelMoveKey::Parse(move_next, parsed)
+                                                          ? move_next
+                                                          : std::string(CandidatePanelMoveKey::DefaultNext);
+            }
             for (std::size_t i = 0; i < g_input_state_shortcuts.size(); ++i)
             {
                 const auto &definition = FanyImeInputStateShortcuts::Definitions[i];

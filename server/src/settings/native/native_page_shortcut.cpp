@@ -1,5 +1,8 @@
 #include "settings/native/native_settings_pages.h"
 
+#include "config/candidate_panel_move_key.h"
+#include "engine/contracts/candidate_action_key.h"
+
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
 
@@ -13,6 +16,489 @@ namespace native_settings
 {
 namespace
 {
+// ---------------------------------------------------------------------------------
+// Candidate translation expand-key recorder (moved from the input page)
+// ---------------------------------------------------------------------------------
+std::string KeyCodeForBinding(UINT vk)
+{
+    if (vk >= 'A' && vk <= 'Z')
+        return std::string("Key") + static_cast<char>(vk);
+    if (vk >= '0' && vk <= '9')
+        return std::string("Digit") + static_cast<char>(vk);
+    if (vk >= VK_F1 && vk <= VK_F9)
+        return std::string("F") + static_cast<char>('1' + (vk - VK_F1));
+    if (vk >= VK_F10 && vk <= VK_F12)
+        return std::string("F1") + static_cast<char>('0' + (vk - VK_F10));
+    for (const auto &entry : FanyImeKeyChord::NamedKeys)
+        if (entry.key == vk)
+            return std::string(entry.name);
+    return {};
+}
+
+std::wstring WideFromAscii(std::string_view text)
+{
+    std::wstring wide;
+    for (const char ch : text)
+        wide.push_back(static_cast<wchar_t>(static_cast<unsigned char>(ch)));
+    return wide;
+}
+
+std::wstring ExpandKeyLabel(const std::string &binding)
+{
+    if (binding.empty())
+        return L"未绑定（功能关闭）";
+    FanyImeKeyChord::Binding parsed;
+    if (!FanyImeCandidateActionKey::Parse(binding, parsed) || parsed.key == 0)
+        return L"无效配置";
+    std::wstring label;
+    if (parsed.modifiers & FanyImeKeyChord::Control)
+        label += L"Ctrl + ";
+    if (parsed.modifiers & FanyImeKeyChord::Shift)
+        label += L"Shift + ";
+    if (parsed.key == 0xc0)
+        label += L"`";
+    else if ((parsed.key >= 'A' && parsed.key <= 'Z') || (parsed.key >= '0' && parsed.key <= '9'))
+        label += static_cast<wchar_t>(parsed.key);
+    else if (parsed.key >= VK_F1 && parsed.key <= VK_F12)
+        label += L"F" + std::to_wstring(parsed.key - VK_F1 + 1);
+    else
+    {
+        for (const auto &entry : FanyImeKeyChord::NamedKeys)
+            if (entry.key == parsed.key)
+                label += WideFromAscii(entry.label);
+    }
+    return label;
+}
+
+// `.shortcut-actions button`-styled small button; the record one also captures keys while recording.
+class ExpandKeyButton : public msimeui::Visual
+{
+  public:
+    explicit ExpandKeyButton(std::wstring text) : text_(std::move(text))
+    {
+    }
+
+    void SetText(std::wstring text)
+    {
+        if (text == text_)
+            return;
+        text_ = std::move(text);
+        InvalidateMeasure();
+        InvalidateVisual();
+    }
+
+    void SetDisabled(bool disabled)
+    {
+        disabled_ = disabled;
+    }
+
+    void SetOnClick(std::function<void()> handler)
+    {
+        onClick_ = std::move(handler);
+    }
+
+    void SetOnKey(std::function<bool(WPARAM, LPARAM)> handler)
+    {
+        onKey_ = std::move(handler);
+    }
+
+    void SetOnBlur(std::function<void()> handler)
+    {
+        onBlur_ = std::move(handler);
+    }
+
+    SizeF Measure(const SizeF &) override
+    {
+        const float border = CssBorder();
+        const TextStyle style = CaptionStyle();
+        return {MeasureTextWidth(text_, style) + 20.0f + border * 2.0f, LineHeight(style) + 12.0f + border * 2.0f};
+    }
+
+    void Arrange(const RectF &finalRect) override
+    {
+        bounds_ = finalRect;
+    }
+
+    void Render(msimeui::DeviceResources &dr) override
+    {
+        const Palette &p = CurrentPalette();
+        FillRounded(dr, bounds_, 6.0f, p.controlBg);
+        StrokeRounded(dr, bounds_, 6.0f, p.border, 1.0f);
+        DrawTextInRect(dr, text_, CaptionStyle(), bounds_, p.text, true);
+    }
+
+    bool IsFocusable() const override
+    {
+        return !disabled_;
+    }
+
+    bool OnMouseDown(const POINT &point, WPARAM) override
+    {
+        pressed_ = !disabled_ && window_ && HitTest(window_->ClientPixelsToDips(point));
+        return pressed_;
+    }
+
+    bool OnMouseUp(const POINT &point, WPARAM) override
+    {
+        const bool clicked = pressed_ && window_ && HitTest(window_->ClientPixelsToDips(point));
+        pressed_ = false;
+        if (clicked && onClick_ && !disabled_)
+        {
+            // A handler may tear down the visual that owns onClick_ while it runs.
+            const auto handler = onClick_;
+            handler();
+        }
+        return true;
+    }
+
+    bool OnKeyDown(WPARAM key, LPARAM lParam) override
+    {
+        if (!onKey_)
+            return false;
+        const auto handler = onKey_;
+        return handler(key, lParam);
+    }
+
+    void OnFocusChanged(bool focused) override
+    {
+        if (!focused && onBlur_)
+        {
+            const auto handler = onBlur_;
+            handler();
+        }
+    }
+
+    HCURSOR GetCursor() const override
+    {
+        return LoadCursor(nullptr, disabled_ ? IDC_ARROW : IDC_HAND);
+    }
+
+  private:
+    static TextStyle CaptionStyle()
+    {
+        TextStyle style;
+        style.size = kFontCaption;
+        return style;
+    }
+
+    std::wstring text_;
+    bool disabled_ = false;
+    bool pressed_ = false;
+    std::function<void()> onClick_;
+    std::function<bool(WPARAM, LPARAM)> onKey_;
+    std::function<void()> onBlur_;
+};
+
+// The expand-key recorder: bare ` only, or Ctrl[+Shift] + letter/digit/F1-F12/punctuation/Space;
+// clearing disables the feature. The binding lives in keybindings.candidate_expansion_key.
+class ExpandKeyEditor : public msimeui::Container
+{
+  public:
+    explicit ExpandKeyEditor(SettingsModel *model) : model_(model)
+    {
+        record_ = std::make_shared<ExpandKeyButton>(L"未绑定（功能关闭）");
+        record_->SetOnClick([this] { StartRecording(); });
+        record_->SetOnKey([this](WPARAM key, LPARAM lParam) { return OnRecordKey(key, lParam); });
+        record_->SetOnBlur([this] { StopRecording(); });
+        clear_ = std::make_shared<ExpandKeyButton>(L"清除");
+        clear_->SetOnClick([this] { Save(std::string(), L"已清除，展开键功能已关闭。"); });
+        reset_ = std::make_shared<ExpandKeyButton>(L"恢复默认");
+        reset_->SetOnClick([this] { Save(std::string(FanyImeCandidateActionKey::Default), L"已恢复为默认的 ` 键。"); });
+
+        auto actions = std::make_shared<Row>(6.0f);
+        actions->SetWrap(true, 6.0f);
+        actions->SetAlign(Row::Align::Start);
+        actions->Add(record_);
+        actions->Add(clear_);
+        actions->Add(reset_);
+        TextStyle statusStyle;
+        statusStyle.size = kFontCaption;
+        statusStyle.wrap = true;
+        status_ = std::make_shared<Label>(L"", statusStyle, TextRole::Muted);
+        statusBox_ = std::make_shared<Hideable>(status_, false);
+        auto column = std::make_shared<Column>(0.0f);
+        column->Add(actions);
+        column->Add(statusBox_);
+        SetChild(column);
+    }
+
+    void Sync(const std::string &binding)
+    {
+        binding_ = binding;
+        if (!recording_)
+            record_->SetText(ExpandKeyLabel(binding));
+    }
+
+    void SetDisabled(bool disabled)
+    {
+        record_->SetDisabled(disabled);
+        clear_->SetDisabled(disabled);
+        reset_->SetDisabled(disabled);
+    }
+
+  private:
+    void StartRecording()
+    {
+        if (recording_)
+            return;
+        recording_ = true;
+        record_->SetText(L"请按下新按键…");
+        SetStatus(L"按 Esc 取消。除 ` 以外的键需要按住 Ctrl，可再加 Shift。");
+    }
+
+    void StopRecording()
+    {
+        if (!recording_)
+            return;
+        recording_ = false;
+        record_->SetText(ExpandKeyLabel(binding_));
+    }
+
+    void SetStatus(std::wstring text)
+    {
+        status_->SetText(std::move(text));
+        statusBox_->SetVisible(!text.empty());
+    }
+
+    void Save(std::string binding, std::wstring status)
+    {
+        StopRecording();
+        binding_ = binding;
+        model_->Update("keybindings.candidate_expansion_key", binding);
+        SetStatus(std::move(status));
+    }
+
+    bool OnRecordKey(WPARAM vk, LPARAM lParam)
+    {
+        if (!recording_)
+            return false;
+        if (vk == VK_ESCAPE || vk == VK_TAB)
+        {
+            StopRecording();
+            SetStatus(L"");
+            return vk == VK_ESCAPE;
+        }
+        if ((lParam & (1L << 30)) != 0 || vk == VK_CONTROL || vk == VK_SHIFT || vk == VK_MENU || vk == VK_LWIN ||
+            vk == VK_RWIN)
+            return true;
+        const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        const bool win = (GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0;
+        if (alt || win)
+        {
+            SetStatus(L"不支持 Alt / Win 组合。");
+            return true;
+        }
+        const std::string code = KeyCodeForBinding(static_cast<UINT>(vk));
+        if (code.empty())
+        {
+            SetStatus(L"请选择 `、Ctrl + 字母、数字、F1–F12、标点或 Space。");
+            return true;
+        }
+        std::string binding;
+        if (!ctrl && !shift && vk == VK_OEM_3)
+            binding = "Backquote";
+        else if (ctrl)
+            binding = "Ctrl+" + (shift ? std::string("Shift+") : std::string()) + code;
+        else
+        {
+            SetStatus(L"除 ` 以外的键需要按住 Ctrl。");
+            return true;
+        }
+        FanyImeKeyChord::Binding parsed;
+        if (!FanyImeCandidateActionKey::Parse(binding, parsed))
+        {
+            SetStatus(L"这个键不能用作展开键。");
+            return true;
+        }
+        Save(binding, L"已保存。");
+        return true;
+    }
+
+    SettingsModel *model_ = nullptr;
+    std::string binding_;
+    bool recording_ = false;
+    std::shared_ptr<ExpandKeyButton> record_, clear_, reset_;
+    std::shared_ptr<Label> status_;
+    std::shared_ptr<Hideable> statusBox_;
+};
+
+// The panel move-key recorders: bare arrow keys / letters / digits / F1-F12 / punctuation /
+// Space, optionally with Ctrl; clearing unbinds that direction. Bindings live in
+// keybindings.candidate_expansion_move_prev_key and ..._next_key.
+std::string MoveKeyCodeForBinding(UINT vk)
+{
+    switch (vk)
+    {
+    case VK_UP:
+        return "Up";
+    case VK_DOWN:
+        return "Down";
+    case VK_LEFT:
+        return "Left";
+    case VK_RIGHT:
+        return "Right";
+    default:
+        return KeyCodeForBinding(vk);
+    }
+}
+
+std::wstring MoveKeyLabel(const std::string &binding)
+{
+    if (binding.empty())
+        return L"未绑定（不移动）";
+    FanyImeKeyChord::Binding parsed;
+    if (!CandidatePanelMoveKey::Parse(binding, parsed) || parsed.key == 0)
+        return L"无效配置";
+    std::wstring label;
+    if (parsed.modifiers & FanyImeKeyChord::Control)
+        label += L"Ctrl + ";
+    switch (parsed.key)
+    {
+    case 0x26:
+        return label + L"↑";
+    case 0x28:
+        return label + L"↓";
+    case 0x27:
+        return label + L"←";
+    case 0x29:
+        return label + L"→";
+    default:
+        break;
+    }
+    if ((parsed.key >= 'A' && parsed.key <= 'Z') || (parsed.key >= '0' && parsed.key <= '9'))
+        label += static_cast<wchar_t>(parsed.key);
+    else if (parsed.key >= VK_F1 && parsed.key <= VK_F12)
+        label += L"F" + std::to_wstring(parsed.key - VK_F1 + 1);
+    else
+    {
+        for (const auto &entry : FanyImeKeyChord::NamedKeys)
+            if (entry.key == parsed.key)
+                label += WideFromAscii(entry.label);
+    }
+    return label;
+}
+
+class MoveKeyEditor : public msimeui::Container
+{
+  public:
+    MoveKeyEditor(SettingsModel *model, std::string path, std::string fallback)
+        : model_(model), path_(std::move(path)), fallback_(std::move(fallback))
+    {
+        record_ = std::make_shared<ExpandKeyButton>(L"未绑定（不移动）");
+        record_->SetOnClick([this] { StartRecording(); });
+        record_->SetOnKey([this](WPARAM key, LPARAM lParam) { return OnRecordKey(key, lParam); });
+        record_->SetOnBlur([this] { StopRecording(); });
+        clear_ = std::make_shared<ExpandKeyButton>(L"清除");
+        clear_->SetOnClick([this] { Save(std::string(), L"已清除，该方向不再移动展开候选。"); });
+        reset_ = std::make_shared<ExpandKeyButton>(L"恢复默认");
+        reset_->SetOnClick([this] { Save(fallback_, L"已恢复默认方向键。"); });
+
+        auto actions = std::make_shared<Row>(6.0f);
+        actions->SetWrap(true, 6.0f);
+        actions->SetAlign(Row::Align::Start);
+        actions->Add(record_);
+        actions->Add(clear_);
+        actions->Add(reset_);
+        TextStyle statusStyle;
+        statusStyle.size = kFontCaption;
+        statusStyle.wrap = true;
+        status_ = std::make_shared<Label>(L"", statusStyle, TextRole::Muted);
+        statusBox_ = std::make_shared<Hideable>(status_, false);
+        auto column = std::make_shared<Column>(0.0f);
+        column->Add(actions);
+        column->Add(statusBox_);
+        SetChild(column);
+    }
+
+    void Sync(const std::string &binding)
+    {
+        binding_ = binding;
+        if (!recording_)
+            record_->SetText(MoveKeyLabel(binding));
+    }
+
+  private:
+    void StartRecording()
+    {
+        if (recording_)
+            return;
+        recording_ = true;
+        record_->SetText(L"请按下新按键…");
+        SetStatus(L"按 Esc 取消。方向键、字母、数字、F1–F12、标点或 Space 可直接按，也可按住 Ctrl。");
+    }
+
+    void StopRecording()
+    {
+        if (!recording_)
+            return;
+        recording_ = false;
+        record_->SetText(MoveKeyLabel(binding_));
+    }
+
+    void SetStatus(std::wstring text)
+    {
+        status_->SetText(std::move(text));
+        statusBox_->SetVisible(!text.empty());
+    }
+
+    void Save(std::string binding, std::wstring status)
+    {
+        StopRecording();
+        binding_ = binding;
+        model_->Update(path_, binding);
+        SetStatus(std::move(status));
+    }
+
+    bool OnRecordKey(WPARAM vk, LPARAM lParam)
+    {
+        if (!recording_)
+            return false;
+        if (vk == VK_ESCAPE || vk == VK_TAB)
+        {
+            StopRecording();
+            SetStatus(L"");
+            return vk == VK_ESCAPE;
+        }
+        if ((lParam & (1L << 30)) != 0 || vk == VK_CONTROL || vk == VK_SHIFT || vk == VK_MENU || vk == VK_LWIN ||
+            vk == VK_RWIN)
+            return true;
+        const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        const bool win = (GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0;
+        if (alt || win)
+        {
+            SetStatus(L"不支持 Alt / Win 组合。");
+            return true;
+        }
+        const std::string code = MoveKeyCodeForBinding(static_cast<UINT>(vk));
+        if (code.empty())
+        {
+            SetStatus(L"请选择方向键、字母、数字、F1–F12、标点或 Space。");
+            return true;
+        }
+        const std::string binding = ctrl ? "Ctrl+" + code : code;
+        FanyImeKeyChord::Binding parsed;
+        if (!CandidatePanelMoveKey::Parse(binding, parsed))
+        {
+            SetStatus(L"这个键不能用作移动键。");
+            return true;
+        }
+        Save(binding, L"已保存。");
+        return true;
+    }
+
+    SettingsModel *model_ = nullptr;
+    std::string path_;
+    std::string fallback_;
+    std::string binding_;
+    bool recording_ = false;
+    std::shared_ptr<ExpandKeyButton> record_, clear_, reset_;
+    std::shared_ptr<Label> status_;
+    std::shared_ptr<Hideable> statusBox_;
+};
+
 TextStyle Font(float size, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL, float lineHeight = 0.0f,
                bool wrap = false)
 {
@@ -1159,6 +1645,7 @@ VisualPtr BuildShortcutPage(PageContext &context)
             {L"以词定字：上屏高亮候选的首字 / 末字（可在“输入”中改为 - / =）", Keys({L"[", L"|/", L"]"})},
             {L"上屏高亮候选的译文（需开启候选中英互译；有多条释义时再选一条）", Keys({L"Ctrl", L"|+", L"Enter"})},
             {L"上屏指定序号候选的译文（需开启候选中英互译）", Keys({L"Ctrl", L"|+", L"1", L"|–", L"9"})},
+            {L"展开 / 收起候选译义面板（可在下方“候选译义面板”改键或关闭）", Keys({L"`"})},
             {L"提交原始输入 / 取消输入", Keys({L"Enter", L"|/", L"Esc"})},
             {L"提交拼音（双拼方案下提交转换后的全拼，可在上方关闭）", Keys({L"Shift", L"|+", L"Enter"})},
         };
@@ -1166,6 +1653,39 @@ VisualPtr BuildShortcutPage(PageContext &context)
             list->Add(RuledRow(RowLabel(entries[i].label), entries[i].keys, true, i > 0));
         column->Add(std::make_shared<TopRule>(list));
         page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);
+    }
+
+    // 候选展开面板（展开键与移动展开候选键，从「输入」页迁移而来）
+    {
+        auto column = std::make_shared<Column>(0.0f);
+        column->Add(Heading(L"候选展开面板", L"按展开键在高亮候选旁弹出面板"));
+        auto expandEditor = std::make_shared<ExpandKeyEditor>(model);
+        auto prevEditor = std::make_shared<MoveKeyEditor>(model, "keybindings.candidate_expansion_move_prev_key",
+                                                          std::string(CandidatePanelMoveKey::DefaultPrev));
+        auto nextEditor = std::make_shared<MoveKeyEditor>(model, "keybindings.candidate_expansion_move_next_key",
+                                                          std::string(CandidatePanelMoveKey::DefaultNext));
+
+        auto list = std::make_shared<Column>(0.0f);
+        list->Add(RuledRow(RowLabel(L"展开键"), expandEditor, false, false));
+        list->Add(RuledRow(RowLabel(L"上一个展开候选词"), prevEditor, false, true));
+        list->Add(RuledRow(RowLabel(L"下一个展开候选词"), nextEditor, false, true));
+        column->Add(std::make_shared<TopRule>(list));
+        auto moveHint =
+            MakeDescription(L"移动键只在面板打开时移动展开候选，平时仍照常参与拼音输入；清除后该方向不再移动");
+        moveHint->SetMargin({24.0f, 8.0f, 24.0f, 0.0f});
+        column->Add(moveHint);
+        page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);
+
+        context.OnConfig([model, expandEditor, prevEditor, nextEditor]() {
+            if (const Json *expand = model->Find("keybindings.candidate_expansion_key"); expand && expand->is_string())
+                expandEditor->Sync(expand->get<std::string>());
+            if (const Json *prev = model->Find("keybindings.candidate_expansion_move_prev_key");
+                prev && prev->is_string())
+                prevEditor->Sync(prev->get<std::string>());
+            if (const Json *next = model->Find("keybindings.candidate_expansion_move_next_key");
+                next && next->is_string())
+                nextEditor->Sync(next->get<std::string>());
+        });
     }
 
     // 全局快捷键

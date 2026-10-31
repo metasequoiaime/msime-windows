@@ -100,7 +100,8 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
         {
             return hr;
         }
-        else if (serverMsgType == Global::DataFromServerMsgType::Normal) // 只有正常情况下才会上屏
+        else if (serverMsgType == Global::DataFromServerMsgType::Normal ||
+                 serverMsgType == Global::DataFromServerMsgType::CommitExactText) // 只有正常情况下才会上屏
         {
             GlobalIme::word_for_creating_word = L"";
             GlobalIme::pending_create_word_preedit.clear();
@@ -292,10 +293,12 @@ HRESULT CMetasequoiaIME::_HandleCandidateSelectByNumber(TfEditCookie ec, _In_ IT
 
     if (_pCandidateListUIPresenter)
     {
-        if (_pCandidateListUIPresenter->_SetSelectionInPage(iSelectAsNumber))
-        {
-            return _HandleCandidateConvert(ec, pContext, requestId, prefetchedText);
-        }
+        // 数字选词以上屏回复为准。展开面板打开时这颗数字选的是面板里的英文译义，条数可能多于本页
+        // 候选数，_SetSelectionInPage 只是本地影子状态，不能决定要不要消费 Server 的回复；影子尽力
+        // 同步即可，真正的上屏文本由 _HandleCandidateFinalize 从回复里取（越界时 Server 回 OutofRange，
+        // 它自己会当空操作）。
+        _pCandidateListUIPresenter->_SetSelectionInPage(iSelectAsNumber);
+        return _HandleCandidateConvert(ec, pContext, requestId, prefetchedText);
     }
 
     return S_FALSE;

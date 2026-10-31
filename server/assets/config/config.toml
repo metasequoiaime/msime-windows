@@ -65,6 +65,24 @@ candidate_translations = false
 candidate_translation_show_pos = true
 # 候选译文只显示第一条释义，关闭时最多显示两条
 candidate_translation_single_sense = false
+# 候选词展开面板：按展开键默认在高亮候选下方弹出竖排面板，当切换输入法纵向布局，建议将转开面板切换到右侧
+candidate_expansion_panel_enabled = true
+# 展开面板里的「翻译」类别：关闭后面板不再列出译义
+candidate_expansion_panel_translation = true
+# 展开面板里的「表情」类别：按高亮候选整词匹配 emoji 关键词，在面板中列出对应 emoji
+candidate_expansion_panel_emoji = true
+# 展开面板里的「颜文字」类别：按高亮候选整词匹配颜文字关键词，在面板中列出对应颜文字
+candidate_expansion_panel_kaomoji = true
+# 展开面板里的「符号」类别：按高亮候选整词匹配符号关键词，在面板中列出对应符号
+candidate_expansion_panel_symbols = true
+# 展开面板里每个类别各自最多列出的条数（0–9，出厂默认 5；0 = 不限制条数）：翻译 / 表情 / 颜文字 / 符号互不影响
+candidate_expansion_panel_translation_max_count = 5
+candidate_expansion_panel_emoji_max_count = 5
+candidate_expansion_panel_kaomoji_max_count = 5
+candidate_expansion_panel_symbols_max_count = 5
+# 展开面板位置：down = 在选定候选词正下方弹出（左缘与高亮候选对齐）；right = 放在候选窗右侧，
+# 与候选窗保持间距、顶边跟随高亮候选；右侧放不下时自动回到下方。宽度自适应
+candidate_expansion_panel_placement = "down"
 # 中文输入状态下输入恰好等于 emoji 关键词时显示 emoji 候选（排在候选项列表最后，不做前缀匹配）
 emoji_mixed_input = false
 # 中文输入状态下显示颜文字前缀候选（排在 emoji 之后）
@@ -457,6 +475,12 @@ toggle_punctuation = "Ctrl+Period"
 toggle_character_set_ctrl_shift_f = true
 # 双拼方案下 Shift + Enter 提交转换后的全拼；关闭后 Shift + Enter 按 Enter 处理（提交原始输入）
 commit_pinyin_shift_enter = true
+# 候选翻译展开键；空字符串表示禁用；裸键仅支持 Backquote，也支持 Ctrl 或 Ctrl+Shift 组合键
+candidate_expansion_key = "Backquote"
+# 展开面板内移动展开候选的键：默认 ↑ / ↓；可录成字母、数字、F1–F12、标点、Space 或方向键，
+# 可加 Ctrl；空字符串表示该方向不移动。仅在面板打开时生效，平时照常参与输入
+candidate_expansion_move_prev_key = "Up"
+candidate_expansion_move_next_key = "Down"
 # 中日英循环切换：开启后上面的中英文切换快捷键按中文、日文、英文依次切换，有输入时先上屏原始字母
 trilingual_cycle = false
 

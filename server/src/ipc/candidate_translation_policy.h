@@ -176,17 +176,20 @@ constexpr uint32_t TranslationDigitPosition(uint32_t keycode, uint32_t modifiers
 // Every sense is returned, with its part-of-speech label removed.
 // A cloud gloss is a single sentence and has no separator, so it stays one entry.
 // Header-only pure policy so tests can pin it without linking the server stack.
-inline std::vector<std::string> SplitTranslationGloss(std::string_view gloss)
+inline std::vector<std::string> SplitTranslationGloss(std::string_view gloss, bool strip_pos)
 {
     static constexpr std::string_view kFullwidthSemicolon = "\xEF\xBC\x9B";
     std::vector<std::string> senses;
     size_t start = 0;
-    const auto push = [&senses](std::string_view sense) {
+    const auto push = [&senses, strip_pos](std::string_view sense) {
         const size_t first = sense.find_first_not_of(" \t\r\n");
         if (first == std::string_view::npos)
             return;
         const size_t last = sense.find_last_not_of(" \t\r\n");
-        senses.emplace_back(StripPartOfSpeechLabel(sense.substr(first, last - first + 1)));
+        std::string_view trimmed = sense.substr(first, last - first + 1);
+        if (strip_pos)
+            trimmed = StripPartOfSpeechLabel(trimmed);
+        senses.emplace_back(trimmed);
     };
     while (start <= gloss.size())
     {
@@ -202,5 +205,11 @@ inline std::vector<std::string> SplitTranslationGloss(std::string_view gloss)
         start = cut + (cut == fullwidth ? kFullwidthSemicolon.size() : 1);
     }
     return senses;
+}
+
+// 上屏用：剥掉词性，只留要写进文档的文本。
+inline std::vector<std::string> SplitTranslationGloss(std::string_view gloss)
+{
+    return SplitTranslationGloss(gloss, true);
 }
 } // namespace FanyImeIpc

@@ -371,7 +371,8 @@ void WorkerThread()
             task.type == TaskType::UiDeleteCandidate || task.type == TaskType::UiFixCandidatePosition ||
             task.type == TaskType::UiClearCandidatePosition || task.type == TaskType::UiPageUp ||
             task.type == TaskType::UiPageDown || task.type == TaskType::UiCommitCandidateAt ||
-            task.type == TaskType::UiExpandCandidates;
+            task.type == TaskType::UiExpandCandidates || task.type == TaskType::UiCloseTranslationPanel ||
+            task.type == TaskType::UiCommitExpansionPanelItem;
         if (candidateUiAction && !CandidateUiOwnerIsCurrent({task.client_id, task.activation_epoch}))
         {
             // The page was hidden or replaced after the click was posted.
@@ -773,6 +774,22 @@ void WorkerThread()
             break;
         }
 
+        case TaskType::UiCommitExpansionPanelItem: {
+            // 面板点选与数字键同一条上屏内核；面板已不在或下标越界时什么都不投递，
+            // 与「点击落空」一致。成功时内核已置好 selected_text。
+            if (!CommitCandidateExpansionPanelSenseText(task.candidate_one_based_index - 1, 0))
+            {
+                break;
+            }
+            if (SendToTsfWorkerThreadClientViaNamedpipe(task.client_id, task.activation_epoch,
+                                                        Global::DataFromServerMsgTypeToTsfWorkerThread::CommitCandidate,
+                                                        Global::candidate_ui.selected_text))
+            {
+                ClearState();
+            }
+            break;
+        }
+
         case TaskType::UiPinCandidate:
         case TaskType::UiDeleteCandidate:
         case TaskType::UiFixCandidatePosition:
@@ -910,6 +927,18 @@ void WorkerThread()
             Global::candidate_ui.begin_selection();
             ExpandCandidatesKeepingPagePosition();
             // 刚打开面板时即使没有新候选，也要重新发布一次，候选页才带上后续候选。
+            RefreshCandidatePageUi(true);
+            break;
+        }
+
+        case TaskType::UiCloseTranslationPanel: {
+            // 展开面板被点了外面：关掉状态并重新发布不带面板的一帧（presenter 已经
+            // 把 Popup 从场景里摘掉，这里只让服务端状态跟上）。
+            if (!Global::candidate_ui.expansion_panel_active)
+            {
+                break;
+            }
+            CloseCandidateExpansionPanel();
             RefreshCandidatePageUi(true);
             break;
         }
@@ -1469,6 +1498,29 @@ void EnqueueCandidateUiCommitAt(int absolute_index, std::wstring expected_text)
     pipe_queueCv.notify_one();
 }
 
+void EnqueueCandidateUiCommitExpansionPanel(int panel_index)
+{
+    if (!pipe_running || panel_index < 0)
+    {
+        return;
+    }
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner)
+    {
+        return;
+    }
+    {
+        std::lock_guard lock(queueMutex);
+        Task task;
+        task.type = TaskType::UiCommitExpansionPanelItem;
+        task.client_id = owner.client_id;
+        task.activation_epoch = owner.activation_epoch;
+        task.candidate_one_based_index = panel_index + 1;
+        PushTaskLocked(std::move(task));
+    }
+    pipe_queueCv.notify_one();
+}
+
 void EnqueueCandidateUiExpand()
 {
     if (!pipe_running)
@@ -1491,6 +1543,35 @@ void EnqueueCandidateUiExpand()
         }
         Task task;
         task.type = TaskType::UiExpandCandidates;
+        task.client_id = owner.client_id;
+        task.activation_epoch = owner.activation_epoch;
+        PushTaskLocked(std::move(task));
+    }
+    pipe_queueCv.notify_one();
+}
+
+void EnqueueCandidateUiCloseTranslationPanel()
+{
+    if (!pipe_running)
+    {
+        return;
+    }
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner)
+    {
+        return;
+    }
+    {
+        std::lock_guard lock(queueMutex);
+        // 连点外面只需要关一次。同样只看它自己那类队列的队尾。
+        std::queue<Task> &queue = TaskQueueFor(TaskType::UiCloseTranslationPanel);
+        if (!queue.empty() && queue.back().type == TaskType::UiCloseTranslationPanel &&
+            queue.back().client_id == owner.client_id && queue.back().activation_epoch == owner.activation_epoch)
+        {
+            return;
+        }
+        Task task;
+        task.type = TaskType::UiCloseTranslationPanel;
         task.client_id = owner.client_id;
         task.activation_epoch = owner.activation_epoch;
         PushTaskLocked(std::move(task));

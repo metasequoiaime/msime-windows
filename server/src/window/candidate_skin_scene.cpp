@@ -898,16 +898,16 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
         brush.radiusY = 0.0f;
     }
     card_->SetBrush(brush);
+    msimeui::Thickness cardContentPad{tokens.containerPad, tokens.containerPad, tokens.containerPad,
+                                      tokens.containerPad};
     if (package && package->schemaVersion >= 2)
     {
         // 内容从面板外缘量起：content_insets_dip，或九宫格边宽加基底内边距，不会压到边框贴图上。
-        card_->SetPadding(
-            ToThickness(CandidateSkinLayers::ResolveContentPadding(*package, tokens.containerPad, !horizontalLayout)));
+        cardContentPad =
+            ToThickness(CandidateSkinLayers::ResolveContentPadding(*package, tokens.containerPad, !horizontalLayout));
     }
-    else
-    {
-        card_->SetPadding(tokens.containerPad);
-    }
+    card_->SetPadding(cardContentPad);
+    result.cardContentPadding = cardContentPad;
     card_->SetMinWidth(cardMinWidthDip);
     if (panelImage)
     {

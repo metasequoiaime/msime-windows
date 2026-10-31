@@ -219,4 +219,21 @@ bool IsTranslationCurrent(uint64_t generation)
 {
     return g_running && g_translation_generation.load() == generation;
 }
+
+std::string LookupTranslationSync(const TranslationQuery &query)
+{
+    if (!g_running || query.key.empty())
+    {
+        return {};
+    }
+    // 独立连接：WorkerLoop 的 EnglishDictionary 绑在它自己的线程上，不能跨线程共用。
+    // 一次开库换一次按键一次的频率，和开面板路径本来就做的 others.db 整表扫描比可以忽略。
+    EnglishDictionary dictionary(g_db_path);
+    if (!dictionary.ready())
+    {
+        return {};
+    }
+    return query.direction == TranslationDirection::EnglishToChinese ? dictionary.query_chinese_gloss(query.key)
+                                                                     : dictionary.query_english_gloss(query.key);
+}
 } // namespace EnglishIme
