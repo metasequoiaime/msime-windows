@@ -12,6 +12,10 @@ struct ShuangpinProfile
     std::unordered_map<std::string, std::string> initials;
     std::unordered_map<std::string, std::string> zero_initials;
     std::unordered_map<std::string, std::string> finals;
+    // 一个韵母在解码时额外接受的键（韵母, 键）。一个键对应多个韵母是解码时自然支持的，
+    // 但 finals 是「韵母 → 键」的单值表，表达不了「同一个韵母两个键」。微软拼音允许
+    // t / v 都能打 ue 与 üe（#1175），靠这张别名表补上。
+    std::vector<std::pair<std::string, std::string>> final_aliases;
 };
 
 // Profiles have static storage duration and can safely be shared by sessions.

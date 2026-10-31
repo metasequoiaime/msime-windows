@@ -1084,6 +1084,32 @@ bool LoadImeConfig()
         g_custom_translation.enabled = tbl["custom_translation"]["enabled"].value_or(false);
         g_custom_translation.endpoint = tbl["custom_translation"]["endpoint"].value_or(std::string());
         g_custom_translation.api_key = tbl["custom_translation"]["api_key"].value_or(std::string());
+        g_custom_translation.format = tbl["custom_translation"]["format"].value_or(std::string("openai"));
+        if (g_custom_translation.format != "openai" && g_custom_translation.format != "responses" &&
+            g_custom_translation.format != "anthropic" && g_custom_translation.format != "gemini" &&
+            g_custom_translation.format != "deeplx")
+            g_custom_translation.format = "openai";
+        g_custom_translation.review = tbl["custom_translation"]["review"].value_or(true);
+        g_custom_translation.thinking = tbl["custom_translation"]["thinking"].value_or(std::string());
+        if (!g_custom_translation.thinking.empty() && g_custom_translation.thinking != "disabled" &&
+            g_custom_translation.thinking != "low" && g_custom_translation.thinking != "high" &&
+            g_custom_translation.thinking != "max")
+            g_custom_translation.thinking.clear();
+        g_custom_translation.model = tbl["custom_translation"]["model"].value_or(std::string("gpt-4o-mini"));
+        const std::string legacy_translation_prompt = tbl["custom_translation"]["prompt"].value_or(std::string());
+        g_custom_translation.prompt_id = tbl["custom_translation"]["prompt_id"].value_or(std::string("custom_1"));
+        if (g_custom_translation.prompt_id != "custom_1" && g_custom_translation.prompt_id != "custom_2" &&
+            g_custom_translation.prompt_id != "custom_3")
+            g_custom_translation.prompt_id = "custom_1";
+        g_custom_translation.prompt_custom_1 = tbl["custom_translation"]["prompt_custom_1"].value_or(std::string());
+        if (g_custom_translation.prompt_custom_1.empty())
+            g_custom_translation.prompt_custom_1 = legacy_translation_prompt;
+        g_custom_translation.prompt_custom_2 = tbl["custom_translation"]["prompt_custom_2"].value_or(std::string());
+        g_custom_translation.prompt_custom_3 = tbl["custom_translation"]["prompt_custom_3"].value_or(std::string());
+        g_custom_translation.prompt =
+            g_custom_translation.prompt_id == "custom_2"   ? g_custom_translation.prompt_custom_2
+            : g_custom_translation.prompt_id == "custom_3" ? g_custom_translation.prompt_custom_3
+                                                           : g_custom_translation.prompt_custom_1;
         g_niutrans.enabled = tbl["niutrans"]["enabled"].value_or(false);
         g_niutrans.app_id = tbl["niutrans"]["app_id"].value_or(std::string());
         g_niutrans.apikey = tbl["niutrans"]["apikey"].value_or(std::string());

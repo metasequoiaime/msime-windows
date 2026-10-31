@@ -1304,15 +1304,24 @@ struct InputPage
     std::shared_ptr<Hideable> smartHint;
 
     // Translation
-    std::string provider = "tencent";
     std::shared_ptr<ToggleSwitch> translationsToggle;
     std::shared_ptr<OpacityBox> translationOptions;
     std::vector<std::shared_ptr<Dimmable>> translationInputs;
     std::shared_ptr<Dimmable> showPosBlock;
     std::shared_ptr<Dimmable> singleSenseBlock;
-    std::map<std::string, std::shared_ptr<Hideable>> providerFields;
     std::map<std::string, std::shared_ptr<ApiField>> fields;
-    std::shared_ptr<ApiField> aiSummary;
+    // 自定义提示词三槽：切换只改当前生效的那一个，内容各存一份。
+    std::string translationPromptId = "custom_1";
+    std::map<std::string, std::string> translationPrompts;
+    std::shared_ptr<voice_fields::InputBox> translationPrompt;
+    std::shared_ptr<Dropdown> translationPromptSlot;
+    std::shared_ptr<Dropdown> thinkingDropdown;
+    void SwitchTranslationPrompt(const std::string &id)
+    {
+        translationPromptId = id;
+        if (translationPrompt)
+            translationPrompt->SetText(Widen(translationPrompts[id]));
+    }
     std::shared_ptr<Label> warning;
     std::shared_ptr<Hideable> warningBox;
     std::unique_ptr<CredentialTest> credentialTest;
@@ -1353,66 +1362,29 @@ struct InputPage
 
     ConfigMap TestConfig() const
     {
-        if (provider == "ai")
-            return {};
-        if (provider == "aliyun")
-            return {{"accessKeyId", Field("aliyunAccessKeyId")}, {"accessKeySecret", Field("aliyunAccessKeySecret")}};
-        if (provider == "niutrans")
-            return {{"appId", Field("niutransAppId")}, {"apiKey", Field("niutransApiKey")}};
-        if (provider == "custom")
-            return {{"endpoint", Field("customTranslationEndpoint")}, {"apiKey", Field("customTranslationApiKey")}};
-        return {{"secretId", Field("tencentTmtSecretId")}, {"secretKey", Field("tencentTmtSecretKey")}};
+        // 只有自定义服务一种：模型、协议格式、思考强度与提示词一起交给服务端。
+        // 少传模型时服务端会拿空 model 发请求，直接被拒，报「未返回有效译文」。
+        ConfigMap map{{"endpoint", Field("customTranslationEndpoint")},
+                      {"apiKey", Field("customTranslationApiKey")},
+                      {"model", Field("customTranslationModel")},
+                      {"format", context->model.GetString("custom_translation.format")},
+                      {"thinking", context->model.GetString("custom_translation.thinking")}};
+        const auto prompt = translationPrompts.find(translationPromptId);
+        if (prompt != translationPrompts.end())
+            map["prompt"] = prompt->second;
+        return map;
     }
 
     void SyncWarning()
     {
-        std::wstring text;
-        bool ok = false;
-        if (provider == "ai")
-        {
-            const voice_fields::ActiveAiConfig state = AiState();
-            // 选择器模式下这里的 provider 已经解析成「生成式上次用的那家」，所以不再是 jev。
-            // AI 联想总开关与这里无关，只要凭据齐就能用。
-            text = L"请先在「AI 与云联想」页面填写当前服务商的接口地址、模型和 Token（Ollama 不需要）";
-            ok = state.usable;
-        }
-        else if (provider == "custom")
-        {
-            text = L"请填写以 http:// 或 https:// 开头的完整接口地址";
-            static const std::regex url(R"(^https?://\S+$)", std::regex::icase);
-            ok = std::regex_match(Field("customTranslationEndpoint"), url);
-        }
-        else if (provider == "aliyun")
-        {
-            text = L"请填写 AccessKey ID 和 AccessKey Secret 后使用阿里云翻译";
-            ok = !Field("aliyunAccessKeyId").empty() && !Field("aliyunAccessKeySecret").empty();
-        }
-        else if (provider == "niutrans")
-        {
-            text = L"请填写 APP ID 和 API Key 后使用小牛翻译";
-            ok = !Field("niutransAppId").empty() && !Field("niutransApiKey").empty();
-        }
-        else
-        {
-            text = L"请填写 SecretId 和 SecretKey 后使用云端翻译";
-            ok = !Field("tencentTmtSecretId").empty() && !Field("tencentTmtSecretKey").empty();
-        }
-        warning->SetText(text);
+        static const std::regex url(R"(^https?://\S+$)", std::regex::icase);
+        const bool ok = std::regex_match(Field("customTranslationEndpoint"), url);
+        warning->SetText(L"请填写以 http:// 或 https:// 开头的完整接口地址");
         warningBox->SetVisible(!ok);
     }
 
     void SyncProviderView()
     {
-        for (auto &[name, box] : providerFields)
-            box->SetVisible(name == provider);
-        const voice_fields::ActiveAiConfig state = AiState();
-        // 摘要用显示名而不是内部 id。
-        if (state.usable)
-            aiSummary->SetText(
-                voice_fields::AiProviderLabel(state.provider, context->model.Find("ai_assistant.providers")) + L" · " +
-                Widen(state.model));
-        else
-            aiSummary->SetText(std::wstring());
         SyncWarning();
     }
 
@@ -1757,16 +1729,7 @@ VisualPtr BuildInputPage(PageContext &context)
         Dropdown::Options language;
         language.minWidth = 140.0f;
         language.menuMinWidth = 140.0f;
-        auto provider = BindDropdown(context, "translation.provider",
-                                     Options({{"tencent", L"腾讯云"},
-                                              {"aliyun", L"阿里云"},
-                                              {"niutrans", L"小牛翻译"},
-                                              {"custom", L"自定义 DeepLX"},
-                                              {"ai", L"AI 辅助"}}),
-                                     language, ValueKind::String, [s](const std::string &value) {
-                                         s->provider = value;
-                                         s->SyncProviderView();
-                                     });
+        // 翻译服务只有自定义一种：DeepLX 与自定义 AI 都由它承载，用「协议格式」区分。
         auto target = BindDropdown(context, "tencent_tmt.target_language",
                                    Options({{"en", L"英语"},
                                             {"fr", L"法语"},
@@ -1809,61 +1772,63 @@ VisualPtr BuildInputPage(PageContext &context)
             return g;
         };
 
-        auto tencent =
-            Col({heading(L"腾讯云 API 凭据", L"用于在线机器翻译，凭据仅保存在本机配置文件中"),
-                 blockInput(grid(
-                     {{field("tencentTmtSecretId", "tencent_tmt.secret_id", L"SecretId", L"AKID...", false), false},
-                      {field("tencentTmtSecretKey", "tencent_tmt.secret_key", L"SecretKey", L"SecretKey", true),
-                       false}}))});
-        auto aliyun =
-            Col({heading(L"阿里云 API 凭据", L"在阿里云控制台「AccessKey 管理」中查看，凭据仅保存在本机配置文件中"),
-                 blockInput(grid(
-                     {{field("aliyunAccessKeyId", "aliyun_mt.secret_id", L"AccessKey ID", L"LTAI...", false), false},
-                      {field("aliyunAccessKeySecret", "aliyun_mt.secret_key", L"AccessKey Secret", L"AccessKey Secret",
-                             true),
-                       false}}))});
-        auto niutrans =
-            Col({heading(L"小牛翻译 API 凭据", L"在“控制台—>API应用”中查看，凭据仅保存在本机配置文件中"),
-                 blockInput(grid({{field("niutransAppId", "niutrans.app_id", L"APP ID", L"应用唯一标识", false), false},
-                                  {field("niutransApiKey", "niutrans.apikey", L"API Key", L"apikey", true), false}}))});
-        auto custom = Col({heading(L"自定义 DeepLX 服务", L"填写完整的 POST 接口地址；API Key 可留空"),
-                           blockInput(grid({{field("customTranslationEndpoint", "custom_translation.endpoint",
-                                                   L"接口地址", L"https://example.com/translate", false),
-                                             true},
-                                            {field("customTranslationApiKey", "custom_translation.api_key",
-                                                   L"API Key（可选，以 Bearer Token 发送）", L"留空表示不鉴权", true),
-                                             true}}))});
-        s->aiSummary = std::make_shared<ApiField>(L"当前服务商与模型", L"未配置", false, true);
-        auto ai = Col({heading(L"复用 AI 辅助配置",
-                               L"使用「AI 与云联想」页生成式服务商的接口地址、Token 与模型，无需在此重复填写。"
-                               L"那边选了「从候选里挑」也照样能用，翻译会用生成式那一家。"
-                               L"不依赖「启用 AI 联想」开关，凭据填好就能用于翻译。"),
-                       blockInput(grid({{s->aiSummary, true}}))});
-        s->providerFields["tencent"] = std::make_shared<Hideable>(tencent, true);
-        s->providerFields["aliyun"] = std::make_shared<Hideable>(aliyun, false);
-        s->providerFields["niutrans"] = std::make_shared<Hideable>(niutrans, false);
-        s->providerFields["custom"] = std::make_shared<Hideable>(custom, false);
-        s->providerFields["ai"] = std::make_shared<Hideable>(ai, false);
-
+        // 协议格式固定五种：前四种是自定义 AI，最后一种是 DeepLX 兼容接口。
+        auto customFormat = BindDropdown(context, "custom_translation.format",
+                                         Options({{"openai", L"OpenAI Chat Completions"},
+                                                  {"responses", L"OpenAI Responses"},
+                                                  {"anthropic", L"Anthropic Messages"},
+                                                  {"gemini", L"Google Gemini"}}),
+                                         language);
+        // 思考强度只留四档：中转模型的默认思考会吃光短请求的预算。
+        auto customThinking =
+            BindDropdown(context, "custom_translation.thinking",
+                         Options({{"disabled", L"关闭"}, {"low", L"低"}, {"high", L"高"}, {"max", L"最高"}}), language);
+        s->thinkingDropdown = customThinking;
+        // 提示词三槽：切换只改当前生效的那一个。
+        auto promptSlot = std::make_shared<Dropdown>(
+            Options({{"custom_1", L"自定义一"}, {"custom_2", L"自定义二"}, {"custom_3", L"自定义三"}}), language);
+        promptSlot->SetOnChanged([s, model](size_t, const DropdownOption &option) {
+            model->Update("custom_translation.prompt_id", option.value);
+            s->SwitchTranslationPrompt(option.value);
+        });
+        s->translationPromptSlot = promptSlot;
+        voice_fields::InputBox::Options promptOptions;
+        promptOptions.multiline = true;
+        promptOptions.height = 180.0f;
+        promptOptions.scrollbar = voice_fields::InputBox::Options::Scrollbar::Thin;
+        s->translationPrompt = std::make_shared<voice_fields::InputBox>(promptOptions);
+        s->translationPrompt->SetOnCommit([s, model](const std::wstring &text) {
+            const std::string value = Narrow(text);
+            s->translationPrompts[s->translationPromptId] = value;
+            model->Update("custom_translation.prompt_" + s->translationPromptId, value);
+        });
+        auto modelField =
+            field("customTranslationModel", "custom_translation.model", L"模型", L"deepseek-flash", false);
+        auto modelRow = blockInput(LanguageRow(L"模型", L"", modelField));
+        auto custom = Col(
+            {heading(L"自定义服务", L"接口地址、模型与协议格式按服务商文档填；API Key 可留空"),
+             blockInput(grid({{field("customTranslationEndpoint", "custom_translation.endpoint", L"接口地址",
+                                     L"https://api.deepseek.com", false),
+                               true},
+                              {field("customTranslationApiKey", "custom_translation.api_key",
+                                     L"API Key（可选，以 Bearer Token 发送）", L"留空表示不鉴权", true),
+                               true}})),
+             modelRow, blockInput(LanguageRow(L"协议格式", L"按服务商文档选择；选错会直接拿到 4xx", customFormat)),
+             blockInput(LanguageRow(L"思考强度", L"中转模型默认思考会吃光短请求的预算，选「关闭」", customThinking)),
+             blockInput(LanguageRow(L"提示词槽位", L"三个槽各存一份提示词，切换只改当前生效的那一个", promptSlot)),
+             blockInput(std::static_pointer_cast<msimeui::Visual>(s->translationPrompt))});
         TextStyle warningStyle;
         warningStyle.size = kFontCaption;
-        s->warning = std::make_shared<Label>(L"请填写 SecretId 和 SecretKey 后使用云端翻译", warningStyle);
+        s->warning = std::make_shared<Label>(L"请填写接口地址与模型后使用在线翻译", warningStyle);
         s->warning->SetColor(Hex(0xD7A64A));
         s->warning->SetMargin({0.0f, 10.0f, 0.0f, 0.0f});
         s->warningBox = std::make_shared<Hideable>(s->warning, true);
         s->credentialTest = std::make_unique<CredentialTest>(
-            context, [s]() { return "translation." + s->provider; }, [s]() { return s->TestConfig(); },
-            [s]() -> Json {
-                if (s->provider != "ai")
-                    return s->TestConfig();
-                // 把当前生效的服务商配置摊平成页面字段，凭据测试据此判断「测试期间配置是否改过」，
-                // 宿主再用同一份字段去发请求。
-                const voice_fields::ActiveAiConfig state = s->AiState();
-                return Json{{"provider", state.provider},
-                            {"endpoint", state.endpoint},
-                            {"token", state.token},
-                            {"model", state.model}};
-            });
+            context, []() { return std::string("translation.custom"); }, [s]() { return s->TestConfig(); },
+            [s]() { return s->TestConfig(); });
+
+        // 校对只对自定义服务生效。
+        auto review = BindToggle(context, "custom_translation.review");
 
         auto options = Col(
             {std::make_shared<Divider>(Divider::Kind::Option),
@@ -1872,18 +1837,20 @@ VisualPtr BuildInputPage(PageContext &context)
              blockInput(LanguageRow(L"只显示单条释义", L"每个候选只显示第一条译文释义；Ctrl+Enter 仍可选择全部释义上屏",
                                     s->singleSenseBlock)),
              std::make_shared<Divider>(Divider::Kind::Option),
-             blockInput(LanguageRow(L"在线翻译服务",
-                                    L"可使用腾讯云、阿里云、小牛翻译、自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置",
-                                    provider)),
+             blockInput(LanguageRow(
+                 L"AI 校对", L"译完后把译文交给同一模型复核，只回写确实要改的条目；只对自定义服务生效，不阻塞上屏",
+                 review)),
              std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用所选在线服务", target)),
-             std::make_shared<Divider>(Divider::Kind::Option), s->providerFields["tencent"],
-             s->providerFields["aliyun"], s->providerFields["niutrans"], s->providerFields["custom"],
-             s->providerFields["ai"], s->warningBox, s->credentialTest->View()});
+             std::make_shared<Divider>(Divider::Kind::Option), custom, s->warningBox, s->credentialTest->View()});
         s->translationOptions = std::make_shared<OpacityBox>(options);
         s->translationOptions->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         master->SetOnChanged([s, model](bool on) {
             model->Update("general.candidate_translations", on);
+            // 界面只剩自定义服务：开关打开即选中它。留给 [translation].provider 空着会被旧 enabled
+            // 布尔推到小牛，用户填的自定义接口就永远不生效。
+            if (on)
+                model->Update("translation.provider", "custom");
             s->SetTranslationsEnabled(on);
         });
         page.AddSection(
@@ -1891,7 +1858,6 @@ VisualPtr BuildInputPage(PageContext &context)
                  s->translationOptions}));
         s->translationsToggle = master;
     }
-
     // ---- 以词定字 ----
     {
         s->wordKeysBrackets = PaddedRadio(s->wordKeys->Add(L"[ / ]", "brackets"));
@@ -2177,18 +2143,37 @@ VisualPtr BuildInputPage(PageContext &context)
             s->translationsToggle->SetChecked(translations->get<bool>());
             s->SetTranslationsEnabled(translations->get<bool>());
         }
-        const std::string provider = model->GetString("translation.provider");
-        s->provider = provider == "aliyun" || provider == "niutrans" || provider == "custom" || provider == "ai"
-                          ? provider
-                          : "tencent";
-        s->fields["tencentTmtSecretId"]->SetText(Widen(model->GetString("tencent_tmt.secret_id")));
-        s->fields["tencentTmtSecretKey"]->SetText(Widen(model->GetString("tencent_tmt.secret_key")));
-        s->fields["aliyunAccessKeyId"]->SetText(Widen(model->GetString("aliyun_mt.secret_id")));
-        s->fields["aliyunAccessKeySecret"]->SetText(Widen(model->GetString("aliyun_mt.secret_key")));
-        s->fields["niutransAppId"]->SetText(Widen(model->GetString("niutrans.app_id")));
-        s->fields["niutransApiKey"]->SetText(Widen(model->GetString("niutrans.apikey")));
+        // 翻译服务固定为自定义：其余服务商的输入框已不再创建，不能在这里碰 fields。
         s->fields["customTranslationEndpoint"]->SetText(Widen(model->GetString("custom_translation.endpoint")));
         s->fields["customTranslationApiKey"]->SetText(Widen(model->GetString("custom_translation.api_key")));
+        s->fields["customTranslationModel"]->SetText(Widen(model->GetString("custom_translation.model")));
+        // DeepLX 已从格式列表移除；旧配置里的 deeplx 或未知值回落到 openai。
+        {
+            std::string format = model->GetString("custom_translation.format");
+            if (format != "openai" && format != "responses" && format != "anthropic" && format != "gemini")
+                model->Update("custom_translation.format", "openai");
+        }
+        // 思考强度只有四档；空值或未知值一律按「关闭」处理，与后端默认一致。
+        {
+            std::string thinking = model->GetString("custom_translation.thinking");
+            if (thinking != "disabled" && thinking != "low" && thinking != "high" && thinking != "max")
+            {
+                thinking = "disabled";
+                model->Update("custom_translation.thinking", thinking);
+            }
+            if (s->thinkingDropdown)
+                s->thinkingDropdown->SetValue(thinking);
+        }
+        // 提示词三槽与当前生效槽位
+        s->translationPrompts["custom_1"] = model->GetString("custom_translation.prompt_custom_1");
+        s->translationPrompts["custom_2"] = model->GetString("custom_translation.prompt_custom_2");
+        s->translationPrompts["custom_3"] = model->GetString("custom_translation.prompt_custom_3");
+        std::string promptId = model->GetString("custom_translation.prompt_id", "custom_1");
+        if (promptId != "custom_1" && promptId != "custom_2" && promptId != "custom_3")
+            promptId = "custom_1";
+        if (s->translationPromptSlot)
+            s->translationPromptSlot->SetValue(promptId);
+        s->SwitchTranslationPrompt(promptId);
         s->SyncProviderView();
 
         // Lattice language model row. Server 映射着 sc.lm 时删除只留标记（deletePending），
