@@ -1279,6 +1279,14 @@ HRESULT CCandidateListUIPresenter::BeginUIElement()
     // Hosts that activate with TF_TMF_UIELEMENTENABLEDONLY (typical for games)
     // must never get an IME-owned candidate HWND, even if BeginUIElement left
     // pbShow TRUE.
+    //
+    // pbShow FALSE is not a promise that the host draws the candidates. The
+    // documented meaning is that the application *may* draw them, and CUAS, the
+    // bridge that lets a TSF text service serve an IMM32-only host, answers FALSE
+    // because it cannot host a UI element at all. Such a host never draws, so the
+    // candidate window has to come from us like it does for every other host.
+    // Only the activation flag above marks a host that really draws.
+    bool pbShowIgnored = false;
     if (Global::IgnoreHostUiLess)
     {
         _isShowMode = TRUE;
@@ -1287,13 +1295,19 @@ HRESULT CCandidateListUIPresenter::BeginUIElement()
     {
         _isShowMode = FALSE;
     }
+    else if (_isShowMode == FALSE)
+    {
+        _isShowMode = TRUE;
+        pbShowIgnored = true;
+    }
     Global::CandidateUiLessMode = (_isShowMode == FALSE);
     QueueTsfHostWindowDiagnostic(
         L"begin-ui-element",
         fmt::format(L"hr={:#x} host_pbShow={} element_id={} activate_flags={:#x} uielement_enabled_only={} "
-                    L"uiless_ignored={} final_show={} host_uiless={}",
+                    L"uiless_ignored={} final_show={} host_uiless={} pb_show_ignored={}",
                     static_cast<unsigned>(beginHr), hostShow, _uiElementId, _pTextService->_dwActivateFlags,
-                    _pTextService->_IsUiLessMode(), Global::IgnoreHostUiLess, _isShowMode, Global::HostUiLessMode));
+                    _pTextService->_IsUiLessMode(), Global::IgnoreHostUiLess, _isShowMode, Global::HostUiLessMode,
+                    pbShowIgnored));
 
 Exit:
     return hr;

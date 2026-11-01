@@ -145,6 +145,11 @@ session 直接消费；session 自己那次读（`TryReadCommitReplyFromServerPi
   （游戏按登记名称决定要不要自己处理输入法消息，不在名单里就弹系统默认组合窗，独占全屏下会把游戏踢出全屏）。
   选择记在 `HKLM\Software\Metasequoia\MetasequoiaIME\GameCompatProfileName`，`RegisterProfiles` 注册时以它为准——
   安装/升级重新注册会覆盖名称，不读它用户的选择就静默丢了。开启时 `ActivateEx` 也不再对这些游戏忽略 UI-less 声明。
+- `BeginUIElement` 的 `pbShow=FALSE` 只表示「应用**可能**自绘」，不是「应用一定会自绘」。CUAS 是让 TSF
+  输入法服务只认 IMM32 的宿主时走的兼容层，它因为承载不了 UI element 才回 FALSE，自己从不画候选。
+  判断宿主是否自绘只看激活标志 `TF_TMF_UIELEMENTENABLEDONLY`：没有这个标志的宿主一律由我们画候选窗，
+  否则只走 CUAS 的游戏（战舰世界等）候选窗会整个消失。加新宿主时先看日志里的
+  `activate_flags`、`host_pbShow`、`pb_show_ignored` 三项，不要凭 `pbShow` 推断。
 - 生产日志不得记录用户原始按键、预编辑、候选词或提交文本。性能与 IPC 诊断记录耗时、请求 ID、
   token、状态和错误码即可；调试日志也应尽量避免持久化用户输入。
 
