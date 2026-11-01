@@ -21,6 +21,7 @@ export type ClientMessage =
   | { "type": "latticeModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "openHandwritingPanel"; "protocolVersion"?: 1 }
   | { "type": "restartServer"; "protocolVersion"?: 1 }
+  | { "type": "userDataBackupRequest"; "protocolVersion"?: 1; "data": { "action": "export" | "import"; "path": string; "includeModels"?: boolean } }
   | { "type": "copyText"; "protocolVersion"?: 1; "data": string }
   | { "type": "openExternalUrl"; "protocolVersion"?: 1; "data": string }
   | { "type": "dragStart"; "protocolVersion"?: 1 }
@@ -79,6 +80,7 @@ export type ServerMessage =
   | { "type": "apiModelListResult"; "protocolVersion"?: 1; "requestId": string; "ok": boolean; "message": string; "models"?: Array<string> }
   | { "type": "aiProviderSyncResult"; "protocolVersion"?: 1; "requestId": string; "ok": boolean; "message": string }
   | { "type": "restartServerDone"; "protocolVersion"?: 1; "ok": boolean }
+  | { "type": "userDataBackupDone"; "protocolVersion"?: 1; "action": "export" | "import"; "ok": boolean; "message": string }
   | { "type": "dictionaryResponse"; "protocolVersion"?: 1; "requestId": string; "action"?: string; "dictionary"?: string; "ok": boolean; "message": string; "rows": Array<{ "word": string; "code"?: string; "display"?: string; "weight"?: number }>; "content"?: string; "filename"?: string; "offset"?: number; "hasMore"?: boolean; [key: string]: unknown }
   | { "type": "statsResponse"; "protocolVersion"?: 1; "requestId": string; "action": string; "ok": boolean; "message": string; "overview"?: { "hasData": boolean; "firstDayKey": number; "lastDayKey": number; "days": number; "totalChars": number; "totalActiveMs": number; "todayDayKey": number; "todayChars": number; "todayActiveMs": number; "averagePerDay": number; "currentStreak": number; "longestStreak": number; "bestDayKey": number; "bestDayChars": number; "todaySpeed": number; "averageSpeed": number; "fastestSpeed": number; "fastestDayKey": number; "todayFirstWordRatio": number | null; "totalFirstWordRatio": number | null; "todayFirstWordTotal": number; "categories": { "cjk": number; "latin": number; "digit": number; "punct": number; "other": number }; "todayHourly": Array<number>; "daily": Array<{ "dayKey": number; "cjk": number; "latin": number; "digit": number; "punct": number; "other": number; "activeMs": number; "firstWordHits": number; "firstWordTotal": number }> }; "removedDays"?: number; [key: string]: unknown };
 export type SettingsMessage =
@@ -101,6 +103,7 @@ export type SettingsMessage =
   | { "type": "latticeModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "openHandwritingPanel"; "protocolVersion"?: 1 }
   | { "type": "restartServer"; "protocolVersion"?: 1 }
+  | { "type": "userDataBackupRequest"; "protocolVersion"?: 1; "data": { "action": "export" | "import"; "path": string; "includeModels"?: boolean } }
   | { "type": "copyText"; "protocolVersion"?: 1; "data": string }
   | { "type": "openExternalUrl"; "protocolVersion"?: 1; "data": string }
   | { "type": "dragStart"; "protocolVersion"?: 1 }
