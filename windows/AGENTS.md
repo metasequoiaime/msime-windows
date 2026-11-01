@@ -141,6 +141,9 @@ session 直接消费；session 自己那次读（`TryReadCommitReplyFromServerPi
 - 安装器把 DLL 装到 `System32\IME\MetasequoiaIME\msime_v*\`（x86 在 `SysWOW64` 下同名目录），不要挪回
   Program Files：CS2 等开启 Trusted Mode 的游戏只放行「位于系统目录且有代码签名」的第三方 in-proc DLL，
   否则输入法在游戏里根本切不出来。用 `linstall.ps1` 从构建目录注册的开发版不满足这一条，游戏内不可用。
+- Arm64 机器上装进 `System32` 的那一份是 Arm64X，不是 x64 也不是纯 Arm64：Arm64 宿主和 x64 仿真宿主
+  读同一份 `InProcServer32`，一个文件必须同时满足两类宿主。改动构建结构时别把这条约束绕过去，
+  否则要么原生应用没输入法，要么仿真应用没输入法。构建见 `cmake/arm64x.cmake`。
 - 语言配置的登记名称不总是 `TEXTSERVICE_DESC`：设置页「游戏兼容」会把它换成 CS2 / Dota 2 白名单里的名字
   （游戏按登记名称决定要不要自己处理输入法消息，不在名单里就弹系统默认组合窗，独占全屏下会把游戏踢出全屏）。
   选择记在 `HKLM\Software\Metasequoia\MetasequoiaIME\GameCompatProfileName`，`RegisterProfiles` 注册时以它为准——
@@ -193,6 +196,14 @@ Release：
 .\scripts\lcompile-release.ps1 64
 .\scripts\lcompile-release.ps1 32
 ```
+
+Arm64X（Windows on Arm 用，两遍链接，需要 `VCPKG_ROOT`）：
+
+```powershell
+.\scripts\lcompile-release-arm64.ps1
+```
+
+第一遍 `buildarm64-release` 只产出第二遍要合并的链接输入，能装的是 `buildarm64x-release\Release` 里的那份。
 
 本目录的 `windows_ipc_contract` 在 x64/x86 上验证协议布局、版本握手与语音分帧；CI 还构建 Server 和 GUI 框架，并在锁定词库上运行 Server 测试。这些检查不能替代真实 TSF 宿主行为回归。按改动范围做手工回归：
 

@@ -27,6 +27,8 @@ try {
         'windows/build32-release/Release/MetasequoiaImeTsf.pdb',
         'windows/build64-release/Release/MetasequoiaImeTsf.dll',
         'windows/build64-release/Release/MetasequoiaImeTsf.pdb',
+        'windows/buildarm64x-release/Release/MetasequoiaImeTsf.dll',
+        'windows/buildarm64x-release/Release/MetasequoiaImeTsf.pdb',
         'THIRD_PARTY_NOTICES.txt',
         'LICENSE',
         'server/assets/config/config.toml',
@@ -78,6 +80,7 @@ strings = "あ亜".encode()
                          'app_data/sentence-model.safetensors', 'app_data/chinese-ime-lm-NOTICE.md',
                          'tsf_dll/32/MetasequoiaImeTsf.dll', 'tsf_dll/32/MetasequoiaImeTsf.pdb',
                          'tsf_dll/64/MetasequoiaImeTsf.dll', 'tsf_dll/64/MetasequoiaImeTsf.pdb',
+                         'tsf_dll/arm64/MetasequoiaImeTsf.dll', 'tsf_dll/arm64/MetasequoiaImeTsf.pdb',
                          'server_exe/MetasequoiaImeServer.pdb',
                          'server_exe/MetasequoiaImeDictionaryReplay.pdb',
                          'app_data/helpcodes/helpcode.txt', 'app_data/radical/decomposition.txt',
@@ -119,6 +122,14 @@ strings = "あ亜".encode()
         if ($issForIcon -notmatch ('Source: "\{#MySourceRoot\}\\tsf_dll\\' + $arch + '\\\*\.dll";\s*\\\s*DestDir: "\{#MyTsfRoot' + $arch + '\}\\')) {
             throw "The $arch-bit TSF DLL must be installed under MyTsfRoot$arch"
         }
+    }
+    # 64 位视图里只能有一个文件：Arm64 宿主与 x64 仿真宿主读的是同一份 InProcServer32。
+    # 所以两份 64 位 DLL 必须按架构互斥，而 Arm64X 必须落在 MyTsfRoot64。
+    if ($issForIcon -notmatch ('Source: "\{#MySourceRoot\}\\tsf_dll\\64\\\*\.dll";\s*\\\s*DestDir: "\{#MyTsfRoot64\}\\\{code:GetVersionDir\}";\s*\\\s*Flags: ignoreversion regserver; Check: not IsArm64')) {
+        throw 'The x64 TSF DLL must be skipped on Arm64, which registers the Arm64X file instead'
+    }
+    if ($issForIcon -notmatch ('Source: "\{#MySourceRoot\}\\tsf_dll\\arm64\\\*\.dll";\s*\\\s*DestDir: "\{#MyTsfRoot64\}\\\{code:GetVersionDir\}";\s*\\\s*Flags: ignoreversion regserver; Check: IsArm64')) {
+        throw 'The Arm64X TSF DLL must be installed into MyTsfRoot64 on Arm64'
     }
     if ($issForIcon -notmatch '#define MyTsfRoot64\s+"\{sys\}\\IME\\' -or $issForIcon -notmatch '#define MyTsfRoot32\s+"\{syswow64\}\\IME\\') {
         throw 'MyTsfRoot32/MyTsfRoot64 must point into the system directories'
@@ -196,6 +207,7 @@ strings = "あ亜".encode()
     & (Join-Path $installer 'Prepare-PackageFiles.ps1') -RepoRoot $fixture -TargetVersion '2026.9.1'
     foreach ($file in @('app_data/assets/settings/sidebar/about.svg',
                          'tsf_dll/32/MetasequoiaImeTsf.dll', 'tsf_dll/64/MetasequoiaImeTsf.dll',
+                         'tsf_dll/arm64/MetasequoiaImeTsf.dll',
                          'server_exe/MetasequoiaImeServer.exe')) {
         if (-not (Test-Path (Join-Path $installer $file))) { throw "Missing packaged file: $file" }
     }
