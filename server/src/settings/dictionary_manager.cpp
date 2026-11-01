@@ -315,6 +315,125 @@ json::object ExportUserDictionary(const std::string &dictionary)
     return result;
 }
 
+// 全部词库导出：拼音、五笔、英文三份用户新增词条合并成一个带来源列的文件。
+json::object ExportAllUserDictionaries()
+{
+    const std::string path = user_dictionary::default_user_db_path();
+    if (!std::filesystem::exists(path))
+        return Result(false, "当前没有可导出的用户新增词条");
+    if (!user_dictionary::ensure_user_database(path))
+        return Result(false, "升级用户词库格式失败");
+
+    sqlite3 *raw = nullptr;
+    if (sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
+    {
+        const std::string error = raw ? sqlite3_errmsg(raw) : "无法打开用户词库";
+        if (raw)
+            sqlite3_close(raw);
+        return Result(false, "打开用户词库失败：" + error);
+    }
+    Db db(raw);
+    sqlite3_busy_timeout(db.get(), 3000);
+
+    struct Source
+    {
+        const char *kind;
+        const char *label;
+    };
+    const Source sources[] = {{"pinyin", "拼音"}, {"wubi", "五笔"}, {"english", "英文"}};
+
+    std::ostringstream content;
+    content << "来源\t编码/单词\t词条\t权重\n";
+    int count = 0;
+    for (const auto &source : sources)
+    {
+        const std::string kind = source.kind;
+        const std::string filter = kind == "pinyin" ? "WHERE dictionary=?1 AND operation='upsert' "
+                                                    : "WHERE dictionary=?1 AND operation='upsert' AND user_inserted=1 ";
+        std::string error;
+        Stmt stmt = Prepare(
+            db.get(),
+            "SELECT key,value,weight,display FROM user_dictionary_operations " + filter + "ORDER BY key,value", error);
+        if (!stmt || !BindText(stmt.get(), 1, kind))
+            return Result(false, "读取用户词库失败：" + error);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW)
+        {
+            const auto text = [&](int column) {
+                const unsigned char *value = sqlite3_column_text(stmt.get(), column);
+                return SanitizeExportField(value ? reinterpret_cast<const char *>(value) : "");
+            };
+            const std::string key = text(0);
+            const std::string value = text(1);
+            const auto weight = sqlite3_column_int64(stmt.get(), 2);
+            const std::string display = text(3);
+            if (kind == "pinyin" && HelpcodeUtils::count_utf8_chars(value) <= 1)
+                continue;
+            content << source.label << '\t' << key << '\t' << (kind == "english" ? display : value) << '\t' << weight
+                    << '\n';
+            ++count;
+        }
+    }
+    if (count == 0)
+        return Result(false, "当前没有可导出的用户新增词条");
+
+    json::object result = Result(true, "已导出 " + std::to_string(count) + " 条用户词条");
+    result["content"] = content.str();
+    result["filename"] = "水杉IME-全部用户词库.txt";
+    result["entryCount"] = count;
+    return result;
+}
+
+bool EnsureEnglishSchema();
+
+// 按语种导出候选词释义总表：一个语种一份文件，词头 + 释义两列。
+json::object ExportGlossDictionary(const std::string &language)
+{
+    static const std::vector<std::string> kLanguages{"en", "fr", "ja", "es", "ru", "de", "ko", "th", "vi", "it"};
+    if (std::find(kLanguages.begin(), kLanguages.end(), language) == kLanguages.end())
+        return Result(false, "未知语种");
+    if (!EnsureEnglishSchema())
+        return Result(false, "英文词库初始化失败");
+    std::string error;
+    Db db = OpenDatabase("english.db", error);
+    if (!db)
+        return Result(false, "打开英文词库失败：" + error);
+
+    Stmt stmt;
+    if (language == "en")
+        stmt = Prepare(db.get(), "SELECT chinese,english_gloss FROM zh_en_glosses ORDER BY chinese", error);
+    else
+        stmt = Prepare(db.get(), "SELECT chinese,gloss FROM zh_glosses WHERE lang=?1 ORDER BY chinese", error);
+    if (!stmt)
+        return Result(false, "查询失败：" + error);
+    if (language != "en" && !BindText(stmt.get(), 1, language))
+        return Result(false, "查询失败：" + error);
+
+    std::ostringstream content;
+    content << "词头\t释义\n";
+    int count = 0;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW)
+    {
+        const auto text = [&](int column) {
+            const unsigned char *value = sqlite3_column_text(stmt.get(), column);
+            return SanitizeExportField(value ? reinterpret_cast<const char *>(value) : "");
+        };
+        const std::string headword = text(0);
+        const std::string gloss = text(1);
+        if (headword.empty() || gloss.empty())
+            continue;
+        content << headword << '\t' << gloss << '\n';
+        ++count;
+    }
+    if (count == 0)
+        return Result(false, "该语种还没有释义数据");
+
+    json::object result = Result(true, "已导出 " + std::to_string(count) + " 条释义");
+    result["content"] = content.str();
+    result["filename"] = "水杉IME-候选词释义-" + language + ".txt";
+    result["entryCount"] = count;
+    return result;
+}
+
 bool NormalizePinyin(const std::string &mode, const std::string &input, quanpin::Segments &segments,
                      std::string &normalized, std::string &message)
 {
@@ -1008,6 +1127,59 @@ json::object HandleEnglish(const json::object &request)
     Db db = OpenDatabase("english.db", error);
     if (!db)
         return Result(false, "打开英文词库失败：" + error);
+    // 候选词释义：code 传入目标语种时，改查 zh_glosses（词头 + 该语种释义）。
+    const std::string language = StringValue(request, "code");
+    const bool gloss_query = action == "query" && (language == "fr" || language == "ja" || language == "es" ||
+                                                   language == "ru" || language == "de" || language == "ko" ||
+                                                   language == "th" || language == "vi" || language == "it");
+    if (gloss_query)
+    {
+        Stmt stmt;
+        if (word.empty())
+        {
+            stmt = Prepare(
+                db.get(),
+                "SELECT chinese,gloss,0 FROM zh_glosses WHERE lang=?1 ORDER BY chinese" + Paging::Sql(request), error);
+            if (stmt)
+                BindText(stmt.get(), 1, language);
+        }
+        else
+        {
+            std::string upper = word;
+            upper.back() = static_cast<char>(upper.back() + 1);
+            stmt = Prepare(db.get(),
+                           "SELECT chinese,gloss,0 FROM zh_glosses WHERE lang=?1 AND "
+                           "((chinese>=?2 AND chinese<?3) OR gloss LIKE ?4) ORDER BY chinese" +
+                               Paging::Sql(request),
+                           error);
+            if (stmt)
+            {
+                BindText(stmt.get(), 1, language);
+                BindText(stmt.get(), 2, word);
+                BindText(stmt.get(), 3, upper);
+                BindText(stmt.get(), 4, "%" + word + "%");
+            }
+        }
+        if (!stmt)
+            return Result(false, "查询失败：" + error);
+        return Paging::Read(stmt.get(), request, true);
+    }
+    // 多语释义总表：一个词头一次给出全部语种的释义，不再按语种切换。
+    if (action == "query" && language == "all")
+    {
+        std::string pattern = word.empty() ? "%" : word + "%";
+        Stmt stmt = Prepare(db.get(),
+                            "SELECT chinese, group_concat(lang || ':' || gloss, ' · '), 0 FROM ("
+                            "SELECT chinese, lang, gloss FROM zh_glosses WHERE chinese LIKE ?1 "
+                            "UNION ALL "
+                            "SELECT chinese, 'en', english_gloss FROM zh_en_glosses WHERE chinese LIKE ?1"
+                            ") GROUP BY chinese ORDER BY chinese" +
+                                Paging::Sql(request),
+                            error);
+        if (!stmt || !BindText(stmt.get(), 1, pattern))
+            return Result(false, "查询失败：" + error);
+        return Paging::Read(stmt.get(), request, true);
+    }
     if (action == "query")
     {
         if (!IsAsciiWord(word))
@@ -1501,7 +1673,11 @@ json::object HandleRequest(const json::object &request)
     const std::string dictionary = StringValue(request, "dictionary");
     const std::string action = StringValue(request, "action");
     if (action == "export")
-        return ExportUserDictionary(dictionary);
+    {
+        if (dictionary == "gloss")
+            return ExportGlossDictionary(StringValue(request, "code"));
+        return dictionary == "all" ? ExportAllUserDictionaries() : ExportUserDictionary(dictionary);
+    }
     // 纯汉字导入按目标词库分发出码方式：拼音走注音引擎，五笔走 wubi86 单字码组合。
     if (action == "importHans")
     {

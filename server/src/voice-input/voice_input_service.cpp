@@ -5,6 +5,7 @@
 
 #include "voice_input_service.h"
 #include "voice_input_gesture.h"
+#include "cloud/ai_wire.h"
 #include "config/ime_config.h"
 #include "doubao_asr_client.h"
 #include "log/candidate_diag_log.h"
@@ -779,46 +780,38 @@ std::string Polish(const std::string &text, const VoiceInputConfig &config)
     if (!ShouldPolish(text, config))
         return text;
     const std::string polish_token = VoiceInput::ResolvePolishToken(config);
+    // 设置页里的润色服务商可能是协议 id（responses / anthropic / gemini）：
+    // Chat 沿用原来的厂商特判，其余三种用统一构造的四协议请求体。
+    const auto wire = AiWire::FromId(config.polish_provider);
     std::string payload;
     try
     {
-        payload = VoiceInput::BuildBatchPolish(text, config);
+        if (wire == AiWire::Wire::Chat)
+            payload = VoiceInput::BuildBatchPolish(text, config);
+        else
+            payload = AiWire::BuildBody(wire, VoiceInput::ResolvePolishModel(config),
+                                        VoiceInput::ResolvePolishSystemPrompt(config),
+                                        VoiceInput::WrapAsrUserMessage(text), 512, 0.2)
+                          .dump();
     }
     catch (...)
     {
         return text;
     }
-    CURL *curl = curl_easy_init();
-    if (!curl)
-        return text;
-    std::string response;
-    curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, ("Authorization: Bearer " + polish_token).c_str());
-    curl_easy_setopt(curl, CURLOPT_URL, config.polish_endpoint.c_str());
-    NetworkProxy::ApplyToCurl(curl);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.data());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(payload.size()));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    const std::string polish_url =
+        AiWire::NormalizeEndpoint(config.polish_endpoint, wire, VoiceInput::ResolvePolishModel(config));
     // Polishing is optional: if it cannot finish promptly, abort the request and
     // let the caller commit the original ASR text returned below.
-    curl_easy_setopt(
-        curl, CURLOPT_TIMEOUT_MS,
+    const long polish_timeout_ms =
         VoiceInput::UsesDeepSeekThinking(config.polish_provider, config.polish_endpoint, config.polish_thinking)
             ? kPolishThinkingTimeoutMs
-            : kPolishTimeoutMs);
-    const CURLcode result = curl_easy_perform(curl);
-    long http_status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    if (result != CURLE_OK || http_status < 200 || http_status >= 300)
+            : kPolishTimeoutMs;
+    const auto polish_outcome = AiWire::Send(polish_url, wire, polish_token, payload, polish_timeout_ms);
+    if (!polish_outcome.ok || polish_outcome.status < 200 || polish_outcome.status >= 300)
         return text;
     try
     {
-        return metasequoia::voice::parse_polished_text(response);
+        return metasequoia::voice::parse_polished_text(polish_outcome.body);
     }
     catch (const std::exception &error)
     {

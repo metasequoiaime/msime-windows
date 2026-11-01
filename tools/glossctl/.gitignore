@@ -1,0 +1,4 @@
+# 构建产物，不随源码提交
+glossctl.exe
+glossctl
+sqlite3.dll

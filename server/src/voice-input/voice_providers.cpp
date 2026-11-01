@@ -229,7 +229,9 @@ std::string ResolveAsrToken(const VoiceInputConfig &config)
 
 std::string ResolvePolishToken(const VoiceInputConfig &config)
 {
-    return LookupToken(config.polish_tokens, config.polish_provider);
+    const std::string slot_token = LookupToken(config.polish_tokens, config.polish_provider);
+    // 协议 id 不在旧的厂商标名里时，回退到单独保存的 polish_token。
+    return slot_token.empty() ? UsableToken(config.polish_token) : slot_token;
 }
 
 std::string DefaultAsrEndpoint(std::string_view provider)

@@ -4,7 +4,9 @@
 #include "quanpin_utils.h"
 #include <algorithm>
 #include <array>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace quanpin
 {
@@ -114,12 +116,41 @@ inline std::vector<Segments> fuzzy_segmentations(const Segments &segments, metas
 template <typename Group>
 std::vector<WordItem> merge_fuzzy_candidates(std::vector<WordItem> exact, std::vector<WordItem> fuzzy, Group group)
 {
-    std::unordered_set<std::string> seen;
-    for (const auto &item : exact)
-        seen.insert(item.word);
-    fuzzy.erase(std::remove_if(fuzzy.begin(), fuzzy.end(),
-                               [&](const WordItem &item) { return !seen.insert(item.word).second; }),
-                fuzzy.end());
+    // 同名词在 exact 与 fuzzy 各有一条时，不能先到先得：整句联想给出的 Fallback 往往权重只有 1，
+    // 而 fuzzy 池里可能是权重几十万的词库真身。按「来源优先 + 权重」择优保留，否则被删掉的
+    // 恰好是那条能参与调频的词库项（#1172：模糊音下「执行」「已经」永远调不上去）。
+    const auto rank_of = [](const WordItem &item) {
+        const bool database = item.source == CandidateSource::Database || item.source == CandidateSource::UserDatabase;
+        return std::pair<int, std::int64_t>{database ? 1 : 0, item.weight};
+    };
+
+    std::unordered_map<std::string, std::size_t> exact_index;
+    exact_index.reserve(exact.size());
+    for (std::size_t index = 0; index < exact.size(); ++index)
+        exact_index.emplace(exact[index].word, index);
+
+    std::vector<WordItem> remaining;
+    remaining.reserve(fuzzy.size());
+    // fuzzy 池自己也会有同名词：同一个词被多条模糊读法命中、又不在 exact 里时，
+    // 旧代码的全局 seen 顺带挡住了这层重复，换成择优保留后就没了，得单独再收一次。
+    std::unordered_set<std::string> remaining_words;
+    remaining_words.reserve(fuzzy.size());
+    for (auto &item : fuzzy)
+    {
+        const auto found = exact_index.find(item.word);
+        if (found == exact_index.end())
+        {
+            if (remaining_words.insert(item.word).second)
+                remaining.push_back(std::move(item));
+            continue;
+        }
+        // 同名词已在 exact 里：位置不动，内容择优。整句候选被词库真身顶掉时，
+        // canonical_pinyin 与来源也跟着回到词库项，调频才有东西可写。
+        WordItem &existing = exact[found->second];
+        if (rank_of(item) > rank_of(existing))
+            existing = std::move(item);
+    }
+    fuzzy = std::move(remaining);
     std::stable_sort(fuzzy.begin(), fuzzy.end(), [&](const WordItem &a, const WordItem &b) {
         const auto ga = group(a), gb = group(b);
         return ga != gb ? ga > gb : a.weight > b.weight;
