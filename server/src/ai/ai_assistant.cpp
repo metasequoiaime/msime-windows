@@ -33,6 +33,10 @@ AiAssistant::Request g_latest;
 std::chrono::steady_clock::time_point g_last_input;
 AiAssistant::ApplyCallback g_callback;
 AiAssistant::detail::SuggestionCache g_candidate_cache;
+#if defined(MSIME_AI_ASSISTANT_TEST)
+// Tests set this hook before Start and clear it after Stop.
+std::function<void(const std::string &)> g_after_fetch_hook;
+#endif
 
 std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev::Client &jev_client)
 {
@@ -133,6 +137,10 @@ void WorkerLoop()
         if (request.identity.empty())
             continue;
         const std::string candidate = Fetch(request, observed, jev_client);
+#if defined(MSIME_AI_ASSISTANT_TEST)
+        if (g_after_fetch_hook)
+            g_after_fetch_hook(candidate);
+#endif
         if (!candidate.empty() && g_running && g_generation.load() == observed && g_callback)
         {
             {
@@ -189,4 +197,13 @@ void Clear()
 {
     OnInputChanged({});
 }
+#if defined(MSIME_AI_ASSISTANT_TEST)
+namespace testing
+{
+void SetAfterFetchHook(std::function<void(const std::string &)> hook)
+{
+    g_after_fetch_hook = std::move(hook);
+}
+} // namespace testing
+#endif
 } // namespace AiAssistant

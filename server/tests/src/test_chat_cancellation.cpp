@@ -165,6 +165,14 @@ struct AssistantScope
         AiAssistant::Stop();
     }
 };
+
+struct AfterFetchHookScope
+{
+    ~AfterFetchHookScope()
+    {
+        AiAssistant::testing::SetAfterFetchHook({});
+    }
+};
 } // namespace
 
 TEST_CASE(chat_request_without_cancellation_receives_content)
@@ -252,6 +260,70 @@ TEST_CASE(ai_assistant_discards_stale_transfer_and_retries_same_request)
     REQUIRE(first_started);
     REQUIRE(second_started);
     REQUIRE(server.SecondRequestAt() - next_input_at >= 500ms);
+    REQUIRE(received);
+    REQUIRE(callbacks.size() == 1);
+    REQUIRE(callbacks.front() == "new");
+}
+
+TEST_CASE(ai_assistant_discards_completed_reply_after_generation_changes)
+{
+    LocalChatServer server(true);
+    std::mutex gate_mutex;
+    std::condition_variable gate_cv;
+    bool old_fetched = false;
+    bool resume_worker = false;
+    AiAssistant::testing::SetAfterFetchHook([&](const std::string &candidate) {
+        if (candidate != "old")
+            return;
+        std::unique_lock lock(gate_mutex);
+        old_fetched = true;
+        gate_cv.notify_all();
+        gate_cv.wait(lock, [&] { return resume_worker; });
+    });
+    AfterFetchHookScope hook;
+
+    std::mutex callback_mutex;
+    std::condition_variable callback_cv;
+    std::vector<std::string> callbacks;
+    AiAssistant::Start([&](const std::string &candidate, const std::string &, uint64_t) {
+        {
+            std::lock_guard lock(callback_mutex);
+            callbacks.push_back(candidate);
+        }
+        callback_cv.notify_all();
+    });
+    AssistantScope assistant;
+    AiAssistant::Request request;
+    request.identity = "same-cache-key";
+    request.pinyin_segments = {"ni"};
+    request.config.enabled = true;
+    request.config.provider = "custom";
+    request.config.token = "test-token";
+    request.config.endpoint = server.Endpoint();
+    request.config.model = "test-model";
+    request.config.prompt = "test";
+    AiAssistant::OnInputChanged(request);
+    const bool first_started = server.WaitForRequests(1);
+    server.ReleaseFirst();
+    bool old_completed;
+    {
+        std::unique_lock lock(gate_mutex);
+        old_completed = gate_cv.wait_for(lock, 5s, [&] { return old_fetched; });
+    }
+    // The old HTTP result is complete. Change the generation before cache insertion.
+    AiAssistant::OnInputChanged(request);
+    {
+        std::lock_guard lock(gate_mutex);
+        resume_worker = true;
+    }
+    gate_cv.notify_all();
+
+    const bool second_started = server.WaitForRequests(2);
+    std::unique_lock lock(callback_mutex);
+    const bool received = callback_cv.wait_for(lock, 5s, [&] { return !callbacks.empty(); });
+    REQUIRE(first_started);
+    REQUIRE(old_completed);
+    REQUIRE(second_started);
     REQUIRE(received);
     REQUIRE(callbacks.size() == 1);
     REQUIRE(callbacks.front() == "new");

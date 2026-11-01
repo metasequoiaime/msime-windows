@@ -260,6 +260,7 @@ target_include_directories(${TEST_EXECUTABLE_NAME}
 # guards lives in that executable's main() and cannot be linked into the test binary.
 target_compile_definitions(${TEST_EXECUTABLE_NAME}
     PRIVATE
+    MSIME_AI_ASSISTANT_TEST
     "MSIME_DEFAULT_CONFIG_PATH=\"${CMAKE_SOURCE_DIR}/../installer/default_config/config.default.toml\""
     "MSIME_CUSTOM_SHUANGPIN_EXAMPLE_PATH=\"${CMAKE_SOURCE_DIR}/../docs/custom-shuangpin.example.toml\""
     "MSIME_DICTIONARY_REPLAY_EXE=\"$<TARGET_FILE:${DICTIONARY_REPLAY_EXECUTABLE_NAME}>\""
