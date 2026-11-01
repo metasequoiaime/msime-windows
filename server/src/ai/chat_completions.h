@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -19,6 +20,7 @@ enum class Failure
     Network,      // 连接被拒、DNS、代理、TLS 等，响应体为空
     Status,       // 服务端返回了非 2xx
     Timeout,      // 超过整体超时或连接超时
+    Cancelled,    // 调用方取消了请求
     TooLarge,     // 响应超过 1 MiB，已中止读取
     InvalidJson,  // 响应不是合法 JSON
     NoContent,    // JSON 合法但没有 choices[0].message.content
@@ -35,7 +37,8 @@ struct Result
 
 // POST 一次请求并从 choices[0].message.content 取回复。失败时 Result::failure 说明原因，
 // detail 带上足够定位的信息。token 为空时不带 Authorization 头（Ollama 这类不鉴权的本机服务）。
-Result FetchContent(const std::string &endpoint, const std::string &token, const std::string &payload, long timeout_ms);
+Result FetchContent(const std::string &endpoint, const std::string &token, const std::string &payload, long timeout_ms,
+                    const std::function<bool()> &cancelled = {});
 
 // 把失败原因格式化成一句中文。detail 非空时附在后面。
 std::string DescribeFailure(Failure failure, const std::string &detail);
