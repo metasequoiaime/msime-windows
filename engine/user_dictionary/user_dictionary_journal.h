@@ -77,6 +77,37 @@ bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_d
 bool bump_pinyin_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
                         const std::string &value);
 
+// 用户在设置页加的字母词（T恤、A股，见 quanpin::LatinWords）。生效的那一行写在 msime.db 的 latin_words，
+// 和出厂字母词同表；另在日志里单独一张 user_latin_words 记下，换词库时由 replay 写回。不进
+// user_dictionary_operations：旧版本的 replay 见到不认识的 dictionary 种类会判整批失败、中止安装，
+// 单独一张表旧版本根本不读，装回旧版也不受影响。出厂字母词不能在这里改或删。
+struct UserLatinWord
+{
+    std::string key; // t'xu，见 quanpin::LatinEntry
+    std::string value;
+    std::int64_t weight = 0;
+    bool exact_only = false;
+};
+enum class LatinWordWrite
+{
+    Written,
+    Exists,  // latin_words 里已经有同样的键和词（出厂的或用户加过的）
+    Missing, // 要改、要删的词不是用户加的字母词
+    Failed,
+};
+// 逐条加进 latin_words 与日志，整批一个事务（词库是还没有这张表的旧版本时先建表）。结果与 words 一一对应；
+// 事务本身失败时全部是 Failed，什么也没写。调用方先用 quanpin::parse_latin_entry 规范好键。
+std::vector<LatinWordWrite> add_user_latin_words(const std::string &main_db_path, const std::string &user_db_path,
+                                                 const std::vector<UserLatinWord> &words);
+// 把用户加的 (old_key, old_value) 换成 word：两张表上删旧写新，一个事务。
+LatinWordWrite update_user_latin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                      const std::string &old_key, const std::string &old_value,
+                                      const UserLatinWord &word);
+LatinWordWrite delete_user_latin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                      const std::string &key, const std::string &value);
+// 日志里的全部用户字母词，按键排序。日志不存在或还没有这张表时为空。
+std::vector<UserLatinWord> user_latin_words(const std::string &user_db_path);
+
 // 快捷短语混排的调频状态。快捷短语与拼音候选的权重不在同一个量纲上，不能互相比较，所以
 // 按编码记一个槽位：同码快捷短语组前面排几个普通候选（见
 // metasequoia::local_modes::counts_toward_quick_phrase_slot）。没有记录即 0，组在首位。

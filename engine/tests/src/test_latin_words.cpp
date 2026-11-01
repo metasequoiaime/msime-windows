@@ -2,7 +2,9 @@
 #include "../../core/input_session.h"
 #include "../../core/data_path.h"
 #include "../../contracts/assets/assets.h"
+#include "../../quanpin/latin_words.h"
 #include "../../shuangpin/shuangpin_profile.h"
+#include "../../user_dictionary/user_dictionary_journal.h"
 #include "test_directory_cleanup.h"
 
 #include <sqlite3.h>
@@ -104,6 +106,12 @@ std::size_t find_index(const metasequoia::InputSession &session, const std::stri
     return candidates.size();
 }
 
+// 候选非空且第一个就是 word。只比 find_index(...) == 0 不够：候选为空时 find_index 也返回 0。
+bool first_is(const metasequoia::InputSession &session, const std::string &word)
+{
+    return !session.candidates().empty() && session.candidates()[0].word == word;
+}
+
 bool has_latin_word(const metasequoia::InputSession &session)
 {
     for (const auto &item : session.candidates())
@@ -182,7 +190,7 @@ void test_quanpin_candidates(const metasequoia::RuntimePaths &paths)
         // tx 是常用简拼；只有两个字母时不补全，单个字母什么都不配。
         metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
         type(session, "tx");
-        require(!has_latin_word(session) && find_index(session, "同学") == 0,
+        require(!has_latin_word(session) && first_is(session, "同学"),
                 "Two letters that are only a prefix of a latin word must not bring it in.");
     }
     {
@@ -199,7 +207,7 @@ void test_quanpin_candidates(const metasequoia::RuntimePaths &paths)
         // u 开头切不成拼音，照样按字母串认；U 模式要按 Shift+U 才进。
         metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
         type(session, "upan");
-        require(find_index(session, "U盘") == 0, "A latin word starting with u must be offered on its own.");
+        require(first_is(session, "U盘"), "A latin word starting with u must be offered on its own.");
     }
 }
 
@@ -314,6 +322,181 @@ void test_old_dictionary(const metasequoia::RuntimePaths &paths)
     require(!has_latin_word(session) && find_index(session, "买一件T恤") == session.candidates().size(),
             "A dictionary without latin_words must behave as before.");
 }
+
+// 设置页导入、新增字母词时读音的各种写法（#1340 后续：用户字母词）。
+void test_parse_entries()
+{
+    const auto expect = [](const char *word, const char *reading, const char *key) {
+        std::string error;
+        const auto entry = quanpin::parse_latin_entry(word, reading, error);
+        if (!entry || entry->key != key || entry->value != word)
+            throw std::runtime_error(std::string("Latin entry ") + word + " / " + reading + " should read as " + key +
+                                     ": " + (entry ? entry->key : error));
+    };
+    expect("T恤", "t'xu", "t'xu");
+    expect("T恤", "T xu", "t'xu");
+    expect("T恤", "txu", "t'xu");
+    expect("T恤", "T xu4", "t'xu");
+    expect("卡拉OK", "kǎ'lā'OK", "ka'la'o'k");
+    expect("卡拉OK", "ka la o k", "ka'la'o'k");
+    expect("卡拉OK", "kalaok", "ka'la'o'k");
+    expect("PPT模板", "PPT mo ban", "p'p't'mo'ban");
+    expect("A方案", "a fang'an", "a'fang'an");
+    expect("X光", "x guāng", "x'guang");
+    expect("绿V", "lǜ V", "lv'v");
+
+    const auto reject = [](const char *word, const char *reading, const char *why) {
+        std::string error;
+        if (quanpin::parse_latin_entry(word, reading, error) || error.empty())
+            throw std::runtime_error(std::string("Latin entry ") + word + " / " + reading +
+                                     " must be rejected: " + why);
+    };
+    reject("T恤", "te'xu", "the letter T does not match te");
+    reject("T恤", "t'x'u", "a separator splits the syllable xu");
+    reject("T恤", "", "no reading");
+    reject("T恤3", "txu", "digits are not part of latin words");
+    reject("TX", "tx", "no Han character");
+    reject("恤", "xu", "no letter");
+    reject("T 恤", "txu", "spaces are not part of latin words");
+    reject("A方案", "afangan", "fang'an and fan'gan both fit");
+
+    std::string error;
+    const auto plate = quanpin::parse_latin_entry("鄂A", "e A", error);
+    require(plate && plate->key == "e'a" && plate->exact_only, "A license plate must be marked exact-only.");
+    const auto annotated = quanpin::make_latin_entry("T恤衫", {"xu", "shan"}, error);
+    require(annotated && annotated->key == "t'xu'shan" && !annotated->exact_only,
+            "Annotated syllables must fill the Han characters in order.");
+    require(!quanpin::make_latin_entry("T恤衫", {"xu"}, error), "A short annotation must be rejected.");
+    require(quanpin::latin_word_han_runs("A股B股衫") == std::vector<std::string>{"股", "股衫"},
+            "Han runs must be split at letters.");
+}
+
+std::string utf8_path(const std::filesystem::path &path)
+{
+    return metasequoia::path_to_utf8(path);
+}
+
+std::vector<user_dictionary::UserLatinWord> words_from(const std::vector<std::pair<const char *, const char *>> &rows)
+{
+    std::vector<user_dictionary::UserLatinWord> words;
+    for (const auto &[word, reading] : rows)
+    {
+        std::string error;
+        const auto entry = quanpin::parse_latin_entry(word, reading, error);
+        if (!entry)
+            throw std::runtime_error("Fixture latin word did not parse: " + error);
+        words.push_back({entry->key, entry->value, 100, entry->exact_only});
+    }
+    return words;
+}
+
+void retype(metasequoia::InputSession &session, const std::string &text)
+{
+    session.handle_command(metasequoia::Command::Cancel);
+    type(session, text);
+}
+
+// 用户加的字母词：已开着的会话里下一次按键就能打出来（全拼、双拼），出厂词不能改删，改名、删除生效。
+void test_user_words(const std::filesystem::path &directory)
+{
+    const auto paths = paths_for(directory);
+    const auto main = utf8_path(directory / "msime.db");
+    const auto journal = utf8_path(paths.user(metasequoia::assets::user_journal));
+    const auto &xiaohe = GetXiaoheShuangpinProfile();
+    metasequoia::InputSession quanpin_session(SchemeType::Quanpin, 0u, true, true, true, paths);
+    metasequoia::InputSession shuangpin_session(SchemeType::Shuangpin, xiaohe, paths);
+    with_lattice(quanpin_session);
+    type(quanpin_session, "xguang");
+    type(shuangpin_session, "xgl");
+    require(find_index(quanpin_session, "X光") == quanpin_session.candidates().size() &&
+                find_index(shuangpin_session, "X光") == shuangpin_session.candidates().size(),
+            "X光 must not exist before it is added.");
+    // 先让词格把 a'gu 这个跨度（还没有 A股）记进跨度缓存，加词后换一串没打过的输入再用到它。
+    retype(quanpin_session, "maiagu");
+
+    const auto added = user_dictionary::add_user_latin_words(
+        main, journal, words_from({{"X光", "X guang"}, {"T恤", "t'xu"}, {"A股", "A gu"}}));
+    require(added == std::vector<user_dictionary::LatinWordWrite>{user_dictionary::LatinWordWrite::Written,
+                                                                  user_dictionary::LatinWordWrite::Exists,
+                                                                  user_dictionary::LatinWordWrite::Written},
+            "A new latin word must be written and a shipped one reported as existing.");
+    retype(quanpin_session, "zuoagu");
+    require(find_index(quanpin_session, "做A股") < quanpin_session.candidates().size(),
+            "A sentence through a span cached before the word was added must see the new word.");
+
+    retype(quanpin_session, "xguang");
+    retype(shuangpin_session, "xgl");
+    require(first_is(quanpin_session, "X光") && quanpin_session.candidates()[0].latin_word,
+            "A latin word added while the quanpin session is open must show on the next key.");
+    require(first_is(shuangpin_session, "X光"),
+            "A latin word added while the shuangpin session is open must show on the next key.");
+    retype(quanpin_session, "txu");
+    require(first_is(quanpin_session, "T恤"), "Shipped latin words must stay after a reload.");
+    retype(quanpin_session, "maiyijianxguang");
+    require(!quanpin_session.candidates().empty() && quanpin_session.candidates()[0].word == "买一件X光",
+            "A user latin word must also join sentences.");
+
+    using user_dictionary::LatinWordWrite;
+    require(user_dictionary::delete_user_latin_word(main, journal, "t'xu", "T恤") == LatinWordWrite::Missing,
+            "Shipped latin words must not be deletable.");
+    require(user_dictionary::update_user_latin_word(main, journal, "x'guang", "X光", {"t'xu", "T恤", 1, false}) ==
+                LatinWordWrite::Exists,
+            "Renaming onto an existing latin word must be refused.");
+    const auto renamed = words_from({{"X线", "X xian"}}).front();
+    require(user_dictionary::update_user_latin_word(main, journal, "x'guang", "X光", renamed) ==
+                LatinWordWrite::Written,
+            "A user latin word must be renamable.");
+    const auto stored = user_dictionary::user_latin_words(journal);
+    require(stored.size() == 2 && stored[0].value == "A股" && stored[1].value == "X线" && stored[1].key == "x'xian",
+            "The journal must follow the rename.");
+    retype(quanpin_session, "xguang");
+    require(find_index(quanpin_session, "X光") == quanpin_session.candidates().size(),
+            "The old name must be gone after a rename.");
+    retype(quanpin_session, "xxian");
+    require(first_is(quanpin_session, "X线"), "The new name must show after a rename.");
+
+    require(user_dictionary::add_user_latin_words(main, journal, words_from({{"鄂A", "e A"}})).front() ==
+                LatinWordWrite::Written,
+            "A user license plate must be accepted.");
+    retype(quanpin_session, "ea");
+    require(find_index(quanpin_session, "鄂A") < quanpin_session.candidates().size(),
+            "A user license plate must show on an exact match.");
+    require(user_dictionary::delete_user_latin_word(main, journal, "e'a", "鄂A") == LatinWordWrite::Written,
+            "A user latin word must be deletable.");
+    retype(quanpin_session, "ea");
+    require(find_index(quanpin_session, "鄂A") == quanpin_session.candidates().size(),
+            "A deleted user latin word must disappear on the next key.");
+}
+
+// 换词库（安装、升级）后回放：用户字母词写回新词库，词库是还没有 latin_words 的旧版本时补建表，
+// 早期没有 exact_only 列的表补上列。
+void test_replay(const std::filesystem::path &root, const std::filesystem::path &journal_directory)
+{
+    const auto journal = utf8_path(paths_for(journal_directory).user(metasequoia::assets::user_journal));
+    for (const char *name : {"replay-without-table", "replay-with-table", "replay-old-columns"})
+    {
+        const auto directory = root / name;
+        prepare_dictionary(directory, std::string(name) == "replay-with-table");
+        if (std::string(name) == "replay-old-columns")
+            execute(directory / "msime.db", "CREATE TABLE latin_words(key TEXT, value TEXT, weight INTEGER);"
+                                            "INSERT INTO latin_words VALUES('t''xu','T恤',10);");
+        const auto result =
+            user_dictionary::replay(journal, utf8_path(directory / "msime.db"), utf8_path(directory / "english.db"));
+        if (!result.error.empty() || result.failed != 0)
+            throw std::runtime_error(std::string("Replaying user latin words failed on ") + name + ": " + result.error);
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths_for(directory));
+        type(session, "xxian");
+        if (!first_is(session, "X线"))
+            throw std::runtime_error(std::string("A replayed user latin word must show on ") + name);
+        if (std::string(name) != "replay-without-table")
+        {
+            session.handle_command(metasequoia::Command::Cancel);
+            type(session, "txu");
+            if (!first_is(session, "T恤"))
+                throw std::runtime_error(std::string("Replay must keep the shipped latin words on ") + name);
+        }
+    }
+}
 } // namespace
 
 int main()
@@ -334,6 +517,11 @@ int main()
         test_exact_only(paths);
         test_no_learning(current, paths);
         test_old_dictionary(paths_for(old));
+        test_parse_entries();
+        const auto user = root / "user";
+        prepare_dictionary(user, true);
+        test_user_words(user);
+        test_replay(root, user);
     }
     catch (const std::exception &error)
     {
