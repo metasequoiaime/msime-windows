@@ -5,6 +5,7 @@ export type ClientMessage =
   | { "type": "configRequest"; "protocolVersion"?: 1 }
   | { "type": "skinCatalogRequest"; "protocolVersion"?: 1 }
   | { "type": "openSkinDirectory"; "protocolVersion"?: 1 }
+  | { "type": "openLogDirectory"; "protocolVersion"?: 1 }
   | { "type": "openHelpcodeDirectory"; "protocolVersion"?: 1 }
   | { "type": "openShuangpinDirectory"; "protocolVersion"?: 1 }
   | { "type": "collocationModelDownload"; "protocolVersion"?: 1; "data": { "modelId": string } }
@@ -87,6 +88,7 @@ export type SettingsMessage =
   | { "type": "configRequest"; "protocolVersion"?: 1 }
   | { "type": "skinCatalogRequest"; "protocolVersion"?: 1 }
   | { "type": "openSkinDirectory"; "protocolVersion"?: 1 }
+  | { "type": "openLogDirectory"; "protocolVersion"?: 1 }
   | { "type": "openHelpcodeDirectory"; "protocolVersion"?: 1 }
   | { "type": "openShuangpinDirectory"; "protocolVersion"?: 1 }
   | { "type": "collocationModelDownload"; "protocolVersion"?: 1; "data": { "modelId": string } }
