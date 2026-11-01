@@ -27,7 +27,7 @@ struct Entry
 struct Limits
 {
     std::uint64_t max_entry_size = 4ull * 1024 * 1024 * 1024 - 1;
-    std::uint64_t max_total_size = 8ull * 1024 * 1024 * 1024;
+    std::uint64_t max_total_size = 4ull * 1024 * 1024 * 1024 - 1;
     std::size_t max_entries = 20000;
 };
 
@@ -43,7 +43,6 @@ class Writer
                  Entry *added = nullptr);
     bool AddBytes(const std::string &archive_path, std::string_view bytes, std::string &error, Entry *added = nullptr);
     bool Finish(std::string &error);
-    void Abort();
 
   private:
     struct PendingEntry
@@ -56,6 +55,7 @@ class Writer
 
     bool AddStream(const std::string &archive_path, std::istream &input, std::uint64_t expected_size,
                    std::string &error, Entry *added);
+    void Abort();
     bool WriteLocalHeader(const std::string &archive_path, std::uint32_t &offset, std::string &error);
     bool PatchLocalHeader(std::uint32_t offset, std::uint32_t crc, std::uint64_t size, std::string &error);
     bool WriteCentralDirectory(std::string &error);

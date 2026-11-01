@@ -1630,26 +1630,30 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                 try
                 {
                     g_worker->Submit([action, path, include_models, post_done]() -> SerialTaskQueue::Completion {
-                        const SettingsUserDataBackup::Hooks hooks = SettingsUserDataBackup::ProductionHooks();
-                        const std::filesystem::path target = std::filesystem::u8path(path);
                         std::string message;
                         bool ok = false;
                         try
                         {
+                            const SettingsUserDataBackup::Hooks hooks = SettingsUserDataBackup::ProductionHooks();
+                            // Path conversion, the backup itself and the config reload all
+                            // stay under this handler: an exception past it would escape the
+                            // worker and leave the global busy flag set forever.
+                            const std::filesystem::path target = std::filesystem::u8path(path);
                             if (action == "export")
                                 ok = SettingsUserDataBackup::Export(target, include_models, hooks, message);
                             else
                                 ok = SettingsUserDataBackup::Import(target, hooks, message);
+                            // An import may have replaced config.toml even when a later step
+                            // failed. Reloading on the worker keeps the settings process in
+                            // step with the disk.
+                            if (action == "import")
+                                InitImeConfig();
                         }
-                        catch (const std::exception &)
+                        catch (...)
                         {
                             ok = false;
                             message = "用户数据备份失败，请重试。";
                         }
-                        // An import may have replaced config.toml even when a later step failed.
-                        // Reloading on the worker keeps the settings process in step with the disk.
-                        if (action == "import")
-                            InitImeConfig();
                         return [action, ok, message = std::move(message), refresh = action == "import", post_done] {
                             g_user_data_backup_busy.store(false);
                             post_done(action, ok, message);

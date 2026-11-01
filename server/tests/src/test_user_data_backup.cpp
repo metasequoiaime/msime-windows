@@ -5,10 +5,11 @@
 #include "tests/includes/test_utf8_path.h"
 
 #include <boost/json.hpp>
-#include <boost/system/error_code.hpp>
 #include <sqlite3.h>
 #include <windows.h>
+#include <zlib.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -70,7 +71,6 @@ struct HookState
 {
     int stop_calls = 0;
     int start_calls = 0;
-    int export_calls = 0;
     std::vector<std::string> imported_dictionaries;
     std::string last_dictionary_content;
     std::string export_content = "ni'hao\t你好\t10\n";
@@ -97,7 +97,6 @@ SettingsUserDataBackup::Hooks MakeHooks(const std::shared_ptr<HookState> &state)
         return state->start_ok;
     };
     hooks.export_dictionary = [state](const std::string &dictionary, std::string &content, std::string &message) {
-        ++state->export_calls;
         // SettingsDictionary reports an untouched dictionary as a failure whose message
         // starts with 当前没有可导出; that is the only case Export may treat as empty.
         if (dictionary != "quanpin")
@@ -132,6 +131,21 @@ void PrepareSource(const SettingsUserDataBackup::Context &context)
     // the archive's own whitelist only accepts skins/<name>/<file...>.
     WriteFile(context.data_dir / "skins" / "README.md", "stray notes\n");
     WriteFile(context.data_dir / "models" / "neural-desktop" / "sentence-model-desktop.safetensors", "model-bytes");
+    // Payload, pending update and remote identity are real model state and must stay.
+    WriteFile(context.data_dir / "models" / "neural-desktop" / "sentence-model-desktop.gram", "gram-bytes");
+    WriteFile(context.data_dir / "models" / "neural-desktop" / "sentence-model-desktop.gram.new", "pending-bytes");
+    WriteFile(context.data_dir / "models" / "neural-desktop" / ".remote", "etag=\"0x1\"\n");
+    WriteFile(context.data_dir / "models" / "neural-desktop" / ".remote.new", "etag=\"0x2\"\n");
+    // Download scratch, atomic-write scratch and the logical-deletion marker are
+    // model-internal state; a backup must not restore them.
+    WriteFile(context.data_dir / "models" / "neural-desktop" / "sentence-model-desktop.safetensors.part",
+              "partial-bytes");
+    WriteFile(context.data_dir / "models" / "neural-desktop" / "sentence-model-desktop.safetensors.tmp",
+              "scratch-bytes");
+    WriteFile(context.data_dir / "models" / "neural-desktop" / ".remote.tmp", "identity-scratch");
+    WriteFile(context.data_dir / "models" / "neural-desktop" / ".trash", "");
+    // The transient filter is model-only: same-named files under a skin stay.
+    WriteFile(context.data_dir / "skins" / "custom" / "theme" / "preview.tmp", "skin-scratch\n");
 }
 
 std::string SerializeManifest(const std::vector<user_data_zip::Entry> &entries)
@@ -263,6 +277,127 @@ user_data_zip::Entry AddEntry(user_data_zip::Writer &writer, const std::string &
     REQUIRE(writer.AddBytes(path, content, message, &entry));
     return entry;
 }
+
+// Builds the manifest entry for content that goes into a hand-written ZIP.
+user_data_zip::Entry MakeManifestEntry(const std::string &path, const std::string &content)
+{
+    user_data_zip::Entry entry;
+    entry.path = path;
+    entry.size = content.size();
+    entry.crc = static_cast<std::uint32_t>(
+        crc32(0L, reinterpret_cast<const Bytef *>(content.data()), static_cast<uInt>(content.size())));
+    return entry;
+}
+
+void PutLittleEndian16(std::vector<std::uint8_t> &out, const std::uint16_t value)
+{
+    out.push_back(static_cast<std::uint8_t>(value & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFF));
+}
+
+void PutLittleEndian32(std::vector<std::uint8_t> &out, const std::uint32_t value)
+{
+    out.push_back(static_cast<std::uint8_t>(value & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((value >> 16) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((value >> 24) & 0xFF));
+}
+
+std::string DeflateRaw(const std::string &content)
+{
+    uLongf capacity = compressBound(static_cast<uLong>(content.size()));
+    std::string buffer(capacity, '\0');
+    REQUIRE(compress2(reinterpret_cast<Bytef *>(buffer.data()), &capacity,
+                      reinterpret_cast<const Bytef *>(content.data()), static_cast<uLong>(content.size()),
+                      Z_BEST_COMPRESSION) == Z_OK);
+    buffer.resize(capacity);
+    // compress2 emits a zlib stream; ZIP method 8 stores raw DEFLATE, so drop the
+    // 2-byte zlib header and the trailing Adler-32. compress2 never presets a
+    // dictionary, which keeps the header at exactly two bytes.
+    REQUIRE(buffer.size() > 6);
+    REQUIRE((static_cast<unsigned char>(buffer[1]) & 0x20) == 0);
+    return buffer.substr(2, buffer.size() - 6);
+}
+
+// Writes a two-entry archive with method 8 entries so the reader's deflate path
+// runs against bytes this repository did not produce.
+void WriteDeflatedArchive(const fs::path &archive, const std::vector<user_data_zip::Entry> &entries,
+                          const std::vector<std::string> &contents)
+{
+    struct CentralRecord
+    {
+        std::string path;
+        std::uint32_t crc = 0;
+        std::uint32_t compressed_size = 0;
+        std::uint32_t size = 0;
+        std::uint32_t offset = 0;
+    };
+    std::vector<std::uint8_t> bytes;
+    std::vector<CentralRecord> central;
+    for (std::size_t index = 0; index < entries.size(); ++index)
+    {
+        const std::string deflated = DeflateRaw(contents[index]);
+        CentralRecord record;
+        record.path = entries[index].path;
+        record.crc = entries[index].crc;
+        record.compressed_size = static_cast<std::uint32_t>(deflated.size());
+        record.size = static_cast<std::uint32_t>(contents[index].size());
+        record.offset = static_cast<std::uint32_t>(bytes.size());
+
+        PutLittleEndian32(bytes, 0x04034b50);
+        PutLittleEndian16(bytes, 20);     // version needed
+        PutLittleEndian16(bytes, 0x0800); // UTF-8 names
+        PutLittleEndian16(bytes, 8);      // deflate
+        PutLittleEndian16(bytes, 0);      // time
+        PutLittleEndian16(bytes, 0);      // date
+        PutLittleEndian32(bytes, record.crc);
+        PutLittleEndian32(bytes, record.compressed_size);
+        PutLittleEndian32(bytes, record.size);
+        PutLittleEndian16(bytes, static_cast<std::uint16_t>(record.path.size()));
+        PutLittleEndian16(bytes, 0); // extra
+        bytes.insert(bytes.end(), record.path.begin(), record.path.end());
+        bytes.insert(bytes.end(), deflated.begin(), deflated.end());
+        central.push_back(std::move(record));
+    }
+
+    const std::uint32_t central_offset = static_cast<std::uint32_t>(bytes.size());
+    for (const CentralRecord &record : central)
+    {
+        PutLittleEndian32(bytes, 0x02014b50);
+        PutLittleEndian16(bytes, 20);     // version made by
+        PutLittleEndian16(bytes, 20);     // version needed
+        PutLittleEndian16(bytes, 0x0800); // UTF-8 names
+        PutLittleEndian16(bytes, 8);      // deflate
+        PutLittleEndian16(bytes, 0);      // time
+        PutLittleEndian16(bytes, 0);      // date
+        PutLittleEndian32(bytes, record.crc);
+        PutLittleEndian32(bytes, record.compressed_size);
+        PutLittleEndian32(bytes, record.size);
+        PutLittleEndian16(bytes, static_cast<std::uint16_t>(record.path.size()));
+        PutLittleEndian16(bytes, 0); // extra
+        PutLittleEndian16(bytes, 0); // comment
+        PutLittleEndian16(bytes, 0); // disk
+        PutLittleEndian16(bytes, 0); // internal attributes
+        PutLittleEndian32(bytes, 0); // external attributes
+        PutLittleEndian32(bytes, record.offset);
+        bytes.insert(bytes.end(), record.path.begin(), record.path.end());
+    }
+    const std::uint32_t central_size = static_cast<std::uint32_t>(bytes.size()) - central_offset;
+
+    PutLittleEndian32(bytes, 0x06054b50);
+    PutLittleEndian16(bytes, 0); // disk
+    PutLittleEndian16(bytes, 0); // central directory disk
+    PutLittleEndian16(bytes, static_cast<std::uint16_t>(central.size()));
+    PutLittleEndian16(bytes, static_cast<std::uint16_t>(central.size()));
+    PutLittleEndian32(bytes, central_size);
+    PutLittleEndian32(bytes, central_offset);
+    PutLittleEndian16(bytes, 0); // comment
+
+    std::ofstream file(archive, std::ios::binary | std::ios::trunc);
+    REQUIRE(static_cast<bool>(file));
+    file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    REQUIRE(static_cast<bool>(file));
+}
 } // namespace
 
 TEST_CASE(user_data_backup_export_never_stops_server_and_reopens)
@@ -305,15 +440,84 @@ TEST_CASE(user_data_backup_export_respects_include_models)
     REQUIRE(without_reader.Open(message));
     for (const user_data_zip::Entry &entry : without_reader.Entries())
         REQUIRE(entry.path.rfind("models/", 0) != 0);
+    // The model-only transient filter must not bleed into skins.
+    REQUIRE(without_reader.Find("skins/custom/theme/preview.tmp") != nullptr);
 
     const auto with = workspace.root / "with.zip";
     RequireOk(SettingsUserDataBackup::Export(context, with, true, MakeHooks(state), message), message);
     user_data_zip::Reader with_reader(with);
     REQUIRE(with_reader.Open(message));
-    bool found_model = false;
-    for (const user_data_zip::Entry &entry : with_reader.Entries())
-        found_model = found_model || entry.path == "models/neural-desktop/sentence-model-desktop.safetensors";
-    REQUIRE(found_model);
+    REQUIRE(with_reader.Find("models/neural-desktop/sentence-model-desktop.safetensors") != nullptr);
+    REQUIRE(with_reader.Find("models/neural-desktop/sentence-model-desktop.gram") != nullptr);
+    REQUIRE(with_reader.Find("models/neural-desktop/sentence-model-desktop.gram.new") != nullptr);
+    REQUIRE(with_reader.Find("models/neural-desktop/.remote") != nullptr);
+    REQUIRE(with_reader.Find("models/neural-desktop/.remote.new") != nullptr);
+    REQUIRE(with_reader.Find("models/neural-desktop/sentence-model-desktop.safetensors.part") == nullptr);
+    REQUIRE(with_reader.Find("models/neural-desktop/sentence-model-desktop.safetensors.tmp") == nullptr);
+    REQUIRE(with_reader.Find("models/neural-desktop/.remote.tmp") == nullptr);
+    REQUIRE(with_reader.Find("models/neural-desktop/.trash") == nullptr);
+}
+
+TEST_CASE(user_data_backup_export_does_not_include_previous_destination)
+{
+    Workspace workspace("self-inclusion");
+    const SettingsUserDataBackup::Context context = MakeContext(workspace.root);
+    PrepareSource(context);
+    auto state = std::make_shared<HookState>();
+    std::string message;
+    // A destination directly under models/ is already dropped by the depth-0 rule;
+    // nest it inside a model/skin directory so only the skip list can keep it out.
+    const std::vector<fs::path> destinations{context.data_dir / "models" / "neural-desktop" / "backup.zip",
+                                             context.data_dir / "skins" / "custom" / "backup.zip"};
+    for (const fs::path &destination : destinations)
+    {
+        const std::string archive_path = destination.lexically_relative(context.data_dir).generic_u8string();
+        RequireOk(SettingsUserDataBackup::Export(context, destination, true, MakeHooks(state), message), message);
+        REQUIRE(fs::is_regular_file(destination));
+        // The second export must treat the first archive as the destination it is
+        // about to replace, not as payload that belongs in the new archive.
+        RequireOk(SettingsUserDataBackup::Export(context, destination, true, MakeHooks(state), message), message);
+
+        user_data_zip::Reader reader(destination);
+        REQUIRE(reader.Open(message));
+        REQUIRE(reader.Find(archive_path) == nullptr);
+        REQUIRE(reader.Find("models/neural-desktop/sentence-model-desktop.safetensors") != nullptr);
+        REQUIRE(reader.Find("manifest.json") != nullptr);
+    }
+}
+
+TEST_CASE(user_data_backup_reads_deflated_archive)
+{
+    Workspace workspace("deflate");
+    const auto archive = workspace.root / "deflated.zip";
+    const std::string skin = "name = \"custom\"\n[theme]\naccent = \"#336699\"\n";
+    const user_data_zip::Entry skin_entry = MakeManifestEntry("skins/custom/skin.toml", skin);
+    const std::string manifest = SerializeManifest({skin_entry});
+    WriteDeflatedArchive(archive, {MakeManifestEntry("manifest.json", manifest), skin_entry}, {manifest, skin});
+
+    std::string message;
+    REQUIRE(SettingsUserDataBackup::Validate(archive, message));
+
+    {
+        user_data_zip::Reader reader(archive);
+        REQUIRE(reader.Open(message));
+        const user_data_zip::Entry *manifest_entry = reader.Find("manifest.json");
+        REQUIRE(manifest_entry != nullptr);
+        std::string extracted_manifest;
+        REQUIRE(reader.ExtractToMemory(*manifest_entry, extracted_manifest, 1024 * 1024, message));
+        REQUIRE_EQ(extracted_manifest, manifest);
+        const user_data_zip::Entry *entry = reader.Find("skins/custom/skin.toml");
+        REQUIRE(entry != nullptr);
+        REQUIRE_EQ(entry->method, std::uint16_t{8});
+        const fs::path extracted = workspace.root / "extracted.toml";
+        REQUIRE(reader.ExtractTo(*entry, extracted, message));
+        REQUIRE_EQ(ReadFile(extracted), skin);
+    }
+
+    // Corrupting the deflated bytes must fail Validate: the CRC check on method 8 is
+    // real, not a by-product of the fixture having been emitted as stored data.
+    FlipFirstDataByte(archive, "skins/custom/skin.toml");
+    REQUIRE(!SettingsUserDataBackup::Validate(archive, message));
 }
 
 TEST_CASE(user_data_backup_import_applies_files_backs_up_and_restarts)
@@ -434,7 +638,15 @@ TEST_CASE(user_data_backup_rejects_crc_mismatch_before_stop)
     REQUIRE(!SettingsUserDataBackup::Import(destination, archive, MakeHooks(state), message));
     REQUIRE_EQ(state->stop_calls, 0);
     REQUIRE_EQ(state->start_calls, 0);
+    // The content pass is now the staging extraction; it must still reject the bad
+    // bytes before the stop hook runs.
+    REQUIRE(message.find("CRC") != std::string::npos);
     REQUIRE_EQ(ReadFile(destination.data_dir / "config.toml"), std::string("# keep\n"));
+    REQUIRE(!fs::exists(destination.data_dir / ".backup-before-import"));
+    bool staging_left = false;
+    for (const fs::directory_entry &entry : fs::directory_iterator(destination.data_dir))
+        staging_left = staging_left || entry.path().filename().u8string().rfind(".user-data-import-", 0) == 0;
+    REQUIRE(!staging_left);
 }
 
 TEST_CASE(user_data_backup_dictionary_failure_keeps_backup_and_restarts)
@@ -497,6 +709,25 @@ TEST_CASE(user_data_backup_start_failure_is_reported)
     REQUIRE_EQ(state->stop_calls, 1);
     REQUIRE_EQ(state->start_calls, 1);
     REQUIRE(message.find("手动启动") != std::string::npos);
+}
+
+TEST_CASE(user_data_backup_import_requires_start_hook_when_stopping)
+{
+    Workspace workspace("missing-start-hook");
+    const SettingsUserDataBackup::Context source_context = MakeContext(workspace.root / "source");
+    PrepareSource(source_context);
+    const auto archive = workspace.root / "backup.zip";
+    std::string message;
+    auto source_state = std::make_shared<HookState>();
+    REQUIRE(SettingsUserDataBackup::Export(source_context, archive, false, MakeHooks(source_state), message));
+
+    const SettingsUserDataBackup::Context destination = MakeContext(workspace.root / "destination");
+    auto state = std::make_shared<HookState>();
+    SettingsUserDataBackup::Hooks hooks = MakeHooks(state);
+    hooks.start_server = nullptr;
+    REQUIRE(!SettingsUserDataBackup::Import(destination, archive, hooks, message));
+    REQUIRE_EQ(state->stop_calls, 1);
+    REQUIRE(message.find("无法重新启动输入法") != std::string::npos);
 }
 
 TEST_CASE(user_data_backup_export_fails_when_dictionary_export_fails)

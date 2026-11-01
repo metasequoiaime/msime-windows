@@ -21,9 +21,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
-#include <sstream>
 #include <system_error>
-#include <thread>
 #include <vector>
 
 namespace SettingsUserDataBackup
@@ -34,10 +32,16 @@ constexpr char kFormat[] = "metasequoia-user-data";
 constexpr int kFormatVersion = 1;
 constexpr char kManifestPath[] = "manifest.json";
 constexpr std::uint64_t kMaxEntrySize = 4ull * 1024 * 1024 * 1024 - 1;
-constexpr std::uint64_t kMaxTotalSize = 8ull * 1024 * 1024 * 1024;
+// Matches the writer, which patches 32-bit local and central directory fields and
+// therefore cannot produce an archive larger than this.
+constexpr std::uint64_t kMaxTotalSize = 4ull * 1024 * 1024 * 1024 - 1;
 constexpr std::size_t kMaxEntries = 20000;
 constexpr std::uint64_t kMaxManifestBytes = 16 * 1024 * 1024;
 constexpr DWORD kProcessExitTimeoutMs = 15000;
+// A Watchdog that is already running but has no Server yet is mid-start; five
+// seconds covers that window without inheriting the full exit-wait timeout and
+// guaranteeing a failure.
+constexpr DWORD kServerStartTimeoutMs = 5000;
 constexpr std::uint64_t kMaxDictionaryBytes = 512ull * 1024 * 1024;
 const char *const kDictionaries[] = {"quanpin", "wubi", "english", "quick"};
 
@@ -275,6 +279,22 @@ bool WaitForProcessesToExit(const std::vector<DWORD> &process_ids, DWORD timeout
     return true;
 }
 
+bool WaitForServerToStart(const std::filesystem::path &image, DWORD timeout_ms, std::string &message)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    for (;;)
+    {
+        if (!FindProcesses(image).empty())
+            return true;
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            message = "等待输入法后台启动超时。请稍后重试。";
+            return false;
+        }
+        Sleep(100);
+    }
+}
+
 bool StopServer(std::string &message)
 {
     const std::filesystem::path directory = CurrentExecutableDirectory();
@@ -285,10 +305,23 @@ bool StopServer(std::string &message)
     }
     const std::filesystem::path server_image = directory / L"MetasequoiaImeServer.exe";
     const std::filesystem::path watchdog_image = directory / L"MetasequoiaImeWatchdog.exe";
-    const std::vector<DWORD> server_processes = FindProcesses(server_image);
+    std::vector<DWORD> server_processes = FindProcesses(server_image);
     const std::vector<DWORD> watchdog_processes = FindProcesses(watchdog_image);
     if (server_processes.empty() && watchdog_processes.empty())
         return true;
+
+    if (server_processes.empty())
+    {
+        // The Watchdog is starting the Server right now; stopping the Watchdog alone
+        // would leave that Server orphaned, and the later exit wait would time out.
+        std::string wait_message;
+        if (!WaitForServerToStart(server_image, kServerStartTimeoutMs, wait_message))
+        {
+            message = "输入法后台正在启动，请稍后重试。";
+            return false;
+        }
+        server_processes = FindProcesses(server_image);
+    }
 
     const bool notified = NotifyImeServerStopForBackup();
     if (!notified && !server_processes.empty())
@@ -312,27 +345,34 @@ bool StartWatchdog(std::string &message)
         return false;
     }
     const std::filesystem::path image = directory / L"MetasequoiaImeWatchdog.exe";
+    const std::filesystem::path server_image = directory / L"MetasequoiaImeServer.exe";
     if (!std::filesystem::is_regular_file(image))
     {
         message = "找不到 MetasequoiaImeWatchdog.exe，输入法未自动启动。";
         return false;
     }
-    if (!FindProcesses(image).empty())
-        return true;
-
-    SHELLEXECUTEINFOW info{};
-    info.cbSize = sizeof(info);
-    info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    info.lpVerb = L"open";
-    info.lpFile = image.c_str();
-    info.nShow = SW_SHOWNORMAL;
-    if (!ShellExecuteExW(&info))
+    if (FindProcesses(image).empty())
     {
-        message = "启动输入法失败" + ErrorSuffix(GetLastError()) + "，请手动启动水杉输入法。";
+        SHELLEXECUTEINFOW info{};
+        info.cbSize = sizeof(info);
+        info.fMask = SEE_MASK_NOCLOSEPROCESS;
+        info.lpVerb = L"open";
+        info.lpFile = image.c_str();
+        info.nShow = SW_SHOWNORMAL;
+        if (!ShellExecuteExW(&info))
+        {
+            message = "启动输入法失败" + ErrorSuffix(GetLastError()) + "，请手动启动水杉输入法。";
+            return false;
+        }
+        if (info.hProcess)
+            CloseHandle(info.hProcess);
+    }
+    std::string wait_message;
+    if (!WaitForServerToStart(server_image, kProcessExitTimeoutMs, wait_message))
+    {
+        message = "输入法后台没有启动，请手动启动水杉输入法。";
         return false;
     }
-    if (info.hProcess)
-        CloseHandle(info.hProcess);
     return true;
 }
 
@@ -643,7 +683,8 @@ std::string SerializeManifest(const std::vector<ManifestItem> &items)
     return boost::json::serialize(manifest);
 }
 
-bool ValidateArchive(const std::filesystem::path &archive, std::vector<ManifestItem> &items, std::string &message)
+bool ValidateArchive(const std::filesystem::path &archive, std::vector<ManifestItem> &items, std::string &message,
+                     bool verify_contents = true)
 {
     user_data_zip::Limits limits;
     limits.max_entry_size = kMaxEntrySize;
@@ -717,13 +758,16 @@ bool ValidateArchive(const std::filesystem::path &archive, std::vector<ManifestI
             message = "备份条目与 manifest 记录不一致：" + item.path;
             return false;
         }
-        if (!reader.Verify(entry, message))
+        // Import skips this full pass because it extracts every entry into the
+        // staging directory before the Server is stopped, and ExtractTo verifies
+        // the CRC as it writes. Validate() is the standalone API and keeps it.
+        if (verify_contents && !reader.Verify(entry, message))
             return false;
     }
 
-    for (const auto &[path, entry] : entries)
+    for (const auto &path_entry : entries)
     {
-        (void)entry;
+        const std::string &path = path_entry.first;
         std::size_t position = 0;
         while ((position = path.find('/', position)) != std::string::npos)
         {
@@ -752,9 +796,36 @@ std::filesystem::path TargetPath(const Context &context, const std::string &path
     return context.data_dir / Utf8Path(path);
 }
 
+bool HasSuffix(const std::string &value, const char *suffix)
+{
+    const std::size_t length = std::strlen(suffix);
+    return value.size() >= length && value.compare(value.size() - length, length, suffix) == 0;
+}
+
+// A model directory keeps download scratch files (.part), atomic-write scratch
+// files (.tmp) and the logical-deletion marker (.trash) next to the payload.
+// Scratch bytes are never restorable, and .trash is runtime deletion bookkeeping
+// rather than user payload, so all three stay out of the archive. Pending updates
+// (.gram.new / .remote.new) and the remote identities are real state and stay.
+bool IsModelTransientFile(const std::filesystem::path &path)
+{
+    const std::string name = LowerAscii(path.filename().u8string());
+    return name == ".trash" || HasSuffix(name, ".part") || HasSuffix(name, ".tmp");
+}
+
+bool IsSkippedPath(const std::filesystem::path &path, const std::vector<std::filesystem::path> &skip)
+{
+    for (const std::filesystem::path &candidate : skip)
+    {
+        if (!candidate.empty() && SameNormalizedPath(path, candidate))
+            return true;
+    }
+    return false;
+}
+
 bool AddDirectoryToArchive(user_data_zip::Writer &writer, const std::filesystem::path &root, const std::string &prefix,
-                           bool skip_default_skin, std::vector<ManifestItem> &items, std::string &message,
-                           const std::filesystem::path &skip = {})
+                           bool skip_default_skin, bool skip_model_transients, std::vector<ManifestItem> &items,
+                           std::string &message, const std::vector<std::filesystem::path> &skip = {})
 {
     std::error_code error;
     const bool present = std::filesystem::exists(root, error);
@@ -820,8 +891,14 @@ bool AddDirectoryToArchive(user_data_zip::Writer &writer, const std::filesystem:
             continue;
         }
         // The export writes its temporary ZIP next to the user's chosen destination.
-        // A destination inside models/ or skins/ must not swallow its own partial file.
-        if (!skip.empty() && SameNormalizedPath(entry.path(), skip))
+        // A destination inside models/ or skins/ must not swallow its own partial
+        // file, and a destination from an earlier export must not be archived again.
+        if (IsSkippedPath(entry.path(), skip))
+        {
+            iterator.increment(error);
+            continue;
+        }
+        if (skip_model_transients && IsModelTransientFile(entry.path()))
         {
             iterator.increment(error);
             continue;
@@ -868,11 +945,6 @@ struct DirectoryCleanup
 bool ReadArchiveFile(const user_data_zip::Entry &entry, const std::filesystem::path &staging, std::string &content,
                      std::string &message)
 {
-    if (entry.size > kMaxDictionaryBytes)
-    {
-        message = "词库文件超过大小上限：" + entry.path;
-        return false;
-    }
     const std::filesystem::path path = staging / Utf8Path(entry.path);
     return ReadSmallFile(path, kMaxDictionaryBytes, content, message);
 }
@@ -950,7 +1022,7 @@ Hooks ProductionHooks()
 bool Validate(const std::filesystem::path &archive, std::string &message)
 {
     std::vector<ManifestItem> items;
-    return ValidateArchive(archive, items, message);
+    return ValidateArchive(archive, items, message, true);
 }
 
 bool Export(const std::filesystem::path &destination, bool include_models, const Hooks &hooks, std::string &message)
@@ -1039,15 +1111,17 @@ bool Export(const Context &context, const std::filesystem::path &destination, bo
         }
     }
 
-    if (!AddDirectoryToArchive(writer, context.data_dir / L"skins", "skins/", true, items, message, temporary))
+    const std::vector<std::filesystem::path> exported_paths{temporary, destination};
+    if (!AddDirectoryToArchive(writer, context.data_dir / L"skins", "skins/", true, false, items, message,
+                               exported_paths))
         return false;
-    if (include_models &&
-        !AddDirectoryToArchive(writer, context.data_dir / L"models", "models/", false, items, message, temporary))
+    if (include_models && !AddDirectoryToArchive(writer, context.data_dir / L"models", "models/", false, true, items,
+                                                 message, exported_paths))
         return false;
 
     std::sort(items.begin(), items.end(),
               [](const ManifestItem &left, const ManifestItem &right) { return left.path < right.path; });
-    if (!writer.AddBytes(kManifestPath, SerializeManifest(items), message, &added))
+    if (!writer.AddBytes(kManifestPath, SerializeManifest(items), message, nullptr))
         return false;
     if (!writer.Finish(message))
         return false;
@@ -1084,7 +1158,10 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
 {
     message.clear();
     std::vector<ManifestItem> items;
-    if (!ValidateArchive(source, items, message))
+    // Import extracts every entry into staging before stopping the Server, and
+    // ExtractTo verifies the CRC while writing, so this pass only has to check the
+    // structure and the manifest. Reading every model twice would double the cost.
+    if (!ValidateArchive(source, items, message, false))
         return false;
 
     DirectoryCleanup staging;
@@ -1267,8 +1344,20 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
 
     bool start_ok = true;
     std::string start_message;
-    if (stop_attempted && hooks.start_server)
-        start_ok = hooks.start_server(start_message);
+    if (stop_attempted)
+    {
+        if (!hooks.start_server)
+        {
+            // A stop without a matching start leaves the input method down; that
+            // must never be reported as a successful import.
+            start_ok = false;
+            start_message = "导入后无法重新启动输入法，请手动启动水杉输入法。";
+        }
+        else
+        {
+            start_ok = hooks.start_server(start_message);
+        }
+    }
 
     if (start_ok && failures.empty())
     {
