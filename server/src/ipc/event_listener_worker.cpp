@@ -140,6 +140,7 @@ struct Task
     uint64_t client_id = 0;
     uint64_t activation_epoch = 0;
     std::chrono::steady_clock::time_point enqueued_at{};
+    uint64_t enqueue_sequence = 0;
     std::string cloud_candidate;
     std::string cloud_pinyin;
     uint64_t cloud_generation = 0;
@@ -180,6 +181,8 @@ double QueueWaitMilliseconds(const Task &task)
 // 按类别分的四条 FIFO 队列。同类内保持入队顺序；类别之间由 NextTaskClass 决定。
 std::array<std::queue<Task>, kTaskClassCount> taskQueues;
 std::mutex queueMutex;
+// The sequence preserves user action order across the two interactive queues.
+uint64_t lastTaskSequence = 0;
 // 队列里已经有一个还没开始跑的 ApplyRescoredOrder（受 queueMutex 保护）。它跑起来时会读所有模型
 // 已算完的结果，所以排队期间再完成的批次不必再各排一个，免得每批都在按键前面重查一次词格。
 bool rescoreApplyQueued = false;
@@ -193,6 +196,7 @@ void PushTaskLocked(Task &&task)
     // 否则它们的等待时长恒为 0，「等满 500 ms 就越过富化」永远不会触发。
     if (task.enqueued_at == std::chrono::steady_clock::time_point{})
         task.enqueued_at = std::chrono::steady_clock::now();
+    task.enqueue_sequence = ++lastTaskSequence;
     taskQueues[TaskClassIndex(ClassifyTask(task.type))].push(std::move(task));
 }
 
@@ -222,6 +226,7 @@ Task TakeNextTaskLocked()
         {
             heads[i].has_task = true;
             heads[i].wait_ms = QueueWaitMilliseconds(taskQueues[i].front());
+            heads[i].enqueue_sequence = taskQueues[i].front().enqueue_sequence;
         }
     }
     std::queue<Task> &queue = taskQueues[TaskClassIndex(NextTaskClass(heads))];
@@ -1454,10 +1459,11 @@ void EnqueueCandidateUiPaging(CandidateUiAction action, int steps)
         // One notch of the wheel is one step, and every step can hit the engine
         // and the user dictionary. Folding a burst into the task already waiting
         // for the same page keeps a fast scroll from queueing an unbounded run.
-        // 合并只看同类队列的队尾：队列分成四条之后，全队列的最新一格可能是别的类别。
+        // Merge only consecutive posts. An intervening user action needs its own position in the order.
         std::queue<Task> &queue = TaskQueueFor(type);
         if (!queue.empty() && queue.back().type == type && queue.back().client_id == owner.client_id &&
-            queue.back().activation_epoch == owner.activation_epoch)
+            queue.back().activation_epoch == owner.activation_epoch &&
+            queue.back().enqueue_sequence == lastTaskSequence)
         {
             queue.back().page_steps += steps;
         }
@@ -1511,10 +1517,11 @@ void EnqueueCandidateUiExpand()
     }
     {
         std::lock_guard lock(queueMutex);
-        // 连续滚到底部只需要展开一次。同样只看它自己那类队列的队尾。
+        // Coalesce only consecutive posts. A later key can change the candidate page.
         std::queue<Task> &queue = TaskQueueFor(TaskType::UiExpandCandidates);
         if (!queue.empty() && queue.back().type == TaskType::UiExpandCandidates &&
-            queue.back().client_id == owner.client_id && queue.back().activation_epoch == owner.activation_epoch)
+            queue.back().client_id == owner.client_id && queue.back().activation_epoch == owner.activation_epoch &&
+            queue.back().enqueue_sequence == lastTaskSequence)
         {
             return;
         }
