@@ -10,8 +10,10 @@
 #include <condition_variable>
 #include <future>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace
 {
@@ -212,7 +214,8 @@ TEST_CASE(chat_request_cancelled_during_transfer_stops_before_timeout)
     REQUIRE(stopped);
     REQUIRE(result.failure == ChatCompletions::Failure::Cancelled);
     REQUIRE(!result.content.has_value());
-    REQUIRE(ChatCompletions::DescribeFailure(result.failure, result.detail).empty());
+    REQUIRE(ChatCompletions::DescribeFailure(result.failure, result.detail) !=
+            ChatCompletions::DescribeFailure(ChatCompletions::Failure::Timeout, result.detail));
 }
 
 TEST_CASE(chat_request_timeout_remains_distinct_from_cancellation)
@@ -327,6 +330,29 @@ TEST_CASE(ai_assistant_discards_completed_reply_after_generation_changes)
     REQUIRE(received);
     REQUIRE(callbacks.size() == 1);
     REQUIRE(callbacks.front() == "new");
+}
+
+TEST_CASE(ai_assistant_restart_ignores_input_from_before_stop)
+{
+    LocalChatServer server;
+    std::atomic<int> callbacks{0};
+    AiAssistant::Request request;
+    request.identity = "before-stop";
+    request.pinyin_segments = {"ni"};
+    request.config.enabled = true;
+    request.config.provider = "custom";
+    request.config.token = "test-token";
+    request.config.endpoint = server.Endpoint();
+    request.config.model = "test-model";
+    // Stop while the worker is still inside the idle debounce, so the request never reaches the network.
+    AiAssistant::Start([&](const std::string &, const std::string &, uint64_t) { ++callbacks; });
+    AiAssistant::OnInputChanged(request);
+    AiAssistant::Stop();
+    // A restarted worker must not pick up the input that belonged to the previous run.
+    AiAssistant::Start([&](const std::string &, const std::string &, uint64_t) { ++callbacks; });
+    AssistantScope assistant;
+    REQUIRE(!server.WaitForRequests(1, 1500ms));
+    REQUIRE(callbacks == 0);
 }
 
 TEST_CASE(ai_assistant_stop_cancels_active_transfer)

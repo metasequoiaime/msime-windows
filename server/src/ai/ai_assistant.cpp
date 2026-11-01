@@ -101,10 +101,10 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
     return reply.candidate;
 }
 
-void WorkerLoop()
+// observed 从 Start 时的代数开始：上一轮 Stop 之前留下的输入不属于这个 Worker。
+void WorkerLoop(uint64_t observed)
 {
     Jev::Client jev_client;
-    uint64_t observed = 0;
     while (g_running)
     {
         std::unique_lock lock(g_mutex);
@@ -141,17 +141,17 @@ void WorkerLoop()
         if (g_after_fetch_hook)
             g_after_fetch_hook(candidate);
 #endif
-        if (!candidate.empty() && g_running && g_generation.load() == observed && g_callback)
+        if (!candidate.empty() && g_callback)
         {
             {
+                // 过期的结果不进缓存。回调之后代数仍可能变化，消费方按 observed 自行过滤。
                 std::lock_guard cache_lock(g_mutex);
                 if (!g_running || g_generation.load() != observed)
                     continue;
                 g_candidate_cache.Store(AiAssistant::detail::BuildSuggestionCacheKey(request), candidate);
             }
             (void)0;
-            if (g_running && g_generation.load() == observed)
-                g_callback(candidate, request.identity, observed);
+            g_callback(candidate, request.identity, observed);
         }
     }
 }
@@ -166,7 +166,7 @@ void Start(ApplyCallback callback)
     curl_global_init(CURL_GLOBAL_DEFAULT);
     g_callback = std::move(callback);
     g_running = true;
-    g_worker = std::thread(WorkerLoop);
+    g_worker = std::thread(WorkerLoop, g_generation.load());
 }
 void Stop()
 {
@@ -178,6 +178,7 @@ void Stop()
         g_worker.join();
     {
         std::lock_guard lock(g_mutex);
+        g_latest = {};
         g_candidate_cache.Clear();
     }
     curl_global_cleanup();

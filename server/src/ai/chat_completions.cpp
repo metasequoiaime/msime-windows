@@ -198,7 +198,7 @@ Result FetchContent(const std::string &endpoint, const std::string &token, const
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     }
 
-    const CURLcode performed = IsCancelled(cancelled) ? CURLE_ABORTED_BY_CALLBACK : curl_easy_perform(curl);
+    const CURLcode performed = curl_easy_perform(curl);
     long status = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_slist_free_all(headers);
@@ -302,7 +302,8 @@ std::string DescribeFailure(Failure failure, const std::string &detail)
         text = "请求超时";
         break;
     case Failure::Cancelled:
-        return {};
+        text = "请求已取消";
+        break;
     case Failure::TooLarge:
         text = "响应过大";
         break;
