@@ -1923,17 +1923,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         }
         if (Global::Keycode == VK_OEM_MINUS && GetConfiguredPagingMinusEqualEnabled())
         {
-            const PageMoveResult moved = MoveCandidatePage(-1);
-            // The first page has no previous page, so the key becomes a literal
-            // '-' in the raw spelling instead of a page turn that swallows it.
-            // Ctrl and Alt combinations keep the old no-op paging behavior.
-            if (moved == PageMoveResult::Unchanged && (Global::ModifiersDown & FanyImeIpc::kKeyModifierMask) == 0 &&
-                AppendLiteralToComposition(L'-', client_id, activation_epoch, request_id))
-            {
-                return;
-            }
-            result = Global::DataFromServerMsgType::MovePagePrevious;
-            refresh = moved != PageMoveResult::Unchanged;
+            move_page(-1, Global::DataFromServerMsgType::MovePagePrevious);
         }
         else if (Global::Keycode == VK_OEM_PLUS && GetConfiguredPagingMinusEqualEnabled())
         {
