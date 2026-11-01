@@ -92,6 +92,13 @@ sentence_neural_desktop = false
 sentence_neural_keyboard = true
 # 实验：用轻量神经模型结合最近上屏的前文，重排完整拼音对应的前 32 个词库候选（含单字与词组）
 context_candidate_rerank = false
+# 长词前缀补全：首选已是 prefix_completion_min_chars 个字以上、覆盖整串输入的词时，从词库里找以它开头的
+# 更长的词（中华人民 → 中华人民共和国），挑最可能的一条放在第二位。首选不是词库词（整句猜的，如诗句前四字）
+# 时只按拼音找；是词库词时按字找，切词残片不补。打分优先用 sentence_collocation_model 激活的万象等模型（不必
+# 打开整句加成），没有时用 sc.lm，再没有用随包的神经模型。
+prefix_completion = true
+# 首选至少几个字才补，3~8。不进设置页，供配置文件高级调参。
+prefix_completion_min_chars = 4
 # 某个模型的首选与已有候选重复时，改为显示该模型排名最高的下一条不同结果
 sentence_show_next_on_duplicate = false
 # 在候选窗的整句候选后显示来源标签（〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕〔八股〕〔墨奇〕）

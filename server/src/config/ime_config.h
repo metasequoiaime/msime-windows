@@ -2,6 +2,7 @@
 
 #include "ai/ai_provider_store.h"
 #include "engine/core/fuzzy_pinyin_options.h"
+#include "engine/core/prefix_completion_options.h"
 #include "engine/core/scheme_type.h"
 #include "engine/shuangpin/shuangpin_profile.h"
 #include "engine/contracts/input_state_shortcuts.h"
@@ -559,6 +560,11 @@ bool GetConfiguredAssocSentenceNeuralKeyboard();
 bool SetConfiguredAssocSentenceNeuralKeyboard(bool enabled);
 bool GetConfiguredAssocContextCandidateRerank();
 bool SetConfiguredAssocContextCandidateRerank(bool enabled);
+// 长词前缀补全（#1343）：开关（prefix_completion，默认开）与首选的最少字数
+// （prefix_completion_min_chars，3~8，默认 4，只在配置文件里调）合成会话选项。
+bool GetConfiguredAssocPrefixCompletion();
+bool SetConfiguredAssocPrefixCompletion(bool enabled);
+metasequoia::PrefixCompletionOptions GetConfiguredPrefixCompletionOptions();
 bool GetConfiguredAssocSentenceShowNextOnDuplicate();
 bool SetConfiguredAssocSentenceShowNextOnDuplicate(bool enabled);
 bool GetConfiguredAssocSentenceSourceBadge();

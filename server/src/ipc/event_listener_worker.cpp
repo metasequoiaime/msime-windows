@@ -807,6 +807,13 @@ void WorkerThread()
             {
                 break;
             }
+            // 长词前缀补全（#1343）的键比首选长：置顶会拿同页别的键的权重当阶梯，固定位置会把它钉在首选的
+            // 输入下面，下次首选换了它还占着那一格。删除照常，按它自己的完整读音删。
+            if (item.prefix_completion &&
+                (task.type == TaskType::UiPinCandidate || task.type == TaskType::UiFixCandidatePosition))
+            {
+                break;
+            }
 
             const bool english_candidate = item.source == CandidateSource::EnglishDictionary;
             const auto ranking_keys = RankingKeysForCandidate(item);
@@ -1250,6 +1257,28 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
             candidates, entry_key, word, mode, linear_step, trigger_count, false, &ranking_changed,
             wubi ? user_dictionary::DictionaryKind::Wubi : user_dictionary::DictionaryKind::Pinyin);
         if (ranking_changed)
+        {
+            EnqueueResetInputSessionCacheTask();
+        }
+    });
+}
+
+void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,
+                                 uint64_t activation_epoch)
+{
+    static FanyImeIpc::SelectionRankingReplayGuard replay_guard;
+    if (!replay_guard.should_apply(std::string("b\x1f") + key + '\x1f' + word, client_id, activation_epoch,
+                                   GetTickCount64()))
+    {
+        return;
+    }
+    if (GetConfiguredFrequencyAdjustment().mode == "disabled")
+    {
+        return;
+    }
+    DictionaryWriter().Post([key, word] {
+        if (user_dictionary::bump_pinyin_weight(CommonUtils::get_ime_data_path() + "\\msime.db",
+                                                user_dictionary::default_user_db_path(), key, word))
         {
             EnqueueResetInputSessionCacheTask();
         }

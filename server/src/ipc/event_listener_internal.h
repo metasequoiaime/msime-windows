@@ -311,6 +311,9 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
                                        const std::string &entry_key, const std::string &word, uint64_t client_id,
                                        uint64_t activation_epoch,
                                        const std::vector<WordItem> *ranking_candidates = nullptr);
+// 长词前缀补全（#1343）选中后的调频：只把它在自己的完整读音 key 下升到组内首位，不按排位挪位置。
+void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,
+                                 uint64_t activation_epoch);
 void EnqueueLearnEnteredEnglishWordTask(const std::string &word);
 // 快捷短语组的调频。word 非空：选中了组里的这一条，first_in_group 表示它本来就排在组首；
 // word 为空：越过整组选了普通候选，ordinary_rank 是它在普通候选里的名次。

@@ -72,6 +72,10 @@ bool record_pinyin_upsert_from_database(const std::string &main_db_path, const s
 // without inserting. Row-missing behaviour matches update_wubi_weight.
 bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
                       const std::string &value);
+// 同上，拼音分表（key 是带分隔符的完整全拼，表名按格式契约从它算）。长词前缀补全（#1343）选中时用：
+// 它的键和同页其他候选不同，不能走 adjust_candidate_ranking 按排位挪位置。
+bool bump_pinyin_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
+                        const std::string &value);
 
 // 快捷短语混排的调频状态。快捷短语与拼音候选的权重不在同一个量纲上，不能互相比较，所以
 // 按编码记一个槽位：同码快捷短语组前面排几个普通候选（见

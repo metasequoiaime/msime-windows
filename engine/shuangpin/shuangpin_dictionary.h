@@ -12,6 +12,7 @@
 #include "../core/syllable_helpcode.h"
 #include "../neural/neural_decoder.h"
 #include "../quanpin/lattice_rerank.h"
+#include "../quanpin/prefix_completion.h"
 #include "../quanpin/quanpin_query.h"
 #include "engine/ngram/language_model.h"
 #include "shuangpin_latin_words.h"
@@ -103,6 +104,10 @@ class ShuangpinDictionary
     // 原始按键整串等于某个字母词在本方案下的敲法时（小鹤 txu 是 T恤），把它排在整串精确命中的词库行
     // 之后；三个键起再补两条以它开头的更长的词。见 QuanpinDictionary::insert_latin_words。
     void insert_latin_words(std::vector<WordItem> &candidates, const std::string &raw_input);
+    // 长词前缀补全（#1343）：首选是四个字以上、覆盖整串按键的词时，把以它开头的最可能的更长的词插到
+    // 第二位。见 quanpin::insert_prefix_completion。
+    void insert_prefix_completion(std::vector<WordItem> &candidates, const std::string &raw_input,
+                                  const metasequoia::PrefixCompletionOptions &options);
 
     explicit ShuangpinDictionary(const ShuangpinProfile &profile = GetXiaoheShuangpinProfile(),
                                  metasequoia::RuntimePaths paths = metasequoia::RuntimePaths::legacy());
@@ -154,6 +159,11 @@ class ShuangpinDictionary
     // 字母词与它们在本方案下的敲法，第一次用到时载入；后者存着指向前者的指针，两者一起建、不再重载。
     std::optional<quanpin::LatinWords> latin_words_;
     std::optional<ShuangpinLatinWords> latin_codes_;
+    // 见 insert_prefix_completion，随 reset_cache 清。
+    quanpin::PrefixCompletionCache prefix_completion_cache_;
+    // 补全打分用的万象模型与它的路径，见 QuanpinDictionary::prefix_completion_gram_。
+    std::string prefix_completion_gram_path_;
+    std::shared_ptr<const gram::GramDb> prefix_completion_gram_;
     const quanpin::LatinWords &latin_words();
     const ShuangpinLatinWords &latin_codes();
     // 贪心切分把字母词拆坏（tx'u 读成 tie 加声母 sh）时，在贪心切分的边界上找字母词的敲法，命中就换一条

@@ -438,6 +438,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"sentence_neural_desktop_model_url", neural_model::SourceUrl()},
             {"sentence_neural_keyboard", GetConfiguredAssocSentenceNeuralKeyboard()},
             {"context_candidate_rerank", GetConfiguredAssocContextCandidateRerank()},
+            {"prefix_completion", GetConfiguredAssocPrefixCompletion()},
             {"sentence_show_next_on_duplicate", GetConfiguredAssocSentenceShowNextOnDuplicate()},
             {"sentence_source_badge", GetConfiguredAssocSentenceSourceBadge()},
             {"sentence_collocation_enabled", GetConfiguredAssocSentenceCollocationEnabled()},
@@ -873,6 +874,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredAssocSentenceNeuralDesktop(json::value_to<bool>(data.at("value")));
     if (path == "association.context_candidate_rerank")
         return SetConfiguredAssocContextCandidateRerank(json::value_to<bool>(data.at("value")));
+    if (path == "association.prefix_completion")
+        return SetConfiguredAssocPrefixCompletion(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_neural_keyboard")
         return SetConfiguredAssocSentenceNeuralKeyboard(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_show_next_on_duplicate")

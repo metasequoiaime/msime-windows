@@ -263,6 +263,25 @@ bool SetConfiguredAssocContextCandidateRerank(bool enabled)
     return true;
 }
 
+bool GetConfiguredAssocPrefixCompletion()
+{
+    return g_assoc_prefix_completion;
+}
+bool SetConfiguredAssocPrefixCompletion(bool enabled)
+{
+    if (!WriteConfiguredValue("association", "prefix_completion", enabled ? "true" : "false"))
+        return false;
+    g_assoc_prefix_completion = enabled;
+    return true;
+}
+metasequoia::PrefixCompletionOptions GetConfiguredPrefixCompletionOptions()
+{
+    metasequoia::PrefixCompletionOptions options;
+    options.enabled = g_assoc_prefix_completion;
+    options.minimum_chars = g_assoc_prefix_completion_min_chars;
+    return options;
+}
+
 bool GetConfiguredAssocSentenceNeuralKeyboard()
 {
     return g_assoc_sentence_neural_keyboard;

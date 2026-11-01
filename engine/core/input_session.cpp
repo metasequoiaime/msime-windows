@@ -1291,6 +1291,16 @@ std::optional<std::string> InputSession::learn_candidate(std::size_t index)
     {
         return std::nullopt;
     }
+    // 长词前缀补全（#1343）：它的键比首选长，和同页其他候选不是一个读音，按排位挪位置会拿别的键的权重
+    // 当阶梯（engine/AGENTS.md「用户词库权重」）。只按它自己的键加一次权重：出厂的长词几乎都是同一个低
+    // 权重，选过一次就高过它们，下次补全打分时排在前面。选的是首页第一个也照样记。
+    if (selected.prefix_completion)
+    {
+        if (frequency_adjustment_configured_ && frequency_adjustment_.mode == FrequencyAdjustmentMode::Disabled)
+            return std::nullopt;
+        (void)engine_.update_weight_by_pinyin_and_word(selected.scheme, selected.canonical_pinyin, selected.word);
+        return std::nullopt;
+    }
     // 整句候选走造词，不走调频：它在词库里没有行可改。不受 frequency_adjustment_
     // 约束（那是候选词频策略），也不跳过 index == 0——首位整句同样没有落库，
     // 下次仍要靠猜，存下来才稳定。
@@ -1335,7 +1345,8 @@ KeyResult InputSession::pin_candidate(std::size_t index)
     if (index >= candidates().size())
         return {};
     const auto source = candidates()[index].source;
-    if (candidates()[index].latin_word)
+    // 前缀补全的位置由打分定，置顶会把它钉在首选的键下面，下次首选换了它还占着那一格。
+    if (candidates()[index].latin_word || candidates()[index].prefix_completion)
         return {};
     if (source != CandidateSource::EnglishDictionary &&
         ((source != CandidateSource::Database && source != CandidateSource::UserDatabase) ||

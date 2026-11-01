@@ -916,10 +916,14 @@ bool delete_english_candidate(const std::string &english_db_path, const std::str
     return delete_dictionary_candidate(english_db_path, user_db_path, DictionaryKind::English, entry_key, value);
 }
 
-bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
-                      const std::string &value)
+namespace
 {
-    if (key.empty() || value.empty())
+// 选中的词升到它自己那个码组的首位（组内最高权重 + 1），新权重与日志的 upsert 在同一个挂库事务里写。
+// 只改已有的行：(key, value) 不存在时返回 false，不造行。
+bool bump_weight_in_table(const std::string &main_db_path, const std::string &user_db_path, const std::string &table,
+                          DictionaryKind kind, const std::string &key, const std::string &value)
+{
+    if (key.empty() || value.empty() || table.empty())
         return false;
     // Initialize the journal before attaching it; every operation owns its connections.
     if (!ensure_user_database(user_db_path))
@@ -937,12 +941,13 @@ bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_d
     };
     // 增量语义对齐全拼侧 build_sql_for_updating_word：新权重 = 同码组当前最高权重 + 1，
     // 选中候选升到组内首位，而不是固定 +1（同码组有更高权重行时固定 +1 不会改变排序）。
-    auto current = prepare(database.get(), "SELECT MAX(weight) FROM main.\"wubi86\" WHERE \"key\"=?1");
+    auto current = prepare(database.get(), "SELECT MAX(weight) FROM main.\"" + table + "\" WHERE \"key\"=?1");
     if (!current || !bind_text(current.get(), 1, key) || sqlite3_step(current.get()) != SQLITE_ROW)
         return rollback();
     const std::int64_t new_weight = clamp_managed_weight(sqlite3_column_int64(current.get(), 0) + 1);
     current.reset();
-    auto bump = prepare(database.get(), "UPDATE main.\"wubi86\" SET weight=?1 WHERE \"key\"=?2 AND \"value\"=?3");
+    auto bump =
+        prepare(database.get(), "UPDATE main.\"" + table + "\" SET weight=?1 WHERE \"key\"=?2 AND \"value\"=?3");
     // changes()==0 表示目标行不存在：与 update_wubi_weight 一致，不造行。
     if (!bump || sqlite3_bind_int64(bump.get(), 1, new_weight) != SQLITE_OK || !bind_text(bump.get(), 2, key) ||
         !bind_text(bump.get(), 3, value) || sqlite3_step(bump.get()) != SQLITE_DONE ||
@@ -954,14 +959,27 @@ bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_d
                                 "operation,weight,display) VALUES(?1,?2,?3,'upsert',?4,'')"
                                 " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',"
                                 "weight=excluded.weight,display='',updated_at=unixepoch()");
-    if (!journal || !bind_text(journal.get(), 1, kind_name(DictionaryKind::Wubi)) ||
-        !bind_text(journal.get(), 2, key) || !bind_text(journal.get(), 3, value) ||
-        sqlite3_bind_int64(journal.get(), 4, new_weight) != SQLITE_OK || sqlite3_step(journal.get()) != SQLITE_DONE)
+    if (!journal || !bind_text(journal.get(), 1, kind_name(kind)) || !bind_text(journal.get(), 2, key) ||
+        !bind_text(journal.get(), 3, value) || sqlite3_bind_int64(journal.get(), 4, new_weight) != SQLITE_OK ||
+        sqlite3_step(journal.get()) != SQLITE_DONE)
         return rollback();
     journal.reset();
     if (!execute_sql(database.get(), "COMMIT"))
         return rollback();
     return true;
+}
+} // namespace
+
+bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
+                      const std::string &value)
+{
+    return bump_weight_in_table(main_db_path, user_db_path, "wubi86", DictionaryKind::Wubi, key, value);
+}
+
+bool bump_pinyin_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
+                        const std::string &value)
+{
+    return bump_weight_in_table(main_db_path, user_db_path, pinyin_table(key), DictionaryKind::Pinyin, key, value);
 }
 
 namespace

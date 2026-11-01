@@ -132,6 +132,9 @@ std::vector<WordItem> ShuangpinEngine::query(const QueryRequest &request)
     dictionary_.filter_by_syllable_helpcodes(candidates);
     // 放在辅助码各条路径之后：奇数个键的 txu 开着单码辅助时会被读成「tx + 辅码 u」，T恤 照样要有。
     dictionary_.insert_latin_words(candidates, request.raw_input);
+    // 辅助码筛过、重排过的列表不补：首选是按辅码挑出来的，补出来的长词不一定满足同样的约束。
+    if (request.end_helpcodes.empty() && request.syllable_helpcodes.empty())
+        dictionary_.insert_prefix_completion(candidates, request.raw_input, request.prefix_completion);
     return candidates;
 }
 
