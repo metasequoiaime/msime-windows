@@ -67,6 +67,10 @@ struct WordItem
     // Generated/Fallback 同时被原样上屏、英文、日期、拆字、假名、译文等合成候选借用，
     // 候选窗的〔Trigram〕/〔Unigram〕来源标签只认这个标记，不能单凭 source 判断。
     bool sentence_association = false;
+    // 字母词（msime.db 的 latin_words：T恤、AA制）单独出的那一行。来源仍记 Database，上屏、推进组合、
+    // 繁体展开都和普通词条一样；只是它在 tbl_* 里没有行，调频、置顶、删词改不到它，只会白记选择计数，
+    // 所以都不碰它，位置只由出厂权重和语言模型定（见 #1340）。
+    bool latin_word = false;
     // 繁体模式下这一项显示与上屏的写法，由 server 展开候选列表时填（见
     // server/src/ipc/traditional_variant_expansion_policy.h），组页与上屏读它。空表示这一项没有
     // 展开，输出文字由 server 按当前字形从 word 得到（简体模式、日语方案、U 模式拆字列表下就是 word）。

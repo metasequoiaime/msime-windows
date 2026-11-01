@@ -78,6 +78,8 @@ constexpr double kMaintenanceMaxWaitMs = 500.0;
 // Keep classification exhaustive in event_listener_task_class.cpp.
 TaskClass ClassifyTask(TaskType type);
 const wchar_t *TaskClassName(TaskClass type);
+// Boost input priority only while the worker runs a Foreground task.
+bool NeedsInputPriorityBoost(TaskClass type);
 // The caller supplies one head per class and at least one queued task.
 TaskClass NextTaskClass(const std::array<TaskClassHead, kTaskClassCount> &heads);
 } // namespace FanyNamedPipe

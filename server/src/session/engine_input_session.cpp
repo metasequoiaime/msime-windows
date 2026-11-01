@@ -83,6 +83,7 @@ void EngineInputSession::ApplyConfiguration()
                                              IsConfiguredEndHelpcodeUppercaseTrigger());
     session_.set_mid_sentence_helpcode_enabled(GetConfiguredShuangpinMidSentenceHelpcodeEnabled());
     session_.set_direct_helpcode_enabled(GetConfiguredShuangpinDirectHelpcodeEnabled());
+    session_.set_direct_helpcode_end_trigger_enabled(GetConfiguredShuangpinDirectHelpcodeEndTrigger());
     session_.set_direct_helpcode_markers(GetConfiguredShuangpinDirectHelpcodeSlash(),
                                          GetConfiguredShuangpinDirectHelpcodeUppercase());
     session_.set_mid_sentence_uppercase_trigger_enabled(GetConfiguredShuangpinMidSentenceHelpcodeUppercase());
@@ -302,6 +303,16 @@ bool EngineInputSession::accepts_direct_helpcode_slash(std::size_t caret) const
     // 同上，按当前配置判断。
     return GetConfiguredShuangpinDirectHelpcodeEnabled() && GetConfiguredShuangpinDirectHelpcodeSlash() &&
            session_.accepts_direct_helpcode_slash_at(caret);
+}
+
+std::optional<std::string> EngineInputSession::direct_helpcode_end_trigger_prefix(const std::string &typed)
+{
+    // 同上，按当前配置判断。
+    if (!IsConfiguredDirectHelpcodeEndTriggerActive())
+    {
+        return std::nullopt;
+    }
+    return session_.direct_helpcode_end_trigger_prefix(typed);
 }
 
 bool EngineInputSession::has_mid_sentence_helpcode() const

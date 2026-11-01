@@ -271,8 +271,7 @@ std::string BuildCurrentCandidatePage()
     // 而且 g_candidate_translation_glosses 还留着原候选的译文，照常查会把译文再标注一遍。
     const bool translation_page = g_translation_candidates_active;
     const bool show_helpcodes =
-        !translation_page && ((current_scheme == SchemeType::Shuangpin && GetConfiguredShuangpinHelpcodeEnabled() &&
-                               GetConfiguredShowShuangpinHelpcodeInCandidateWindow()) ||
+        !translation_page && ((current_scheme == SchemeType::Shuangpin && IsConfiguredShuangpinHelpcodeHintShown()) ||
                               (current_scheme == SchemeType::Quanpin && GetConfiguredQuanpinHelpcodeEnabled() &&
                                GetConfiguredShowQuanpinHelpcodeInCandidateWindow()));
     // U 模式（部件拆字反查）：候选上反显该字的注音。annotation 在这个模式下专属注音，辅助码

@@ -451,6 +451,28 @@ void InputSession::set_direct_helpcode_markers(bool slash, bool uppercase)
     online_requests_.invalidate();
 }
 
+void InputSession::set_direct_helpcode_end_trigger_enabled(bool enabled)
+{
+    if (direct_helpcode_end_trigger_enabled_ == enabled)
+    {
+        return;
+    }
+    direct_helpcode_end_trigger_enabled_ = enabled;
+    engine_.set_direct_helpcode_end_trigger_enabled(enabled);
+    update_mixed_candidates();
+    online_requests_.invalidate();
+}
+
+std::optional<std::string> InputSession::direct_helpcode_end_trigger_prefix(const std::string &typed)
+{
+    if (!direct_helpcode_enabled_ || !direct_helpcode_end_trigger_enabled_ || !is_shuangpin() ||
+        dedicated_english_mode_ || local_input_mode_ != LocalInputMode::None)
+    {
+        return std::nullopt;
+    }
+    return engine_.direct_helpcode_end_trigger_prefix(typed);
+}
+
 bool InputSession::accepts_direct_helpcode_slash_at(std::size_t caret) const
 {
     if (!direct_helpcode_enabled_ || !direct_helpcode_slash_marker_ || !is_shuangpin() || dedicated_english_mode_ ||
@@ -1264,6 +1286,11 @@ std::optional<std::string> InputSession::learn_candidate(std::size_t index)
     {
         return quick_phrase_diagnostic;
     }
+    // 字母词在 tbl_* 里没有行，调频改不到它，只会白记一笔选择计数；它的位置只由出厂权重和语言模型定（#1340）。
+    if (selected.latin_word)
+    {
+        return std::nullopt;
+    }
     // 整句候选走造词，不走调频：它在词库里没有行可改。不受 frequency_adjustment_
     // 约束（那是候选词频策略），也不跳过 index == 0——首位整句同样没有落库，
     // 下次仍要靠猜，存下来才稳定。
@@ -1308,6 +1335,8 @@ KeyResult InputSession::pin_candidate(std::size_t index)
     if (index >= candidates().size())
         return {};
     const auto source = candidates()[index].source;
+    if (candidates()[index].latin_word)
+        return {};
     if (source != CandidateSource::EnglishDictionary &&
         ((source != CandidateSource::Database && source != CandidateSource::UserDatabase) ||
          scheme() == SchemeType::JapaneseRomaji))

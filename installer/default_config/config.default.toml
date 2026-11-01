@@ -405,6 +405,12 @@ shuangpin_direct_helpcode = false
 # （如 uiaB）。开启大写后大写字母只当四码的第二位辅码；都写成 false 时按补 / 生效
 shuangpin_direct_helpcode_slash = true
 shuangpin_direct_helpcode_uppercase = false
+# 直接辅助码下用引导键进入末尾辅助码：引导键是上面末尾辅助码勾了的反引号、分号（大写字母在直接辅助码里
+# 本身是辅码，不算）。前面每一节都能看成「完整双拼 + 0~2 个辅码」时，在输入末尾敲引导键会把各音节上的辅码
+# 删掉、整理成纯双拼（如 uixulpb 敲 ; 变成 uiulpb;），后面接一到两个辅码按末尾辅助码筛候选（一码重排、两码
+# 筛选）；退格删掉这个引导键时恢复整理前的输入。只在直接辅助码开着时生效。微软/搜狗/紫光双拼里分号跟在字母
+# 后面时是 ing 韵母，这些方案请用反引号
+shuangpin_direct_helpcode_end_trigger = false
 # 全拼辅助码
 quanpin_helpcode = false
 # 全拼辅助码方案，可选："lantian", "ziranma", "shouyou2_0", "shouyouplus", "xiaohe", "jiajia"，

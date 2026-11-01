@@ -1833,6 +1833,9 @@ void BroadcastConfiguredInputModeState(uint64_t excluded_input_mode_client_id)
     BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeChanged,
                                            FormatDirectHelpcodeWorkerPayload());
     BroadcastToTsfWorkerThreadViaNamedpipe(
+        Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged,
+        FormatDirectHelpcodeEndTriggerWorkerPayload());
+    BroadcastToTsfWorkerThreadViaNamedpipe(
         Global::DataFromServerMsgTypeToTsfWorkerThread::MidSentenceHelpcodeUppercaseChanged,
         FormatMidSentenceHelpcodeUppercaseWorkerPayload());
     BroadcastToTsfWorkerThreadViaNamedpipe(Global::DataFromServerMsgTypeToTsfWorkerThread::EndHelpcodeTriggersChanged,

@@ -164,6 +164,13 @@ constexpr std::uint32_t SensitiveField = 0x02000000u;
 // and a caret move with CompositionRestored carrying the caret. The DLL only sets it after the Server turned the
 // feature on and CompositionRestore was negotiated; the Server strips it before any key-modifier policy runs.
 constexpr std::uint32_t HorizontalArrowSelection = 0x01000000u;
+// KeyEvent only: ';' or Backspace the DLL routed as a direct helpcode end trigger rewrite
+// (DirectHelpcodeEndTriggerChanged, FanyImeDirectHelpcode::AcceptsEndTriggerAt / IsEndTriggerBackspaceAt) and whose
+// reply it will apply. The Server then always answers: CompositionRestored with the rewritten (or restored)
+// composition, or, for a ';' it cannot rewrite, the ordinary punctuation commit. The DLL only sets it after the Server
+// turned the feature on and CompositionRestore was negotiated; the Server strips it before any key-modifier policy
+// runs.
+constexpr std::uint32_t DirectHelpcodeEndTriggerRewrite = 0x00800000u;
 
 constexpr std::uint32_t EncodeImeSwitchCapsLockSnapshot(bool enabled)
 {
@@ -485,7 +492,14 @@ constexpr std::uint32_t HorizontalArrowSelectionChanged = 39;
 // Server re-derives the path from its own state and starts the installer. Broadcast to every
 // connected client: the download usually finishes while the user types elsewhere.
 constexpr std::uint32_t UpdateInstallerReady = 40;
-constexpr std::uint32_t MaxKnown = UpdateInstallerReady;
+// Which keys enter the shuangpin end helpcode while direct helpcode is on (helpcode.shuangpin_direct_helpcode_end_
+// trigger, keys from the end helpcode trigger settings). Payload one character, FanyImeEndHelpcode::PayloadFor with
+// the uppercase bit always clear: bit 1 '`', bit 2 ';'; "0" when either switch is off or the active scheme is not
+// shuangpin. The DLL sends such a key at the end of a FanyImeDirectHelpcode::AcceptsEndTriggerAt composition, and
+// Backspace over the end block it opened (IsEndTriggerBackspaceAt), as Server-authoritative keys and rebuilds its
+// buffer from the Server's CompositionRestored reply. Older DLLs ignore the opcode and keep the keys as punctuation.
+constexpr std::uint32_t DirectHelpcodeEndTriggerChanged = 41;
+constexpr std::uint32_t MaxKnown = DirectHelpcodeEndTriggerChanged;
 // Source compatibility for the Server's historical spellings.
 constexpr std::uint32_t SwitchToEn = SwitchToEnglish;
 constexpr std::uint32_t SwitchToCn = SwitchToChinese;

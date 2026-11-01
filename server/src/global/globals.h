@@ -141,6 +141,16 @@ struct CompositionState
     // prefix it belongs to. Set by restore_last_selection, consumed (and reset)
     // by the caller.
     RestoredSelectionHighlight restored_selection_highlight;
+    // 直接辅助码下用 ; 进入末尾辅助码时整理前的原串，和整理后的整串（纯双拼 + 末尾段开头）。退格删掉这个
+    // 末尾段开头时，raw 仍等于 direct_end_trigger_rewritten 才恢复原串；之后再改过前面就只删这一个字符。
+    std::string direct_end_trigger_original;
+    std::string direct_end_trigger_rewritten;
+
+    void clear_direct_end_trigger()
+    {
+        direct_end_trigger_original.clear();
+        direct_end_trigger_rewritten.clear();
+    }
 
     void clear()
     {
@@ -153,6 +163,7 @@ struct CompositionState
         creating_word.clear();
         selection_history.clear();
         restored_selection_highlight = {};
+        clear_direct_end_trigger();
     }
 
     void clear_creating_word()

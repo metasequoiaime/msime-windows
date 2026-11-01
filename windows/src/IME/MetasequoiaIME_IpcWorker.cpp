@@ -452,7 +452,8 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
         {
             validFrame = FanyImeDirectHelpcode::IsValidPayload(buf.data[0]) && buf.data[1] == L'\0';
         }
-        if (validFrame && buf.msg_type == Global::DataToTsfWorkerThreadMsgType::EndHelpcodeTriggersChanged)
+        if (validFrame && (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::EndHelpcodeTriggersChanged ||
+                           buf.msg_type == Global::DataToTsfWorkerThreadMsgType::DirectHelpcodeEndTriggerChanged))
         {
             validFrame = FanyImeEndHelpcode::IsValidPayload(buf.data[0]) && buf.data[1] == L'\0';
         }
@@ -542,6 +543,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::EndHelpcodeTriggersChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::EnumerationCommaKeysChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::HorizontalArrowSelectionChanged ||
+                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::DirectHelpcodeEndTriggerChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InputModeChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::TrilingualCycleChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CapsLockChanged ||
@@ -695,6 +697,14 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                                                      std::memory_order_relaxed);
             Global::DirectHelpcodeEnabled.store(FanyImeDirectHelpcode::EnabledFromPayload(buf.data[0]),
                                                 std::memory_order_relaxed);
+        }
+        else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::DirectHelpcodeEndTriggerChanged)
+        {
+            // 大写字母在直接辅助码里本身是辅码，不当引导键，Server 也不会发这一位。
+            Global::DirectHelpcodeEndTriggerKeys.store(
+                FanyImeEndHelpcode::FlagsFromPayload(buf.data[0]) &
+                    (FanyImeEndHelpcode::kBacktick | FanyImeEndHelpcode::kSemicolon),
+                std::memory_order_relaxed);
         }
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::MidSentenceHelpcodeUppercaseChanged)
         {

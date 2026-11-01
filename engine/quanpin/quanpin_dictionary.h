@@ -10,6 +10,7 @@
 #include "../core/sentence_association_options.h"
 #include "../neural/neural_decoder.h"
 #include "lattice_rerank.h"
+#include "latin_words.h"
 #include "quanpin_query.h"
 #include "engine/ngram/language_model.h"
 #include "engine/ngram/octagram/octagram_gram.h"
@@ -179,6 +180,12 @@ class QuanpinDictionary
     // 直查逐行相同；随 reset_cache 清空（词库被写或换了开关时）。with_fuzzy 为假时不收模糊读音，
     // 见 lattice_best_path。
     quanpin::WordLatticeLookup lattice_lookup(int limit, bool with_fuzzy = true);
+    // 字母词表，第一次用到时从 db_ 载入。
+    const quanpin::LatinWords &latin_words();
+    // 打出的字母串整串等于某个字母词的编码时把它插进候选，三个字母起再补两条以它开头的更长的词
+    // （txu 补 T恤衫）。排位见 quanpin::insert_latin_candidates。
+    void insert_latin_words(std::vector<WordItem> &result, const std::string &raw_input,
+                            const quanpin::Segments &segments, const std::string &code_for_selection);
     void set_fuzzy_pinyin(metasequoia::FuzzyPinyinOptions options);
     bool user_prefers_reading(const std::string &key);
     static void append_unique_words(std::vector<WordItem> &result, const std::vector<WordItem> &extra);
@@ -225,6 +232,8 @@ class QuanpinDictionary
     // 多音单字各读音的权重和，词格第一次查跨度时载入，此后不随 reset_cache 重载。
     // 见 quanpin::load_char_reading_totals。
     std::shared_ptr<const quanpin::CharReadingTotals> char_reading_totals_;
+    // 见 latin_words()。只读出厂表，不随 reset_cache 重载。
+    std::optional<quanpin::LatinWords> latin_words_;
     sqlite3 *db_ = nullptr;
     sqlite3_int64 data_version_ = -1;
     metasequoia::RuntimePaths paths_;

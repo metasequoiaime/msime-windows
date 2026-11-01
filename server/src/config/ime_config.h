@@ -427,6 +427,16 @@ bool SetConfiguredShuangpinDirectHelpcodeUppercase(bool enabled);
 // DirectHelpcodeChanged 的载荷（FanyImeDirectHelpcode::PayloadFor）："0" 表示开关关着或当前方案不是双拼，
 // "1" 开着且勾了 /，"2" 开着但没勾 /。
 std::wstring FormatDirectHelpcodeWorkerPayload();
+// 直接辅助码下用 ; 进入末尾辅助码（helpcode.shuangpin_direct_helpcode_end_trigger，默认关），规则见
+// FanyImeDirectHelpcode::AcceptsEndTriggerAt。
+bool GetConfiguredShuangpinDirectHelpcodeEndTrigger();
+bool SetConfiguredShuangpinDirectHelpcodeEndTrigger(bool enabled);
+// 此刻是否生效：直接辅助码和这个开关都开着，且当前方案是双拼。引导键是末尾辅助码设置里勾了的反引号、分号。
+bool IsConfiguredDirectHelpcodeEndTriggerActive();
+// 字符 ch（'`' 或 ';'）此刻是不是直接辅助码下进入末尾辅助码的引导键：上面生效，且末尾辅助码设置里勾了这个键。
+bool IsConfiguredDirectHelpcodeEndTriggerKey(wchar_t ch);
+// DirectHelpcodeEndTriggerChanged 的载荷（FanyImeEndHelpcode::PayloadFor，不带大写位）：此刻生效的引导键。
+std::wstring FormatDirectHelpcodeEndTriggerWorkerPayload();
 const std::string &GetConfiguredShuangpinHelpcodeSchema();
 bool SetConfiguredShuangpinHelpcodeSchema(const std::string &schema);
 bool GetConfiguredQuanpinHelpcodeEnabled();
@@ -475,6 +485,8 @@ std::vector<CustomHelpcodeSchemaInfo> GetCustomHelpcodeSchemas();
 std::string GetCustomHelpcodeDirectory();
 bool GetConfiguredShowShuangpinHelpcodeInCandidateWindow();
 bool SetConfiguredShowShuangpinHelpcodeInCandidateWindow(bool enabled);
+// 双拼候选此刻是否带辅码提示：勾了显示，且末尾、句中（引导键或直接）任意一种辅助码开着。
+bool IsConfiguredShuangpinHelpcodeHintShown();
 bool GetConfiguredShowQuanpinHelpcodeInCandidateWindow();
 bool SetConfiguredShowQuanpinHelpcodeInCandidateWindow(bool enabled);
 bool GetConfiguredFloatingToolbarEnabled();

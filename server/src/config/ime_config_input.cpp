@@ -695,6 +695,43 @@ bool SetConfiguredShuangpinDirectHelpcodeUppercase(bool enabled)
     return true;
 }
 
+bool GetConfiguredShuangpinDirectHelpcodeEndTrigger()
+{
+    return g_shuangpin_direct_helpcode_end_trigger;
+}
+
+bool SetConfiguredShuangpinDirectHelpcodeEndTrigger(bool enabled)
+{
+    if (!WriteConfiguredValue("helpcode", "shuangpin_direct_helpcode_end_trigger", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_shuangpin_direct_helpcode_end_trigger = enabled;
+    return true;
+}
+
+bool IsConfiguredDirectHelpcodeEndTriggerActive()
+{
+    return g_shuangpin_direct_helpcode_enabled && g_shuangpin_direct_helpcode_end_trigger &&
+           GetConfiguredActiveInputScheme() == SchemeType::Shuangpin;
+}
+
+bool IsConfiguredDirectHelpcodeEndTriggerKey(wchar_t ch)
+{
+    if (!IsConfiguredDirectHelpcodeEndTriggerActive())
+    {
+        return false;
+    }
+    return ch == L'`' ? g_shuangpin_helpcode_trigger_backtick : ch == L';' && g_shuangpin_helpcode_trigger_semicolon;
+}
+
+std::wstring FormatDirectHelpcodeEndTriggerWorkerPayload()
+{
+    return std::wstring(1,
+                        FanyImeEndHelpcode::PayloadFor<wchar_t>(IsConfiguredDirectHelpcodeEndTriggerKey(L'`'),
+                                                                IsConfiguredDirectHelpcodeEndTriggerKey(L';'), false));
+}
+
 std::wstring FormatDirectHelpcodeWorkerPayload()
 {
     const bool enabled =
@@ -953,6 +990,14 @@ bool SetConfiguredShowShuangpinHelpcodeInCandidateWindow(bool enabled)
     }
     g_show_shuangpin_helpcode_in_candidate_window = enabled;
     return true;
+}
+
+bool IsConfiguredShuangpinHelpcodeHintShown()
+{
+    // shuangpin_helpcode 只管末尾辅助码；只开句中辅助码（引导键或直接）时同样要在候选上看辅码。
+    return g_show_shuangpin_helpcode_in_candidate_window &&
+           (g_shuangpin_helpcode_enabled || g_shuangpin_mid_sentence_helpcode_enabled ||
+            g_shuangpin_direct_helpcode_enabled);
 }
 
 bool GetConfiguredShowQuanpinHelpcodeInCandidateWindow()

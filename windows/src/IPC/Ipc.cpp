@@ -1032,6 +1032,12 @@ bool UsesHorizontalArrowSelection()
            SupportsCompositionRestore();
 }
 
+bool UsesDirectHelpcodeEndTrigger()
+{
+    return Global::DirectHelpcodeEndTriggerKeys.load(std::memory_order_relaxed) != 0 && !Global::IsUiLessMode() &&
+           SupportsCompositionRestore();
+}
+
 bool SupportsCaretStateIndicator()
 {
     return hPipe && hPipe != INVALID_HANDLE_VALUE &&

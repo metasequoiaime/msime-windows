@@ -135,8 +135,10 @@ void ApplyDeferredKeyState(DeferredShadowState &shadow, const _KEYSTROKE_STATE &
     case FUNCTION_MOVE_RIGHT_SEGMENT:
     case FUNCTION_MOVE_LEFT_CANDIDATE:
     case FUNCTION_MOVE_RIGHT_CANDIDATE:
+    case FUNCTION_SERVER_COMPOSITION_REWRITE:
         // How much one unit covers is Server-owned, as is whether a candidate
-        // arrow moves the highlight or the caret, so the future raw and caret
+        // arrow moves the highlight or the caret (or how the direct helpcode end
+        // trigger rewrites the spelling), so the future raw and caret
         // cannot be predicted here. Invalidate the projection instead of
         // advancing it by one character; the next key re-reads the real
         // composition.
@@ -552,6 +554,15 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
         shadow.inputLength == 0 && !shadow.candidateActive)
     {
         return setKeyState(CATEGORY_COMPOSING, FUNCTION_BACKSPACE);
+    }
+
+    // 与同步路径（CompositionProcessorEngine_KeyClassify.cpp）一致：直接辅助码下进入末尾辅助码的引导键和删掉它的退格
+    // 交给 Server 改写，按影子状态算。
+    if (shadow.imeOpen && !shadow.japaneseMode &&
+        CCompositionProcessorEngine::IsDirectHelpcodeEndTriggerRewriteKey(
+            *classifiedCode, *classifiedWch, shadow.rawInput.data(), shadow.rawInput.size(), shadow.caret))
+    {
+        return setKeyState(CATEGORY_COMPOSING, FUNCTION_SERVER_COMPOSITION_REWRITE);
     }
 
     _KEYSTROKE_STATE inputState = {};
@@ -1136,6 +1147,11 @@ void CMetasequoiaIME::_DrainOneDeferredKeyDown()
             // There is no candidate authority offline. Commit exactly the
             // raw text already held by the TSF composition.
             offlineState.Function = FUNCTION_FINALIZE_TEXTSTORE;
+            break;
+        case FUNCTION_SERVER_COMPOSITION_REWRITE:
+            // Nothing can rewrite the spelling offline: Backspace deletes one
+            // character, a guide key commits the raw text like the other Server keys.
+            offlineState.Function = key.wParam == VK_BACK ? FUNCTION_BACKSPACE : FUNCTION_FINALIZE_TEXTSTORE;
             break;
         case FUNCTION_MOVE_PAGE_UP:
         case FUNCTION_MOVE_PAGE_DOWN:

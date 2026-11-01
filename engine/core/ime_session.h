@@ -51,6 +51,14 @@ class ImeSession
     }
     // 直接辅助码在句中用什么结束四码：补 /、第二位辅码大写，可以都开。
     void set_direct_helpcode_markers(bool slash, bool uppercase);
+    // 直接辅助码下用引导键进入末尾辅助码（宿主把 ; 和它前面的输入改写成「纯双拼 + kEndMarker」，见
+    // FanyImeDirectHelpcode::AcceptsEndTriggerAt）。开着时输入串里有末尾段就不再交给直接辅助码的解析器，
+    // 末尾段的辅码按引导键式末尾辅助码筛候选，与末尾辅助码自己的开关无关。
+    void set_direct_helpcode_end_trigger_enabled(bool enabled);
+    // typed（光标在末尾）能不能这样进入末尾辅助码：按直接辅助码的切分，每个音节都是完整的两键双拼、
+    // 带 0~2 个辅码时，返回去掉辅码后的纯双拼（手动分隔符 ' 原样保留），否则返回空。开关关着、不是双拼、
+    // 或 typed 不满足形状规则时同样返回空。只做一次独立查询，不动当前组合。
+    std::optional<std::string> direct_helpcode_end_trigger_prefix(const std::string &typed);
     void set_quanpin_helpcode_enabled(bool enabled);
     void set_quanpin_autocorrect_types(unsigned autocorrect_types);
     void set_fuzzy_pinyin_options(metasequoia::FuzzyPinyinOptions options)
@@ -134,6 +142,8 @@ class ImeSession
     void apply_request_options(QueryRequest &request) const;
     // 直接辅助码开着时把请求交给解析器改写，见 ProviderRegistry::resolve_direct_helpcode。
     void resolve_direct_helpcode(QueryRequest &request);
+    // 直接辅助码与末尾引导都开着、请求的原串里有末尾段：这时按引导键式末尾辅助码查，不再按直接辅助码解析。
+    bool direct_helpcode_end_block_active(const QueryRequest &request) const;
     void refresh_candidates();
     void bind_wubi_scheme();
     void bind_shuangpin_scheme();
@@ -158,6 +168,7 @@ class ImeSession
     bool enable_direct_helpcode_ = false;
     bool direct_helpcode_slash_marker_ = true;
     bool direct_helpcode_uppercase_marker_ = false;
+    bool enable_direct_helpcode_end_trigger_ = false;
     bool enable_mid_sentence_uppercase_trigger_ = false;
     bool enable_quanpin_helpcode_ = false;
     unsigned quanpin_autocorrect_types_ = 0;

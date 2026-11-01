@@ -272,6 +272,25 @@ bool IsEndHelpcodeMarkerKey(UINT keycode, WCHAR wch, const std::string &raw_inpu
     return g_inputSession->accepts_end_helpcode_marker(caret);
 }
 
+// 直接辅助码下用引导键（末尾辅助码设置里勾了的反引号、分号）进入末尾辅助码：TSF 把输入末尾形状合适的引导键、
+// 以及删掉它留下的末尾段开头的退格打上
+// FanyImePipeFlags::DirectHelpcodeEndTriggerRewrite 交过来，并且一定会读这次的回复。是否这样处理以标记为准，
+// 不再按配置和形状重算：配置刚改、TSF 还没收到新状态时，两边仍按同一个约定走。HandleImeKey 每键解析一次。
+bool g_key_direct_end_trigger_request = false;
+
+// 这颗引导键真的要改写输入串：TSF 打了标记，且直接辅助码的切分里每个音节都是「完整双拼 + 0~2 个辅码」，返回
+// 去掉辅码后的纯双拼。改写不了时引导键照旧当标点（上屏高亮候选 + 标点），TSF 等的回帧就是那一帧。
+std::optional<std::string> DirectHelpcodeEndTriggerPrefix(UINT keycode, WCHAR wch, const std::string &raw_input)
+{
+    const bool trigger_key = (keycode == VK_OEM_1 && wch == L';') || (keycode == VK_OEM_3 && wch == L'`');
+    if (!g_key_direct_end_trigger_request || !trigger_key || g_english_input_mode || g_inputSession == nullptr ||
+        IsUiLessMode() || IsJapaneseInputMode())
+    {
+        return std::nullopt;
+    }
+    return g_inputSession->direct_helpcode_end_trigger_prefix(raw_input);
+}
+
 bool IsSelectionKey(UINT keycode)
 {
     if (keycode == VK_SPACE)
@@ -382,7 +401,29 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
     // know this key produced that state on purpose.
     bool keep_creating_word_after_empty_raw = false;
 
-    if (keycode == VK_BACK)
+    if (keycode == VK_BACK && g_key_direct_end_trigger_request && client_supports_restore && !IsUiLessMode() &&
+        !FanyImeIpc::IsSegmentBackspaceKey(keycode, modifiers_down))
+    {
+        // 删的是进入末尾辅助码的那个引导键：前面还是当时整理出的样子就恢复整理前的原串（句中辅码重新生效），
+        // 否则只删光标前的一个字符。两种结果都回 CompositionRestored，TSF 照着重建，自己不删。
+        if (!composition.direct_end_trigger_original.empty() && raw == composition.direct_end_trigger_rewritten)
+        {
+            raw = composition.direct_end_trigger_original;
+            composition.caret_position = raw.size();
+        }
+        else if (composition.caret_position > 0)
+        {
+            raw.erase(composition.caret_position - 1, 1);
+            --composition.caret_position;
+        }
+        composition.clear_direct_end_trigger();
+        composition_restored = true;
+        keep_creating_word_after_empty_raw =
+            raw.empty() && FanyImeIpc::ShouldKeepCreatingWordAfterRawEmptied(composition.creating_word.active,
+                                                                             IsUiLessMode(), client_supports_restore,
+                                                                             composition.selection_history.size());
+    }
+    else if (keycode == VK_BACK)
     {
         // Ctrl+Backspace deletes one segmentation unit (one character's pinyin)
         // instead of one character. The boundaries are the engine's, so TSF
@@ -491,6 +532,18 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         {
             input = FanyImeMidSentenceHelpcode::kEndMarker;
         }
+        else if (const auto prefix =
+                     client_supports_restore ? DirectHelpcodeEndTriggerPrefix(keycode, wch, raw) : std::nullopt)
+        {
+            // 直接辅助码下用引导键进入末尾辅助码：各音节上的辅码删掉，整串改写成「纯双拼 + 末尾段开头」，记下
+            // 原串供删掉这个引导键时恢复。改写由 CompositionRestored 带给 TSF。
+            composition.direct_end_trigger_original = raw;
+            raw = *prefix + FanyImeMidSentenceHelpcode::kEndMarker;
+            composition.direct_end_trigger_rewritten = raw;
+            composition.caret_position = raw.size();
+            composition.note_raw_inserted();
+            composition_restored = true;
+        }
         else if (IsDirectHelpcodeSlashKey(keycode, wch, raw))
         {
             input = '/';
@@ -525,13 +578,17 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         {
             return true;
         }
-        raw.insert(raw.begin() + static_cast<std::ptrdiff_t>(composition.caret_position), input);
-        ++composition.caret_position;
-        // Typing locks the newest selection (Rime's selected_before_editing):
-        // Backspace must keep deleting these fresh characters instead of
-        // retracting the selection out from under them. Caret moves never reach
-        // here and deliberately do not lock.
-        composition.note_raw_inserted();
+        // 0：上面已经整串改写过（直接辅助码下的 ;），没有要插入的字符。
+        if (input != 0)
+        {
+            raw.insert(raw.begin() + static_cast<std::ptrdiff_t>(composition.caret_position), input);
+            ++composition.caret_position;
+            // Typing locks the newest selection (Rime's selected_before_editing):
+            // Backspace must keep deleting these fresh characters instead of
+            // retracting the selection out from under them. Caret moves never reach
+            // here and deliberately do not lock.
+            composition.note_raw_inserted();
+        }
     }
 
     if (raw.empty() && !keep_creating_word_after_empty_raw)
@@ -1074,6 +1131,9 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     // 是否生效以标记为准而不是再查配置：配置刚改、TSF 还没收到新状态时，两边仍按同一个约定走。
     const bool horizontal_arrow_request = (Global::ModifiersDown & FanyImePipeFlags::HorizontalArrowSelection) != 0;
     Global::ModifiersDown &= ~FanyImePipeFlags::HorizontalArrowSelection;
+    // 同理：直接辅助码下进入末尾辅助码的引导键和删掉它的退格，见 g_key_direct_end_trigger_request。
+    g_key_direct_end_trigger_request = (Global::ModifiersDown & FanyImePipeFlags::DirectHelpcodeEndTriggerRewrite) != 0;
+    Global::ModifiersDown &= ~FanyImePipeFlags::DirectHelpcodeEndTriggerRewrite;
 
     // MainPipeClientThread only enqueues this from a negotiated client with a known action.
     if (namedpipeData.event_type == FanyImePipeEventType::InputStateAction)
@@ -1284,6 +1344,11 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         IsMidSentenceHelpcodeMarkerKey(Global::Keycode, Global::Wch, input_before_key) ||
         IsEndHelpcodeMarkerKey(Global::Keycode, Global::Wch, input_before_key);
     const bool is_direct_helpcode_slash = IsDirectHelpcodeSlashKey(Global::Keycode, Global::Wch, input_before_key);
+    // 直接辅助码下用引导键进入末尾辅助码：改写得了就当编辑键改写输入串；改写不了时照旧当标点，TSF 等的回帧
+    // 就是标点那一帧（见 g_key_direct_end_trigger_request）。
+    const bool is_direct_helpcode_end_trigger =
+        ClientNegotiatedCompositionRestore(client_id) &&
+        DirectHelpcodeEndTriggerPrefix(Global::Keycode, Global::Wch, input_before_key).has_value();
     const bool is_date_time_input_key = IsDateTimeInputKey(Global::Keycode, Global::Wch, input_before_key);
     // V 模式的数字和 . + - * / ( )：只进输入串，不选词、不翻页、不当标点。
     const bool is_v_mode_input_key = IsVModeInputKey(Global::Wch, input_before_key);
@@ -1300,8 +1365,8 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     const bool is_commit_with_highlighted_candidate_punctuation =
         word_character_direction != 0 ||
         (!is_manual_pinyin_separator && !is_microsoft_shuangpin_ing_key && !is_mid_sentence_helpcode_marker &&
-         !is_direct_helpcode_slash && !is_date_time_input_key && !is_v_mode_input_key &&
-         !is_v_mode_shift_digit_selection &&
+         !is_direct_helpcode_slash && !is_direct_helpcode_end_trigger && !is_date_time_input_key &&
+         !is_v_mode_input_key && !is_v_mode_shift_digit_selection &&
          IsCommitWithHighlightedCandidatePunctuationInCandidateMode(Global::Keycode, Global::Wch));
     const bool is_selection_key = IsSelectionKey(Global::Keycode);
     // 移高亮的左右键不碰组合，交给下面的候选导航分支。
@@ -1310,7 +1375,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         Global::Keycode == VK_BACK || Global::Keycode == VK_DELETE ||
         (Global::Keycode >= 'A' && Global::Keycode <= 'Z') || is_manual_pinyin_separator ||
         is_microsoft_shuangpin_ing_key || is_mid_sentence_helpcode_marker || is_direct_helpcode_slash ||
-        is_japanese_long_vowel || is_date_time_input_key || is_v_mode_input_key;
+        is_direct_helpcode_end_trigger || is_japanese_long_vowel || is_date_time_input_key || is_v_mode_input_key;
     const bool should_forward_key_to_session = !is_commit_with_highlighted_candidate_punctuation && !is_selection_key &&
                                                !is_paging_key && !is_composition_edit_key;
 

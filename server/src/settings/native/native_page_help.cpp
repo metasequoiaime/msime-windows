@@ -278,21 +278,17 @@ VisualPtr BuildHelpPage(PageContext &context)
     // 游戏兼容
     {
         auto column = std::make_shared<Column>(0.0f);
-        column->Add(MakeTitle(L"游戏兼容（CS2 / Dota 2）"));
-        column->Add(Description(L"CS2、Dota 2 "
-                                L"只给内置名单里的输入法画候选；不在名单里时会在左上角弹出系统组合小框，独占全屏下还会"
-                                L"把游戏踢出全屏（黑屏）。开启后水杉在系统里登记为下面的名称，游戏会自己画候选。"));
-        column->Add(Description(L"代价：语言栏和 Windows 设置里也会显示这个名称；需要管理员权限（会弹一次 "
-                                L"UAC）；要重启游戏才生效；已知上屏后的第一下退格会被游戏吞掉（游戏那边的行为）。"));
-        column->Add(Description(L"任务栏的输入指示和 Win+Space 的切换列表要到重启资源管理器或重新登录后才更新，"
-                                L"系统设置和语言栏会立即变化。"));
+        column->Add(MakeTitle(L"游戏兼容（伪装名称 实验性）"));
+        column->Add(Description(L"部分游戏（CS2、Dota 2）使用白名单，只允许固定几个输入法使用；不在名单里无法使用"));
+        column->Add(Description(L"功能不稳定：已知问题包括，上屏后的第一下退格会被游戏吞掉（游戏那边的行为）。"
+                                L"建议保持默认「拼音输入法」，或者改成任意大厂输入法的名称。"));
         state->compatEnabled = std::make_shared<CheckOption>(L"启用游戏兼容名称");
         state->compatEnabled->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         state->compatEnabled->SetHorizontalAlignment(msimeui::HorizontalAlignment::Leading);
         column->Add(state->compatEnabled);
         state->compatName = std::make_shared<StyledInput>(L"拼音输入法", 12.0f);
         state->compatName->SetDisabled(true);
-        auto field = FieldWithCaption(L"登记名称", state->compatName);
+        auto field = FieldWithCaption(L"伪装名称", state->compatName);
         state->compatApply = std::make_shared<CssButton>(L"应用", DefaultImeButtonStyle(true));
         state->compatApply->SetDisabled(true);
         auto row = std::make_shared<Row>(20.0f);
