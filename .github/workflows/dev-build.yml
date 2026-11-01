@@ -127,7 +127,7 @@ jobs:
         shell: pwsh
         run: ./scripts/ci/check-tsf-dll.ps1 -BuildDir '${{ matrix.build_dir }}'
       - name: Upload the TSF binary and symbols
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dev-tsf-${{ matrix.name }}
           retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
@@ -242,7 +242,7 @@ jobs:
           if ($targets.Count -eq 0) { throw 'No EXE or DLL found to sign under server/build-release/bin/Release.' }
           ./installer/sign-dev-build.ps1 -FilePath $targets
       - name: Upload the Server build
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dev-server
           retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
@@ -252,7 +252,7 @@ jobs:
       # the trust that the signature above depends on.
       - name: Upload the signing certificate
         if: ${{ (inputs.component || 'all') == 'server' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dev-server-certificate
           retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
@@ -281,17 +281,17 @@ jobs:
           "display=$display" >> $env:GITHUB_OUTPUT
           "installer=installer/Output/MetasequoiaIME_Setup_v$display.exe" >> $env:GITHUB_OUTPUT
       - name: Download the x64 TSF binary and symbols
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dev-tsf-x64
           path: windows/build64-release/Release
       - name: Download the 32-bit TSF binary and symbols
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dev-tsf-Win32
           path: windows/build32-release/Release
       - name: Download the Server build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dev-server
           path: server/build-release/bin/Release
@@ -351,7 +351,7 @@ jobs:
           "installer_path=$((Resolve-Path $built).Path)" >> $env:GITHUB_OUTPUT
           "installer_sha256=$hash" >> $env:GITHUB_OUTPUT
       - name: Upload the installer and the signing certificate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dev-installer
           retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
@@ -374,7 +374,7 @@ jobs:
           -TargetVersion $env:TARGET_VERSION
           -OutputDirectory "${{ runner.temp }}/portable"
       - name: Upload the portable settings window
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dev-settings-portable
           retention-days: ${{ env.DEV_ARTIFACT_RETENTION }}
