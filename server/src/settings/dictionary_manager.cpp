@@ -8,6 +8,7 @@
 #include "utils/common_utils.h"
 #include "utils/hanzi_pinyin.h"
 #include "engine/common/helpcode_utils.h"
+#include "engine/quanpin/latin_words.h"
 #include "engine/quanpin/quanpin_query.h"
 #include "engine/quanpin/quanpin_utils.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
@@ -22,8 +23,10 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -553,6 +556,294 @@ bool ParseImportLine(const std::string &line, std::string &word, std::string &co
     return Validation::ParseCodedImportLine(line, word, code, weight, message);
 }
 
+// ---- 字母词（T恤、卡拉OK，dictionary == "latin"）----
+// 生效的行写在 msime.db 的 latin_words，另记进用户日志的 user_latin_words，换词库时回放写回；
+// 两边一个事务，见 user_dictionary::add_user_latin_words。出厂字母词只能查，不能改删。
+
+std::string MainDictionaryPath()
+{
+    return CommonUtils::get_ime_data_path() + "\\msime.db";
+}
+
+// 词里的汉字自动注音（按连续汉字分段注，字母不参与，免得打断上下文），字母照抄。
+std::optional<quanpin::LatinEntry> AnnotateLatinEntry(const std::string &word, std::string &message)
+{
+    message = quanpin::latin_word_problem(word);
+    if (!message.empty())
+        return std::nullopt;
+    std::vector<std::string> syllables;
+    for (const auto &run : quanpin::latin_word_han_runs(word))
+    {
+        if (!IsPureHanPhrase(run))
+        {
+            message = "词里有无法自动注音的汉字，请在第二列写出读音（例如 T恤<Tab>t'xu）";
+            return std::nullopt;
+        }
+        std::string code;
+        if (!AnnotateHansToPinyin(run, code, message))
+            return std::nullopt;
+        for (const auto &syllable : quanpin::split_segments(code))
+            syllables.push_back(syllable);
+    }
+    return quanpin::make_latin_entry(word, syllables, message);
+}
+
+// 读音留空时自动注音。
+std::optional<quanpin::LatinEntry> ResolveLatinEntry(const std::string &word, const std::string &reading,
+                                                     std::string &message)
+{
+    if (reading.find_first_not_of(" \t") == std::string::npos)
+        return AnnotateLatinEntry(word, message);
+    return quanpin::parse_latin_entry(word, reading, message);
+}
+
+struct LatinImportLine
+{
+    int line_no = 0;
+    std::string word;
+    std::string reading; // 空：自动注音
+    int weight = Validation::kDefaultPinyinImportWeight;
+};
+
+// 一行：词语[<Tab>读音[<Tab>权重]]。只有一列时自动注音。
+bool ParseLatinImportLine(const std::string &line, LatinImportLine &parsed, std::string &message)
+{
+    if (line.find('\t') == std::string::npos)
+    {
+        const auto begin = line.find_first_not_of(' ');
+        const auto end = line.find_last_not_of(' ');
+        parsed.word = begin == std::string::npos ? std::string{} : line.substr(begin, end - begin + 1);
+        parsed.reading.clear();
+        parsed.weight = Validation::kDefaultPinyinImportWeight;
+        if (parsed.word.empty())
+        {
+            message = "词语不能为空";
+            return false;
+        }
+        return true;
+    }
+    return Validation::ParseCodedImportLine(line, parsed.word, parsed.reading, parsed.weight, message);
+}
+
+// 规范、校验后整批写进词库和日志（一个事务）。结果计进三个计数。
+void ImportLatinLines(const std::vector<LatinImportLine> &lines, int &inserted, int &skipped,
+                      const std::function<void(int, const std::string &)> &append_error)
+{
+    std::vector<user_dictionary::UserLatinWord> words;
+    std::vector<int> line_numbers;
+    for (const auto &line : lines)
+    {
+        std::string message;
+        const auto entry = ResolveLatinEntry(line.word, line.reading, message);
+        if (!entry)
+        {
+            append_error(line.line_no, message);
+            continue;
+        }
+        words.push_back({entry->key, entry->value, (std::max)(0, line.weight), entry->exact_only});
+        line_numbers.push_back(line.line_no);
+    }
+    if (words.empty())
+        return;
+    const auto results =
+        user_dictionary::add_user_latin_words(MainDictionaryPath(), user_dictionary::default_user_db_path(), words);
+    for (std::size_t i = 0; i < results.size(); ++i)
+    {
+        switch (results[i])
+        {
+        case user_dictionary::LatinWordWrite::Written:
+            ++inserted;
+            break;
+        case user_dictionary::LatinWordWrite::Exists:
+            ++skipped;
+            break;
+        default:
+            append_error(line_numbers[i], "写入失败");
+            break;
+        }
+    }
+}
+
+json::object ImportLatin(const json::object &request)
+{
+    std::string content = StringValue(request, "content");
+    if (content.size() >= 3 && static_cast<unsigned char>(content[0]) == 0xEF &&
+        static_cast<unsigned char>(content[1]) == 0xBB && static_cast<unsigned char>(content[2]) == 0xBF)
+        content.erase(0, 3);
+    if (content.find_first_not_of(" \t\r\n") == std::string::npos)
+        return Result(false, "文件内容为空");
+
+    int inserted = 0;
+    int skipped = 0;
+    int failed = 0;
+    std::vector<std::string> error_details;
+    const auto append_error = [&](int line_no, const std::string &detail) {
+        ++failed;
+        if (error_details.size() < 5)
+            error_details.push_back("第 " + std::to_string(line_no) + " 行：" + detail);
+    };
+
+    std::vector<LatinImportLine> lines;
+    std::istringstream stream(content);
+    std::string line;
+    int line_no = 0;
+    bool in_yaml_header = false;
+    while (std::getline(stream, line))
+    {
+        ++line_no;
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (Validation::ShouldSkipImportLine(line, in_yaml_header))
+            continue;
+        LatinImportLine parsed;
+        parsed.line_no = line_no;
+        std::string message;
+        if (!ParseLatinImportLine(line, parsed, message))
+        {
+            append_error(line_no, message);
+            continue;
+        }
+        lines.push_back(std::move(parsed));
+    }
+    ImportLatinLines(lines, inserted, skipped, append_error);
+    return SummarizeImport(inserted, skipped, failed, error_details);
+}
+
+json::object QueryLatin(const json::object &request)
+{
+    std::string code;
+    for (const unsigned char ch : StringValue(request, "code"))
+    {
+        if (ch == '\'' || ch == ' ')
+            continue;
+        if (!std::isalpha(ch))
+            return Result(false, "请输入字母词的编码，只能是英文字母（例如 txu）");
+        code.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    if (code.empty())
+        return Result(false, "请输入字母词的编码，只能是英文字母（例如 txu）");
+
+    std::string error;
+    Db db = OpenDatabase("msime.db", error);
+    if (!db)
+        return Result(false, "打开拼音词库失败：" + error);
+    // 还没有这张表的旧词库：没有字母词，不是错误。
+    Stmt exists = Prepare(db.get(), "SELECT 1 FROM sqlite_master WHERE type='table' AND name='latin_words'", error);
+    if (!exists)
+        return Result(false, "查询失败：" + error);
+    if (sqlite3_step(exists.get()) != SQLITE_ROW)
+    {
+        json::object result = Result(true, "没有找到词条");
+        result["hasMore"] = false;
+        result["offset"] = 0;
+        return result;
+    }
+    exists.reset();
+    std::string upper = code;
+    ++upper.back(); // 只有 a-z，加一就是前缀的上界
+    Stmt stmt = Prepare(db.get(),
+                        "SELECT \"key\",\"value\",\"weight\" FROM latin_words "
+                        "WHERE replace(\"key\",'''','')>=?1 AND replace(\"key\",'''','')<?2 "
+                        "ORDER BY CASE WHEN replace(\"key\",'''','')=?1 THEN 0 ELSE 1 END,\"weight\" DESC,\"key\","
+                        "\"value\"" +
+                            Paging::Sql(request),
+                        error);
+    if (!stmt || !BindText(stmt.get(), 1, code) || !BindText(stmt.get(), 2, upper))
+        return Result(false, "查询失败：" + error);
+    return Paging::Read(stmt.get(), request);
+}
+
+json::object MutateLatin(const json::object &request)
+{
+    const std::string action = StringValue(request, "action");
+    const std::string journal = user_dictionary::default_user_db_path();
+    const auto old_key = [&]() {
+        // 表格里显示的就是规范好的键；仍按词重新规范一遍，旧版导出、手改过的写法也认。
+        const std::string old_code = StringValue(request, "oldCode");
+        std::string message;
+        const auto entry = quanpin::parse_latin_entry(StringValue(request, "oldWord"), old_code, message);
+        return entry ? entry->key : old_code;
+    };
+    if (action == "delete")
+    {
+        switch (user_dictionary::delete_user_latin_word(MainDictionaryPath(), journal, old_key(),
+                                                        StringValue(request, "oldWord")))
+        {
+        case user_dictionary::LatinWordWrite::Written:
+            NotifyImeServerClearDictCache();
+            return Result(true, "词条删除成功");
+        case user_dictionary::LatinWordWrite::Missing:
+            return Result(false, "内置字母词不能删除，只能删除自己加的字母词");
+        default:
+            return Result(false, "删除失败");
+        }
+    }
+    if (action != "create" && action != "update")
+        return Result(false, "未知操作");
+
+    std::string message;
+    const auto entry = ResolveLatinEntry(StringValue(request, "word"), StringValue(request, "code"), message);
+    if (!entry)
+        return Result(false, message);
+    const user_dictionary::UserLatinWord word{entry->key, entry->value, (std::max)(0, IntValue(request, "weight", 10)),
+                                              entry->exact_only};
+    if (action == "create")
+    {
+        switch (user_dictionary::add_user_latin_words(MainDictionaryPath(), journal, {word}).front())
+        {
+        case user_dictionary::LatinWordWrite::Written:
+            NotifyImeServerClearDictCache();
+            return Result(true, "词条新增成功");
+        case user_dictionary::LatinWordWrite::Exists:
+            return Result(false, "词条已经存在");
+        default:
+            return Result(false, "新增失败");
+        }
+    }
+    switch (user_dictionary::update_user_latin_word(MainDictionaryPath(), journal, old_key(),
+                                                    StringValue(request, "oldWord"), word))
+    {
+    case user_dictionary::LatinWordWrite::Written:
+        NotifyImeServerClearDictCache();
+        return Result(true, "词条修改成功");
+    case user_dictionary::LatinWordWrite::Exists:
+        return Result(false, "修改后的词条已经存在");
+    case user_dictionary::LatinWordWrite::Missing:
+        return Result(false, "内置字母词不能修改，只能修改自己加的字母词");
+    default:
+        return Result(false, "修改失败");
+    }
+}
+
+json::object ExportLatin()
+{
+    const auto words = user_dictionary::user_latin_words(user_dictionary::default_user_db_path());
+    if (words.empty())
+        return Result(false, "当前没有可导出的用户字母词");
+    std::ostringstream content;
+    for (const auto &word : words)
+        content << SanitizeExportField(word.value) << '\t' << SanitizeExportField(word.key) << '\t' << word.weight
+                << '\n';
+    json::object result = Result(true, "已导出 " + std::to_string(words.size()) + " 条用户字母词");
+    result["content"] = content.str();
+    result["filename"] = "水杉IME-字母词用户词库.txt";
+    result["entryCount"] = words.size();
+    return result;
+}
+
+json::object HandleLatin(const json::object &request)
+{
+    const std::string action = StringValue(request, "action");
+    if (action == "query")
+        return QueryLatin(request);
+    // 字母词页的「批量导入」与下方「按词导入（自动注音）」走同一条路：一列的行自动注音。
+    if (action == "import" || action == "importHans")
+        return ImportLatin(request);
+    if (action == "export")
+        return ExportLatin();
+    return MutateLatin(request);
+}
+
 json::object ImportChinese(const json::object &request)
 {
     std::string content = StringValue(request, "content");
@@ -578,6 +869,10 @@ json::object ImportChinese(const json::object &request)
             error_details.push_back("第 " + std::to_string(line_no) + " 行：" + detail);
     };
 
+    // 含英文字母的词（Rime 词库里混着的 T恤、卡拉OK）按字母词导入：它们不是拼音表的词，拼音表也
+    // 存不下（T 不是音节；写成 te'xu 硬塞进去，txu 反而打不出来）。拼音这批提交之后再写：字母词另开
+    // 连接和事务，不能等在这批的写锁后面。
+    std::vector<LatinImportLine> latin_lines;
     sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
     std::istringstream stream(content);
     std::string line;
@@ -597,6 +892,11 @@ json::object ImportChinese(const json::object &request)
         if (!ParseImportLine(line, word, code, weight, message))
         {
             append_error(line_no, message);
+            continue;
+        }
+        if (quanpin::contains_latin_letter(word))
+        {
+            latin_lines.push_back({line_no, word, code, weight});
             continue;
         }
 
@@ -620,6 +920,7 @@ json::object ImportChinese(const json::object &request)
         ++inserted;
     }
     sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr);
+    ImportLatinLines(latin_lines, inserted, skipped, append_error);
 
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
@@ -801,6 +1102,10 @@ json::object MutateChinese(const json::object &request)
     const std::string code = StringValue(request, "code");
     const std::string word = StringValue(request, "word");
     const int weight = (std::max)(0, IntValue(request, "weight", 10));
+    // 在拼音页新增含英文字母的词，按字母词加（见 ImportChinese）。改、删仍走拼音表：以前这样硬塞进
+    // 拼音表的旧词条还得能删掉。
+    if (action == "create" && quanpin::contains_latin_letter(word))
+        return MutateLatin(request);
     quanpin::Segments segments;
     std::string key, error;
     if (!ValidateChineseEntry(mode, code, word, segments, key, error))
@@ -1500,6 +1805,8 @@ json::object HandleRequest(const json::object &request)
 {
     const std::string dictionary = StringValue(request, "dictionary");
     const std::string action = StringValue(request, "action");
+    if (dictionary == "latin")
+        return HandleLatin(request);
     if (action == "export")
         return ExportUserDictionary(dictionary);
     // 纯汉字导入按目标词库分发出码方式：拼音走注音引擎，五笔走 wubi86 单字码组合。

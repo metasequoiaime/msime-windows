@@ -5,7 +5,10 @@
 #include "word_lattice.h"
 #include <sqlite3.h>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace quanpin
@@ -13,6 +16,8 @@ namespace quanpin
 // msime.db 的 latin_words：T恤、AA制、卡拉OK 这类拉丁字母加汉字的词。键里每个字母自成一段
 // （t'xu、ka'la'o'k），按打出的字母串匹配，不看切分：kalaok 切成 ka'lao'k 也要认出卡拉OK。
 // 词不多（一千来条），载入后整表放在内存里。旧词库没有这张表时就是空的。
+// 出厂词由建库脚本写；用户在设置页加的词也写在这张表里，另记进用户日志的 user_latin_words，
+// 换词库时由 replay 写回（见 user_dictionary::add_user_latin_words）。
 struct LatinWord
 {
     std::string code; // 键去掉分隔符，即要敲的字母串
@@ -22,7 +27,19 @@ struct LatinWord
     // 车牌（浙E、鄂A）：只在整串正好是它时单独出候选，不补全、不进整句。浙E 的 zhe'e 全是完整音节，
     // 进了词格会混进普通整句（就浙E养）；补全会让 zhe 冒出一串车牌。
     bool exact_only = false;
+
+    bool operator==(const LatinWord &other) const
+    {
+        return key == other.key && value == other.value && weight == other.weight && exact_only == other.exact_only;
+    }
 };
+
+// 建表语句，与 scripts/dictionary_build/pinyin_db.py 的 CREATE_LATIN_WORDS 同一结构。用户在设置页加词、
+// 回放用户字母词时，词库可能是还没有这张表的旧版本，用它补建。
+inline constexpr const char *kLatinWordsTableSql =
+    "CREATE TABLE IF NOT EXISTS main.latin_words(\"key\" TEXT NOT NULL,\"value\" TEXT NOT NULL,"
+    "\"weight\" INTEGER NOT NULL,\"exact_only\" INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(\"key\",\"value\"))"
+    " WITHOUT ROWID";
 
 class LatinWords
 {
@@ -51,6 +68,37 @@ class LatinWords
     std::vector<LatinWord> words_;
     std::size_t max_code_length_ = 0;
 };
+
+// 词典对象持有的那一份字母词。词库被别的连接写过（data_version 不同于 loaded_version，或词典清缓存时
+// 置了 stale）就重读；读出来和手上那份完全相同时沿用原对象，双拼按它反推的按键表也就不用重建——调频
+// 每选一次词都会让 data_version 变一次，不能每次都重建。用 shared_ptr：重读时，正在解词格的那一轮仍
+// 握着旧的一份。statement_cache 是词典的语句缓存（随词典析构 finalize），查 data_version 的语句放在里面。
+std::shared_ptr<const LatinWords> refresh_latin_words(std::shared_ptr<const LatinWords> current, bool &stale,
+                                                      sqlite3_int64 &loaded_version, sqlite3 *db,
+                                                      std::unordered_map<std::string, sqlite3_stmt *> &statement_cache);
+
+// 用户加的一条字母词，规范成 latin_words 的一行。
+struct LatinEntry
+{
+    std::string key; // t'xu、ka'la'o'k：字母各一段（小写），汉字各一个完整音节
+    std::string value;
+    bool exact_only = false; // 车牌，见 LatinWord::exact_only
+};
+
+// 词只含英文字母和汉字、两样都有，且不太长。返回空串表示合格，否则是给用户看的原因。
+std::string latin_word_problem(const std::string &word);
+// 车牌：省份简称加一个大写字母（浙E、鄂A），与建库脚本的 _LICENSE_PLATE 同一规则。
+bool is_license_plate(const std::string &word);
+// 按读音规范一条字母词。读音的写法都认：t'xu（本输入法导出的格式）、T xu（Rime 用户词库）、
+// kǎ'lā'OK（万象：字母串原样一段，汉字带声调）、xu4 这种数字调、不分隔的 txu。字母要与词里的字母
+// 逐个对上，汉字各对一个完整音节；切法不唯一（fangan：fang'an / fan'gan）时要求用 ' 分开。
+// 失败返回空，error 是给用户看的原因。
+std::optional<LatinEntry> parse_latin_entry(const std::string &word, const std::string &reading, std::string &error);
+// 汉字的读音已经按顺序给出（自动注音）：字母照抄，汉字依次取 han_syllables。
+std::optional<LatinEntry> make_latin_entry(const std::string &word, const std::vector<std::string> &han_syllables,
+                                           std::string &error);
+// 词里依次每一段连续汉字（T恤衫 → 恤衫；A股B股 → 股、股），给自动注音按段注，免得字母打断上下文。
+std::vector<std::string> latin_word_han_runs(const std::string &word);
 
 // 一个字母配不出词，单敲 t 不该冒出 T台、T恤。
 inline constexpr std::size_t kLatinWordMinimumCode = 2;

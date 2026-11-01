@@ -156,16 +156,19 @@ class ShuangpinDictionary
     std::unordered_map<std::string, std::vector<quanpin::LatticeLexeme>> direct_span_cache_;
     // 见 QuanpinDictionary::char_reading_totals_。
     std::shared_ptr<const quanpin::CharReadingTotals> char_reading_totals_;
-    // 字母词与它们在本方案下的敲法，第一次用到时载入；后者存着指向前者的指针，两者一起建、不再重载。
-    std::optional<quanpin::LatinWords> latin_words_;
-    std::optional<ShuangpinLatinWords> latin_codes_;
+    // 字母词与它们在本方案下的敲法，第一次用到时载入。reset_cache 只置 stale，下次用到时重读
+    // （见 quanpin::refresh_latin_words）；字母词换了对象，敲法跟着重建。都按值交给调用方用。
+    std::shared_ptr<const quanpin::LatinWords> latin_words_;
+    bool latin_words_stale_ = false;
+    sqlite3_int64 latin_words_version_ = -1;
+    std::shared_ptr<const ShuangpinLatinWords> latin_codes_;
     // 见 insert_prefix_completion，随 reset_cache 清。
     quanpin::PrefixCompletionCache prefix_completion_cache_;
     // 补全打分用的万象模型与它的路径，见 QuanpinDictionary::prefix_completion_gram_。
     std::string prefix_completion_gram_path_;
     std::shared_ptr<const gram::GramDb> prefix_completion_gram_;
-    const quanpin::LatinWords &latin_words();
-    const ShuangpinLatinWords &latin_codes();
+    std::shared_ptr<const quanpin::LatinWords> latin_words();
+    std::shared_ptr<const ShuangpinLatinWords> latin_codes();
     // 贪心切分把字母词拆坏（tx'u 读成 tie 加声母 sh）时，在贪心切分的边界上找字母词的敲法，命中就换一条
     // 切分：命中前照旧，命中段按字母词的键切，命中后从命中结尾重新贪心切。这条切分解出的整句比贪心
     // 切分的好才合并进来，排在整句的最前面。

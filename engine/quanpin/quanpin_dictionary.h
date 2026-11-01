@@ -184,8 +184,9 @@ class QuanpinDictionary
     // 直查逐行相同；随 reset_cache 清空（词库被写或换了开关时）。with_fuzzy 为假时不收模糊读音，
     // 见 lattice_best_path。
     quanpin::WordLatticeLookup lattice_lookup(int limit, bool with_fuzzy = true);
-    // 字母词表，第一次用到时从 db_ 载入。
-    const quanpin::LatinWords &latin_words();
+    // 字母词表，第一次用到时从 db_ 载入，词库被写过后重读（见 quanpin::refresh_latin_words）。
+    // 调用方按值拿着用完：重读换掉的旧表要等手上这份放掉才释放。
+    std::shared_ptr<const quanpin::LatinWords> latin_words();
     // 打出的字母串整串等于某个字母词的编码时把它插进候选，三个字母起再补两条以它开头的更长的词
     // （txu 补 T恤衫）。排位见 quanpin::insert_latin_candidates。
     void insert_latin_words(std::vector<WordItem> &result, const std::string &raw_input,
@@ -236,8 +237,10 @@ class QuanpinDictionary
     // 多音单字各读音的权重和，词格第一次查跨度时载入，此后不随 reset_cache 重载。
     // 见 quanpin::load_char_reading_totals。
     std::shared_ptr<const quanpin::CharReadingTotals> char_reading_totals_;
-    // 见 latin_words()。只读出厂表，不随 reset_cache 重载。
-    std::optional<quanpin::LatinWords> latin_words_;
+    // 见 latin_words()。reset_cache 只置 stale，下次用到时重读（设置页加的字母词由此生效）。
+    std::shared_ptr<const quanpin::LatinWords> latin_words_;
+    bool latin_words_stale_ = false;
+    sqlite3_int64 latin_words_version_ = -1;
     // 见 set_prefix_completion。缓存按前缀存打过分的补全，随 reset_cache 清（调频改了权重）。
     metasequoia::PrefixCompletionOptions prefix_completion_;
     quanpin::PrefixCompletionCache prefix_completion_cache_;

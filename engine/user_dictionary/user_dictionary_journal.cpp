@@ -22,6 +22,7 @@
 #include "../english/english_dictionary.h"
 #include "../local_modes/local_database.h"
 #include "../neural/json.h"
+#include "../quanpin/latin_words.h"
 #include "../quanpin/quanpin_utils.h"
 
 namespace user_dictionary
@@ -211,7 +212,12 @@ bool ensure_schema(sqlite3 *db)
         "CREATE TABLE IF NOT EXISTS date_time_format_order("
         "category TEXT NOT NULL,format TEXT NOT NULL,position INTEGER NOT NULL CHECK(position>=0),"
         "PRIMARY KEY(category,format));"
-        "CREATE TABLE IF NOT EXISTS dictionary_state(name TEXT PRIMARY KEY,value TEXT NOT NULL);";
+        "CREATE TABLE IF NOT EXISTS dictionary_state(name TEXT PRIMARY KEY,value TEXT NOT NULL);"
+        // 用户加的字母词，见 add_user_latin_words。
+        "CREATE TABLE IF NOT EXISTS user_latin_words("
+        "key TEXT NOT NULL,value TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+        "exact_only INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT(unixepoch()),"
+        "PRIMARY KEY(key,value));";
     if (sqlite3_exec(db, sql, nullptr, nullptr, nullptr) != SQLITE_OK)
         return false;
 
@@ -980,6 +986,222 @@ bool bump_pinyin_weight(const std::string &main_db_path, const std::string &user
                         const std::string &value)
 {
     return bump_weight_in_table(main_db_path, user_db_path, pinyin_table(key), DictionaryKind::Pinyin, key, value);
+}
+
+namespace
+{
+// 词库里的 latin_words 可写：没有就建（还没收字母词的旧词库）；没有 exact_only 列（本地建过的早期
+// 字母词表）就补上。db 是词库的连接，写在它当前的事务里。
+bool ensure_latin_words_table(sqlite3 *db)
+{
+    if (!execute_sql(db, quanpin::kLatinWordsTableSql))
+        return false;
+    auto columns = prepare(db, "PRAGMA main.table_info(latin_words)");
+    if (!columns)
+        return false;
+    while (sqlite3_step(columns.get()) == SQLITE_ROW)
+    {
+        const unsigned char *name = sqlite3_column_text(columns.get(), 1);
+        if (name != nullptr && std::string(reinterpret_cast<const char *>(name)) == "exact_only")
+            return true;
+    }
+    columns.reset();
+    return execute_sql(db, "ALTER TABLE main.latin_words ADD COLUMN exact_only INTEGER NOT NULL DEFAULT 0");
+}
+
+std::int64_t clamp_latin_weight(std::int64_t weight)
+{
+    return (std::min)((std::max)(weight, std::int64_t{0}), kManagedWeightCeiling);
+}
+
+bool latin_row_exists(sqlite3 *db, const char *table, const std::string &key, const std::string &value)
+{
+    auto stmt = prepare(db, std::string("SELECT 1 FROM ") + table + " WHERE \"key\"=?1 AND \"value\"=?2 LIMIT 1");
+    return stmt && bind_text(stmt.get(), 1, key) && bind_text(stmt.get(), 2, value) &&
+           sqlite3_step(stmt.get()) == SQLITE_ROW;
+}
+
+// 先 UPDATE 再 INSERT，不用 ON CONFLICT：不同来源建的 latin_words 未必都有主键。
+bool write_latin_row(sqlite3 *db, const UserLatinWord &word)
+{
+    const std::int64_t weight = clamp_latin_weight(word.weight);
+    auto update =
+        prepare(db, "UPDATE main.latin_words SET \"weight\"=?3,\"exact_only\"=?4 WHERE \"key\"=?1 AND \"value\"=?2");
+    if (!update || !bind_text(update.get(), 1, word.key) || !bind_text(update.get(), 2, word.value) ||
+        sqlite3_bind_int64(update.get(), 3, weight) != SQLITE_OK ||
+        sqlite3_bind_int(update.get(), 4, word.exact_only ? 1 : 0) != SQLITE_OK ||
+        sqlite3_step(update.get()) != SQLITE_DONE)
+        return false;
+    if (sqlite3_changes(db) > 0)
+        return true;
+    auto insert = prepare(db, "INSERT INTO main.latin_words(\"key\",\"value\",\"weight\",\"exact_only\")"
+                              " VALUES(?1,?2,?3,?4)");
+    return insert && bind_text(insert.get(), 1, word.key) && bind_text(insert.get(), 2, word.value) &&
+           sqlite3_bind_int64(insert.get(), 3, weight) == SQLITE_OK &&
+           sqlite3_bind_int(insert.get(), 4, word.exact_only ? 1 : 0) == SQLITE_OK &&
+           sqlite3_step(insert.get()) == SQLITE_DONE;
+}
+
+bool delete_row(sqlite3 *db, const char *table, const std::string &key, const std::string &value)
+{
+    auto stmt = prepare(db, std::string("DELETE FROM ") + table + " WHERE \"key\"=?1 AND \"value\"=?2");
+    return stmt && bind_text(stmt.get(), 1, key) && bind_text(stmt.get(), 2, value) &&
+           sqlite3_step(stmt.get()) == SQLITE_DONE;
+}
+
+bool journal_latin_word(sqlite3 *db, const UserLatinWord &word)
+{
+    auto stmt = prepare(db, "INSERT INTO latin_journal.user_latin_words(key,value,weight,exact_only)"
+                            " VALUES(?1,?2,?3,?4) ON CONFLICT(key,value) DO UPDATE SET weight=excluded.weight,"
+                            " exact_only=excluded.exact_only,updated_at=unixepoch()");
+    return stmt && bind_text(stmt.get(), 1, word.key) && bind_text(stmt.get(), 2, word.value) &&
+           sqlite3_bind_int64(stmt.get(), 3, clamp_latin_weight(word.weight)) == SQLITE_OK &&
+           sqlite3_bind_int(stmt.get(), 4, word.exact_only ? 1 : 0) == SQLITE_OK &&
+           sqlite3_step(stmt.get()) == SQLITE_DONE;
+}
+
+// 打开词库、挂上日志、开写事务、确保 latin_words 可写。失败返回空连接，什么也没写。
+Db begin_latin_transaction(const std::string &main_db_path, const std::string &user_db_path)
+{
+    // 先把日志建好（含 user_latin_words）再挂上去；每次操作用自己的连接，同 delete_dictionary_candidate。
+    if (!ensure_user_database(user_db_path))
+        return {};
+    auto database = open_database(main_db_path, SQLITE_OPEN_READWRITE);
+    auto attach = database ? prepare(database.get(), "ATTACH DATABASE ?1 AS latin_journal") : Stmt{};
+    if (!attach || !bind_text(attach.get(), 1, user_db_path) || sqlite3_step(attach.get()) != SQLITE_DONE)
+        return {};
+    attach.reset();
+    if (!execute_sql(database.get(), "BEGIN IMMEDIATE"))
+        return {};
+    if (!ensure_latin_words_table(database.get()))
+    {
+        (void)execute_sql(database.get(), "ROLLBACK");
+        return {};
+    }
+    return database;
+}
+
+bool valid_latin_word(const UserLatinWord &word)
+{
+    return !word.key.empty() && !word.value.empty();
+}
+} // namespace
+
+std::vector<LatinWordWrite> add_user_latin_words(const std::string &main_db_path, const std::string &user_db_path,
+                                                 const std::vector<UserLatinWord> &words)
+{
+    std::vector<LatinWordWrite> results(words.size(), LatinWordWrite::Failed);
+    if (words.empty())
+        return results;
+    auto database = begin_latin_transaction(main_db_path, user_db_path);
+    if (!database)
+        return results;
+    for (std::size_t i = 0; i < words.size(); ++i)
+    {
+        const auto &word = words[i];
+        if (!valid_latin_word(word))
+            continue;
+        // 同一批里重复的行，第二条按已存在算。
+        if (latin_row_exists(database.get(), "main.latin_words", word.key, word.value))
+        {
+            results[i] = LatinWordWrite::Exists;
+            continue;
+        }
+        if (!write_latin_row(database.get(), word) || !journal_latin_word(database.get(), word))
+        {
+            (void)execute_sql(database.get(), "ROLLBACK");
+            return std::vector<LatinWordWrite>(words.size(), LatinWordWrite::Failed);
+        }
+        results[i] = LatinWordWrite::Written;
+    }
+    if (!execute_sql(database.get(), "COMMIT"))
+    {
+        (void)execute_sql(database.get(), "ROLLBACK");
+        return std::vector<LatinWordWrite>(words.size(), LatinWordWrite::Failed);
+    }
+    return results;
+}
+
+LatinWordWrite update_user_latin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                      const std::string &old_key, const std::string &old_value,
+                                      const UserLatinWord &word)
+{
+    if (!valid_latin_word(word) || old_key.empty() || old_value.empty())
+        return LatinWordWrite::Failed;
+    auto database = begin_latin_transaction(main_db_path, user_db_path);
+    if (!database)
+        return LatinWordWrite::Failed;
+    const auto finish = [&](LatinWordWrite result) {
+        (void)execute_sql(database.get(), result == LatinWordWrite::Written ? "COMMIT" : "ROLLBACK");
+        return result;
+    };
+    if (!latin_row_exists(database.get(), "latin_journal.user_latin_words", old_key, old_value))
+        return finish(LatinWordWrite::Missing);
+    const bool renamed = old_key != word.key || old_value != word.value;
+    if (renamed && latin_row_exists(database.get(), "main.latin_words", word.key, word.value))
+        return finish(LatinWordWrite::Exists);
+    if (renamed && (!delete_row(database.get(), "main.latin_words", old_key, old_value) ||
+                    !delete_row(database.get(), "latin_journal.user_latin_words", old_key, old_value)))
+        return finish(LatinWordWrite::Failed);
+    if (!write_latin_row(database.get(), word) || !journal_latin_word(database.get(), word))
+        return finish(LatinWordWrite::Failed);
+    if (!execute_sql(database.get(), "COMMIT"))
+    {
+        (void)execute_sql(database.get(), "ROLLBACK");
+        return LatinWordWrite::Failed;
+    }
+    return LatinWordWrite::Written;
+}
+
+LatinWordWrite delete_user_latin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                      const std::string &key, const std::string &value)
+{
+    if (key.empty() || value.empty())
+        return LatinWordWrite::Failed;
+    auto database = begin_latin_transaction(main_db_path, user_db_path);
+    if (!database)
+        return LatinWordWrite::Failed;
+    const auto rollback = [&](LatinWordWrite result) {
+        (void)execute_sql(database.get(), "ROLLBACK");
+        return result;
+    };
+    if (!latin_row_exists(database.get(), "latin_journal.user_latin_words", key, value))
+        return rollback(LatinWordWrite::Missing);
+    if (!delete_row(database.get(), "main.latin_words", key, value) ||
+        !delete_row(database.get(), "latin_journal.user_latin_words", key, value))
+        return rollback(LatinWordWrite::Failed);
+    if (!execute_sql(database.get(), "COMMIT"))
+        return rollback(LatinWordWrite::Failed);
+    return LatinWordWrite::Written;
+}
+
+std::vector<UserLatinWord> user_latin_words(const std::string &user_db_path)
+{
+    std::vector<UserLatinWord> words;
+    std::error_code error;
+    if (!std::filesystem::exists(metasequoia::path_from_utf8(user_db_path.c_str()), error))
+        return words;
+    auto journal = open_database(user_db_path, SQLITE_OPEN_READONLY);
+    // 还没有这张表的旧日志 prepare 失败，即没有用户字母词。
+    auto stmt = journal ? prepare(journal.get(), "SELECT key,value,weight,exact_only FROM user_latin_words "
+                                                 "ORDER BY key,value")
+                        : Stmt{};
+    if (!stmt)
+        return words;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW)
+    {
+        const unsigned char *key = sqlite3_column_text(stmt.get(), 0);
+        const unsigned char *value = sqlite3_column_text(stmt.get(), 1);
+        if (key == nullptr || value == nullptr)
+            continue;
+        UserLatinWord word;
+        word.key = reinterpret_cast<const char *>(key);
+        word.value = reinterpret_cast<const char *>(value);
+        word.weight = sqlite3_column_int64(stmt.get(), 2);
+        word.exact_only = sqlite3_column_int(stmt.get(), 3) != 0;
+        words.push_back(std::move(word));
+    }
+    return words;
 }
 
 namespace
@@ -1874,6 +2096,46 @@ bool save_rebased_journal(const std::string &user_db_path, const std::string &di
     state.reset();
     return execute_sql(user_db.get(), "COMMIT");
 }
+
+// 用户加的字母词写回新装的词库（见 add_user_latin_words），与其余回放同一个事务：写不成就算失败、整批
+// 回滚，和别的用户词一样不悄悄丢。还没有 user_latin_words 的旧日志 prepare 失败，即没有可写回的。
+void replay_user_latin_words(sqlite3 *journal, sqlite3 *main_db, ReplayResult &result)
+{
+    auto rows = prepare(journal, "SELECT key,value,weight,exact_only FROM user_latin_words ORDER BY key,value");
+    if (!rows)
+        return;
+    std::vector<UserLatinWord> words;
+    int row_result = SQLITE_ROW;
+    while ((row_result = sqlite3_step(rows.get())) == SQLITE_ROW)
+    {
+        const unsigned char *key = sqlite3_column_text(rows.get(), 0);
+        const unsigned char *value = sqlite3_column_text(rows.get(), 1);
+        UserLatinWord word;
+        word.key = key != nullptr ? reinterpret_cast<const char *>(key) : "";
+        word.value = value != nullptr ? reinterpret_cast<const char *>(value) : "";
+        word.weight = sqlite3_column_int64(rows.get(), 2);
+        word.exact_only = sqlite3_column_int(rows.get(), 3) != 0;
+        if (valid_latin_word(word))
+            words.push_back(std::move(word));
+        else
+            ++result.skipped;
+    }
+    rows.reset();
+    if (row_result != SQLITE_DONE)
+    {
+        ++result.failed;
+        return;
+    }
+    if (words.empty())
+        return;
+    if (!ensure_latin_words_table(main_db))
+    {
+        result.failed += static_cast<int>(words.size());
+        return;
+    }
+    for (const auto &word : words)
+        write_latin_row(main_db, word) ? ++result.applied : ++result.failed;
+}
 } // namespace
 
 ReplayResult replay(const std::string &user_db_path, const std::string &main_db_path,
@@ -1984,6 +2246,7 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
                            : "cannot read the complete user dictionary journal and rollback also failed";
         return result;
     }
+    replay_user_latin_words(journal.get(), main_db.get(), result);
     if (result.failed == 0)
     {
         if (!execute_sql(main_db.get(), "COMMIT"))

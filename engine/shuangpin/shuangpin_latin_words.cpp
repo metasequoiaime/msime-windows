@@ -16,12 +16,14 @@ namespace
 constexpr std::size_t kCodesPerWordLimit = 8;
 } // namespace
 
-void ShuangpinLatinWords::build(const quanpin::LatinWords &words, const ShuangpinProfile &profile)
+void ShuangpinLatinWords::build(std::shared_ptr<const quanpin::LatinWords> source, const ShuangpinProfile &profile)
 {
     codes_.clear();
     max_code_length_ = 0;
-    if (words.empty())
+    words_ = std::move(source);
+    if (!words_ || words_->empty())
         return;
+    const quanpin::LatinWords &words = *words_;
 
     // 音节 -> 本方案里能敲出它的两键。逐个试所有两键组合，和切分时的解码走同一个函数，
     // 自定义方案也不用单独处理。

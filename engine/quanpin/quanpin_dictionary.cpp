@@ -982,7 +982,7 @@ std::vector<WordItem> QuanpinDictionary::query_series(const std::string &raw_inp
     // 词格查不出能覆盖它们的词。它们都落在某个字母词里时，词格能借字母词把整串解通。
     // Google 解码器会把这些字母当声母另行猜读音，只给全是完整音节的输入用。
     const bool complete_segments = quanpin::has_only_complete_pinyin_segments(segments);
-    const bool latin_segments = !complete_segments && latin_words().covers_incomplete_segments(segments);
+    const bool latin_segments = !complete_segments && latin_words()->covers_incomplete_segments(segments);
     if (segments.size() >= 2 && (complete_segments || latin_segments))
     {
         // 两条整句来源各出一句：词格（kenlm 三元模型打分）在前，Google 解码器在后。
@@ -2455,6 +2455,7 @@ void QuanpinDictionary::reset_cache()
     lattice_best_path_cache_.clear();
     lattice_span_cache_.clear();
     prefix_completion_cache_.clear();
+    latin_words_stale_ = true;
 }
 
 quanpin::WordLatticeLookup QuanpinDictionary::lattice_lookup(int limit, bool with_fuzzy)
@@ -2465,10 +2466,11 @@ quanpin::WordLatticeLookup QuanpinDictionary::lattice_lookup(int limit, bool wit
         char_reading_totals_ = quanpin::load_char_reading_totals(db_);
     }
     auto db_lookup = quanpin::make_lattice_db_lookup(db_, statement_cache_, limit, fuzzy, char_reading_totals_);
-    // 字母词按跨度里拼起来的字母匹配：ka'lao'k 一样认出 ka'la'o'k 的卡拉OK。表在这里（查询线程上）载好。
-    auto lookup = [this, &latin = latin_words(), db_lookup = std::move(db_lookup)](const quanpin::Segments &span) {
+    // 字母词按跨度里拼起来的字母匹配：ka'lao'k 一样认出 ka'la'o'k 的卡拉OK。表在这里（查询线程上）载好，
+    // 按值捕获：这次查询里缓存若被清掉、表被重读，这个查询函数仍用它拿到的那一份。
+    auto lookup = [this, latin = latin_words(), db_lookup = std::move(db_lookup)](const quanpin::Segments &span) {
         auto rows = db_lookup(span);
-        quanpin::prepend_latin_lexemes(latin, span, language_model_, rows);
+        quanpin::prepend_latin_lexemes(*latin, span, language_model_, rows);
         return rows;
     };
     return [this, lookup = std::move(lookup), limit, fuzzy](const quanpin::Segments &span) {
@@ -2947,24 +2949,33 @@ quanpin::PrefixCompletionScorers QuanpinDictionary::prefix_completion_scorers()
     return scorers;
 }
 
-const quanpin::LatinWords &QuanpinDictionary::latin_words()
+std::shared_ptr<const quanpin::LatinWords> QuanpinDictionary::latin_words()
 {
-    if (!latin_words_)
+    auto refreshed =
+        quanpin::refresh_latin_words(latin_words_, latin_words_stale_, latin_words_version_, db_, statement_cache_);
+    // 字母词真换了（设置页加、改、删了词）：词格按跨度、按切分缓存的结果里还是旧的字母词，一并清掉。
+    // 没走 reset_cache 的查询路径（缓存没命中）也就不会拿旧跨度组句。两份缓存都只在查找时读、读完即用，
+    // 这里清不会撞上正在用的条目。
+    if (latin_words_ && refreshed != latin_words_)
     {
-        latin_words_.emplace();
-        latin_words_->load(db_);
+        lattice_span_cache_.clear();
+        lattice_best_path_cache_.clear();
     }
-    return *latin_words_;
+    latin_words_ = std::move(refreshed);
+    return latin_words_;
 }
 
 void QuanpinDictionary::insert_latin_words(std::vector<WordItem> &result, const std::string &raw_input,
                                            const quanpin::Segments &segments, const std::string &code_for_selection)
 {
     const std::string code = quanpin::latin_code(raw_input);
-    if (code.size() < quanpin::kLatinWordMinimumCode || latin_words().empty())
+    if (code.size() < quanpin::kLatinWordMinimumCode)
+        return;
+    const auto latin = latin_words();
+    if (latin->empty())
         return;
     const auto completions = code.size() >= quanpin::kLatinWordMinimumCompletionCode
-                                 ? latin_words().completions(code, quanpin::kLatinWordCompletionLimit)
+                                 ? latin->completions(code, quanpin::kLatinWordCompletionLimit)
                                  : std::vector<const quanpin::LatinWord *>{};
-    quanpin::insert_latin_candidates(result, latin_words().exact(code), completions, code_for_selection, segments);
+    quanpin::insert_latin_candidates(result, latin->exact(code), completions, code_for_selection, segments);
 }

@@ -255,7 +255,7 @@ vector<ShuangpinDictionary::WordItem> ShuangpinDictionary::generateSeries( //
         lattice_options.language_model = language_model_;
         // 贪心切分本身就留下了字母段（小鹤 mdyijmtxu 切成 md'yi'jm't'xu），同全拼，见 QuanpinDictionary::query_series。
         lattice_options.allow_latin_segments = !quanpin::has_only_complete_pinyin_segments(quanpin_syllables) &&
-                                               latin_words().covers_incomplete_segments(quanpin_syllables);
+                                               latin_words()->covers_incomplete_segments(quanpin_syllables);
         if (has_collocation)
         {
             lattice_options.collocation_scorer = [db = collocation_db_,
@@ -1197,6 +1197,7 @@ void ShuangpinDictionary::reset_cache()
     _cached_buffer_series.clear();
     direct_span_cache_.clear();
     prefix_completion_cache_.clear();
+    latin_words_stale_ = true;
     if (direct_resolver_)
     {
         direct_resolver_->reset_cache();
@@ -1222,10 +1223,11 @@ quanpin::WordLatticeLookup ShuangpinDictionary::lattice_lookup(int limit)
     auto db_lookup = quanpin::make_lattice_db_lookup(quanpin_db_, quanpin_statement_cache_, limit, fuzzy_pinyin_,
                                                      char_reading_totals_);
     // 字母词，见 QuanpinDictionary::lattice_lookup。
-    quanpin::WordLatticeLookup lookup = [this, &latin = latin_words(),
+    // 按值捕获：下面清缓存（reset_cache_if_database_changed）会让字母词重读，这个查询函数仍用它拿到的那一份。
+    quanpin::WordLatticeLookup lookup = [this, latin = latin_words(),
                                          db_lookup = std::move(db_lookup)](const quanpin::Segments &span) {
         auto rows = db_lookup(span);
-        quanpin::prepend_latin_lexemes(latin, span, language_model_, rows);
+        quanpin::prepend_latin_lexemes(*latin, span, language_model_, rows);
         return rows;
     };
     if (!direct_span_cache_enabled_)
@@ -1673,39 +1675,40 @@ std::string ShuangpinDictionary::get_pinyin_segmentation_with_cases()
     return res;
 }
 
-const quanpin::LatinWords &ShuangpinDictionary::latin_words()
+std::shared_ptr<const quanpin::LatinWords> ShuangpinDictionary::latin_words()
 {
-    if (!latin_words_)
-    {
-        latin_words_.emplace();
-        latin_words_->load(quanpin_db_);
-    }
-    return *latin_words_;
+    latin_words_ = quanpin::refresh_latin_words(latin_words_, latin_words_stale_, latin_words_version_, quanpin_db_,
+                                                quanpin_statement_cache_);
+    return latin_words_;
 }
 
-const ShuangpinLatinWords &ShuangpinDictionary::latin_codes()
+std::shared_ptr<const ShuangpinLatinWords> ShuangpinDictionary::latin_codes()
 {
-    if (!latin_codes_)
+    auto words = latin_words();
+    if (!latin_codes_ || latin_codes_->source() != words.get())
     {
-        latin_codes_.emplace();
-        latin_codes_->build(latin_words(), profile_);
+        auto codes = std::make_shared<ShuangpinLatinWords>();
+        codes->build(std::move(words), profile_);
+        latin_codes_ = std::move(codes);
     }
-    return *latin_codes_;
+    return latin_codes_;
 }
 
 void ShuangpinDictionary::insert_latin_words(std::vector<WordItem> &candidates, const std::string &raw_input)
 {
     std::string keys = remove_delimiters(raw_input);
     if (keys.size() < quanpin::kLatinWordMinimumCode ||
-        !std::all_of(keys.begin(), keys.end(), [](char ch) { return (ch >= 'a' && ch <= 'z') || ch == ';'; }) ||
-        latin_codes().empty())
+        !std::all_of(keys.begin(), keys.end(), [](char ch) { return (ch >= 'a' && ch <= 'z') || ch == ';'; }))
+        return;
+    const auto codes = latin_codes();
+    if (codes->empty())
         return;
     const auto completions = keys.size() >= quanpin::kLatinWordMinimumCompletionCode
-                                 ? latin_codes().completions(keys, quanpin::kLatinWordCompletionLimit)
+                                 ? codes->completions(keys, quanpin::kLatinWordCompletionLimit)
                                  : std::vector<const quanpin::LatinWord *>{};
     const auto typed_syllables = quanpin::split_segments(ShuangpinUtil::convert_seg_shuangpin_to_seg_complete_pinyin(
         shuangpin::segment_input(raw_input, profile_), profile_));
-    quanpin::insert_latin_candidates(candidates, latin_codes().exact(keys), completions, keys, typed_syllables);
+    quanpin::insert_latin_candidates(candidates, codes->exact(keys), completions, keys, typed_syllables);
 }
 
 void ShuangpinDictionary::insert_prefix_completion(std::vector<WordItem> &candidates, const std::string &raw_input,
@@ -1741,7 +1744,8 @@ void ShuangpinDictionary::merge_latin_sentence(std::vector<WordItem> &candidates
 {
     // 一串输入里能换的切分不多，多了只是白解几遍词格。
     constexpr std::size_t kAlternativeLimit = 4;
-    const auto &codes = latin_codes();
+    const auto codes_holder = latin_codes();
+    const ShuangpinLatinWords &codes = *codes_holder;
     if (codes.empty() || pinyin_sequence.find('\'') != std::string::npos)
         return;
     const auto boundaries = shuangpin::segment_raw_boundaries(pinyin_sequence, profile_);
@@ -1789,9 +1793,9 @@ void ShuangpinDictionary::merge_latin_sentence(std::vector<WordItem> &candidates
     latin_options.constrained_lookup = {};
     latin_options.allow_latin_segments = true;
     const auto lookup = lattice_lookup(options.span_limit);
+    const auto latin = latin_words();
     const auto best_score = [&](const quanpin::Segments &syllables) -> std::optional<double> {
-        if (!quanpin::has_only_complete_pinyin_segments(syllables) &&
-            !latin_words().covers_incomplete_segments(syllables))
+        if (!quanpin::has_only_complete_pinyin_segments(syllables) && !latin->covers_incomplete_segments(syllables))
             return std::nullopt;
         const auto paths = quanpin::decode_word_lattice(syllables, lookup, latin_options);
         if (paths.empty())
