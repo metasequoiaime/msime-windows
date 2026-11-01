@@ -957,8 +957,6 @@ json::object ImportHans(const json::object &request)
             error_details.push_back("第 " + std::to_string(line_no) + " 行：" + detail);
     };
 
-    // 含英文字母的词按字母词导入、自动注音，见 ImportChinese。
-    std::vector<LatinImportLine> latin_lines;
     sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
     std::istringstream stream(content);
     std::string line;
@@ -973,11 +971,6 @@ json::object ImportHans(const json::object &request)
             continue;
         const auto end = line.find_last_not_of(" \t");
         const std::string word = line.substr(begin, end - begin + 1);
-        if (quanpin::contains_latin_letter(word))
-        {
-            latin_lines.push_back({line_no, word, std::string{}, kDefaultWeight});
-            continue;
-        }
 
         std::string code;
         std::string message;
@@ -1007,7 +1000,6 @@ json::object ImportHans(const json::object &request)
         ++inserted;
     }
     sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr);
-    ImportLatinLines(latin_lines, inserted, skipped, append_error);
 
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
