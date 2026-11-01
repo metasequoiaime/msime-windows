@@ -198,8 +198,8 @@ VisualPtr BuildDictionaryPage(PageContext &context)
     TextStyle hansStyle = SectionTitleStyle();
     hansStyle.lineHeight = 1.45f;
     hansStyle.wrap = true;
-    auto hansTitle = std::make_shared<Label>(L"批量导入词组(e.g.人名、T恤)到拼音词库，自动注音", hansStyle);
-    IndexSettingTitle(hansTitle, L"批量导入词组(e.g.人名、T恤)到拼音词库，自动注音");
+    auto hansTitle = std::make_shared<Label>(L"批量导入纯汉字词组(e.g.人名)到拼音词库", hansStyle);
+    IndexSettingTitle(hansTitle, L"批量导入纯汉字词组(e.g.人名)到拼音词库");
     auto hansButton = std::make_shared<Button>(L"导入", ButtonKind::Primary);
     hansButton->SetMinWidth(68.0f);
     hansButton->SetOnClick([panel]() { panel->Import("importHans"); });
@@ -224,7 +224,7 @@ VisualPtr BuildDictionaryPage(PageContext &context)
         // 纯汉字导入按当前标签页出码；英文词库收不了纯汉字，整块隐藏。字母词页换成按词导入、自动注音。
         const std::string &dictionary = locked->Dictionary();
         hans->SetVisible(dictionary != "english");
-        hansTitle->SetText(dictionary == "quanpin" ? L"批量导入词组(e.g.人名、T恤)到拼音词库，自动注音"
+        hansTitle->SetText(dictionary == "quanpin" ? L"批量导入纯汉字词组(e.g.人名)到拼音词库"
                            : dictionary == "latin" ? L"批量导入字母词(e.g.T恤)，每行一个词，自动注音"
                                                    : L"批量导入纯汉字词组(e.g.人名)到五笔词库");
     });
