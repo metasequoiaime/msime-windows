@@ -103,7 +103,9 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/cloud/ai_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/chat_completions.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/jev_client.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_chat_cancellation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_assistant_reply.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant_reply.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_jev_candidates.cpp"
@@ -287,6 +289,7 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     # native_settings_update_download.cpp 用 WinHTTP 取包、用 BCrypt 算摘要。
     winhttp
     bcrypt
+    ws2_32
 )
 
 add_test(NAME ${TEST_EXECUTABLE_NAME} COMMAND ${TEST_EXECUTABLE_NAME})

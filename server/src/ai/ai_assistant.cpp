@@ -43,7 +43,7 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
     const bool token_missing =
         token.empty() && config.provider != "jev" && AiAssistant::ProviderUsesToken(config.provider);
     if (!config.enabled || token_missing || config.endpoint.empty() || config.model.empty() ||
-        request.pinyin_segments.empty() || g_generation.load() != generation)
+        request.pinyin_segments.empty() || !g_running || g_generation.load() != generation)
     {
         (void)0;
         return {};
@@ -61,6 +61,8 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
             const auto response = jev_client.Fetch(config.endpoint, config.token, body.dump(), [generation] {
                 return !g_running || g_generation.load() != generation;
             });
+            if (!g_running || g_generation.load() != generation)
+                return {};
             return response ? Jev::ParseChoice(*response, request.candidates) : std::string{};
         }
         catch (const std::exception &)
@@ -69,9 +71,10 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
         }
     }
     const nlohmann::json body = AiAssistant::detail::BuildRequestBody(request);
-    const auto fetched = ChatCompletions::FetchContent(config.endpoint, token, body.dump(),
-                                                       AiAssistant::detail::RequestTimeoutMs(config));
-    if (g_generation.load() != generation)
+    const auto fetched = ChatCompletions::FetchContent(
+        config.endpoint, token, body.dump(), AiAssistant::detail::RequestTimeoutMs(config),
+        [generation] { return !g_running || g_generation.load() != generation; });
+    if (!g_running || g_generation.load() != generation || fetched.failure == ChatCompletions::Failure::Cancelled)
         return {};
     if (!fetched.content)
     {
@@ -89,7 +92,7 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
         spdlog::warn("AI 联想回复无法解析 model={} {}", config.model, AiAssistant::detail::DescribeReplyFailure(reply));
         return {};
     }
-    if (g_generation.load() != generation)
+    if (!g_running || g_generation.load() != generation)
         return {};
     return reply.candidate;
 }
@@ -130,14 +133,17 @@ void WorkerLoop()
         if (request.identity.empty())
             continue;
         const std::string candidate = Fetch(request, observed, jev_client);
-        if (!candidate.empty() && g_generation.load() == observed && g_callback)
+        if (!candidate.empty() && g_running && g_generation.load() == observed && g_callback)
         {
             {
                 std::lock_guard cache_lock(g_mutex);
+                if (!g_running || g_generation.load() != observed)
+                    continue;
                 g_candidate_cache.Store(AiAssistant::detail::BuildSuggestionCacheKey(request), candidate);
             }
             (void)0;
-            g_callback(candidate, request.identity, observed);
+            if (g_running && g_generation.load() == observed)
+                g_callback(candidate, request.identity, observed);
         }
     }
 }
