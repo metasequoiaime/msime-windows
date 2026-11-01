@@ -240,6 +240,11 @@ set(TEST_SOURCE_FILES
     # Routing lives in dictionary_manager.cpp's HandleRequest, so the importHans dispatch test has
     # to link the real translation unit rather than restate the branch order.
     "${CMAKE_SOURCE_DIR}/src/settings/dictionary_manager.cpp"
+    # The backup tests drive the real archive writer/reader and the real orchestration module;
+    # stop/start and dictionary callbacks are injected so no Server is ever touched.
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_data_backup.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/user_data_backup.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/zip_archive.cpp"
 )
 
 add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILES})
@@ -291,6 +296,8 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     winhttp
     bcrypt
     ws2_32
+    # zip_archive.cpp 用 zlib 的 CRC 与 deflate 解压。
+    ZLIB::ZLIB
 )
 
 add_test(NAME ${TEST_EXECUTABLE_NAME} COMMAND ${TEST_EXECUTABLE_NAME})
