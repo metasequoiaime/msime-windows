@@ -2,6 +2,7 @@
 
 #include "config/ime_config.h"
 #include "ipc/ipc.h"
+#include "log/candidate_diag_log.h"
 #include "msime_version.h"
 #include "settings/native/native_settings_update_download.h"
 #include "settings/settings_launcher.h"
@@ -39,6 +40,32 @@ std::string &PendingVersionSlot()
 {
     static std::string version;
     return version;
+}
+
+// 与 PendingVersionSlot 同一次探测的安装包摘要。启动安装程序前要再核对一次：
+// 校验发生在下载结束，到用户点「是」之间隔着一个 UAC，数据目录又是中等完整性、
+// 同机可写的，中间被换掉或截断时必须发现。
+std::string &PendingSha256Slot()
+{
+    static std::string digest;
+    return digest;
+}
+
+// 已经弹过安装提示的版本。轮询每 6 小时一轮，包一直躺在磁盘上，不去重的话
+// 用户点过「否」之后还会被反复问；同一进程内同一个版本只问一次。
+std::string &NotifiedVersionSlot()
+{
+    static std::string version;
+    return version;
+}
+
+bool ClaimNotification(const std::string &version)
+{
+    std::lock_guard lock(Mutex());
+    if (NotifiedVersionSlot() == version)
+        return false;
+    NotifiedVersionSlot() = version;
+    return true;
 }
 
 // 正在进行的探测，避免轮询间隔内叠两轮。
@@ -190,6 +217,10 @@ bool ResolveCandidate(const std::string &body, const update_channel::Version &cu
 
 std::atomic<bool> g_started{false};
 
+// 同一时刻只允许拉起一个安装程序。弹窗是广播给所有 TSF 宿主的，几个窗口各点一次
+// 「是」时不能同时起两个 Inno 实例，否则后一个会自己退出，看起来像装到一半没了。
+std::atomic<bool> g_launching{false};
+
 void PollLoop()
 {
     std::this_thread::sleep_for(std::chrono::minutes(kStartupDelayMinutes));
@@ -220,11 +251,13 @@ std::string PendingVersion()
 bool LaunchPendingInstaller(const std::wstring &requested_installer)
 {
     std::string version;
+    std::string digest;
     {
         std::lock_guard lock(Mutex());
         version = PendingVersionSlot();
+        digest = PendingSha256Slot();
     }
-    if (version.empty())
+    if (version.empty() || digest.empty())
         return false;
     const std::filesystem::path directory = InstallerDirectory(version);
     if (directory.empty())
@@ -237,14 +270,31 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer)
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec))
         return false;
+    // 最后一道完整性检查。下载结束时已经算过一次，但那次与现在之间隔着用户读弹窗、
+    // 点 UAC 的时间，文件落在中等完整性的数据目录里，任何人、任何截断都能改写它。
+    // 摘要对不上就不启动，宁可让用户重新检查一次。
+    if (!native_settings::update_download::FileMatchesDigest(path, digest))
+    {
+        DIAG_LOGF(L"[update] installer digest mismatch before launch version={} file={}", Widen(version),
+                  requested_installer);
+        return false;
+    }
     // 安装器会替换本进程和几个面板 exe，先让它们退出，避免 Inno 逼用户重启。
     CloseEmojiPanelApplication();
     CloseKeyboardPanelApplication();
     CloseHandwritingPanelApplication();
+    // 多个宿主同时点「是」时只放行第一个；后到的直接放弃，不再起第二个 Inno 实例。
+    bool expected = false;
+    if (!g_launching.compare_exchange_strong(expected, true))
+        return false;
     // 安装包需要提权，交给 ShellExecute 走 UAC；不放参数，让用户在 Inno Setup 里自己确认。
     const HINSTANCE result =
         ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, path.parent_path().c_str(), SW_SHOWNORMAL);
-    return reinterpret_cast<INT_PTR>(result) > 32;
+    const bool launched = reinterpret_cast<INT_PTR>(result) > 32;
+    if (!launched)
+        g_launching = false;
+    DIAG_LOGF(L"[update] launch installer version={} launched={}", Widen(version), launched);
+    return launched;
 }
 
 void CheckOnce()
@@ -255,9 +305,15 @@ void CheckOnce()
             return;
         Running() = true;
     }
-    const auto done = [](const std::string &version) {
+    const auto done = [](const std::string &version, const std::string &digest) {
         std::lock_guard lock(Mutex());
-        PendingVersionSlot() = version;
+        // 一次探测失败不该把已经下好、校验过的包从待安装状态里抹掉：用户可能正开着
+        // 提示框，下一次轮询刚好断网就点不动了。只有拿到新的可用结果才覆盖。
+        if (!version.empty())
+        {
+            PendingVersionSlot() = version;
+            PendingSha256Slot() = digest;
+        }
         Running() = false;
     };
 
@@ -266,12 +322,14 @@ void CheckOnce()
     if (!update_channel::Parse(CurrentVersion(), current) || !current.valid ||
         !update_channel::SupportsAutoUpdate(current) || current.kind != update_channel::Kind::Release)
     {
-        done(std::string());
+        DIAG_LOGF(L"[update] poll skipped current={} reason=channel", Widen(CurrentVersion()));
+        done({}, {});
         return;
     }
     if (!GetConfiguredAutoDownloadUpdate())
     {
-        done(std::string());
+        DIAG_LOGF(L"[update] poll skipped current={} reason=auto_download_off", Widen(CurrentVersion()));
+        done({}, {});
         return;
     }
 
@@ -280,27 +338,32 @@ void CheckOnce()
     std::string body;
     if (!HttpGetText(std::string(kManifestUrl) + "?t=" + std::to_string(stamp), body))
     {
-        done(std::string());
+        DIAG_LOGF(L"[update] manifest request failed current={}", Widen(CurrentVersion()));
+        done({}, {});
         return;
     }
 
     Candidate candidate;
     if (!ResolveCandidate(body, current, candidate))
     {
-        done(std::string());
+        DIAG_LOGF(L"[update] manifest rejected current={}", Widen(CurrentVersion()));
+        done({}, {});
         return;
     }
+    DIAG_LOGF(L"[update] manifest latest={} current={}", Widen(candidate.version), Widen(CurrentVersion()));
     if (!native_settings::update_download::IsInstallerName(candidate.installer) ||
         !native_settings::update_download::IsSha256Hex(candidate.sha256))
     {
-        done(std::string());
+        DIAG_LOGF(L"[update] manifest rejected latest={} reason=installer_fields", Widen(candidate.version));
+        done({}, {});
         return;
     }
 
     const std::filesystem::path directory = InstallerDirectory(candidate.version);
     if (directory.empty())
     {
-        done(std::string());
+        DIAG_LOGF(L"[update] installer directory unavailable latest={}", Widen(candidate.version));
+        done({}, {});
         return;
     }
     const std::filesystem::path existing = directory / std::filesystem::path(candidate.installer);
@@ -335,6 +398,11 @@ void CheckOnce()
         const native_settings::update_download::Result result = native_settings::update_download::Download(request);
         if (result.outcome == native_settings::update_download::Outcome::Ok)
             return true;
+        for (const native_settings::update_download::Attempt &attempt : result.attempts)
+        {
+            DIAG_LOGF(L"[update] attempt url={} outcome={} bytes={} seconds={} message={}", Widen(attempt.url),
+                      static_cast<int>(attempt.outcome), attempt.bytes, attempt.seconds, Widen(attempt.message));
+        }
         write_progress(update_channel::DownloadProgress::State::Failed, 0, 0,
                        result.message.empty() ? std::string("下载失败") : result.message);
         return false;
@@ -347,20 +415,30 @@ void CheckOnce()
         // 目录里已经有同名文件：摘要对得上就直接用，对不上说明上次没写完整或被换掉了，
         // 删掉重下。不能只看文件存在就当成可用。
         ready = native_settings::update_download::FileMatchesDigest(existing, candidate.sha256);
+        DIAG_LOGF(L"[update] existing installer latest={} verified={}", Widen(candidate.version), ready);
         if (!ready)
             std::filesystem::remove(existing, ec);
     }
     if (!ready)
+    {
+        // 上一次进程崩溃留下的 .part 不能续（临时名带进程号），留着只会占几百 MB。
+        native_settings::update_download::PruneOldInstallers(directory, candidate.installer);
         ready = download();
+    }
     if (!ready)
     {
-        done(std::string());
+        DIAG_LOGF(L"[update] download failed latest={}", Widen(candidate.version));
+        done({}, {});
         return;
     }
     // 已经下过并校验过了，只差提示。进度停在「等待安装」，设置页据此显示提示。
     write_progress(update_channel::DownloadProgress::State::Ready, 0, 0, {});
-    done(candidate.version);
-    BroadcastInstallerReady(candidate.version, existing, candidate.installer);
+    done(candidate.version, candidate.sha256);
+    DIAG_LOGF(L"[update] installer ready latest={}", Widen(candidate.version));
+    // 没有人连着就什么也没弹出去，这时不能记成「已经问过」，否则这个版本在本次
+    // 进程里再也不会提示。等到某一轮轮询时有宿主连着，再问一次。
+    if (ConnectedTsfWorkerClientCount() > 0 && ClaimNotification(candidate.version))
+        BroadcastInstallerReady(candidate.version, existing, candidate.installer);
 }
 
 void StartPolling()

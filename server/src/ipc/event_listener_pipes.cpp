@@ -1024,8 +1024,10 @@ void AuxPipeEventListenerLoopThread()
                     // 有旧 DLL 被占用。安装包本身由 Server 在退出前拉起：路径只认数据目录
                     // 里校验过的那一份，消息里的文件名只用于核对，不直接当成路径信任。
                     const std::wstring installer = message.substr(std::wstring(L"InstallUpdate|").size());
-                    update_check::LaunchPendingInstaller(installer);
-                    RestartServerProcess();
+                    // 摘要对不上、文件不在了、ShellExecute 被拦下，都不应该把正在用的
+                    // Server 重启一遍：用户会看到输入法闪断，却什么也没装上。
+                    if (update_check::LaunchPendingInstaller(installer))
+                        RestartServerProcess();
                 }
                 else if (message == L"ConfigChanged" || message == L"InputSchemeChanged" ||
                          message == L"CandidateSkinRefresh")
