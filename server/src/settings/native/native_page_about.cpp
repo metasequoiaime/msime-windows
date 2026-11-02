@@ -3,6 +3,7 @@
 #include "msime_version.h"
 #include "settings/native/native_settings_update_download.h"
 #include "settings/update_channel.h"
+#include "utils/network_proxy.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
@@ -82,8 +83,10 @@ std::string HttpGet(const std::string &url)
     if (!WinHttpCrackUrl(wide.c_str(), 0, 0, &parts))
         return {};
     std::string body;
-    HINTERNET session =
-        WinHttpOpen(L"MetasequoiaImeSettings", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+    // 和其它联网路径一致地走用户配置的代理。这里以前直接用 AUTOMATIC_PROXY，
+    // 只认系统代理，[network] 里填的自定义代理被整个跳过：清单走了直连，安装包
+    // 却走代理，两条路结果不同，表现为检查时好时坏。
+    HINTERNET session = NetworkProxy::OpenWinHttpSession(L"MetasequoiaImeSettings/1.0");
     if (!session)
         return {};
     WinHttpSetTimeouts(session, 10000, 10000, 10000, 10000);
@@ -93,6 +96,11 @@ std::string HttpGet(const std::string &url)
             ? WinHttpOpenRequest(connection, L"GET", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                  parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)
             : nullptr;
+    if (request)
+    {
+        DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+        WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
+    }
     DWORD status = 0;
     DWORD statusSize = sizeof(status);
     if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) &&

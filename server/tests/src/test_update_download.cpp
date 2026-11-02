@@ -3,6 +3,7 @@
 
 #include "settings/native/native_settings_update_download.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -50,6 +51,40 @@ TEST_CASE(update_download_builds_github_first_then_the_mirror)
     REQUIRE(ChannelUrls("https://msime.app/download/", "MetasequoiaIME_Setup_v1.0.0.exe").empty());
     // 安装包名不合法时同样不产生通道。
     REQUIRE(ChannelUrls(release, "setup.exe").empty());
+}
+
+TEST_CASE(update_download_parses_content_range_for_resume)
+{
+    using native_settings::update_download::ParseContentRange;
+    std::uint64_t start = 0;
+    std::uint64_t total = 0;
+
+    REQUIRE(ParseContentRange(L"bytes 0-1023/4096", start, total));
+    REQUIRE_EQ(start, std::uint64_t{0});
+    REQUIRE_EQ(total, std::uint64_t{4096});
+
+    // 续传时起点必须正好是本地已有的字节数，调用方会拿它和文件长度比。
+    REQUIRE(ParseContentRange(L"bytes 1024-4095/4096", start, total));
+    REQUIRE_EQ(start, std::uint64_t{1024});
+    REQUIRE_EQ(total, std::uint64_t{4096});
+
+    // 总长未知的写法：`*` 不当成数字，total 保持 0，后面靠摘要兜底。
+    REQUIRE(ParseContentRange(L"bytes 1024-2047/*", start, total));
+    REQUIRE_EQ(start, std::uint64_t{1024});
+    REQUIRE_EQ(total, std::uint64_t{0});
+
+    // 大小写与空白不影响解析。
+    REQUIRE(ParseContentRange(L"Bytes  10-20/30", start, total));
+    REQUIRE_EQ(start, std::uint64_t{10});
+    REQUIRE_EQ(total, std::uint64_t{30});
+
+    // 结构不对、起点比终点大、数字里混进字母，都不能猜着用。
+    REQUIRE(!ParseContentRange(L"", start, total));
+    REQUIRE(!ParseContentRange(L"bytes 10-20", start, total));
+    REQUIRE(!ParseContentRange(L"items 0-1/2", start, total));
+    REQUIRE(!ParseContentRange(L"bytes 20-10/30", start, total));
+    REQUIRE(!ParseContentRange(L"bytes abc-10/30", start, total));
+    REQUIRE(!ParseContentRange(L"bytes 0-10/", start, total));
 }
 
 TEST_CASE(update_download_refuses_to_start_without_a_digest)
