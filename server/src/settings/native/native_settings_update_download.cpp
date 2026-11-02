@@ -683,74 +683,81 @@ Result Download(const Request &request)
         Clock::now() + std::chrono::seconds((std::max)(request.deadline_seconds, std::uint64_t{60}));
     const auto minimum_channel_budget = std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(60));
 
-    for (size_t channel_index = 0; channel_index < channels.size(); ++channel_index)
+    // 第一轮按剩余通道数分配预算；如果主通道只是慢、镜像又暂时 404，第二轮用
+    // 剩下的预算回到同一个 part 文件继续续传，别把本来能下完的连接切死。
+    for (int pass = 0; pass < 2; ++pass)
     {
-        const std::string &channel = channels[channel_index];
-        const Clock::time_point channel_started = Clock::now();
-        if (channel_started >= deadline)
+        if (Clock::now() >= deadline)
+            break;
+        for (size_t channel_index = 0; channel_index < channels.size(); ++channel_index)
         {
-            std::filesystem::remove(part_path, ec);
-            result.outcome = Outcome::Failed;
-            result.message = "下载超时";
-            return result;
-        }
-        // 按剩余通道数分配预算。第一条通道再慢也不能把全局预算吃光，否则镜像
-        // 永远等不到机会，8 到 50 KB/s 的 GitHub 连接会直接拖死整次下载。
-        const auto remaining = deadline - channel_started;
-        const auto share = remaining / static_cast<long long>(channels.size() - channel_index);
-        const Clock::time_point channel_deadline =
-            (std::min)(deadline, channel_started + (std::max)(share, minimum_channel_budget));
-        for (int attempt_index = 0; attempt_index < kAttemptsPerChannel; ++attempt_index)
-        {
-            if (Clock::now() >= channel_deadline)
-                break;
-            Attempt attempt = FetchOnce(channel, part_path, channel_deadline, request.on_progress);
-            attempt.url = channel;
-            result.attempts.push_back(attempt);
-            if (attempt.outcome == Outcome::Ok)
+            const std::string &channel = channels[channel_index];
+            const Clock::time_point channel_started = Clock::now();
+            if (channel_started >= deadline)
             {
-                // 完整性只认整份文件的 SHA256。续传把多次连接的字节拼在同一个临时
-                // 文件里，边下边算的哈希跨不过重连，所以这里统一读一遍再决定。
-                if (FileMatchesDigest(part_path, request.installer_sha256))
-                {
-                    // 正式名字可能已经被另一个先完成的实例写好，且内容相同。这时不再
-                    // 覆盖：MoveFileEx 会把旧文件顶掉，而用户可能正读到它。
-                    if (FileMatchesDigest(final_path, request.installer_sha256))
-                    {
-                        std::filesystem::remove(part_path, ec);
-                        result.outcome = Outcome::Ok;
-                        result.message.clear();
-                        result.path = final_path;
-                        return result;
-                    }
-                    std::filesystem::remove(final_path, ec);
-                    if (MoveFileExW(part_path.c_str(), final_path.c_str(),
-                                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-                    {
-                        result.outcome = Outcome::Ok;
-                        result.message.clear();
-                        result.path = final_path;
-                        return result;
-                    }
-                    std::filesystem::remove(part_path, ec);
-                    result.outcome = Outcome::Failed;
-                    result.message = "无法保存安装包";
-                    return result;
-                }
-                // 摘要不对：可能是续传的前缀来自一条坏连接，也可能是上游内容变了。
-                // 丢掉临时文件，下一次从零重下；最后一次尝试仍是这个结论才判校验失败。
                 std::filesystem::remove(part_path, ec);
-                result.attempts.back().message = "SHA256 与清单不符";
-                continue;
+                result.outcome = Outcome::Failed;
+                result.message = "下载超时";
+                return result;
             }
-            if (attempt.outcome == Outcome::NotFound)
+            // 按剩余通道数分配预算。第一条通道再慢也不能把全局预算吃光，否则镜像
+            // 永远等不到机会，8 到 50 KB/s 的 GitHub 连接会直接拖死整次下载。
+            const auto remaining = deadline - channel_started;
+            const auto share = remaining / static_cast<long long>(channels.size() - channel_index);
+            const Clock::time_point channel_deadline =
+                (std::min)(deadline, channel_started + (std::max)(share, minimum_channel_budget));
+            for (int attempt_index = 0; attempt_index < kAttemptsPerChannel; ++attempt_index)
             {
-                // 这一条没有就没有，重试三次也一样。换下一条通道。
-                break;
+                if (Clock::now() >= channel_deadline)
+                    break;
+                Attempt attempt = FetchOnce(channel, part_path, channel_deadline, request.on_progress);
+                attempt.url = channel;
+                result.attempts.push_back(attempt);
+                if (attempt.outcome == Outcome::Ok)
+                {
+                    // 完整性只认整份文件的 SHA256。续传把多次连接的字节拼在同一个临时
+                    // 文件里，边下边算的哈希跨不过重连，所以这里统一读一遍再决定。
+                    if (FileMatchesDigest(part_path, request.installer_sha256))
+                    {
+                        // 正式名字可能已经被另一个先完成的实例写好，且内容相同。这时不再
+                        // 覆盖：MoveFileEx 会把旧文件顶掉，而用户可能正读到它。
+                        if (FileMatchesDigest(final_path, request.installer_sha256))
+                        {
+                            std::filesystem::remove(part_path, ec);
+                            result.outcome = Outcome::Ok;
+                            result.message.clear();
+                            result.path = final_path;
+                            return result;
+                        }
+                        std::filesystem::remove(final_path, ec);
+                        if (MoveFileExW(part_path.c_str(), final_path.c_str(),
+                                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                        {
+                            result.outcome = Outcome::Ok;
+                            result.message.clear();
+                            result.path = final_path;
+                            return result;
+                        }
+                        std::filesystem::remove(part_path, ec);
+                        result.outcome = Outcome::Failed;
+                        result.message = "无法保存安装包";
+                        return result;
+                    }
+                    // 摘要不对：可能是续传的前缀来自一条坏连接，也可能是上游内容变了。
+                    // 丢掉临时文件，下一次从零重下；最后一次尝试仍是这个结论才判校验失败。
+                    std::filesystem::remove(part_path, ec);
+                    result.attempts.back().message = "SHA256 与清单不符";
+                    continue;
+                }
+                if (attempt.outcome == Outcome::NotFound)
+                {
+                    // 这一条没有就没有，重试三次也一样。换下一条通道。
+                    break;
+                }
+                // 其它失败：同一条通道还有重试机会。临时文件留着，下一次用 Range 续传。
             }
-            // 其它失败：同一条通道还有重试机会。临时文件留着，下一次用 Range 续传。
         }
-    }
+    } // pass
     std::filesystem::remove(part_path, ec);
     // 只按最后一次尝试的结局下结论。之前出现过一次摘要不符、后面只是断网时，
     // 不能把网络问题报成「安装包校验失败」这种安全结论。
@@ -758,6 +765,14 @@ Result Download(const Request &request)
     const bool all_not_found = !result.attempts.empty() &&
                                std::all_of(result.attempts.begin(), result.attempts.end(),
                                            [](const Attempt &attempt) { return attempt.outcome == Outcome::NotFound; });
+    // 失败原因取进度最多的那次尝试，而不是最后一次。慢通道超时、镜像 404 时，
+    // 最后一次是「没有这个包」，真正的原因是前面那条通道太慢。
+    const Attempt *best_attempt = nullptr;
+    for (const Attempt &attempt : result.attempts)
+    {
+        if (best_attempt == nullptr || attempt.bytes > best_attempt->bytes)
+            best_attempt = &attempt;
+    }
     result.outcome = last_checksum ? Outcome::Checksum : Outcome::Failed;
     if (last_checksum)
         result.message = "安装包校验失败";
@@ -766,10 +781,8 @@ Result Download(const Request &request)
     else
     {
         result.message = "所有下载通道都失败了";
-        // 把最后一次尝试的原因带上：用户看到的就是「速度低」「连不上」这类具体
-        // 结论，而不是一句没有信息量的总失败。
-        if (!result.attempts.empty() && !result.attempts.back().message.empty())
-            result.message += "：" + result.attempts.back().message;
+        if (best_attempt != nullptr && !best_attempt->message.empty())
+            result.message += "：" + best_attempt->message;
     }
     return result;
 }

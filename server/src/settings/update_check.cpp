@@ -497,8 +497,9 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
         CloseHandle(file);
         DIAG_LOGF(L"[update] installer signature invalid version={} file={}", Widen(version), requested_installer);
         ClearPendingSlotsIfVersion(version);
-        // 文件留着，不反复重下 64 MB；notified 也留着，同一个版本不再一遍遍弹。
-        // failed.txt 让下一轮轮询直接跳过这一版，保留 Failed 进度给设置页看。
+        // 文件留着，不反复重下 64 MB；failed.txt 让下一轮轮询跳过这一版。notified
+        // 也清掉：同一版本重新上传了不同的包时，摘要变了要能重新提示一次。
+        ClearNotifiedVersionIfVersion(version);
         WriteFailedVersion(version, digest);
         WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0,
                            "安装包签名校验失败，请从发布页手动下载");
