@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <regex>
+#include <thread>
 
 // partials/about-settings.html + modules/about-settings.ts + modules/update-manifest.ts;
 // styles in styles/modules/document-settings.css (.about-*).
@@ -67,6 +68,19 @@ int CompareVersions(const Version &left, const Version &right)
             return l < r ? -1 : 1;
     }
     return 0;
+}
+
+// 清单字段类型不对时 value() 会抛 type_error，设置窗口的消息处理不能让它逃出去。
+std::string JsonStringOrEmpty(const nlohmann::json &object, const char *key)
+{
+    const auto it = object.find(key);
+    return it != object.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+bool JsonBoolOr(const nlohmann::json &object, const char *key, const bool fallback)
+{
+    const auto it = object.find(key);
+    return it != object.end() && it->is_boolean() ? it->get<bool>() : fallback;
 }
 
 // GET over WinHTTP; empty on any failure. Runs on a worker thread.
@@ -320,23 +334,44 @@ void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::s
     }
     SHELLEXECUTEINFOW info{};
     info.cbSize = sizeof(info);
-    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
     info.lpVerb = L"open";
     info.lpFile = path.c_str();
     const std::filesystem::path working_directory = path.parent_path();
     info.lpDirectory = working_directory.c_str();
     info.nShow = SW_SHOWNORMAL;
     const bool opened = ShellExecuteExW(&info) != FALSE;
-    if (opened && info.hProcess != nullptr)
-    {
-        WaitForInputIdle(info.hProcess, 5000);
-        CloseHandle(info.hProcess);
-    }
-    CloseHandle(file);
     if (!opened)
+    {
+        CloseHandle(file);
         FinishUpdateDownload(state, false, L"安装包已下载，但无法自动打开，请重试");
-    else
-        FinishUpdateDownload(state, true, L"安装包已下载并通过校验，已打开安装程序");
+        return;
+    }
+    FinishUpdateDownload(state, true, L"安装包已下载并通过校验，已打开安装程序");
+    // 等安装器起来并打开安装包之后再放掉只读句柄。等待放到后台线程，设置窗口
+    // 不因为一次 UAC 或安装器初始化卡住。
+    const HANDLE process = info.hProcess;
+    try
+    {
+        std::thread([file, process] {
+            if (process != nullptr)
+            {
+                WaitForInputIdle(process, 5000);
+                CloseHandle(process);
+            }
+            else
+            {
+                Sleep(1000);
+            }
+            CloseHandle(file);
+        }).detach();
+    }
+    catch (...)
+    {
+        if (process != nullptr)
+            CloseHandle(process);
+        CloseHandle(file);
+    }
 }
 
 void ShowUpdateDialog(PageContext &context, const Version &latest, const std::string &releaseUrl,
@@ -354,8 +389,8 @@ void ShowUpdateDialog(PageContext &context, const Version &latest, const std::st
     // describeInstallerTrust
     static const std::regex installerName(R"(^MetasequoiaIME_Setup_v[\w.-]+\.exe$)", std::regex::icase);
     static const std::regex sha256(R"(^[0-9a-f]{64}$)");
-    const std::string name = manifest.value("installerName", std::string());
-    const std::string digest = manifest.value("installerSha256", std::string());
+    const std::string name = JsonStringOrEmpty(manifest, "installerName");
+    const std::string digest = JsonStringOrEmpty(manifest, "installerSha256");
     const bool nameValid = std::regex_match(name, installerName);
     if (manifest.contains("signed") && manifest["signed"].is_boolean() && !manifest["signed"].get<bool>())
     {
@@ -458,7 +493,7 @@ void CheckForUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
             static const std::regex tag(R"(^https://github\.com/metasequoiaime/([\w.-]+)/releases/tag/([\w.+-]+)$)");
             static const std::regex installer(R"(^MetasequoiaIME_Setup_v[\w.-]+\.exe$)", std::regex::icase);
             std::smatch match;
-            const std::string name = manifest.value("installerName", std::string());
+            const std::string name = JsonStringOrEmpty(manifest, "installerName");
             if (std::regex_match(releaseUrl, match, tag) && std::regex_match(name, installer))
                 mirror = std::string(kDownloadMirrorPrefix) + "https://github.com/metasequoiaime/" + match[1].str() +
                          "/releases/download/" + match[2].str() + "/" + name;
@@ -522,9 +557,9 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                 return;
             }
 
-            const std::string name = manifest.value("installerName", std::string());
-            const std::string digest = manifest.value("installerSha256", std::string());
-            const bool signed_installer = manifest.value("signed", false);
+            const std::string name = JsonStringOrEmpty(manifest, "installerName");
+            const std::string digest = JsonStringOrEmpty(manifest, "installerSha256");
+            const bool signed_installer = JsonBoolOr(manifest, "signed", false);
             if (!update_download::IsInstallerName(name) || !update_download::IsSha256Hex(digest))
             {
                 // 清单没给可用的包装与摘要，退回到原来那条路：让用户自己去下载页。

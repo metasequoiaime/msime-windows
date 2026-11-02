@@ -65,9 +65,13 @@ bool &PendingSignedSlot()
     return signed_installer;
 }
 
-void ClearPendingSlots()
+// 只清自己那一版。轮询线程可能在提示或启动期间已经换上了更新的版本，
+// 不能把新的候选连带抹掉。
+void ClearPendingSlotsIfVersion(const std::string &version)
 {
     std::lock_guard lock(Mutex());
+    if (PendingVersionSlot() != version)
+        return;
     PendingVersionSlot().clear();
     PendingSha256Slot().clear();
     PendingInstallerSlot().clear();
@@ -84,25 +88,33 @@ std::filesystem::path NotifiedPath()
     return std::filesystem::path(data) / L"updates" / L"notified.txt";
 }
 
-std::string ReadNotifiedVersion()
+// 某个版本已经在启动前验签失败。环境问题不会因为再下一遍 64 MB 就好，记下来，
+// 这一版不再自动重试；换新版本或用户手动下载都不受影响。
+std::filesystem::path FailedPath()
 {
-    const std::filesystem::path path = NotifiedPath();
+    const std::wstring data = CommonUtils::get_ime_data_path_w();
+    if (data.empty())
+        return {};
+    return std::filesystem::path(data) / L"updates" / L"failed.txt";
+}
+
+std::string ReadStateLine(const std::filesystem::path &path)
+{
     if (path.empty())
         return {};
     std::ifstream file(path, std::ios::binary);
     if (!file)
         return {};
-    std::string version;
-    std::getline(file, version);
-    while (!version.empty() && (version.back() == '\r' || version.back() == '\n'))
-        version.pop_back();
-    return version;
+    std::string line;
+    std::getline(file, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+        line.pop_back();
+    return line;
 }
 
-void WriteNotifiedVersion(const std::string &version)
+void WriteStateLine(const std::filesystem::path &path, const std::string &line)
 {
-    const std::filesystem::path path = NotifiedPath();
-    if (path.empty() || version.empty())
+    if (path.empty() || line.empty())
         return;
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
@@ -112,10 +124,20 @@ void WriteNotifiedVersion(const std::string &version)
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         if (!file)
             return;
-        file << version;
+        file << line;
     }
     if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
         std::filesystem::remove(temporary, ec);
+}
+
+std::string ReadNotifiedVersion()
+{
+    return ReadStateLine(NotifiedPath());
+}
+
+void WriteNotifiedVersion(const std::string &version)
+{
+    WriteStateLine(NotifiedPath(), version);
 }
 
 void ClearNotifiedVersion()
@@ -127,9 +149,33 @@ void ClearNotifiedVersion()
     std::filesystem::remove(path, ec);
 }
 
+void ClearNotifiedVersionIfVersion(const std::string &version)
+{
+    if (ReadNotifiedVersion() == version)
+        ClearNotifiedVersion();
+}
+
+std::string ReadFailedVersion()
+{
+    return ReadStateLine(FailedPath());
+}
+
+void WriteFailedVersion(const std::string &version)
+{
+    WriteStateLine(FailedPath(), version);
+}
+
+// 轮询线程和安装失败路径都会写 progress.txt，底层临时文件名是固定的，必须串行。
+std::mutex &ProgressMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
 void WriteProgressState(update_channel::DownloadProgress::State state, const std::string &version,
                         std::uint64_t received, std::uint64_t total, const std::string &reason)
 {
+    std::lock_guard lock(ProgressMutex());
     update_channel::DownloadProgress progress;
     progress.state = state;
     progress.version = version;
@@ -242,33 +288,38 @@ std::mutex &PromptMutex()
 bool SendInstallerReady(uint64_t client_id, const std::string &version, const std::filesystem::path &path,
                         const std::string &installer)
 {
-    // 三段：版本号、安装包绝对路径、安装包文件名。
-    std::wstring payload = Widen(version);
+    // 三段：版本号、安装包路径、安装包文件名。TSF 只用到版本号和文件名，路径仅作
+    // 展示；数据目录很深时路径本身就可能超过管道载荷上限，这时留空，别让整条提示
+    // 因为一个展示字段发不出去。
+    const std::wstring wide_version = Widen(version);
+    const std::wstring wide_installer = Widen(installer);
+    std::wstring payload = wide_version;
     payload += L'\t';
-    payload += path.wstring();
+    const std::wstring wide_path = path.wstring();
+    if (wide_version.size() + wide_path.size() + wide_installer.size() + 2 < FanyImePipeLimits::CandidateTextCapacity)
+    {
+        payload += wide_path;
+    }
     payload += L'\t';
-    payload += Widen(installer);
+    payload += wide_installer;
     return SendToTsfWorkerThreadClientViaNamedpipe(
         client_id, Global::DataFromServerMsgTypeToTsfWorkerThread::UpdateInstallerReady, payload);
 }
 
-// 有待安装包就尝试提示一次。没有活动宿主、已经提示过、文件被换掉都不算提示成功；
-// 只有真正写进管道才记 notified.txt，客户端下次激活还能补上。
+// 有待安装包就尝试提示一次。没有活动宿主、已经提示过都不算提示成功；只有真正
+// 写进管道才记 notified.txt，客户端下次激活还能补上。文件完整性和签名留给启动
+// 路径核对，这里不做 64 MB 的重复读盘。
 void BroadcastPendingIfAny()
 {
     std::lock_guard prompt_lock(PromptMutex());
     std::string version;
-    std::string digest;
     std::string installer;
-    bool signed_installer = false;
     {
         std::lock_guard lock(Mutex());
         version = PendingVersionSlot();
-        digest = PendingSha256Slot();
         installer = PendingInstallerSlot();
-        signed_installer = PendingSignedSlot();
     }
-    if (version.empty() || digest.empty() || installer.empty())
+    if (version.empty() || installer.empty())
         return;
     if (ReadNotifiedVersion() == version)
         return;
@@ -276,28 +327,6 @@ void BroadcastPendingIfAny()
     if (active.client_id == 0)
         return;
     const std::filesystem::path path = InstallerDirectory(version) / std::filesystem::path(installer);
-    HANDLE file = INVALID_HANDLE_VALUE;
-    if (!native_settings::update_download::OpenVerifiedInstaller(path, digest, file))
-    {
-        DIAG_LOGF(L"[update] pending installer unusable version={}", Widen(version));
-        ClearPendingSlots();
-        ClearNotifiedVersion();
-        WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0,
-                           "安装包已损坏，请重新检查更新");
-        return;
-    }
-    CloseHandle(file);
-    if (signed_installer && !native_settings::update_download::VerifyAuthenticode(path))
-    {
-        DIAG_LOGF(L"[update] pending installer signature invalid version={}", Widen(version));
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        ClearPendingSlots();
-        ClearNotifiedVersion();
-        WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0,
-                           "安装包签名校验失败，请重新检查更新");
-        return;
-    }
     if (SendInstallerReady(active.client_id, version, path, installer))
     {
         WriteNotifiedVersion(version);
@@ -345,6 +374,14 @@ bool ResolveCandidate(const std::string &body, const update_channel::Version &cu
 
     candidate.version = latest.text;
     candidate.release_url = release_url;
+    // value() 在键存在但类型不对时会抛 type_error，轮询线程没有捕获就会
+    // std::terminate。先把可选字段的类型挡掉，坏清单当成「没有更新」。
+    if ((manifest.contains("installerName") && !manifest["installerName"].is_string()) ||
+        (manifest.contains("installerSha256") && !manifest["installerSha256"].is_string()) ||
+        (manifest.contains("signed") && !manifest["signed"].is_boolean()))
+    {
+        return false;
+    }
     candidate.installer = manifest.value("installerName", std::string());
     candidate.sha256 = manifest.value("installerSha256", std::string());
     // 清单写明 signed=true 时，启动前还要过 Authenticode。缺省按未声明处理，
@@ -364,7 +401,17 @@ void PollLoop()
     std::this_thread::sleep_for(std::chrono::minutes(kStartupDelayMinutes));
     for (;;)
     {
-        CheckOnce();
+        try
+        {
+            CheckOnce();
+        }
+        catch (...)
+        {
+            // 清单或文件系统里出现没预料到的异常时，别让轮询线程整个死掉，
+            // 也别把 Running 永远留在 true。
+            std::lock_guard lock(Mutex());
+            Running() = false;
+        }
         std::this_thread::sleep_for(std::chrono::minutes(kPollIntervalMinutes));
     }
 }
@@ -416,8 +463,8 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
         Narrow(requested_installer) != installer)
     {
         error = L"安装包与当前待安装版本不一致，请重新检查。";
-        ClearPendingSlots();
-        ClearNotifiedVersion();
+        ClearPendingSlotsIfVersion(version);
+        ClearNotifiedVersionIfVersion(version);
         return false;
     }
     const std::filesystem::path path = InstallerDirectory(version) / std::filesystem::path(installer);
@@ -428,8 +475,8 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
     {
         DIAG_LOGF(L"[update] installer digest mismatch before launch version={} file={}", Widen(version),
                   requested_installer);
-        ClearPendingSlots();
-        ClearNotifiedVersion();
+        ClearPendingSlotsIfVersion(version);
+        ClearNotifiedVersionIfVersion(version);
         WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0,
                            "安装包已损坏，请重新检查更新");
         error = L"安装包已损坏，请重新检查更新。";
@@ -438,14 +485,14 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
     if (signed_installer && !native_settings::update_download::VerifyAuthenticode(path))
     {
         CloseHandle(file);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
         DIAG_LOGF(L"[update] installer signature invalid version={} file={}", Widen(version), requested_installer);
-        ClearPendingSlots();
-        ClearNotifiedVersion();
+        ClearPendingSlotsIfVersion(version);
+        // 文件留着，不反复重下 64 MB；notified 也留着，同一个版本不再一遍遍弹。
+        // failed.txt 让下一轮轮询直接跳过这一版，保留 Failed 进度给设置页看。
+        WriteFailedVersion(version);
         WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0,
-                           "安装包签名校验失败，请重新检查更新");
-        error = L"安装包签名校验失败，已丢弃，请重新检查更新。";
+                           "安装包签名校验失败，请从发布页手动下载");
+        error = L"安装包签名校验失败。请从发布页手动下载安装包。";
         return false;
     }
     // 安装器会替换本进程和几个面板 exe，先让它们退出，避免 Inno 逼用户重启。
@@ -462,7 +509,7 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
     }
     SHELLEXECUTEINFOW info{};
     info.cbSize = sizeof(info);
-    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
     info.lpVerb = L"open";
     info.lpFile = path.c_str();
     const std::filesystem::path working_directory = path.parent_path();
@@ -479,14 +526,14 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
         }
         // 成功拉起后清掉待安装状态，但保留 notified：安装器运行期间 Server 重启时
         // 不会再对同一个版本问一次。
-        ClearPendingSlots();
+        ClearPendingSlotsIfVersion(version);
         DIAG_LOGF(L"[update] launch installer version={} launched=true", Widen(version));
     }
     else
     {
         g_launching = false;
-        ClearPendingSlots();
-        ClearNotifiedVersion();
+        ClearPendingSlotsIfVersion(version);
+        ClearNotifiedVersionIfVersion(version);
         WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0, "无法启动安装程序");
         error = L"安装包已下载并通过校验，但无法启动安装程序。请稍后重试。";
         DIAG_LOGF(L"[update] launch installer version={} launched=false", Widen(version));
@@ -556,6 +603,14 @@ void CheckOnce()
         !native_settings::update_download::IsSha256Hex(candidate.sha256))
     {
         DIAG_LOGF(L"[update] manifest rejected latest={} reason=installer_fields", Widen(candidate.version));
+        done({}, {}, {}, false);
+        return;
+    }
+    if (ReadFailedVersion() == candidate.version)
+    {
+        // 这一版在启动前验签失败过。再下一遍同样会失败，保留 Failed 进度让设置页
+        // 显示原因，等新版本或用户手动处理。
+        DIAG_LOGF(L"[update] skipped failed version={}", Widen(candidate.version));
         done({}, {}, {}, false);
         return;
     }
