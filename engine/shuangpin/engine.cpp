@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <algorithm>
+#include <utility>
 
 namespace
 {
@@ -128,14 +129,15 @@ std::vector<WordItem> ShuangpinEngine::query(const QueryRequest &request)
     dictionary_.set_direct_span_cache_enabled(request.enable_direct_helpcode);
     // 整句同样要收模糊读音，见 QuanpinDictionary::set_fuzzy_pinyin。
     dictionary_.set_fuzzy_pinyin(request.fuzzy_pinyin);
-    auto candidates = query_unfiltered(request);
+    auto unfiltered = query_unfiltered(request);
+    auto &candidates = unfiltered.candidates;
     dictionary_.filter_by_syllable_helpcodes(candidates);
     // 放在辅助码各条路径之后：奇数个键的 txu 开着单码辅助时会被读成「tx + 辅码 u」，T恤 照样要有。
-    dictionary_.insert_latin_words(candidates, request.raw_input);
+    dictionary_.insert_latin_words(candidates, request.raw_input, unfiltered.keys_before_helpcodes);
     // 辅助码筛过、重排过的列表不补：首选是按辅码挑出来的，补出来的长词不一定满足同样的约束。
     if (request.end_helpcodes.empty() && request.syllable_helpcodes.empty())
         dictionary_.insert_prefix_completion(candidates, request.raw_input, request.prefix_completion);
-    return candidates;
+    return std::move(candidates);
 }
 
 bool ShuangpinEngine::resolve_direct_helpcode(QueryRequest &request)
@@ -150,7 +152,7 @@ bool ShuangpinEngine::resolve_direct_helpcode(QueryRequest &request)
     return dictionary_.resolve_direct_helpcode(request);
 }
 
-std::vector<WordItem> ShuangpinEngine::query_unfiltered(const QueryRequest &request)
+ShuangpinEngine::UnfilteredQuery ShuangpinEngine::query_unfiltered(const QueryRequest &request)
 {
     const std::string &raw_input = request.raw_input;
     const std::string &raw_input_with_cases =
@@ -173,7 +175,8 @@ std::vector<WordItem> ShuangpinEngine::query_unfiltered(const QueryRequest &requ
             request.end_helpcodes.size() == 2
                 ? HelpcodeUtils::filter_candidates_with_double_helpcodes(base, request.end_helpcodes, helpcodes_.get())
                 : HelpcodeUtils::reorder_candidates_with_single_helpcode(base, request.end_helpcodes, helpcodes_.get());
-        return append_fuzzy(std::move(filtered), segmentation, request.fuzzy_pinyin, request.end_helpcodes);
+        return {append_fuzzy(std::move(filtered), segmentation, request.fuzzy_pinyin, request.end_helpcodes),
+                pure_input};
     }
 
     if (request.enable_shuangpin_helpcode)
@@ -181,26 +184,29 @@ std::vector<WordItem> ShuangpinEngine::query_unfiltered(const QueryRequest &requ
         // 双码辅助
         if (const auto full_helpcode = build_full_helpcode_query(raw_input, raw_input_with_cases, profile_))
         {
-            return append_fuzzy(dictionary_.generate_with_helpcodes(full_helpcode->base_pure_input,
-                                                                    full_helpcode->base_segmentation, raw_input,
-                                                                    full_helpcode->help_codes),
-                                full_helpcode->base_segmentation, request.fuzzy_pinyin, full_helpcode->help_codes);
+            return {append_fuzzy(dictionary_.generate_with_helpcodes(full_helpcode->base_pure_input,
+                                                                     full_helpcode->base_segmentation, raw_input,
+                                                                     full_helpcode->help_codes),
+                                 full_helpcode->base_segmentation, request.fuzzy_pinyin, full_helpcode->help_codes),
+                    full_helpcode->base_pure_input};
         }
 
         // 单码辅助
         if (const auto single_helpcode = build_single_helpcode_query(raw_input, pure_input_with_cases, profile_))
         {
-            return append_fuzzy(dictionary_.generate_with_helpcodes(single_helpcode->base_pure_input,
-                                                                    single_helpcode->base_segmentation, raw_input,
-                                                                    single_helpcode->help_codes),
-                                single_helpcode->base_segmentation, request.fuzzy_pinyin, single_helpcode->help_codes);
+            return {append_fuzzy(dictionary_.generate_with_helpcodes(single_helpcode->base_pure_input,
+                                                                     single_helpcode->base_segmentation, raw_input,
+                                                                     single_helpcode->help_codes),
+                                 single_helpcode->base_segmentation, request.fuzzy_pinyin, single_helpcode->help_codes),
+                    single_helpcode->base_pure_input};
         }
 
         // 不满足辅助码条件，单独查询，比如，cls -> c'ls，也就直接走下面的 query_normal 了
     }
 
-    return append_fuzzy(query_normal(dictionary_, request, profile_), shuangpin::segment_input(raw_input, profile_),
-                        request.fuzzy_pinyin);
+    return {append_fuzzy(query_normal(dictionary_, request, profile_), shuangpin::segment_input(raw_input, profile_),
+                         request.fuzzy_pinyin),
+            pure_input};
 }
 
 std::string ShuangpinEngine::expandable_initial_code(const QueryRequest &request) const

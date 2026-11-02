@@ -190,7 +190,7 @@ class QuanpinDictionary
     // 打出的字母串整串等于某个字母词的编码时把它插进候选，三个字母起再补两条以它开头的更长的词
     // （txu 补 T恤衫）。排位见 quanpin::insert_latin_candidates。
     void insert_latin_words(std::vector<WordItem> &result, const std::string &raw_input,
-                            const quanpin::Segments &segments, const std::string &code_for_selection);
+                            const std::string &code_for_selection);
     void set_fuzzy_pinyin(metasequoia::FuzzyPinyinOptions options);
     bool user_prefers_reading(const std::string &key);
     static void append_unique_words(std::vector<WordItem> &result, const std::vector<WordItem> &extra);

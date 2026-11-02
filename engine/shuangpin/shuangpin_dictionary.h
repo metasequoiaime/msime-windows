@@ -101,9 +101,11 @@ class ShuangpinDictionary
     }
     // 词格跨度查询带的模糊音规则，见 QuanpinDictionary::set_fuzzy_pinyin。变化时清缓存。
     void set_fuzzy_pinyin(metasequoia::FuzzyPinyinOptions options);
-    // 原始按键整串等于某个字母词在本方案下的敲法时（小鹤 txu 是 T恤），把它排在整串精确命中的词库行
-    // 之后；三个键起再补两条以它开头的更长的词。见 QuanpinDictionary::insert_latin_words。
-    void insert_latin_words(std::vector<WordItem> &candidates, const std::string &raw_input);
+    // 原始按键整串等于某个字母词在本方案下的敲法时（小鹤 txu 是 T恤）把它插进候选，三个键起再补两条
+    // 以它开头的更长的词。排位见 quanpin::insert_latin_candidates；keys_before_helpcodes 是去掉末尾辅码的
+    // 键串（没有辅码时就是整串键），候选的读音盖到它的最后一键就算覆盖整串。
+    void insert_latin_words(std::vector<WordItem> &candidates, const std::string &raw_input,
+                            const std::string &keys_before_helpcodes);
     // 长词前缀补全（#1343）：首选是四个字以上、覆盖整串按键的词时，把以它开头的最可能的更长的词插到
     // 第二位。见 quanpin::insert_prefix_completion。
     void insert_prefix_completion(std::vector<WordItem> &candidates, const std::string &raw_input,
