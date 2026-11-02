@@ -683,14 +683,29 @@ Result Download(const Request &request)
         Clock::now() + std::chrono::seconds((std::max)(request.deadline_seconds, std::uint64_t{60}));
     const auto minimum_channel_budget = std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(60));
 
-    // 第一轮按剩余通道数分配预算；如果主通道只是慢、镜像又暂时 404，第二轮用
-    // 剩下的预算回到同一个 part 文件继续续传，别把本来能下完的连接切死。
+    // 第一轮按剩余可用通道数分配预算；如果主通道只是慢、镜像又暂时 404，第二轮
+    // 用剩下的预算回到同一个 part 文件继续续传，别把本来能下完的连接切死。
+    std::vector<bool> channel_exhausted(channels.size(), false);
+    const auto usable_channel_count = [&channel_exhausted] {
+        size_t count = 0;
+        for (const bool exhausted : channel_exhausted)
+        {
+            if (!exhausted)
+                ++count;
+        }
+        return count;
+    };
     for (int pass = 0; pass < 2; ++pass)
     {
         if (Clock::now() >= deadline)
             break;
         for (size_t channel_index = 0; channel_index < channels.size(); ++channel_index)
         {
+            if (channel_exhausted[channel_index])
+                continue;
+            const size_t remaining_channels = usable_channel_count();
+            if (remaining_channels == 0)
+                break;
             const std::string &channel = channels[channel_index];
             const Clock::time_point channel_started = Clock::now();
             if (channel_started >= deadline)
@@ -700,10 +715,10 @@ Result Download(const Request &request)
                 result.message = "下载超时";
                 return result;
             }
-            // 按剩余通道数分配预算。第一条通道再慢也不能把全局预算吃光，否则镜像
-            // 永远等不到机会，8 到 50 KB/s 的 GitHub 连接会直接拖死整次下载。
+            // 按剩余可用通道数分配预算。第一条通道再慢也不能把全局预算吃光，
+            // 否则镜像永远等不到机会；已经 404 的通道不再占份额。
             const auto remaining = deadline - channel_started;
-            const auto share = remaining / static_cast<long long>(channels.size() - channel_index);
+            const auto share = remaining / static_cast<long long>(remaining_channels);
             const Clock::time_point channel_deadline =
                 (std::min)(deadline, channel_started + (std::max)(share, minimum_channel_budget));
             for (int attempt_index = 0; attempt_index < kAttemptsPerChannel; ++attempt_index)
@@ -751,7 +766,8 @@ Result Download(const Request &request)
                 }
                 if (attempt.outcome == Outcome::NotFound)
                 {
-                    // 这一条没有就没有，重试三次也一样。换下一条通道。
+                    // 这一条没有就没有，重试三次也一样。标记淘汰，换下一条通道。
+                    channel_exhausted[channel_index] = true;
                     break;
                 }
                 // 其它失败：同一条通道还有重试机会。临时文件留着，下一次用 Range 续传。
@@ -770,6 +786,10 @@ Result Download(const Request &request)
     const Attempt *best_attempt = nullptr;
     for (const Attempt &attempt : result.attempts)
     {
+        // 摘要不符已经是结论，不再拿它当「通道失败」的原因；否则最终文案会变成
+        // 网络失败却挂着一句 SHA256 不符。
+        if (attempt.message == "SHA256 与清单不符")
+            continue;
         if (best_attempt == nullptr || attempt.bytes > best_attempt->bytes)
             best_attempt = &attempt;
     }
