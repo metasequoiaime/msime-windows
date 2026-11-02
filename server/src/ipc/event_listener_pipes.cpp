@@ -482,6 +482,9 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             if (activation.changed)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
+                // 有客户端刚激活时补一次更新提示：第一次轮询如果还没有宿主连着，
+                // 不会写下“已经提示过”，这里就是补发点。
+                update_check::NotifyClientActivated();
             }
             continue;
         }
@@ -547,6 +550,9 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             if (activation.changed)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
+                // 有客户端刚激活时补一次更新提示：第一次轮询如果还没有宿主连着，
+                // 不会写下“已经提示过”，这里就是补发点。
+                update_check::NotifyClientActivated();
             }
         }
 
@@ -1025,9 +1031,19 @@ void AuxPipeEventListenerLoopThread()
                     // 里校验过的那一份，消息里的文件名只用于核对，不直接当成路径信任。
                     const std::wstring installer = message.substr(std::wstring(L"InstallUpdate|").size());
                     // 摘要对不上、文件不在了、ShellExecute 被拦下，都不应该把正在用的
-                    // Server 重启一遍：用户会看到输入法闪断，却什么也没装上。
-                    if (update_check::LaunchPendingInstaller(installer))
+                    // Server 重启一遍：用户会看到输入法闪断，却什么也没装上。失败必须
+                    // 给出提示，否则用户点完「是」只会看到什么都没发生。
+                    std::wstring error;
+                    if (update_check::LaunchPendingInstaller(installer, error))
+                    {
                         RestartServerProcess();
+                    }
+                    else
+                    {
+                        MessageBoxW(nullptr,
+                                    error.empty() ? L"安装包无法启动，请稍后在关于页重新检查更新。" : error.c_str(),
+                                    L"水杉输入法", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+                    }
                 }
                 else if (message == L"ConfigChanged" || message == L"InputSchemeChanged" ||
                          message == L"CandidateSkinRefresh")

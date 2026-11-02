@@ -8,9 +8,10 @@
 //   2. 读配置 appearance.auto_download_update，关着就什么都不做；
 //   3. GET https://msime.app/update.json，版本必须同通道且比当前新；
 //   4. 已有校验通过的包就跳过；否则交给下载器，落进数据目录的 updates/<版本>/；
-//   5. 通过 UpdateInstallerReady 广播给所有已连接的 TSF 客户端，由它询问用户。
+//   5. 通过 UpdateInstallerReady 发给当前活动的 TSF 客户端，由它询问用户。
 //
-// 失败一律静默收敛到下一次轮询：更新检查出问题是用户处理不了的，弹窗只会打扰。
+// 轮询失败静默收敛到下一次轮询：更新检查出问题是用户处理不了的，弹窗只会打扰。
+// 用户点了「是」之后的启动失败是另一回事，会清掉待安装状态并给出提示。
 
 #include <cstdint>
 #include <filesystem>
@@ -34,8 +35,12 @@ std::filesystem::path InstallerDirectory(const std::string &version);
 std::string PendingVersion();
 
 // 用户在弹窗里同意安装时调用。路径只从磁盘上校验过的那一份推出来，
-// requested_installer 仅用来核对是不是同一个文件。
-bool LaunchPendingInstaller(const std::wstring &requested_installer);
+// requested_installer 仅用来核对是不是同一个文件。失败时 error 里是给用户看的原因。
+bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstring &error);
+
+// TSF 客户端激活时调用。没有客户端连着时不会消耗「已经提示过」的标记，
+// 客户端刚连上时用它补一次提示，不必等到下一轮轮询。
+void NotifyClientActivated();
 
 // 起一次探测。可重入：已有一轮在跑时直接返回。
 void CheckOnce();

@@ -293,10 +293,10 @@ inline void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const
 }
 
 // 下载结束后恢复按钮并给出结果。成功时先用清单摘要重新核对一遍磁盘上的文件，
-// 再交给系统打开：它已经校验过，接下来是 UAC 和 Inno Setup 自己的界面，每一步仍由
-// 用户确认。重核对是为了堵住「校验完成」到「用户点 UAC」之间被替换的窗口。
+// 并在启动前验证签名；句柄保持只共享读，安装程序起来之前别人改不了也删不掉。
+// 接下来是 UAC 和 Inno Setup 自己的界面，每一步仍由用户确认。
 void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::string &installer_path,
-                          const std::string &expected_digest, const std::string &message)
+                          const std::string &expected_digest, const std::string &message, const bool require_signature)
 {
     if (installer_path.empty())
     {
@@ -304,13 +304,36 @@ void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::s
         return;
     }
     const std::filesystem::path path = std::filesystem::u8path(installer_path);
-    if (!update_download::FileMatchesDigest(path, expected_digest))
+    HANDLE file = INVALID_HANDLE_VALUE;
+    if (!update_download::OpenVerifiedInstaller(path, expected_digest, file))
     {
         FinishUpdateDownload(state, false, L"安装包在打开前核对失败，请重试");
         return;
     }
-    const HINSTANCE opened = ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    if (reinterpret_cast<INT_PTR>(opened) <= 32)
+    if (require_signature && !update_download::VerifyAuthenticode(path))
+    {
+        CloseHandle(file);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        FinishUpdateDownload(state, false, L"安装包签名校验失败，已丢弃，请重试");
+        return;
+    }
+    SHELLEXECUTEINFOW info{};
+    info.cbSize = sizeof(info);
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+    info.lpVerb = L"open";
+    info.lpFile = path.c_str();
+    const std::filesystem::path working_directory = path.parent_path();
+    info.lpDirectory = working_directory.c_str();
+    info.nShow = SW_SHOWNORMAL;
+    const bool opened = ShellExecuteExW(&info) != FALSE;
+    if (opened && info.hProcess != nullptr)
+    {
+        WaitForInputIdle(info.hProcess, 5000);
+        CloseHandle(info.hProcess);
+    }
+    CloseHandle(file);
+    if (!opened)
         FinishUpdateDownload(state, false, L"安装包已下载，但无法自动打开，请重试");
     else
         FinishUpdateDownload(state, true, L"安装包已下载并通过校验，已打开安装程序");
@@ -501,6 +524,7 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
 
             const std::string name = manifest.value("installerName", std::string());
             const std::string digest = manifest.value("installerSha256", std::string());
+            const bool signed_installer = manifest.value("signed", false);
             if (!update_download::IsInstallerName(name) || !update_download::IsSha256Hex(digest))
             {
                 // 清单没给可用的包装与摘要，退回到原来那条路：让用户自己去下载页。
@@ -537,7 +561,7 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                     }
                     return std::string("err\n\n\n") + result.message;
                 },
-                [weak](const std::string &encoded) {
+                [weak, signed_installer](const std::string &encoded) {
                     const std::shared_ptr<AboutState> locked = weak.lock();
                     if (!locked)
                         return;
@@ -555,10 +579,10 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                     const std::string digest = next(cursor);
                     const std::string note = cursor < encoded.size() ? encoded.substr(cursor) : std::string();
                     if (status == "ok")
-                        FinishUpdateDownload(locked, path, digest, note);
+                        FinishUpdateDownload(locked, path, digest, note, signed_installer);
                     else
                         FinishUpdateDownload(locked, std::string(), std::string(),
-                                             note.empty() ? std::string("下载失败") : note);
+                                             note.empty() ? std::string("下载失败") : note, false);
                 });
         });
 }

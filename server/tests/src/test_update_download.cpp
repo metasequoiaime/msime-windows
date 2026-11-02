@@ -181,6 +181,63 @@ TEST_CASE(update_download_gives_each_job_its_own_part_file)
     REQUIRE(!native_settings::update_download::IsInstallerName(first));
 }
 
+TEST_CASE(update_download_holds_the_verified_installer_open)
+{
+    namespace fs = std::filesystem;
+    using namespace native_settings::update_download;
+    const fs::path directory = test::TempRoot() / L"update-download-lock";
+    std::error_code ec;
+    fs::remove_all(directory, ec);
+    fs::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    const fs::path probe = directory / "MetasequoiaIME_Setup_v0.11.1.exe";
+    {
+        std::ofstream file(probe, std::ios::binary | std::ios::trunc);
+        file << "hello";
+    }
+    const std::string expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"; // "hello"
+
+    HANDLE file = INVALID_HANDLE_VALUE;
+    REQUIRE(OpenVerifiedInstaller(probe, expected, file));
+    REQUIRE(file != INVALID_HANDLE_VALUE);
+    // 校验期间和启动安装程序期间只共享读，别处想写打开必须失败。
+    HANDLE writer = CreateFileW(probe.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(writer == INVALID_HANDLE_VALUE);
+    CloseHandle(file);
+
+    // 放掉句柄之后恢复可写。
+    writer = CreateFileW(probe.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(writer != INVALID_HANDLE_VALUE);
+    CloseHandle(writer);
+
+    fs::remove_all(directory, ec);
+}
+
+TEST_CASE(update_download_open_verified_installer_rejects_a_mismatch)
+{
+    namespace fs = std::filesystem;
+    using namespace native_settings::update_download;
+    const fs::path directory = test::TempRoot() / L"update-download-lock-mismatch";
+    std::error_code ec;
+    fs::remove_all(directory, ec);
+    fs::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    const fs::path probe = directory / "MetasequoiaIME_Setup_v0.11.1.exe";
+    {
+        std::ofstream file(probe, std::ios::binary | std::ios::trunc);
+        file << "hellp";
+    }
+    HANDLE file = INVALID_HANDLE_VALUE;
+    REQUIRE(!OpenVerifiedInstaller(probe, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", file));
+    REQUIRE(file == INVALID_HANDLE_VALUE);
+
+    fs::remove_all(directory, ec);
+}
+
 TEST_CASE(update_download_pruning_leaves_only_the_kept_installer)
 {
     namespace fs = std::filesystem;

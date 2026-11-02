@@ -21,6 +21,8 @@
 // 另有两条兜底：连续 20 秒收不到任何字节当作这次尝试失败；任何状态码不是 200
 // 或 206 的响应都算失败，404 与 416 单独处理，换通道或从零重来。
 
+#include <Windows.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -74,8 +76,8 @@ struct Request
     std::uint64_t deadline_seconds = 900;
     // 测试用：把每个通道的地址换掉。空表示用真实地址。
     std::vector<std::string> override_channel_urls;
-    // 下载进度：(已收字节, 服务端声明的总长，0 表示没声明)。在下载线程上同步调用，
-    // 实现必须尽快返回；重试换通道时从 0 重新计。可以为空。
+    // 下载进度：(磁盘上已有的字节, 服务端声明的总长，0 表示没声明)。在下载线程上
+    // 同步调用，实现必须尽快返回；续传时报的是含前缀的累计值，不会回到 0。可以为空。
     std::function<void(std::uint64_t received, std::uint64_t total)> on_progress;
 };
 
@@ -118,6 +120,15 @@ void PruneOldInstallers(const std::filesystem::path &directory, const std::strin
 // 重新核对文件的 SHA-256。下载目录与启动安装程序之间隔着用户点 UAC 的时间，
 // 这段时间里文件可能被同机的其他进程换掉，所以启动前再算一次。
 bool FileMatchesDigest(const std::filesystem::path &path, const std::string &expected_hex);
+
+// 打开一个只允许读共享的句柄，并在句柄上核对 SHA-256。成功后句柄交给调用方，
+// 调用方在拉起安装程序期间不要关闭它：其他进程拿不到写权限，改不了也删不掉。
+// 打开或校验失败时 file 保持 INVALID_HANDLE_VALUE。
+bool OpenVerifiedInstaller(const std::filesystem::path &path, const std::string &expected_hex, HANDLE &file);
+
+// 核对安装包的 Authenticode 签名和信任链。清单写明 signed=true 时在启动前调用，
+// 防止同机进程在摘要校验之后换成一个同样合法的安装包。
+bool VerifyAuthenticode(const std::filesystem::path &path);
 
 // 本次进程独占的安装包文件名：MetasequoiaIME_Setup_v0.11.1.exe.<pid>-<计数>.part。
 // 每个下载任务用自己的临时名，两个实例各写各的文件，互不覆盖；谁先完成谁把它改名成

@@ -191,10 +191,6 @@ void SendToTsfWorkerThreadViaNamedpipe(UINT msg_type, const std::wstring &pipeDa
 // currently focused client (settings UI often steals activation).
 void BroadcastToTsfWorkerThreadViaNamedpipe(UINT msg_type, const std::wstring &pipeData,
                                             uint64_t excluded_client_id = 0);
-// Number of TSF hosts a broadcast would currently reach. A caller that only
-// wants to show something once needs this before marking it as shown; claiming
-// it while no host is connected would lose the event until the next restart.
-size_t ConnectedTsfWorkerClientCount();
 // Sends active language and scheme-dependent key policies without reloading a session.
 void BroadcastConfiguredInputModeState(uint64_t excluded_input_mode_client_id = 0);
 // TrilingualCycleChanged goes only to clients that negotiated TrilingualCycle.

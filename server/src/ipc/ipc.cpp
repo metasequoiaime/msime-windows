@@ -1866,21 +1866,6 @@ void BroadcastToTsfWorkerThreadViaNamedpipe(UINT msg_type, const std::wstring &p
     }
 }
 
-size_t ConnectedTsfWorkerClientCount()
-{
-    std::lock_guard lock(g_pipe_clients_mutex);
-    size_t count = 0;
-    for (const auto &[client_id, session] : g_pipe_clients)
-    {
-        if (client_id != 0 && session.to_tsf_worker_thread_pipe && session.to_tsf_worker_thread_registration_id != 0 &&
-            session.to_tsf_worker_thread_ready)
-        {
-            ++count;
-        }
-    }
-    return count;
-}
-
 bool SendTrilingualCycleState(uint64_t client_id, uint64_t activation_epoch)
 {
     // During an upgrade a host can keep an older DLL loaded. It ignores this
