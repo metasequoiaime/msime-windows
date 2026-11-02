@@ -12,8 +12,10 @@
 #include "../core/syllable_helpcode.h"
 #include "../neural/neural_decoder.h"
 #include "../quanpin/lattice_rerank.h"
+#include "../quanpin/prefix_completion.h"
 #include "../quanpin/quanpin_query.h"
 #include "engine/ngram/language_model.h"
+#include "shuangpin_latin_words.h"
 #include "shuangpin_profile.h"
 #include <shared_mutex>
 #include <array>
@@ -99,6 +101,13 @@ class ShuangpinDictionary
     }
     // 词格跨度查询带的模糊音规则，见 QuanpinDictionary::set_fuzzy_pinyin。变化时清缓存。
     void set_fuzzy_pinyin(metasequoia::FuzzyPinyinOptions options);
+    // 原始按键整串等于某个字母词在本方案下的敲法时（小鹤 txu 是 T恤），把它排在整串精确命中的词库行
+    // 之后；三个键起再补两条以它开头的更长的词。见 QuanpinDictionary::insert_latin_words。
+    void insert_latin_words(std::vector<WordItem> &candidates, const std::string &raw_input);
+    // 长词前缀补全（#1343）：首选是四个字以上、覆盖整串按键的词时，把以它开头的最可能的更长的词插到
+    // 第二位。见 quanpin::insert_prefix_completion。
+    void insert_prefix_completion(std::vector<WordItem> &candidates, const std::string &raw_input,
+                                  const metasequoia::PrefixCompletionOptions &options);
 
     explicit ShuangpinDictionary(const ShuangpinProfile &profile = GetXiaoheShuangpinProfile(),
                                  metasequoia::RuntimePaths paths = metasequoia::RuntimePaths::legacy());
@@ -147,6 +156,24 @@ class ShuangpinDictionary
     std::unordered_map<std::string, std::vector<quanpin::LatticeLexeme>> direct_span_cache_;
     // 见 QuanpinDictionary::char_reading_totals_。
     std::shared_ptr<const quanpin::CharReadingTotals> char_reading_totals_;
+    // 字母词与它们在本方案下的敲法，第一次用到时载入。reset_cache 只置 stale，下次用到时重读
+    // （见 quanpin::refresh_latin_words）；字母词换了对象，敲法跟着重建。都按值交给调用方用。
+    std::shared_ptr<const quanpin::LatinWords> latin_words_;
+    bool latin_words_stale_ = false;
+    sqlite3_int64 latin_words_version_ = -1;
+    std::shared_ptr<const ShuangpinLatinWords> latin_codes_;
+    // 见 insert_prefix_completion，随 reset_cache 清。
+    quanpin::PrefixCompletionCache prefix_completion_cache_;
+    // 补全打分用的万象模型与它的路径，见 QuanpinDictionary::prefix_completion_gram_。
+    std::string prefix_completion_gram_path_;
+    std::shared_ptr<const gram::GramDb> prefix_completion_gram_;
+    std::shared_ptr<const quanpin::LatinWords> latin_words();
+    std::shared_ptr<const ShuangpinLatinWords> latin_codes();
+    // 贪心切分把字母词拆坏（tx'u 读成 tie 加声母 sh）时，在贪心切分的边界上找字母词的敲法，命中就换一条
+    // 切分：命中前照旧，命中段按字母词的键切，命中后从命中结尾重新贪心切。这条切分解出的整句比贪心
+    // 切分的好才合并进来，排在整句的最前面。
+    void merge_latin_sentence(std::vector<WordItem> &candidates, const std::string &pinyin_sequence,
+                              const quanpin::Segments &greedy_syllables, const quanpin::WordLatticeOptions &options);
     void reset_cache_if_database_changed();
     // 这个字能不能落在 helpcode 约束的音节上。
     bool accepts_syllable_char(const SyllableHelpcode &helpcode, const std::string &hanzi) const;

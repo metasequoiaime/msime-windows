@@ -23,4 +23,10 @@ void Start(ApplyCallback callback);
 void Stop();
 void OnInputChanged(Request request);
 void Clear();
+#if defined(MSIME_AI_ASSISTANT_TEST)
+namespace testing
+{
+void SetAfterFetchHook(std::function<void(const std::string &)> hook);
+}
+#endif
 } // namespace AiAssistant

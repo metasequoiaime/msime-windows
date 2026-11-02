@@ -63,6 +63,8 @@ set(METASEQUOIA_IME_ENGINE_SOURCES
     providers/provider_registry.cpp
     providers/wubi_candidate_provider.cpp
     quanpin/engine.cpp
+    quanpin/latin_words.cpp
+    quanpin/prefix_completion.cpp
     quanpin/quanpin_dictionary.cpp
     quanpin/quanpin_query.cpp
     quanpin/quanpin_utils.cpp
@@ -76,6 +78,7 @@ set(METASEQUOIA_IME_ENGINE_SOURCES
     shuangpin/shuangpin_custom_profile.cpp
     shuangpin/shuangpin_dictionary.cpp
     shuangpin/shuangpin_profile.cpp
+    shuangpin/shuangpin_latin_words.cpp
     shuangpin/shuangpin_query.cpp
     shuangpin/shuangpin_utils.cpp
     user_dictionary/user_dictionary_journal.cpp
@@ -309,6 +312,20 @@ if(BUILD_TESTING)
     target_link_libraries(test_local_modes PRIVATE MetasequoiaIme::Engine)
     add_test(NAME local_modes COMMAND test_local_modes)
 
+    add_executable(test_latin_words tests/src/test_latin_words.cpp)
+    if(MSVC)
+        target_compile_options(test_latin_words PRIVATE /utf-8)
+    endif()
+    target_link_libraries(test_latin_words PRIVATE MetasequoiaIme::Engine)
+    add_test(NAME latin_words COMMAND test_latin_words)
+
+    add_executable(test_prefix_completion tests/src/test_prefix_completion.cpp)
+    if(MSVC)
+        target_compile_options(test_prefix_completion PRIVATE /utf-8)
+    endif()
+    target_link_libraries(test_prefix_completion PRIVATE MetasequoiaIme::Engine)
+    add_test(NAME prefix_completion COMMAND test_prefix_completion)
+
     # Per-keystroke latency against the real dictionaries; run by hand, not by ctest.
     add_executable(bench_input_session tests/src/bench_input_session.cpp)
     target_link_libraries(bench_input_session PRIVATE MetasequoiaIme::Engine)
@@ -324,6 +341,13 @@ if(BUILD_TESTING)
     # Sentence-level segmentation evaluation (tests/data/quanpin_sentence_cases.tsv); run by hand, not by ctest.
     add_executable(eval_quanpin_sentence tests/src/eval_quanpin_sentence.cpp)
     target_link_libraries(eval_quanpin_sentence PRIVATE MetasequoiaIme::Engine)
+
+    # Prefix completion (#1343) ranking against the real dictionary and an optional sc.lm; run by hand, not by ctest.
+    add_executable(eval_prefix_completion tests/src/eval_prefix_completion.cpp)
+    if(MSVC)
+        target_compile_options(eval_prefix_completion PRIVATE /utf-8)
+    endif()
+    target_link_libraries(eval_prefix_completion PRIVATE MetasequoiaIme::Engine)
 
     # Run this benchmark by hand with the released dictionaries and neural models.
     add_executable(bench_neural_rescore tests/src/bench_neural_rescore.cpp)

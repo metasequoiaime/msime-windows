@@ -17,6 +17,7 @@
 #include "config/ime_config.h"
 #include "settings/update_check.h"
 #include "window/window_hook.h"
+#include "watchdog/watchdog_protocol.h"
 #include "log/candidate_diag_log.h"
 #include "statistics/stats_pipe.h"
 #include <cwchar>
@@ -1019,6 +1020,14 @@ void AuxPipeEventListenerLoopThread()
                     // backend changes has to travel the same cross-integrity Aux path
                     // the config notifications use. The Watchdog relaunches us.
                     RestartServerProcess();
+                }
+                else if (message == L"StopServerForBackup")
+                {
+                    // A user-data import is about to replace config, statistics, skins
+                    // and models. kStopExitCode makes the Watchdog exit with us instead
+                    // of relaunching, so the settings process can apply files without a
+                    // writer on the other end.
+                    ExitProcess(WatchdogProtocol::kStopExitCode);
                 }
                 else if (message.rfind(L"InstallUpdate|", 0) == 0)
                 {

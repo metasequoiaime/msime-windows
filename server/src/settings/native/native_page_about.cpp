@@ -8,11 +8,15 @@
 #include "msimeui/Window.h"
 
 #include <shellapi.h>
+#include <shobjidl.h>
 #include <winhttp.h>
 
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <regex>
+
+using Microsoft::WRL::ComPtr;
 
 // partials/about-settings.html + modules/about-settings.ts + modules/update-manifest.ts;
 // styles in styles/modules/document-settings.css (.about-*).
@@ -267,12 +271,79 @@ CssButton::Style DialogButtonStyle(bool primary)
     return style;
 }
 
+struct AboutBackupState
+{
+    std::shared_ptr<Button> export_button;
+    std::shared_ptr<Button> import_button;
+    bool busy = false;
+};
+
 struct AboutState
 {
     std::shared_ptr<CssButton> check;
     std::shared_ptr<Label> status;
     std::shared_ptr<Hideable> statusBox;
+    // Set once the user-data backup section exists. Kept here so the page owns the
+    // button state for as long as its controls live.
+    std::shared_ptr<AboutBackupState> backup;
 };
+
+void SetBackupBusy(const std::shared_ptr<AboutBackupState> &state, const bool busy)
+{
+    if (!state)
+        return;
+    state->busy = busy;
+    if (state->export_button)
+        state->export_button->SetDisabled(busy);
+    if (state->import_button)
+        state->import_button->SetDisabled(busy);
+}
+
+std::filesystem::path PickBackupDestination(HWND owner)
+{
+    ComPtr<IFileSaveDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+        return {};
+    const COMDLG_FILTERSPEC filters[] = {{L"ZIP 备份 (*.zip)", L"*.zip"}, {L"所有文件", L"*.*"}};
+    dialog->SetFileTypes(ARRAYSIZE(filters), filters);
+    dialog->SetDefaultExtension(L"zip");
+    dialog->SetFileName(L"水杉IME-用户数据.zip");
+    dialog->SetTitle(L"导出用户数据");
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT | FOS_PATHMUSTEXIST);
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->Show(owner)) || FAILED(dialog->GetResult(&item)))
+        return {};
+    PWSTR path = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+        return {};
+    const std::filesystem::path selected = path;
+    CoTaskMemFree(path);
+    return selected;
+}
+
+std::filesystem::path PickBackupSource(HWND owner)
+{
+    ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+        return {};
+    const COMDLG_FILTERSPEC filters[] = {{L"ZIP 备份 (*.zip)", L"*.zip"}, {L"所有文件", L"*.*"}};
+    dialog->SetFileTypes(ARRAYSIZE(filters), filters);
+    dialog->SetTitle(L"导入用户数据");
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->Show(owner)) || FAILED(dialog->GetResult(&item)))
+        return {};
+    PWSTR path = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+        return {};
+    const std::filesystem::path selected = path;
+    CoTaskMemFree(path);
+    return selected;
+}
 
 // 收尾：恢复按钮，把结论写给用户看。下载版复用它。
 inline void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const bool ok, const std::wstring &message)
@@ -764,6 +835,67 @@ VisualPtr BuildAboutPage(PageContext &context)
         page.AddSection(MakeRow(
             L"日志文件", L"复现一次后打开日志文件夹，发送最近生成的那份文件。最多保留最近 10 个文件，旧的自动删除。",
             openLogs));
+    }
+    // 用户数据备份：导出不停 Server，导入先完整校验再停机应用。
+    {
+        auto backup = std::make_shared<AboutBackupState>();
+        state->backup = backup;
+        auto export_button = std::make_shared<Button>(L"导出…", ButtonKind::Secondary);
+        auto import_button = std::make_shared<Button>(L"导入…", ButtonKind::Secondary);
+        backup->export_button = export_button;
+        backup->import_button = import_button;
+        auto include_models = std::make_shared<ToggleSwitch>(true);
+        const HWND owner = context.host.Hwnd();
+        std::weak_ptr<AboutBackupState> weak_backup = backup;
+        export_button->SetOnClick([model, owner, weak_backup, include_models]() {
+            const std::shared_ptr<AboutBackupState> current = weak_backup.lock();
+            if (!current || current->busy)
+                return;
+            const std::filesystem::path destination = PickBackupDestination(owner);
+            if (destination.empty())
+                return;
+            SetBackupBusy(current, true);
+            model->Post("userDataBackupRequest", Json{{"action", "export"},
+                                                      {"path", destination.u8string()},
+                                                      {"includeModels", include_models->IsChecked()}});
+        });
+        import_button->SetOnClick([model, owner, weak_backup]() {
+            const std::shared_ptr<AboutBackupState> current = weak_backup.lock();
+            if (!current || current->busy)
+                return;
+            const std::filesystem::path source = PickBackupSource(owner);
+            if (source.empty())
+                return;
+            const int answer =
+                MessageBoxW(owner,
+                            L"导入会先停止输入法后台进程，并把将被覆盖的配置、统计、皮肤和模型备份到数据目录的 "
+                            L".backup-before-import。词库只合并条目，不会替换现有数据库。\n\n继续导入吗？",
+                            L"导入用户数据", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+            if (answer != IDOK)
+                return;
+            SetBackupBusy(current, true);
+            model->Post("userDataBackupRequest", Json{{"action", "import"}, {"path", source.u8string()}});
+        });
+        context.OnMessage("userDataBackupDone", [weak_backup, host = &context.host](const Json &message) {
+            const std::shared_ptr<AboutBackupState> current = weak_backup.lock();
+            if (!current)
+                return;
+            SetBackupBusy(current, false);
+            const bool ok = message.contains("ok") && message["ok"].is_boolean() && message["ok"].get<bool>();
+            const std::string text = message.contains("message") && message["message"].is_string()
+                                         ? message["message"].get<std::string>()
+                                         : std::string(ok ? "操作完成" : "操作失败");
+            host->ShowToast(Widen(text), ok);
+        });
+        page.AddSection(MakeRows({
+            MakeRow(L"导出用户数据", L"把配置、统计、用户皮肤、用户词条和模型打包成 ZIP。导出时输入法继续运行。",
+                    export_button),
+            MakeRow(L"包含已下载模型",
+                    L"勾选时把数据目录 models/ 下的模型一起打包；导入按 ZIP 内容恢复，没有模型条目的 ZIP "
+                    L"不会删除本地已有模型。",
+                    include_models),
+            MakeRow(L"导入用户数据", L"先完整校验 ZIP，通过后才停止输入法并覆盖文件；词库只合并条目。", import_button),
+        }));
     }
     // The button's handler only holds the state weakly (the state holds the button), so
     // the page has to own it or the first click finds it gone.

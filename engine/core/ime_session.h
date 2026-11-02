@@ -65,6 +65,10 @@ class ImeSession
     {
         fuzzy_pinyin_ = options;
     }
+    void set_prefix_completion_options(metasequoia::PrefixCompletionOptions options)
+    {
+        prefix_completion_ = options;
+    }
     void set_sentence_association(const SentenceAssociationOptions &options)
     {
         sentence_association_ = options;
@@ -173,6 +177,7 @@ class ImeSession
     bool enable_quanpin_helpcode_ = false;
     unsigned quanpin_autocorrect_types_ = 0;
     metasequoia::FuzzyPinyinOptions fuzzy_pinyin_;
+    metasequoia::PrefixCompletionOptions prefix_completion_;
     SentenceAssociationOptions sentence_association_;
     std::string rescoring_context_;
     metasequoia::WubiInputOptions wubi_options_;

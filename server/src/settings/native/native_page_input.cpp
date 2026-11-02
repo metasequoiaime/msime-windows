@@ -2116,6 +2116,10 @@ VisualPtr BuildInputPage(PageContext &context)
                      L"上文词库重排（实验）",
                      L"使用轻量神经模型，根据本次输入的上文调整单字和词组顺序，例如“冬天会下大”后输入 xue 优先选“雪”"),
                  Toggle(context, "association.context_candidate_rerank")),
+             FrequencyRow(SubBlock(L"长词前缀补全",
+                                   L"本地处理，首选已有 4 个字以上时，把词库里以它开头的最可能的长词放在第二位，例如"
+                                   L"“中华人民”补出“中华人民共和国”；下载万象或 Trigram 模型后排得更准"),
+                          Toggle(context, "association.prefix_completion")),
              FrequencyRow(SubBlock(L"去重后补充次选",
                                    L"本地处理，某个模型的首选与已有候选重复时，显示该模型排名最高的下一条不同结果"),
                           Toggle(context, "association.sentence_show_next_on_duplicate")),

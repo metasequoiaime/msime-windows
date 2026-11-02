@@ -366,6 +366,46 @@
     "direction": "server"
   },
   {
+    "name": "user data export request",
+    "message": {
+      "type": "userDataBackupRequest",
+      "data": {
+        "action": "export",
+        "path": "D:\\Backups\\user-data.zip",
+        "includeModels": true
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "user data import request",
+    "message": {
+      "type": "userDataBackupRequest",
+      "data": {
+        "action": "import",
+        "path": "D:\\Backups\\user-data.zip"
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "user data backup done",
+    "message": {
+      "type": "userDataBackupDone",
+      "protocolVersion": 1,
+      "action": "import",
+      "ok": true,
+      "message": "用户数据已导入。"
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "server"
+  },
+  {
     "name": "malformed dictionary row",
     "message": {
       "type": "dictionaryResponse",

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // event_listener*.cpp 之间共享的内部声明：拆分前同在 event_listener.cpp 里、现在跨文件使用的状态、类型与函数。
 // 生产代码只给 server/src/ipc/event_listener*.cpp 包含；另允许覆盖任务分级纯策略的
@@ -21,6 +21,7 @@
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/candidate_text_policy.h"
 #include "ipc/candidate_ui_owner.h"
+#include "ipc/event_listener_task_class.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "ipc/event_listener.h"
 #include "engine/contracts/v_mode_input.h"
@@ -195,92 +196,6 @@ void WakeNamedPipeListenersForShutdown();
 
 namespace FanyNamedPipe
 {
-enum class TaskType
-{
-    ShowCandidate,
-    HideCandidate,
-    HideCaretState,
-    MoveCandidate,
-    ImeKeyEvent,
-    LangbarRightClick,
-    IMESwitch,
-    PuncSwitch,
-    DoubleSingleByteSwitch,
-    ApplyCloudCandidate,
-    ApplyAiCandidate,
-    ApplyEnglishCandidates,
-    ApplyCandidateTranslations,
-    ApplyMixedCandidates,
-    StoreUserPhrase,
-    ClientActivated,
-    ClientDeactivated,
-    ClientSuspended,
-    StatusSnapshot,
-    UiCommitCandidate,
-    UiPinCandidate,
-    UiDeleteCandidate,
-    UiFixCandidatePosition,
-    UiClearCandidatePosition,
-    UiPageUp,
-    UiPageDown,
-    UiCommitCandidateAt,
-    UiExpandCandidates,
-    // 竖排译文面板被点了外面：presenter 请工作线程把面板状态关掉。
-    UiCloseTranslationPanel,
-    // 候选词展开面板里点选了某条译义：与数字键 1..N 上屏同一条路径。
-    UiCommitExpansionPanelItem,
-    ReloadInputSession,
-    EnsureInputSessionMatchesConfig,
-    ApplyCandidatePageSize,
-    RefreshCandidatePage,
-    ResetInputSessionCache,
-    ExitEnglishInputMode,
-    ToolbarLanguageToggle,
-    // 神经整句重排在后台线程里算完了，候选顺序需要就地更新一次。
-    ApplyRescoredOrder,
-    // 停手到点后把效果档放回来，并按当前组合重查一次候选。
-    RefreshWithEnrichment,
-};
-
-// 任务分级：决定 WorkerThread 先取哪条队列。按键和它触发的界面动作是用户正在等的结果，
-// 后台富化（云/AI/英文/翻译/混输/重排）只负责补齐内容，排在后面。Maintenance 是字典
-// checkpoint、配置重载、缓存整理这类没人盯着结果、但不能无限期不做的事。
-enum class TaskClass
-{
-    Foreground,
-    UserAction,
-    Enrichment,
-    Maintenance,
-};
-
-constexpr std::size_t kTaskClassCount = 4;
-
-constexpr std::size_t TaskClassIndex(TaskClass type)
-{
-    return static_cast<std::size_t>(type);
-}
-
-// 每条类别队列的队首状态；has_task == false 时 wait_ms 不参与判定。
-struct TaskClassHead
-{
-    bool has_task = false;
-    double wait_ms = 0.0;
-};
-
-// Maintenance 队首等过这么久就允许越过 Enrichment，防止用户一直有输入时它永远轮不到。
-// 它只越过 Enrichment，Foreground / UserAction 永远在它前面。
-constexpr double kMaintenanceMaxWaitMs = 500.0;
-
-// 分类表穷举 TaskType 且不写 default：新增类型忘了归类时编译失败（见 .cpp 的 C4062 设置）。
-TaskClass ClassifyTask(TaskType type);
-// 排队诊断日志用的类别名；只用于观测，不参与调度。
-const wchar_t *TaskClassName(TaskClass type);
-// 输入线程的 scoped Above normal 只给用户正在等结果的 Foreground 任务；WorkerThread 与测试共用这一判定。
-bool NeedsInputPriorityBoost(TaskClass type);
-// 依据每类队首的等待时长选出下一个该出队的类。纯函数，测试直接调它，不依赖全局队列。
-// 调用方保证至少一类有任务。
-TaskClass NextTaskClass(const std::array<TaskClassHead, kTaskClassCount> &heads);
-
 enum class PageMoveResult
 {
     Unchanged,
@@ -316,6 +231,9 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
                                        const std::string &entry_key, const std::string &word, uint64_t client_id,
                                        uint64_t activation_epoch,
                                        const std::vector<WordItem> *ranking_candidates = nullptr);
+// 长词前缀补全（#1343）选中后的调频：只把它在自己的完整读音 key 下升到组内首位，不按排位挪位置。
+void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,
+                                 uint64_t activation_epoch);
 void EnqueueLearnEnteredEnglishWordTask(const std::string &word);
 // 快捷短语组的调频。word 非空：选中了组里的这一条，first_in_group 表示它本来就排在组首；
 // word 为空：越过整组选了普通候选，ordinary_rank 是它在普通候选里的名次。

@@ -2,6 +2,7 @@
 
 #include "key_event.h"
 #include "fuzzy_pinyin_options.h"
+#include "prefix_completion_options.h"
 #include "scheme_type.h"
 #include "sentence_association_options.h"
 #include "syllable_helpcode.h"
@@ -62,6 +63,8 @@ struct QueryRequest
     bool enable_quanpin_autocorrect_insertion = false;
     std::vector<KeyStroke> key_strokes;
     metasequoia::FuzzyPinyinOptions fuzzy_pinyin;
+    // 长词前缀补全（#1343），默认关。
+    metasequoia::PrefixCompletionOptions prefix_completion;
     // 整句候选来源与去重补位选项，默认全关。
     SentenceAssociationOptions sentence_association;
     // 给神经重排看的前文：本会话最近上屏的文本。空着也能重排，只是模型看不到语境，「shanghai」

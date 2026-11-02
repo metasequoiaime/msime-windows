@@ -13,11 +13,13 @@
 #include "settings/input_method_install.h"
 #include "settings/dictionary_manager.h"
 #include "settings/native/native_settings_window.h"
+#include "settings/user_data_backup.h"
 
 #include "msimeui/DeviceResources.h"
 #include "settings/serial_task_queue.h"
 #include "statistics/stats_overview.h"
 #include "statistics/stats_store.h"
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -89,6 +91,9 @@ bool g_settings_light = false;
 bool g_model_update_check_started = false;
 // restartServer 之后主动刷新的剩余次数；Server 落位 .gram.new 后提前结束。
 int g_restart_refresh_remaining = 0;
+// A DPI rebuild recreates the About page, so page-local button state cannot be
+// the only guard against a second import queueing behind the first one.
+std::atomic<bool> g_user_data_backup_busy{false};
 // appearance.settings_window_linger 的 UI 线程副本，由 ConfigCompletion 更新。
 std::string g_settings_window_linger = "off";
 std::wstring g_last_config_message;
@@ -449,6 +454,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"sentence_neural_desktop_model_url", neural_model::SourceUrl()},
             {"sentence_neural_keyboard", GetConfiguredAssocSentenceNeuralKeyboard()},
             {"context_candidate_rerank", GetConfiguredAssocContextCandidateRerank()},
+            {"prefix_completion", GetConfiguredAssocPrefixCompletion()},
             {"sentence_show_next_on_duplicate", GetConfiguredAssocSentenceShowNextOnDuplicate()},
             {"sentence_source_badge", GetConfiguredAssocSentenceSourceBadge()},
             {"sentence_collocation_enabled", GetConfiguredAssocSentenceCollocationEnabled()},
@@ -908,6 +914,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredAssocSentenceNeuralDesktop(json::value_to<bool>(data.at("value")));
     if (path == "association.context_candidate_rerank")
         return SetConfiguredAssocContextCandidateRerank(json::value_to<bool>(data.at("value")));
+    if (path == "association.prefix_completion")
+        return SetConfiguredAssocPrefixCompletion(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_neural_keyboard")
         return SetConfiguredAssocSentenceNeuralKeyboard(json::value_to<bool>(data.at("value")));
     if (path == "association.sentence_show_next_on_duplicate")
@@ -1634,6 +1642,78 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             }
             // 回执只有一个出口：无论重启是否成功，页面按 restartServerDone 恢复按钮。
             PostRestartServerDone(ok);
+        }
+        else if (type == "userDataBackupRequest")
+        {
+            const auto &data = value.at("data").as_object();
+            const std::string action = json::value_to<std::string>(data.at("action"));
+            const std::string path = json::value_to<std::string>(data.at("path"));
+            const bool include_models = data.contains("includeModels") && data.at("includeModels").as_bool();
+            const auto post_done = [](const std::string &action, const bool ok, const std::string &message) {
+                json::value response = {{"type", "userDataBackupDone"},
+                                        {"action", action},
+                                        {"ok", ok},
+                                        {"message", message},
+                                        {"protocolVersion", metasequoia::webview::Version}};
+                if (metasequoia::webview::Validate(response, "server"))
+                    PostToPage(string_to_wstring(json::serialize(response)));
+            };
+            if (action != "export" && action != "import")
+            {
+                post_done(action, false, "未知的备份操作。");
+            }
+            else if (g_user_data_backup_busy.exchange(true))
+            {
+                // A DPI rebuild recreates the About page and its disabled buttons;
+                // the process-wide flag keeps a second import from queueing behind
+                // the first one and stopping/restarting the Server twice.
+                post_done(action, false, "已有备份操作正在进行，请稍后再试。");
+            }
+            else
+            {
+                try
+                {
+                    g_worker->Submit([action, path, include_models, post_done]() -> SerialTaskQueue::Completion {
+                        std::string message;
+                        bool ok = false;
+                        try
+                        {
+                            const SettingsUserDataBackup::Hooks hooks = SettingsUserDataBackup::ProductionHooks();
+                            // Path conversion, the backup itself and the config reload all
+                            // stay under this handler: an exception past it would escape the
+                            // worker and leave the global busy flag set forever.
+                            const std::filesystem::path target = std::filesystem::u8path(path);
+                            if (action == "export")
+                                ok = SettingsUserDataBackup::Export(target, include_models, hooks, message);
+                            else
+                                ok = SettingsUserDataBackup::Import(target, hooks, message);
+                            // An import may have replaced config.toml even when a later step
+                            // failed. Reloading on the worker keeps the settings process in
+                            // step with the disk.
+                            if (action == "import")
+                                InitImeConfig();
+                        }
+                        catch (...)
+                        {
+                            ok = false;
+                            message = "用户数据备份失败，请重试。";
+                        }
+                        return [action, ok, message = std::move(message), refresh = action == "import", post_done] {
+                            g_user_data_backup_busy.store(false);
+                            post_done(action, ok, message);
+                            // g_worker may already be stopping after the window closed; PostConfig
+                            // checks that itself and never touches a dead queue.
+                            if (refresh)
+                                PostConfig(true);
+                        };
+                    });
+                }
+                catch (...)
+                {
+                    g_user_data_backup_busy.store(false);
+                    post_done(action, false, "用户数据备份失败，请重试。");
+                }
+            }
         }
         else if (type == "openExternalUrl")
         {

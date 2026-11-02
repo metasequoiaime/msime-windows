@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 TEST_CASE(DictionaryFullPinyinValidationRejectsAbbreviatedSyllables)
 {
@@ -383,6 +384,124 @@ TEST_CASE(QuanpinImportAndQueryKeepExplicitSyllableBoundaries)
             REQUIRE_EQ(row.at("weight").as_int64(), 42);
         }
     }
+}
+
+namespace
+{
+int CountRows(sqlite3 *db, const std::string &sql)
+{
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+    const int count = sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : -1;
+    sqlite3_finalize(stmt);
+    return count;
+}
+
+std::string Message(const boost::json::object &response)
+{
+    return std::string(response.at("message").as_string());
+}
+
+std::vector<std::string> LatinRows(const char *code)
+{
+    const auto response =
+        SettingsDictionary::HandleRequest({{"dictionary", "latin"}, {"action", "query"}, {"code", code}});
+    REQUIRE(response.at("ok").as_bool());
+    std::vector<std::string> rows;
+    for (const auto &row : response.at("rows").as_array())
+        rows.push_back(std::string(row.as_object().at("word").as_string()) + "|" +
+                       std::string(row.as_object().at("code").as_string()));
+    return rows;
+}
+} // namespace
+
+// 字母词（T恤、卡拉OK）：拼音页导入时含英文字母的词分流成字母词，不再硬塞进拼音表；字母词页能增删改查、
+// 导出；内置的只读；词库是还没有 latin_words 的旧版本时照样能加（设置页补建表）。
+TEST_CASE(LatinWordsAreImportedRoutedAndManagedInSettings)
+{
+    const ScopedTempDir dir(L"msime-latin-words-settings");
+    const ScopedDataDir scoped(dir.path());
+    sqlite3 *raw = nullptr;
+    const int opened = sqlite3_open(test::Utf8(dir.path() / L"msime.db").c_str(), &raw);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+    REQUIRE_EQ(opened, SQLITE_OK);
+    REQUIRE_EQ(sqlite3_exec(db.get(),
+                            "CREATE TABLE tbl_2_t(key TEXT NOT NULL,jp TEXT NOT NULL,value TEXT NOT NULL,"
+                            "weight INTEGER NOT NULL,UNIQUE(key,value))",
+                            nullptr, nullptr, nullptr),
+               SQLITE_OK);
+
+    // 第 4 行是以前硬塞进拼音表的写法，现在要被拒：T 对不上 te。
+    const std::string content = "特许\tte xu\t5\n"
+                                "T恤\tT xu\t9\n"
+                                "卡拉OK\tkǎ'lā'OK\n"
+                                "T恤\tte'xu\n";
+    const auto imported =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "import"}, {"content", content}});
+    user_dictionary::close_default_user_database();
+    REQUIRE(imported.at("ok").as_bool());
+    REQUIRE(Message(imported).rfind("成功导入 3 条，失败 1 条。第 4 行：", 0) == 0);
+    REQUIRE_EQ(CountRows(db.get(), "SELECT count(*) FROM tbl_2_t WHERE value='特许'"), 1);
+    REQUIRE_EQ(CountRows(db.get(), "SELECT count(*) FROM tbl_2_t WHERE value='T恤'"), 0);
+    REQUIRE_EQ(LatinRows("txu"), std::vector<std::string>{"T恤|t'xu"});
+    REQUIRE_EQ(LatinRows("kala"), std::vector<std::string>{"卡拉OK|ka'la'o'k"});
+
+    // 字母词页新增；拼音页新增含字母的词也按字母词加。
+    const auto create = [](const char *dictionary, const char *word, const char *code) {
+        return SettingsDictionary::HandleRequest(
+            {{"dictionary", dictionary}, {"action", "create"}, {"word", word}, {"code", code}, {"weight", 20}});
+    };
+    REQUIRE(create("latin", "X光", "x guang").at("ok").as_bool());
+    REQUIRE_EQ(Message(create("latin", "X光", "X'guang")), std::string("词条已经存在"));
+    REQUIRE(create("quanpin", "B超", "b chao").at("ok").as_bool());
+    REQUIRE_EQ(LatinRows("bchao"), std::vector<std::string>{"B超|b'chao"});
+    REQUIRE_EQ(CountRows(db.get(), "SELECT count(*) FROM sqlite_master WHERE name LIKE 'tbl_2_b'"), 0);
+    REQUIRE(!create("latin", "X光3", "x guang 3").at("ok").as_bool());
+
+    // 改名、改权重；内置的（只在 latin_words、不在日志里）不能改删。
+    const auto update = SettingsDictionary::HandleRequest({{"dictionary", "latin"},
+                                                           {"action", "update"},
+                                                           {"oldCode", "x'guang"},
+                                                           {"oldWord", "X光"},
+                                                           {"word", "X线"},
+                                                           {"code", "x xian"},
+                                                           {"weight", 30}});
+    REQUIRE(update.at("ok").as_bool());
+    REQUIRE(LatinRows("xguang").empty());
+    REQUIRE_EQ(LatinRows("xxian"), std::vector<std::string>{"X线|x'xian"});
+    REQUIRE_EQ(sqlite3_exec(db.get(),
+                            "INSERT INTO latin_words(key,value,weight,exact_only) VALUES('a''a''zhi','AA制',7,0)",
+                            nullptr, nullptr, nullptr),
+               SQLITE_OK);
+    const auto remove_builtin = SettingsDictionary::HandleRequest(
+        {{"dictionary", "latin"}, {"action", "delete"}, {"oldCode", "a'a'zhi"}, {"oldWord", "AA制"}});
+    REQUIRE(!remove_builtin.at("ok").as_bool());
+    REQUIRE_EQ(LatinRows("aazhi"), std::vector<std::string>{"AA制|a'a'zhi"});
+
+    const auto exported = SettingsDictionary::HandleRequest({{"dictionary", "latin"}, {"action", "export"}});
+    REQUIRE(exported.at("ok").as_bool());
+    const std::string text(exported.at("content").as_string());
+    REQUIRE(text.find("T恤\tt'xu\t9\n") != std::string::npos);
+    REQUIRE(text.find("卡拉OK\tka'la'o'k\t10000\n") != std::string::npos);
+    REQUIRE(text.find("B超\tb'chao\t20\n") != std::string::npos);
+    REQUIRE(text.find("X线\tx'xian\t30\n") != std::string::npos);
+    REQUIRE(text.find("AA制") == std::string::npos);
+
+    const auto remove = SettingsDictionary::HandleRequest(
+        {{"dictionary", "latin"}, {"action", "delete"}, {"oldCode", "x'xian"}, {"oldWord", "X线"}});
+    REQUIRE(remove.at("ok").as_bool());
+    REQUIRE(LatinRows("xxian").empty());
+    REQUIRE_EQ(user_dictionary::user_latin_words(user_dictionary::default_user_db_path()).size(), size_t{3});
+
+    // 导出的文件原样导回来：全都已存在。
+    const auto again =
+        SettingsDictionary::HandleRequest({{"dictionary", "latin"}, {"action", "import"}, {"content", text}});
+    REQUIRE_EQ(Message(again), std::string("成功导入 1 条，跳过 3 条（已存在）"));
+    user_dictionary::close_default_user_database();
 }
 
 TEST_CASE(WubiPhraseCodeTakesTwoLettersFromEachOfTwoCharWords)

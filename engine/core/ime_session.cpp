@@ -489,6 +489,7 @@ void ImeSession::apply_request_options(QueryRequest &request) const
     request.enable_quanpin_autocorrect_deletion = (quanpin_autocorrect_types_ & quanpin::kAutocorrectDeletion) != 0;
     request.enable_quanpin_autocorrect_insertion = (quanpin_autocorrect_types_ & quanpin::kAutocorrectInsertion) != 0;
     request.fuzzy_pinyin = fuzzy_pinyin_;
+    request.prefix_completion = prefix_completion_;
     request.sentence_association = sentence_association_;
     request.rescoring_context = rescoring_context_;
 }

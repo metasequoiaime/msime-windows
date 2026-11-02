@@ -286,6 +286,11 @@ class InputSession
     {
         engine_.set_fuzzy_pinyin_options(options);
     }
+    // 长词前缀补全（#1343）。下一次查询起生效；词典按前缀缓存的补全与开关无关，不必清。
+    void set_prefix_completion_options(metasequoia::PrefixCompletionOptions options)
+    {
+        engine_.set_prefix_completion_options(options);
+    }
     void set_sentence_association(const SentenceAssociationOptions &options)
     {
         engine_.set_sentence_association(options);

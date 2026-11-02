@@ -104,7 +104,9 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/cloud/ai_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/chat_completions.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/jev_client.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_chat_cancellation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_assistant_reply.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant_reply.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_jev_candidates.cpp"
@@ -241,6 +243,11 @@ set(TEST_SOURCE_FILES
     # Routing lives in dictionary_manager.cpp's HandleRequest, so the importHans dispatch test has
     # to link the real translation unit rather than restate the branch order.
     "${CMAKE_SOURCE_DIR}/src/settings/dictionary_manager.cpp"
+    # The backup tests drive the real archive writer/reader and the real orchestration module;
+    # stop/start and dictionary callbacks are injected so no Server is ever touched.
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_data_backup.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/user_data_backup.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/zip_archive.cpp"
 )
 
 add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILES})
@@ -261,6 +268,7 @@ target_include_directories(${TEST_EXECUTABLE_NAME}
 # guards lives in that executable's main() and cannot be linked into the test binary.
 target_compile_definitions(${TEST_EXECUTABLE_NAME}
     PRIVATE
+    MSIME_AI_ASSISTANT_TEST
     "MSIME_DEFAULT_CONFIG_PATH=\"${CMAKE_SOURCE_DIR}/../installer/default_config/config.default.toml\""
     "MSIME_CUSTOM_SHUANGPIN_EXAMPLE_PATH=\"${CMAKE_SOURCE_DIR}/../docs/custom-shuangpin.example.toml\""
     "MSIME_DICTIONARY_REPLAY_EXE=\"$<TARGET_FILE:${DICTIONARY_REPLAY_EXECUTABLE_NAME}>\""
@@ -290,6 +298,9 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     # native_settings_update_download.cpp 用 WinHTTP 取包、用 BCrypt 算摘要。
     winhttp
     bcrypt
+    ws2_32
+    # zip_archive.cpp 用 zlib 的 CRC 与 deflate 解压。
+    ZLIB::ZLIB
 )
 
 add_test(NAME ${TEST_EXECUTABLE_NAME} COMMAND ${TEST_EXECUTABLE_NAME})

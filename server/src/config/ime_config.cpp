@@ -173,6 +173,8 @@ bool g_assoc_sentence_google = true;
 bool g_assoc_sentence_neural_desktop = false;
 bool g_assoc_sentence_neural_keyboard = true;
 bool g_assoc_context_candidate_rerank = false;
+bool g_assoc_prefix_completion = true;
+std::size_t g_assoc_prefix_completion_min_chars = metasequoia::kPrefixCompletionDefaultMinimumChars;
 bool g_assoc_sentence_show_next_on_duplicate = false;
 // octagram 语法模型（八股文 .gram）：总开关默认关；模型 id 默认空（空 = 未选择任何模型）。
 // 奖励权重与六参数不进设置页，供配置文件高级调参；默认对齐万象现行（wanxiang.schema.yaml）。
@@ -712,6 +714,16 @@ bool LoadImeConfig()
         g_assoc_sentence_neural_desktop = tbl["association"]["sentence_neural_desktop"].value_or(false);
         g_assoc_sentence_neural_keyboard = tbl["association"]["sentence_neural_keyboard"].value_or(true);
         g_assoc_context_candidate_rerank = tbl["association"]["context_candidate_rerank"].value_or(false);
+        g_assoc_prefix_completion = tbl["association"]["prefix_completion"].value_or(true);
+        {
+            const auto chars = tbl["association"]["prefix_completion_min_chars"].value_or(
+                static_cast<std::int64_t>(metasequoia::kPrefixCompletionDefaultMinimumChars));
+            g_assoc_prefix_completion_min_chars =
+                chars >= static_cast<std::int64_t>(metasequoia::kPrefixCompletionMinimumCharsLowest) &&
+                        chars <= static_cast<std::int64_t>(metasequoia::kPrefixCompletionMinimumCharsHighest)
+                    ? static_cast<std::size_t>(chars)
+                    : metasequoia::kPrefixCompletionDefaultMinimumChars;
+        }
         g_assoc_sentence_show_next_on_duplicate = tbl["association"]["sentence_show_next_on_duplicate"].value_or(false);
         g_assoc_sentence_collocation_enabled = tbl["association"]["sentence_collocation_enabled"].value_or(false);
         g_assoc_sentence_collocation_model = tbl["association"]["sentence_collocation_model"].value_or(std::string());
