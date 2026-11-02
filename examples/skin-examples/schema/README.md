@@ -17,15 +17,17 @@
 
 ## `[candidate_window]`
 
-- `min_width_dip`：卡片最小宽度；实际最小宽度还会被装饰图的 `width_dip` 撑大
+- `min_width_dip`：卡片最小宽度；实际最小宽度还会被装饰图的 `width_dip` 撑大。写进 `[candidate_window.horizontal]` / `[candidate_window.vertical]` 时只抬高那一种排布——竖排常用它给晚到的翻译留出并排位置，避免翻译换行后把列表撑出面板底边
 - `corner_radius_dip`：卡片圆角，`0`–`32`；不写则沿用 `base`
 - `border_width_dip`：卡片外框线宽，`0`–`4`；颜色取 `border`，不写 `border` 时取 `base` 的边框色（杨柳青、秋桂没有外框，此时仍不可见）
 - `item_corner_radius_dip`：选中 / 悬停高亮的圆角，`0`–`16`；贴着卡片四角的那几个角仍跟 `corner_radius_dip`
 - `shadow`：卡片阴影，`none` | `soft` | `strong`；不写则沿用 `base`。只影响候选卡片，不影响右键菜单
 - `backdrop`：卡片背后的系统材质，`none` | `acrylic` | `mica`；不写等于 `none`。`acrylic` 模糊卡片后面的窗口；`mica` 模糊桌面壁纸，只透出壁纸色调（需要 Windows 11，更早的系统按 `acrylic` 画）。材质按 Fluent 配方叠「模糊背景 → 亮度层 → 色调」，色调颜色取 `surface`，两个不透明度见下面配色表里的 `backdrop_opacity` / `backdrop_luminosity`。系统关闭「透明效果」或不支持（低于 Windows 10 1903）时，`surface` 按不透明画。写了 `border_image` 时不生效
 - `font_family`：候选字体名，UTF-8 编码后最长 64 字节（约 21 个汉字），不能含引号、反斜杠、逗号、分号、尖括号、花括号和反引号。排在用户设置的字体前面，缺字时仍回落到用户字体；字号不由皮肤决定
-- `page_arrows`：候选框里的翻页箭头，`true` | `false`。横排时是候选右侧贴着最后一行的一小列，竖排时是最后一行下方的一矮行、“‹”与序号左对齐；颜色取 `number`，悬停底色取 `hover`。不写则沿用 `base` 的默认皮肤设置（数据目录 `skins\default\<base>\skin.toml`，出厂为 `false`）
-- `fit_content`：卡片是否严格按候选文字所需的宽度收紧，`true` | `false`。打开后不再垫出厂的最小宽度（160 DIP），同一次输入里后到的翻译等内容消失时宽度也立刻缩回；`min_width_dip` 和装饰图 `width_dip` 仍然生效。不写则沿用 `base` 的默认皮肤设置（出厂为 `false`）
+- `page_arrows`：候选框里的翻页箭头，`true` | `false`。横排时是候选右侧贴着最后一行的一小列，竖排时是最后一行下方的一矮行、“‹”与序号左对齐；颜色取 `number`，悬停底色取 `hover`。不写则沿用 `base` 的默认皮肤设置（数据目录 `skins\default\<base>\skin.toml`，出厂为 `false`）。也可以写进 `[candidate_window.horizontal]` / `[candidate_window.vertical]`，只改那一种排布
+- `fit_content`：卡片是否严格按候选文字所需的宽度收紧，`true` | `false`。打开后不再垫出厂的最小宽度（160 DIP），同一次输入里后到的翻译等内容消失时宽度也立刻缩回；`min_width_dip` 和装饰图 `width_dip` 仍然生效。不写则沿用 `base` 的默认皮肤设置（出厂为 `false`）。同样可以按排布分别写
+
+**按排布覆盖的统一规则**：`[candidate_window]` 的版式键、`border_image`、`content_insets_dip`、`outer_insets_dip` 都可以带 `horizontal` / `vertical` 子表（版式键是 `[candidate_window.horizontal]` / `[candidate_window.vertical]`，其余三张是同名子表）。子表只覆盖写了的键，没写的沿用共用那份；两张子表地位相同、互不继承，没写子表的排布直接用共用那份。
 
 ### `[candidate_window.decoration]`（可选）
 
@@ -34,6 +36,7 @@
 - `image`：图片路径
 - `top_inset_dip` / `width_dip`：装饰框的高和宽，框贴在卡片上方，不与卡片重叠；图片在框内等比缩放
 - `align`：`left` | `center` | `right`，相对卡片
+- `layouts`：可选，只在哪些排布里显示，`["horizontal"]` 或 `["vertical"]`（可写两个）。不写则横竖都画；和自由挂件的 `layouts` 含义相同
 
 装饰图上还可以叠加一个候选词（比如把首选词写在立绘的对话框里）。`candidate_overlay = true` 时下面这组键才生效，都可省略：
 
@@ -73,13 +76,15 @@
 - `stretch_dip`：可选，同为源图像素，给出时代替 `slice_dip`。**面板图里画死的装饰必须落在切片之内（可拉伸区之外）**，否则会被拉长；例如帆船画在右侧，就把右侧切片放到船身左侧
 - `width_dip`：可选，四边在屏幕上画多宽，**按 DIP 计**（同 CSS `border-image-width`），写法同上。不写时取切片的数值当 DIP。给 2 倍图时写成切片的一半，200% 缩放下逐像素清晰、100% 下是缩小一半的同一张图。两条对边加起来比面板还宽时四边按同一比例缩小
 - `fill`：可选，布尔值，是否画中心块，默认 `true`；`false` 时中心留空、透出桌面
-- `repeat`：可选，横向/纵向怎么铺，同 CSS `border-image-repeat`，`stretch`（默认）或 `repeat`。写 1 个值两轴相同，写 2 个值是「横向 纵向」。`repeat` 按源图原尺寸平铺，适合花纹边框（例如竖向候选窗两侧重复的铆钉）；四角永远不铺
+- `repeat`：可选，横向/纵向怎么铺，同 CSS `border-image-repeat`：`stretch`（默认，拉伸）、`repeat`（按源图原尺寸平铺，末尾超出部分裁掉）、`round`（平铺并等比缩放到整数块，边缘正好收口）、`space`（按原尺寸平铺，剩余空间均分成块间空隙；放不下两块时退回拉伸）。写 1 个值两轴相同，写 2 个值是「横向 纵向」。四角永远不铺。花纹边框可以不凑图案周期直接用 `round`，竖排两侧重复的铆钉就不会出现接缝
 
 面板图画在卡片的底色之上、文字之下，不按圆角裁剪（同 CSS）。动图面板也会播放，但面板一般建议用静态图，把动画留给挂件。
 
-### `[candidate_window.border_image.vertical]`（v2 可选）
+### `[candidate_window.border_image.horizontal]` / `[candidate_window.border_image.vertical]`（v2 可选）
 
-竖排（`layout == "vertical"`）换用的九宫格面板图。只写与横排不同的键，其余沿用 `[candidate_window.border_image]` 的值。横排和竖排的图尺寸不同时，`slice_dip` 一般要各写一份。`light_source` 不继承——横排那张浅色图是按横排几何画的，竖排要浅色变体就自己写一张。
+横排 / 竖排换用的九宫格面板图。只写与共用那份不同的键，其余沿用 `[candidate_window.border_image]` 的值；两张子表地位相同、互不继承，没写的排布直接用共用那份。横排和竖排的图尺寸不同时，`slice_dip` 一般要各写一份。
+
+`light_source` 跟着 `source` 走：子表换了 `source` 又没写 `light_source` 时不会继承共用那张浅色图（它是按另一张图的几何画的）；只改切片、边宽等几何时浅色图照常沿用。
 
 ```toml
 [candidate_window.border_image]
@@ -90,6 +95,9 @@ slice_dip = [8, 45, 6, 66]
 source = "assets/vertical.png"
 slice_dip = [26, 10, 26, 10]
 repeat = ["stretch", "repeat"]   # 横向拉伸，纵向平铺
+
+[candidate_window.border_image.horizontal]
+repeat = ["round", "stretch"]    # 只改横排：上下边按整数块平铺
 ```
 
 ### `[candidate_window.content_insets_dip]`（v2 可选）
@@ -97,8 +105,9 @@ repeat = ["stretch", "repeat"]   # 横向拉伸，纵向平铺
 候选框内容与文字的安全内边距，**从面板外缘量起**，用来避开贴图四周自带的花纹或立绘。某一边小于九宫格该边的边宽（`width_dip`）时按边宽算，文字不会压在边框上（同 CSS 的 `border + padding`）。不写时是边宽再加 5 DIP。
 
 - `top` / `right` / `bottom` / `left`：四边内边距，`top` / `bottom` `0`–`200`，`left` / `right` `0`–`500`
+- `clamp_to_border`：可选，布尔值，默认 `true`。`true` 时某一边小于九宫格边宽就按边宽算；贴图的边宽里大半是黑底、真正画出来的边框更窄时（比如宽摆件只占左边一段圆角），写 `false` 就完全按上面的数值，把这块黑底也用上
 
-竖排面板比横排窄很多时，右、左边距往往没法共用，可以另写一份 `[candidate_window.content_insets_dip.vertical]`：只写要覆盖的边，其余沿用上面的值。
+横排和竖排需要不同的边距时，可以另写 `[candidate_window.content_insets_dip.horizontal]` / `[candidate_window.content_insets_dip.vertical]`：只写要覆盖的边，其余沿用上面的值；`clamp_to_border` 也可以在这里再写一次，只影响那一种排布。两张子表互不继承，没写的排布用共用那份。
 
 ```toml
 [candidate_window.content_insets_dip]
@@ -116,6 +125,8 @@ right = 12
 
 预编辑行与候选之间的距离，`0`–`100`。只影响这一处，竖排时候选与翻页箭头之间的间距不变。不写则沿用 `base` 的行距。
 
+皮肤在 `[candidate_window]` / `[candidate_window.horizontal]` / `[candidate_window.vertical]` 里写了 `preedit_margin_dip` 时以它为准，`line_gap_dip` 不再覆盖下边距——勾选「行距」不会把皮肤调好的预编辑行位置顶回去。
+
 ### `[candidate_window.outer_insets_dip]`（v2 可选）
 
 挂件挂在卡片外沿时，窗口需要额外预留的透明空白，从卡片四边往外量。
@@ -123,6 +134,16 @@ right = 12
 - `top` / `right` / `bottom` / `left`：四边预留量浮点数
 
 **不声明时窗口只按卡片大小开，挂到卡片外面的立绘会被窗口边界裁掉。**
+
+横排和竖排的挂件不同、需要预留的空白也不同时，可以另写 `[candidate_window.outer_insets_dip.horizontal]` / `[candidate_window.outer_insets_dip.vertical]`：只写要覆盖的边，其余沿用上面的值；写 `0` 可以取消共用那侧的预留。两张子表互不继承，没写的排布用共用那份。
+
+```toml
+[candidate_window.outer_insets_dip]
+top = 95
+
+[candidate_window.outer_insets_dip.vertical]
+top = 0            # 竖排没有挂在卡片上方的挂件
+```
 
 ### `[[candidate_window.decorations]]`（v2 可选，数组表）
 
@@ -133,6 +154,7 @@ right = 12
 - `width_dip` / `height_dip`：挂件框的尺寸，`0`–`2000`（不含 0）；图片在框里等比缩放、居中（同 CSS `background-size: contain`）
 - `offset_x_dip` / `offset_y_dip`：相对锚点的平移量，`-2000`–`2000`，正数向右、向下
 - `z_index`：层级，`-1000`–`1000` 的整数，默认 `2`。面板自身相当于 `1`：**`z_index < 1` 的挂件画在面板之下**（只有伸出面板的部分看得见），其余画在面板与文字之上。同层按 `z_index` 从小到大、相同时按书写顺序叠放
+- `layouts`：可选，只在哪些排布里显示，`["horizontal"]` 或 `["vertical"]`（可写两个）。不写则横竖都画
 
 挂件不参与布局，也不接收点击；伸到面板外面时要用 `outer_insets_dip` 给窗口留出空白。
 

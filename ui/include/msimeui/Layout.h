@@ -459,15 +459,25 @@ class ShadowCache
 // (image pixels, like the numbers of `border-image-slice`) and drawn into borders `width` wide
 // (DIPs, like `border-image-width`): corners scale from slice to width, edges stretch along
 // their length, the middle stretches both ways and is drawn only with `fill`.
+// 同 CSS border-image-repeat。Stretch 拉伸填满；Repeat 按源图原尺寸平铺、末尾截断；
+// Round 平铺并等比缩放到整数块，边缘不截断；Space 按源图原尺寸平铺，剩余空间均分成块间空隙
+// （放不下两块时退回 Stretch）。
+enum class NineSliceRepeat
+{
+    Stretch,
+    Repeat,
+    Round,
+    Space,
+};
+
 struct NineSlice
 {
     Thickness slice;
     Thickness width;
     bool fill = true;
-    // 同 CSS border-image-repeat：repeatX 让上、中、下三段沿横向平铺（按源图原尺寸），
-    // repeatY 让左、中、右三段沿纵向平铺；false 为拉伸。四角永远不平铺。
-    bool repeatX = false;
-    bool repeatY = false;
+    // repeatX 作用于上、中、下三段（横向），repeatY 作用于左、中、右三段（纵向）；四角永远拉伸。
+    NineSliceRepeat repeatX = NineSliceRepeat::Stretch;
+    NineSliceRepeat repeatY = NineSliceRepeat::Stretch;
 };
 
 // Draws `bitmap` nine-sliced into `destination` (DIPs). Bitmap sizes are read in DIPs at 96 DPI,

@@ -122,6 +122,16 @@ struct DecorationCandidate
     bool stripBadge = true;
 };
 
+// 同 CSS border-image-repeat：stretch 拉伸、repeat 原尺寸平铺（末尾裁掉）、
+// round 缩放到整数块、space 原尺寸平铺并把剩余空间均分成块间空隙。
+enum class BorderImageRepeat
+{
+    Stretch,
+    Repeat,
+    Round,
+    Space,
+};
+
 struct BorderImage
 {
     std::string source;
@@ -139,10 +149,10 @@ struct BorderImage
     std::vector<double> widthDip;
     // 是否画九宫格中心块（CSS border-image-slice 的 fill）
     bool fill = true;
-    // 平铺方式，语义同 CSS border-image-repeat：1 个或 2 个值「横向 纵向」，stretch（默认）/ repeat。
-    // repeat 按源图原尺寸平铺，用来画可以任意加长的花纹边框（如竖向候选窗的侧边）。
-    bool repeatX = false;
-    bool repeatY = false;
+    // 平铺方式，语义同 CSS border-image-repeat：1 个或 2 个值「横向 纵向」。
+    // stretch（默认）/ repeat 原尺寸平铺 / round 整数块缩放 / space 均分空隙。
+    BorderImageRepeat repeatX = BorderImageRepeat::Stretch;
+    BorderImageRepeat repeatY = BorderImageRepeat::Stretch;
 };
 
 struct InsetsDip
@@ -195,6 +205,13 @@ struct CandidateGeometry
     std::string pageArrowStyle;
     // 预编辑行的外边距（上右下左 DIP）
     std::optional<InsetsDip> preeditMarginDip;
+    // 候选框最小宽度。写在 horizontal / vertical 子表里时只抬高那一种排布：
+    // 竖排给晚到的翻译留出并排位置，免得它换行后把列表撑出面板底边。
+    std::optional<Length> minWidthDip;
+    // 卡片是否严格按候选文字宽度收紧，以及是否显示翻页箭头；写在 horizontal / vertical
+    // 子表里时只改那一种排布，没写则沿用 [candidate_window] 的同名键。
+    std::optional<bool> fitContent;
+    std::optional<bool> pageArrows;
 };
 
 // 挂件 z_index 低于它的画在面板（卡片）之下，其余画在面板之上。面板自身相当于 z_index = 1，
@@ -216,6 +233,8 @@ struct FreeDecoration
     double heightDip = 0.0;
     // -1000–1000；低于 kDecorationFrontZIndex 的在面板之下。同层按声明顺序叠放。
     int zIndex = 2;
+    // 只在声明的排布里显示（horizontal / vertical）；空表示横竖都显示。
+    std::vector<std::string> layouts;
 };
 
 struct Package
@@ -257,6 +276,8 @@ struct Package
     // 卡片上方的装饰图；为空表示皮肤没有装饰。
     std::string decorationImage;
     std::string decorationAlign = "right"; // left / center / right，相对卡片
+    // 这张装饰图只在声明的排布里显示（horizontal / vertical）；空表示横竖都显示。
+    std::vector<std::string> decorationLayouts;
     // 叠加在装饰图上的候选词；没开 candidate_overlay 时为空。
     std::optional<DecorationCandidate> decorationCandidate;
     // 候选框里的翻页箭头；未设置时沿用 base 默认皮肤的设置（见 ResolvePageArrows）。
@@ -294,19 +315,29 @@ struct Package
     std::optional<ToolbarButtonFlow> toolbarButtonFlow;
     // v2 专有特性：九宫格贴图边框
     std::optional<BorderImage> borderImage;
-    // 竖排（layout == "vertical"）替换用的九宫格；来自 [candidate_window.border_image.vertical]，
-    // 只覆盖它写了的键，其余沿用 borderImage。为空时竖排也用 borderImage。
+    // 横排 / 竖排替换用的九宫格；来自 [candidate_window.border_image.horizontal|vertical]，
+    // 只覆盖它写了的键，其余沿用 borderImage。为空时该排布也用 borderImage。
+    std::optional<BorderImage> borderImageHorizontal;
     std::optional<BorderImage> borderImageVertical;
     // v2 专有特性：面板内容/文字安全内边距，从面板外缘量起；某一边小于九宫格边框宽度时按边框宽度算。
     std::optional<InsetsDip> contentInsetsDip;
-    // 竖排替换用的内容内边距（[candidate_window.content_insets_dip.vertical]），
-    // 只覆盖它写了的边，其余沿用 contentInsetsDip。为空时竖排也用 contentInsetsDip。
+    // 横排 / 竖排替换用的内容内边距，只覆盖它写了的边，其余沿用 contentInsetsDip。
+    std::optional<InsetsDip> contentInsetsDipHorizontal;
     std::optional<InsetsDip> contentInsetsDipVertical;
+    // 内边距是否仍与九宫格边宽取大值（默认 true，文字不会压到边框贴图上）。
+    // 贴图的边宽里其实是黑底、可见边框更窄时，皮肤可以写 clamp_to_border = false 用上这块空间。
+    // 按排布覆盖时只在对应子表写了才生效，没写的排布沿用共用那份。
+    bool contentInsetsClampToBorder = true;
+    std::optional<bool> contentInsetsClampToBorderHorizontal;
+    std::optional<bool> contentInsetsClampToBorderVertical;
     // v2 专有特性：预编辑行与候选行之间的行距（DIP，0–100）；未设置时沿用 base 的行距。
     std::optional<double> lineGapDip;
     // v2 专有特性：面板之外需要额外预留的窗口空间（上右下左 DIP），给挂在卡片外沿的挂件用。
     // 不声明时窗口只按卡片大小开，挂到外面的立绘会被窗口边界裁掉。
     std::optional<InsetsDip> outerInsetsDip;
+    // 横排 / 竖排替换用的挂件预留，只覆盖写了的边；为空时该排布也用 outerInsetsDip。
+    std::optional<InsetsDip> outerInsetsDipHorizontal;
+    std::optional<InsetsDip> outerInsetsDipVertical;
     // v2 专有特性：多层自由锚定挂件（支持动图）
     std::vector<FreeDecoration> freeDecorations;
 };
@@ -402,9 +433,11 @@ std::optional<DefaultSkin> LoadDefault(const std::filesystem::path &skinsRoot, c
                                        std::string *error = nullptr);
 // skinId 是配置里的候选皮肤：内置皮肤读自己的默认清单；外部皮肤先看自己的 page_arrows，
 // 没写再看 base 的默认清单。package 为外部皮肤已加载的清单，内置皮肤传 nullptr。
-bool ResolvePageArrows(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package);
-// fit_content 的解析顺序同 ResolvePageArrows。
-bool ResolveFitContent(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package);
+// 翻页箭头 / fit_content 的解析：horizontal 子表 > 共用表 > base 默认皮肤。
+bool ResolvePageArrows(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package,
+                       bool horizontal);
+bool ResolveFitContent(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package,
+                       bool horizontal);
 // expand_panel 的解析顺序同 ResolvePageArrows。
 bool ResolveExpandPanel(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package);
 

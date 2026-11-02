@@ -28,17 +28,33 @@ struct NineSlice
     Edges width;
     bool fill = true;
     // 同 CSS border-image-repeat。
-    bool repeatX = false;
-    bool repeatY = false;
+    CandidateSkinCatalog::BorderImageRepeat repeatX = CandidateSkinCatalog::BorderImageRepeat::Stretch;
+    CandidateSkinCatalog::BorderImageRepeat repeatY = CandidateSkinCatalog::BorderImageRepeat::Stretch;
+};
+
+// 皮肤按排布选择参数：共用表 + horizontal / vertical 覆盖子表，子表只改写了的键，两者互不继承。
+enum class CandidateLayout
+{
+    Horizontal,
+    Vertical,
 };
 
 NineSlice ResolveNineSlice(const CandidateSkinCatalog::BorderImage &borderImage);
 
+// 当前排布实际使用的九宫格 / 内容内边距 / 外预留；没有对应覆盖时回落到共用那份。
+// 返回的是 package 里的对象，可以直接拿去渲染。
+const CandidateSkinCatalog::BorderImage *ResolveBorderImage(const CandidateSkinCatalog::Package &package,
+                                                            CandidateLayout layout);
+const CandidateSkinCatalog::InsetsDip *ResolveContentInsets(const CandidateSkinCatalog::Package &package,
+                                                            CandidateLayout layout);
+bool ResolveContentInsetsClampToBorder(const CandidateSkinCatalog::Package &package, CandidateLayout layout);
+const CandidateSkinCatalog::InsetsDip *ResolveOuterInsets(const CandidateSkinCatalog::Package &package,
+                                                          CandidateLayout layout);
+
 // 面板外缘到内容的距离（DIP）。写了 content_insets_dip 时就是它，但不小于九宫格该边的边宽（文字不压在边框上，
 // 与 CSS 的 border + padding 一致）；没写时是九宫格边宽加上基底自己的内边距。
-// vertical 为 true 时，写了 border_image.vertical / content_insets_dip.vertical 就按竖排那套算，
-// 没写的部分仍用横排的值。
-Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double basePadding, bool vertical = false);
+Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double basePadding,
+                            CandidateLayout layout = CandidateLayout::Horizontal);
 
 struct Layers
 {
@@ -50,4 +66,8 @@ struct Layers
 
 // 按 z_index 升序稳定排序（同层保持声明顺序），再以 kDecorationFrontZIndex 为界分成两层。
 Layers SplitDecorations(const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations);
+
+// 挂件声明了 layouts 时只保留当前排布能用的那些；没声明的横竖都保留。保持声明顺序。
+std::vector<CandidateSkinCatalog::FreeDecoration> FilterDecorationsForLayout(
+    const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations, bool horizontal);
 } // namespace CandidateSkinLayers
