@@ -41,6 +41,10 @@ inline const UINT WM_COMMIT_CANDIDATE_AT = WM_USER + 126;
 inline const UINT WM_EXPAND_CANDIDATES = WM_USER + 127;
 // 候选窗自己投递给自己：切换卷轴展开面板。放到消息队列里做，免得在鼠标分发途中改场景。
 inline const UINT WM_TOGGLE_CANDIDATE_EXPAND = WM_USER + 128;
+// 竖排译文面板被点了外面（presenter 的 Popup 关闭回调）：请工作线程关掉面板状态。
+inline const UINT WM_CLOSE_TRANSLATION_PANEL = WM_USER + 129;
+// 候选词展开面板里点选了某条译义。wParam 是它在面板里的下标（0 起），与数字键 1..N 上屏同一条路径。
+inline const UINT WM_COMMIT_EXPANSION_PANEL_ITEM = WM_USER + 130;
 
 // wParam of WM_PAGE_CANDIDATE / WM_PAGE_CANDIDATE_ARROW; lParam carries how many pages to move.
 inline constexpr WPARAM CANDIDATE_PAGE_PREVIOUS = 0;

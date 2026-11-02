@@ -348,14 +348,17 @@ CandidateList::ItemGeometry CandidateList::MeasureItem(size_t index, float width
     ItemGeometry geometry;
     const float labelX = appearance_.contentPadLeft + appearance_.textPadLeft;
     const float labelW = std::max(EstimateTextWidth(item.label, appearance_.labelFontSize), 9.0f);
-    const float textX = labelX + labelW + appearance_.labelGap;
+    const float tagW = item.tag.empty() ? 0.0f : EstimateTextWidth(item.tag, appearance_.tagFontSize);
+    const float tagX = labelX + labelW + appearance_.labelGap;
+    const float textX = tagX + (item.tag.empty() ? 0.0f : tagW + appearance_.tagGap);
     const float contentWidth = std::max(width - textX - appearance_.contentPadRight, 1.0f);
     const float textW = std::min(std::max(EstimateTextWidth(item.text, appearance_.fontSize), 8.0f), contentWidth);
     const float textH = std::max(appearance_.itemHeight, MeasureTextHeight(item.text, appearance_.fontSize, textW));
     geometry.label = {labelX, 0.0f, labelW, appearance_.itemHeight};
+    geometry.tag = {tagX, 0.0f, tagW, appearance_.itemHeight};
     geometry.text = {textX, 0.0f, textW, textH};
     float height = textH;
-    float lineEnd = textW;
+    float lineEnd = item.text.empty() ? 0.0f : textW;
     // height 末尾属于行底内边距的部分：只有单行高度（itemHeight）里才含这段内边距，
     // 换到下方的辅助码和翻译从它上面开始排，排完再把它补回最后一行下面。
     const float padBottom = std::clamp(appearance_.contentPadBottom, 0.0f, appearance_.itemHeight * 0.5f);
@@ -380,8 +383,8 @@ CandidateList::ItemGeometry CandidateList::MeasureItem(size_t index, float width
     }
     if (!item.translation.empty())
     {
-        const float fontSize = appearance_.fontSize * 0.78f;
-        const float gap = appearance_.fontSize * 0.65f;
+        const float fontSize = appearance_.fontSize * appearance_.translationFontSizeScale;
+        const float gap = item.text.empty() ? 0.0f : appearance_.fontSize * 0.65f;
         const float naturalTranslationWidth = EstimateTextWidth(item.translation, fontSize);
         const float translationW = std::min(naturalTranslationWidth, contentWidth);
         const bool inlineTranslation = orientation_ == Orientation::Vertical && geometry.annotation.y == 0.0f &&
@@ -411,7 +414,8 @@ RectF CandidateList::ItemRect(size_t index) const
     // 覆盖整行。这里直接用列表的最终布局宽度 bounds_，而非候选项自然宽度，从而不受测量/
     // 布局缓存影响（绘制前 Present 可能以不同可用宽度重新测量，把每项宽度还原为自然宽度）。
     // 右侧留白由外层卡片内边距提供，与左侧保持一致。
-    if (orientation_ == Orientation::Vertical)
+    // 多列竖排（columnMajor_）例外：每列宽度由该列最宽词条决定，不能铺满整表宽度。
+    if (orientation_ == Orientation::Vertical && !columnMajor_)
     {
         rect.x = bounds_.x;
         rect.width = bounds_.width;
@@ -447,9 +451,120 @@ RectF CandidateList::GetItemBounds(size_t index) const
 SizeF CandidateList::Measure(const SizeF &availableSize)
 {
     itemGeometry_.clear();
+    columnMajor_ = false;
     const float availableWidth = std::max(availableSize.width, 1.0f);
     const float gap = appearance_.itemGap;
     const bool horizontal = orientation_ == Orientation::Horizontal;
+    // 竖排多列：开启 verticalColumns 时按列优先排布——先沿一列向下排，下一项会越过列高预算
+    // 就另起一列向右排；每列宽度取该列最宽词条，列数受 verticalColumns 与列宽预算双重限制，
+    // 放不下时末列在底部溢出裁切。列高/列宽预算优先取 appearance（弹窗会以宿主视口重新测量
+    // 子控件，宿主比面板真正可用的屏幕空间大，必须用固定预算才能让布局稳定）。
+    const float budgetHeight =
+        appearance_.columnBudgetHeight > 0.0f ? appearance_.columnBudgetHeight : availableSize.height;
+    const float budgetWidth = appearance_.columnBudgetWidth > 0.0f ? appearance_.columnBudgetWidth : availableWidth;
+    const bool columnMajor = !horizontal && appearance_.verticalColumns > 0 && budgetHeight < 100000.0f;
+    if (columnMajor)
+    {
+        const float availableHeight = std::max(budgetHeight, 1.0f);
+        const float colGap = appearance_.columnGap >= 0.0f ? appearance_.columnGap : gap;
+        std::vector<ItemGeometry> geos(items_.size());
+        std::vector<float> naturalWidth(items_.size());
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            const auto &item = items_[i];
+            const float textWidth = EstimateTextWidth(item.text, appearance_.fontSize) +
+                                    EstimateTextWidth(item.annotation, appearance_.annotationFontSize);
+            const float translationWidth =
+                EstimateTextWidth(item.translation, appearance_.fontSize * appearance_.translationFontSizeScale);
+            const float contentWidth =
+                textWidth + (item.translation.empty() ? 0.0f : appearance_.fontSize * 0.65f + translationWidth);
+            const float width =
+                appearance_.contentPadLeft + appearance_.textPadLeft +
+                std::max(EstimateTextWidth(item.label, appearance_.labelFontSize), 9.0f) + appearance_.labelGap +
+                (item.tag.empty() ? 0.0f : EstimateTextWidth(item.tag, appearance_.tagFontSize) + appearance_.tagGap) +
+                contentWidth + appearance_.contentPadRight;
+            naturalWidth[i] = std::min(width, budgetWidth);
+            geos[i] = MeasureItem(i, naturalWidth[i]);
+        }
+        std::vector<std::vector<size_t>> columns;
+        std::vector<float> columnHeights;
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            const float h = geos[i].bounds.height;
+            // 列内纵向间距用 itemGap；columnGap 只用于列与列之间的横向间距。
+            if (!columns.empty() && columnHeights.back() + gap + h > availableHeight)
+            {
+                columns.emplace_back();
+                columnHeights.push_back(0.0f);
+            }
+            if (columns.empty())
+            {
+                columns.emplace_back();
+                columnHeights.push_back(0.0f);
+            }
+            if (columns.back().empty())
+            {
+                columns.back().push_back(i);
+                columnHeights.back() = h;
+            }
+            else
+            {
+                columns.back().push_back(i);
+                columnHeights.back() += gap + h;
+            }
+        }
+        auto columnWidth = [&](const std::vector<size_t> &column) {
+            float w = 0.0f;
+            for (size_t idx : column)
+                w = std::max(w, naturalWidth[idx]);
+            return w;
+        };
+        auto totalWidth = [&]() {
+            float w = 0.0f;
+            for (size_t c = 0; c < columns.size(); ++c)
+            {
+                w += columnWidth(columns[c]);
+                if (c + 1 < columns.size())
+                    w += colGap;
+            }
+            return w;
+        };
+        auto mergeLastTwo = [&]() {
+            const size_t a = columns.size() - 2;
+            columns[a].insert(columns[a].end(), columns[a + 1].begin(), columns[a + 1].end());
+            columnHeights[a] += gap + columnHeights[a + 1];
+            columns.pop_back();
+            columnHeights.pop_back();
+        };
+        while (columns.size() > 1 &&
+               (static_cast<int>(columns.size()) > appearance_.verticalColumns || totalWidth() > budgetWidth))
+            mergeLastTwo();
+
+        itemGeometry_.assign(items_.size(), ItemGeometry{});
+        float x = 0.0f;
+        float measuredWidth = 0.0f;
+        float contentHeight = 0.0f;
+        for (size_t c = 0; c < columns.size(); ++c)
+        {
+            // 列宽 = 该列最宽词条；列内每一项的高亮与命中区都铺满整列宽，与单列竖排的整行高亮一致。
+            const float colW = columnWidth(columns[c]);
+            float y = 0.0f;
+            for (size_t idx : columns[c])
+            {
+                geos[idx].bounds.x = x;
+                geos[idx].bounds.y = y;
+                geos[idx].bounds.width = colW;
+                itemGeometry_[idx] = geos[idx];
+                y += geos[idx].bounds.height + gap;
+            }
+            x += colW + colGap;
+            measuredWidth = std::max(measuredWidth, x - colGap);
+            contentHeight = std::max(contentHeight, columnHeights[c]);
+        }
+        columnMajor_ = true;
+        layoutWidth_ = measuredWidth;
+        return {measuredWidth, std::min(contentHeight, availableHeight)};
+    }
     std::vector<float> widths;
     float maxWidth = appearance_.fitContent ? 0.0f : 80.0f;
     // 等宽网格：可用宽度按最小列宽能放下几列（不超过 gridColumns）均分，项宽取整列。
@@ -470,14 +585,17 @@ SizeF CandidateList::Measure(const SizeF &availableSize)
         const float textSlack = !appearance_.fitContent ? 6.0f : (item.annotation.empty() ? 0.0f : 4.0f);
         const float textWidth = EstimateTextWidth(item.text, appearance_.fontSize) + textSlack +
                                 EstimateTextWidth(item.annotation, appearance_.annotationFontSize);
-        const float translationWidth = EstimateTextWidth(item.translation, appearance_.fontSize * 0.78f);
+        const float translationWidth =
+            EstimateTextWidth(item.translation, appearance_.fontSize * appearance_.translationFontSizeScale);
         const float contentWidth =
             horizontal
                 ? std::max(textWidth, translationWidth)
                 : textWidth + (item.translation.empty() ? 0.0f : appearance_.fontSize * 0.65f + translationWidth);
-        float width = appearance_.contentPadLeft + appearance_.textPadLeft +
-                      std::max(EstimateTextWidth(item.label, appearance_.labelFontSize), 9.0f) + appearance_.labelGap +
-                      contentWidth + appearance_.contentPadRight;
+        float width =
+            appearance_.contentPadLeft + appearance_.textPadLeft +
+            std::max(EstimateTextWidth(item.label, appearance_.labelFontSize), 9.0f) + appearance_.labelGap +
+            (item.tag.empty() ? 0.0f : EstimateTextWidth(item.tag, appearance_.tagFontSize) + appearance_.tagGap) +
+            contentWidth + appearance_.contentPadRight;
         if (grid)
         {
             const int span =
@@ -598,7 +716,7 @@ void CandidateList::Render(DeviceResources &deviceResources)
             }
         }
 
-        const float translationFontSize = appearance_.fontSize * 0.78f;
+        const float translationFontSize = appearance_.fontSize * appearance_.translationFontSizeScale;
         const auto &geometry = itemGeometry_[index];
         const auto absolute = [&](RectF rect) {
             rect.x += itemRect.x;
@@ -606,6 +724,7 @@ void CandidateList::Render(DeviceResources &deviceResources)
             return rect;
         };
         const RectF labelRect = absolute(geometry.label);
+        const RectF tagRect = absolute(geometry.tag);
         const RectF textRect = absolute(geometry.text);
         const RectF annotationRect = absolute(geometry.annotation);
         const RectF translationRect = absolute(geometry.translation);
@@ -613,6 +732,8 @@ void CandidateList::Render(DeviceResources &deviceResources)
         const Item &item = items_[index];
         const ComPtr<IDWriteTextLayout> labelLayout =
             TextLayoutFor(factory, fontFamily, item.label, appearance_.labelFontSize, labelRect);
+        const ComPtr<IDWriteTextLayout> tagLayout =
+            item.tag.empty() ? nullptr : TextLayoutFor(factory, fontFamily, item.tag, appearance_.tagFontSize, tagRect);
         const ComPtr<IDWriteTextLayout> textLayout =
             TextLayoutFor(factory, fontFamily, item.text, appearance_.fontSize, textRect);
         const ComPtr<IDWriteTextLayout> annotationLayout =
@@ -624,9 +745,12 @@ void CandidateList::Render(DeviceResources &deviceResources)
         const D2D1_COLOR_F &labelColor = highlighted && appearance_.rowLabelSelected.a > 0.001f
                                              ? appearance_.rowLabelSelected
                                              : appearance_.labelColor;
+        const D2D1_COLOR_F &tagColor =
+            highlighted && appearance_.rowTagSelected.a > 0.001f ? appearance_.rowTagSelected : appearance_.tagColor;
         const D2D1_COLOR_F &textColor =
             highlighted && appearance_.rowTextSelected.a > 0.001f ? appearance_.rowTextSelected : appearance_.textColor;
         ID2D1SolidColorBrush *labelBrush = deviceResources.GetSolidColorBrush(labelColor);
+        ID2D1SolidColorBrush *tagBrush = item.tag.empty() ? nullptr : deviceResources.GetSolidColorBrush(tagColor);
         ID2D1SolidColorBrush *textBrush = deviceResources.GetSolidColorBrush(textColor);
         // 辅助码与翻译在 CSS 里都是 .text 的子节点（.cand-content / .cand-translation），
         // 颜色继承自 .text，选中行的 `.first .text { color: ... }` 会一并覆盖它们。
@@ -671,6 +795,11 @@ void CandidateList::Render(DeviceResources &deviceResources)
         if (labelLayout && labelBrush)
         {
             target->DrawTextLayout(D2D1::Point2F(labelRect.x, labelRect.y), labelLayout.Get(), labelBrush,
+                                   kColorClipTextOptions);
+        }
+        if (tagLayout && tagBrush)
+        {
+            target->DrawTextLayout(D2D1::Point2F(tagRect.x, tagRect.y), tagLayout.Get(), tagBrush,
                                    kColorClipTextOptions);
         }
         if (textLayout && textBrush)

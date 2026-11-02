@@ -294,8 +294,14 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         // g_candidate_force_layout marks the cases (DPI / display change) where
         // the same content must still be re-laid out, so never dedup through it.
         const std::wstring signaturePreedit = showPreedit ? preedit : std::wstring{};
-        const CandidateFramePageState pageState{candidatePage->selected_index_in_page, candidatePage->page_index,
-                                                candidatePage->has_previous_page, candidatePage->has_next_page};
+        const CandidateFramePageState pageState{candidatePage->selected_index_in_page,
+                                                candidatePage->page_index,
+                                                candidatePage->has_previous_page,
+                                                candidatePage->has_next_page,
+                                                candidatePage->expansion_panel_active,
+                                                candidatePage->expansion_panel_anchor,
+                                                candidatePage->expansion_panel_selected,
+                                                CandidateExpansionPanelSignature(candidatePage->expansion_panel_items)};
         const std::wstring frameSignature = CandidateFrameSignature(signaturePreedit, candidatePage->page_views,
                                                                     layoutCaret.x, layoutCaret.y, pageState);
         if (::is_global_wnd_cand_shown && !g_candidate_force_layout.load() &&
@@ -961,6 +967,14 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
 
     case WM_EXPAND_CANDIDATES:
         FanyNamedPipe::EnqueueCandidateUiExpand();
+        break;
+
+    case WM_CLOSE_TRANSLATION_PANEL:
+        FanyNamedPipe::EnqueueCandidateUiCloseTranslationPanel();
+        break;
+
+    case WM_COMMIT_EXPANSION_PANEL_ITEM:
+        FanyNamedPipe::EnqueueCandidateUiCommitExpansionPanel(static_cast<int>(wParam));
         break;
 
     case WM_CLEAR_IME_ENGINE_CACHE: {

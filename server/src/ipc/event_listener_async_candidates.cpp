@@ -316,9 +316,8 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
 
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge)
 {
-    if (!EnglishIme::IsTranslationCurrent(generation) || !GetConfiguredCandidateTranslationsEnabled() ||
-        IsUiLessMode() || g_candidate_translation_signature.empty() || IsCandidateSubPageActive() ||
-        (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji))
+    if (!EnglishIme::IsTranslationCurrent(generation) || !FanyNamedPipe::CandidateTranslationLookupEnabled() ||
+        g_candidate_translation_signature.empty() || IsCandidateSubPageActive())
         return;
 
     std::vector<EnglishIme::TranslationQuery> misses;

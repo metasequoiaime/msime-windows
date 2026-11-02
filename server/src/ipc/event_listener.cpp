@@ -226,6 +226,8 @@ void HideCandidateWindowAndDropItems()
     Global::CandidateString.clear();
     Global::ClearCandidatePageSnapshot();
     Global::candidate_ui.set_items({});
+    // 候选窗收起时展开面板跟着关掉，别让下一次显示把它带回来。
+    FanyNamedPipe::CloseCandidateExpansionPanel();
     // Clear the shown flag first so async callbacks refuse to resurrect the
     // window, then post the actual hide message.
     ::is_global_wnd_cand_shown = false;
@@ -915,6 +917,8 @@ void ClearState()
     g_translation_saved_page_index = 0;
     g_translation_saved_selected_index = 0;
     g_translation_saved_selection_started = false;
+    // 展开面板随组合一起结束：它挂在候选窗里，组合没了它也没有意义。
+    CloseCandidateExpansionPanel();
     EnglishIme::ClearTranslations();
     CloudTranslation::Clear();
     UpdateMixedInput({});
