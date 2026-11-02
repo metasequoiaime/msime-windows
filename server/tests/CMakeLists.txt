@@ -52,6 +52,27 @@ target_include_directories(test_voice_target PRIVATE ../src)
 target_compile_features(test_voice_target PRIVATE cxx_std_17)
 add_test(NAME voice_target COMMAND test_voice_target)
 
+# Drives the real process-priority restore against a deliberately lowered
+# process, so the Server startup path is covered without launching the Server.
+add_executable(test_process_priority
+    src/test_process_priority.cpp
+    ../src/utils/process_priority.cpp)
+target_include_directories(test_process_priority PRIVATE ../src)
+target_compile_features(test_process_priority PRIVATE cxx_std_17)
+add_test(NAME process_priority COMMAND test_process_priority)
+set_tests_properties(process_priority PROPERTIES SKIP_RETURN_CODE 77)
+
+# Exercises the scoped thread-priority boost against the real thread APIs: the
+# guard must raise the thread, restore the entry priority, and skip cleanly on
+# hosts whose policy rejects thread priority changes.
+add_executable(test_thread_priority
+    src/test_thread_priority.cpp
+    ../src/utils/thread_priority.cpp)
+target_include_directories(test_thread_priority PRIVATE ../src)
+target_compile_features(test_thread_priority PRIVATE cxx_std_17)
+add_test(NAME thread_priority COMMAND test_thread_priority)
+set_tests_properties(thread_priority PROPERTIES SKIP_RETURN_CODE 77)
+
 set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark_model_path.cpp"
@@ -82,7 +103,9 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/cloud/ai_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/chat_completions.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/jev_client.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_chat_cancellation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_assistant_reply.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant_reply.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_jev_candidates.cpp"
@@ -217,6 +240,11 @@ set(TEST_SOURCE_FILES
     # Routing lives in dictionary_manager.cpp's HandleRequest, so the importHans dispatch test has
     # to link the real translation unit rather than restate the branch order.
     "${CMAKE_SOURCE_DIR}/src/settings/dictionary_manager.cpp"
+    # The backup tests drive the real archive writer/reader and the real orchestration module;
+    # stop/start and dictionary callbacks are injected so no Server is ever touched.
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_data_backup.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/user_data_backup.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/zip_archive.cpp"
 )
 
 add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILES})
@@ -237,6 +265,7 @@ target_include_directories(${TEST_EXECUTABLE_NAME}
 # guards lives in that executable's main() and cannot be linked into the test binary.
 target_compile_definitions(${TEST_EXECUTABLE_NAME}
     PRIVATE
+    MSIME_AI_ASSISTANT_TEST
     "MSIME_DEFAULT_CONFIG_PATH=\"${CMAKE_SOURCE_DIR}/../installer/default_config/config.default.toml\""
     "MSIME_CUSTOM_SHUANGPIN_EXAMPLE_PATH=\"${CMAKE_SOURCE_DIR}/../docs/custom-shuangpin.example.toml\""
     "MSIME_DICTIONARY_REPLAY_EXE=\"$<TARGET_FILE:${DICTIONARY_REPLAY_EXECUTABLE_NAME}>\""
@@ -268,6 +297,9 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     bcrypt
     wintrust
     crypt32
+    ws2_32
+    # zip_archive.cpp 用 zlib 的 CRC 与 deflate 解压。
+    ZLIB::ZLIB
 )
 
 add_test(NAME ${TEST_EXECUTABLE_NAME} COMMAND ${TEST_EXECUTABLE_NAME})

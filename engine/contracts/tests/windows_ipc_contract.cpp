@@ -46,7 +46,7 @@ int main()
            FanyImeProtocol::TemporaryJapaneseLongVowel) == 0);
     CHECK(FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged == 36);
     CHECK(FanyImeWorkerReplyType::UpdateInstallerReady == 40);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::UpdateInstallerReady);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged);
     for (wchar_t payload = L'0'; payload <= L'3'; ++payload)
     {
         CHECK(FanyImeTemporaryJapanese::IsValidPayload(payload));
@@ -244,7 +244,8 @@ int main()
     CHECK(FanyImeWorkerReplyType::EnumerationCommaKeysChanged == 38);
     CHECK(FanyImeWorkerReplyType::HorizontalArrowSelectionChanged == 39);
     CHECK(FanyImeWorkerReplyType::UpdateInstallerReady == 40);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::UpdateInstallerReady);
+    CHECK(FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged == 41);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged);
     // EnumerationCommaKeysChanged 的载荷：\ 和 / 各一位，两个都没勾按只有 \ 发。
     CHECK(FanyImeEnumerationComma::PayloadFor(true, false) == L'1' &&
           FanyImeEnumerationComma::PayloadFor(false, true) == L'2' &&
@@ -272,6 +273,12 @@ int main()
     CHECK((FanyImePipeFlags::SensitiveField &
            (FanyImePipeFlags::UiLess | FanyImePipeFlags::ImeSwitchCapsSnapshotPresent |
             FanyImePipeFlags::ImeSwitchCapsSnapshotEnabled | FanyImeTrilingualInput::CycleRequestMask)) == 0);
+    // The direct helpcode end trigger flag stays clear of every other flag bit.
+    CHECK((FanyImePipeFlags::DirectHelpcodeEndTriggerRewrite & 7u) == 0);
+    CHECK((FanyImePipeFlags::DirectHelpcodeEndTriggerRewrite &
+           (FanyImePipeFlags::UiLess | FanyImePipeFlags::ImeSwitchCapsSnapshotPresent |
+            FanyImePipeFlags::ImeSwitchCapsSnapshotEnabled | FanyImeTrilingualInput::CycleRequestMask |
+            FanyImePipeFlags::SensitiveField | FanyImePipeFlags::HorizontalArrowSelection)) == 0);
     // Same for the horizontal arrow selection flag, which also stays clear of the sensitive-field bit.
     CHECK((FanyImePipeFlags::HorizontalArrowSelection & 7u) == 0);
     CHECK((FanyImePipeFlags::HorizontalArrowSelection &
@@ -324,6 +331,23 @@ int main()
     CHECK(FanyImeDirectHelpcode::EnabledFromPayload(L'2') && !FanyImeDirectHelpcode::SlashFromPayload(L'2') &&
           FanyImeDirectHelpcode::SlashFromPayload(L'1') && !FanyImeDirectHelpcode::EnabledFromPayload(L'0') &&
           !FanyImeDirectHelpcode::IsValidPayload(L'3'));
+    // 直接辅助码下用 ; 进入末尾辅助码的形状规则，TSF（WCHAR）与 Server（char）共用。
+    const auto end_trigger_at = [](const std::wstring &text, std::size_t caret) {
+        return FanyImeDirectHelpcode::AcceptsEndTriggerAt(text.data(), text.size(), caret);
+    };
+    CHECK(end_trigger_at(L"uixulpb", 7) && end_trigger_at(L"ui", 2) && end_trigger_at(L"uiab/ulpb", 9));
+    CHECK(end_trigger_at(L"uiaBul", 6) && end_trigger_at(L"ui'ulpb", 7) && end_trigger_at(L"uix'ul", 6));
+    // 光标不在末尾、一节只有一键、开头是大写（特殊模式）、已有末尾段或带别的字符时都不收。
+    CHECK(!end_trigger_at(L"uixulpb", 3) && !end_trigger_at(L"u", 1) && !end_trigger_at(L"", 0));
+    CHECK(!end_trigger_at(L"ui'u", 4) && !end_trigger_at(L"ui'", 3) && !end_trigger_at(L"'ui", 3));
+    CHECK(!end_trigger_at(L"Uabc", 4) && !end_trigger_at(L"Tui", 3) && !end_trigger_at(L"uiul|", 5));
+    CHECK(!end_trigger_at(L"uiul`x", 6) && !end_trigger_at(L"ui;ul", 5) && !end_trigger_at(L"ui12", 4));
+    CHECK(FanyImeDirectHelpcode::AcceptsEndTriggerAt("uixulpb", 7, 7));
+    const auto end_backspace_at = [](const std::wstring &text, std::size_t caret) {
+        return FanyImeDirectHelpcode::IsEndTriggerBackspaceAt(text.data(), text.size(), caret);
+    };
+    CHECK(end_backspace_at(L"uiulpb|", 7) && end_backspace_at(L"|", 1));
+    CHECK(!end_backspace_at(L"uiulpb|f", 8) && !end_backspace_at(L"uiulpb|", 6) && !end_backspace_at(L"", 0));
     // TSF（WCHAR）与引擎（char）共用同一条句中辅助码形状规则。
     const auto accepts = [](const std::wstring &text) {
         return FanyImeMidSentenceHelpcode::AcceptsMarker(text.data(), text.size());

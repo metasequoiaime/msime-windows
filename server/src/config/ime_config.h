@@ -2,6 +2,7 @@
 
 #include "ai/ai_provider_store.h"
 #include "engine/core/fuzzy_pinyin_options.h"
+#include "engine/core/prefix_completion_options.h"
 #include "engine/core/scheme_type.h"
 #include "engine/shuangpin/shuangpin_profile.h"
 #include "engine/contracts/input_state_shortcuts.h"
@@ -228,6 +229,8 @@ void NotifyImeServerCandidateSkinRefresh();
 void NotifyImeServerInputSchemeChanged();
 // 请求输入法后台进程重启（由 Watchdog 拉起）。返回是否成功送达。
 bool NotifyImeServerRestart();
+// 请求输入法后台进程以 stop exit code 退出（Watchdog 一起退出）。导入备份前用。
+bool NotifyImeServerStopForBackup();
 // 升级用：以新版模板为骨架重建配置。用户改过的值（与 baseline 中的旧默认值不同）保留，
 // 其余跟随新默认值；模板里没有的旧键被丢弃。baseline 为空时一律保留用户值。
 std::string MergeConfigIntoTemplate(const std::string &template_text, const std::string &user_text,
@@ -427,6 +430,16 @@ bool SetConfiguredShuangpinDirectHelpcodeUppercase(bool enabled);
 // DirectHelpcodeChanged 的载荷（FanyImeDirectHelpcode::PayloadFor）："0" 表示开关关着或当前方案不是双拼，
 // "1" 开着且勾了 /，"2" 开着但没勾 /。
 std::wstring FormatDirectHelpcodeWorkerPayload();
+// 直接辅助码下用 ; 进入末尾辅助码（helpcode.shuangpin_direct_helpcode_end_trigger，默认关），规则见
+// FanyImeDirectHelpcode::AcceptsEndTriggerAt。
+bool GetConfiguredShuangpinDirectHelpcodeEndTrigger();
+bool SetConfiguredShuangpinDirectHelpcodeEndTrigger(bool enabled);
+// 此刻是否生效：直接辅助码和这个开关都开着，且当前方案是双拼。引导键是末尾辅助码设置里勾了的反引号、分号。
+bool IsConfiguredDirectHelpcodeEndTriggerActive();
+// 字符 ch（'`' 或 ';'）此刻是不是直接辅助码下进入末尾辅助码的引导键：上面生效，且末尾辅助码设置里勾了这个键。
+bool IsConfiguredDirectHelpcodeEndTriggerKey(wchar_t ch);
+// DirectHelpcodeEndTriggerChanged 的载荷（FanyImeEndHelpcode::PayloadFor，不带大写位）：此刻生效的引导键。
+std::wstring FormatDirectHelpcodeEndTriggerWorkerPayload();
 const std::string &GetConfiguredShuangpinHelpcodeSchema();
 bool SetConfiguredShuangpinHelpcodeSchema(const std::string &schema);
 bool GetConfiguredQuanpinHelpcodeEnabled();
@@ -475,6 +488,8 @@ std::vector<CustomHelpcodeSchemaInfo> GetCustomHelpcodeSchemas();
 std::string GetCustomHelpcodeDirectory();
 bool GetConfiguredShowShuangpinHelpcodeInCandidateWindow();
 bool SetConfiguredShowShuangpinHelpcodeInCandidateWindow(bool enabled);
+// 双拼候选此刻是否带辅码提示：勾了显示，且末尾、句中（引导键或直接）任意一种辅助码开着。
+bool IsConfiguredShuangpinHelpcodeHintShown();
 bool GetConfiguredShowQuanpinHelpcodeInCandidateWindow();
 bool SetConfiguredShowQuanpinHelpcodeInCandidateWindow(bool enabled);
 bool GetConfiguredFloatingToolbarEnabled();
@@ -547,6 +562,11 @@ bool GetConfiguredAssocSentenceNeuralKeyboard();
 bool SetConfiguredAssocSentenceNeuralKeyboard(bool enabled);
 bool GetConfiguredAssocContextCandidateRerank();
 bool SetConfiguredAssocContextCandidateRerank(bool enabled);
+// 长词前缀补全（#1343）：开关（prefix_completion，默认开）与首选的最少字数
+// （prefix_completion_min_chars，3~8，默认 4，只在配置文件里调）合成会话选项。
+bool GetConfiguredAssocPrefixCompletion();
+bool SetConfiguredAssocPrefixCompletion(bool enabled);
+metasequoia::PrefixCompletionOptions GetConfiguredPrefixCompletionOptions();
 bool GetConfiguredAssocSentenceShowNextOnDuplicate();
 bool SetConfiguredAssocSentenceShowNextOnDuplicate(bool enabled);
 bool GetConfiguredAssocSentenceSourceBadge();

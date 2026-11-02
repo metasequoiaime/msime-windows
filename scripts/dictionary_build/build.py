@@ -47,6 +47,7 @@ def build_msime(source: inputs.Inputs, path: Path, stage: Stages) -> None:
     try:
         stage("quanpin", lambda: pinyin_db.build_quanpin(
             connection, pinyin_db.wanxiang_files(source.dictionary / pinyin_db.WANXIANG)))
+        stage("latin-words", lambda: pinyin_db.build_latin_words(connection, source.dictionary / pinyin_db.LATIN_WORDS))
 
         def words(relative: str):
             entries = pinyin_db.parse_word_list(textutil.read(source.source(relative)), relative)

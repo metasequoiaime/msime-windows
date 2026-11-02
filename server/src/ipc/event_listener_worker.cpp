@@ -15,6 +15,7 @@
 #include "defines/globals.h"
 #include "utils/common_utils.h"
 #include "utils/serial_task_runner.h"
+#include "utils/thread_priority.h"
 #include <utf8.h>
 #include "global/globals.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
@@ -139,6 +140,7 @@ struct Task
     uint64_t client_id = 0;
     uint64_t activation_epoch = 0;
     std::chrono::steady_clock::time_point enqueued_at{};
+    uint64_t enqueue_sequence = 0;
     std::string cloud_candidate;
     std::string cloud_pinyin;
     uint64_t cloud_generation = 0;
@@ -179,6 +181,8 @@ double QueueWaitMilliseconds(const Task &task)
 // 按类别分的四条 FIFO 队列。同类内保持入队顺序；类别之间由 NextTaskClass 决定。
 std::array<std::queue<Task>, kTaskClassCount> taskQueues;
 std::mutex queueMutex;
+// The sequence preserves user action order across the two interactive queues.
+uint64_t lastTaskSequence = 0;
 // 队列里已经有一个还没开始跑的 ApplyRescoredOrder（受 queueMutex 保护）。它跑起来时会读所有模型
 // 已算完的结果，所以排队期间再完成的批次不必再各排一个，免得每批都在按键前面重查一次词格。
 bool rescoreApplyQueued = false;
@@ -192,6 +196,7 @@ void PushTaskLocked(Task &&task)
     // 否则它们的等待时长恒为 0，「等满 500 ms 就越过富化」永远不会触发。
     if (task.enqueued_at == std::chrono::steady_clock::time_point{})
         task.enqueued_at = std::chrono::steady_clock::now();
+    task.enqueue_sequence = ++lastTaskSequence;
     taskQueues[TaskClassIndex(ClassifyTask(task.type))].push(std::move(task));
 }
 
@@ -221,6 +226,7 @@ Task TakeNextTaskLocked()
         {
             heads[i].has_task = true;
             heads[i].wait_ms = QueueWaitMilliseconds(taskQueues[i].front());
+            heads[i].enqueue_sequence = taskQueues[i].front().enqueue_sequence;
         }
     }
     std::queue<Task> &queue = taskQueues[TaskClassIndex(NextTaskClass(heads))];
@@ -383,6 +389,11 @@ void WorkerThread()
             ApplyUiLessFromPacket(namedpipeData);
         }
 
+        const TaskClass task_class = ClassifyTask(task.type);
+        // Microsoft's scheduling guidance: the thread that processes user input
+        // should run at Above normal. Only boost Foreground tasks; UserAction /
+        // Enrichment / Maintenance keep the process's Normal class.
+        ThreadPriority::ScopedBoost foreground_boost(THREAD_PRIORITY_ABOVE_NORMAL, NeedsInputPriorityBoost(task_class));
         switch (task.type)
         {
         case TaskType::ShowCandidate: {
@@ -467,8 +478,8 @@ void WorkerThread()
                 // 只记类别、请求标识和等待时长：按键内容、候选和文本一律不进诊断日志。
                 DIAG_LOGF(L"[key-latency] side=server stage=queue class={} request={} client={} epoch={} "
                           L"elapsed_ms={:.3f}",
-                          TaskClassName(ClassifyTask(task.type)), task.pipe_data.request_id, task.client_id,
-                          task.activation_epoch, queue_elapsed_ms);
+                          TaskClassName(task_class), task.pipe_data.request_id, task.client_id, task.activation_epoch,
+                          queue_elapsed_ms);
             }
             // 顶字后第 4 码丢失的定位探针：DLL 侧 keydown-sent 已确认发出，若这里没打出来，
             // 说明任务根本没进队列（reader 未收到/未入队）；打出来了但组合没变，才是 HandleImeKey 内部问题。
@@ -792,12 +803,19 @@ void WorkerThread()
             }
             if (item.source == CandidateSource::QuickPhrase || item.source == CandidateSource::Emoji ||
                 item.source == CandidateSource::Kaomoji || item.source == CandidateSource::Symbol ||
-                item.source == CandidateSource::Generated)
+                item.source == CandidateSource::Generated || item.latin_word)
             {
                 break;
             }
             // 日文候选没有拼音词库的行：置顶会按罗马音键写进拼音日志，升级回放时变成中文候选（#869）。
             if (task.type == TaskType::UiPinCandidate && item.scheme == SchemeType::JapaneseRomaji)
+            {
+                break;
+            }
+            // 长词前缀补全（#1343）的键比首选长：置顶会拿同页别的键的权重当阶梯，固定位置会把它钉在首选的
+            // 输入下面，下次首选换了它还占着那一格。删除照常，按它自己的完整读音删。
+            if (item.prefix_completion &&
+                (task.type == TaskType::UiPinCandidate || task.type == TaskType::UiFixCandidatePosition))
             {
                 break;
             }
@@ -1250,6 +1268,28 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
     });
 }
 
+void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,
+                                 uint64_t activation_epoch)
+{
+    static FanyImeIpc::SelectionRankingReplayGuard replay_guard;
+    if (!replay_guard.should_apply(std::string("b\x1f") + key + '\x1f' + word, client_id, activation_epoch,
+                                   GetTickCount64()))
+    {
+        return;
+    }
+    if (GetConfiguredFrequencyAdjustment().mode == "disabled")
+    {
+        return;
+    }
+    DictionaryWriter().Post([key, word] {
+        if (user_dictionary::bump_pinyin_weight(CommonUtils::get_ime_data_path() + "\\msime.db",
+                                                user_dictionary::default_user_db_path(), key, word))
+        {
+            EnqueueResetInputSessionCacheTask();
+        }
+    });
+}
+
 // 快捷短语每次都现查，不进引擎的候选缓存，写完不用清缓存。
 void EnqueueLearnQuickPhraseOrderTask(const std::string &code, const std::string &word, bool first_in_group,
                                       int ordinary_rank, uint64_t client_id, uint64_t activation_epoch)
@@ -1419,10 +1459,11 @@ void EnqueueCandidateUiPaging(CandidateUiAction action, int steps)
         // One notch of the wheel is one step, and every step can hit the engine
         // and the user dictionary. Folding a burst into the task already waiting
         // for the same page keeps a fast scroll from queueing an unbounded run.
-        // 合并只看同类队列的队尾：队列分成四条之后，全队列的最新一格可能是别的类别。
+        // Merge only consecutive posts. An intervening user action needs its own position in the order.
         std::queue<Task> &queue = TaskQueueFor(type);
         if (!queue.empty() && queue.back().type == type && queue.back().client_id == owner.client_id &&
-            queue.back().activation_epoch == owner.activation_epoch)
+            queue.back().activation_epoch == owner.activation_epoch &&
+            queue.back().enqueue_sequence == lastTaskSequence)
         {
             queue.back().page_steps += steps;
         }
@@ -1476,10 +1517,11 @@ void EnqueueCandidateUiExpand()
     }
     {
         std::lock_guard lock(queueMutex);
-        // 连续滚到底部只需要展开一次。同样只看它自己那类队列的队尾。
+        // Coalesce only consecutive posts. A later key can change the candidate page.
         std::queue<Task> &queue = TaskQueueFor(TaskType::UiExpandCandidates);
         if (!queue.empty() && queue.back().type == TaskType::UiExpandCandidates &&
-            queue.back().client_id == owner.client_id && queue.back().activation_epoch == owner.activation_epoch)
+            queue.back().client_id == owner.client_id && queue.back().activation_epoch == owner.activation_epoch &&
+            queue.back().enqueue_sequence == lastTaskSequence)
         {
             return;
         }

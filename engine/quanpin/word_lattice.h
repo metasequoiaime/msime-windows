@@ -160,6 +160,9 @@ struct WordLatticeOptions
     // 调用方已经按同一套打分解出来的 n-best（双拼直接辅助码的解析器选切分时顺带解出了最优整句）。
     // 非空时 merge_lattice_candidates 直接用它，不再重解一遍，其余合并逻辑不变。全拼从不设置。
     std::vector<LatticePath> precomputed_paths;
+    // 切分里有 t、k 这类单字母段、且它们都能被字母词（latin_words）覆盖时由调用方置位：
+    // merge_lattice_candidates 平时只接受全是完整音节的切分，置位后也解这条切分。
+    bool allow_latin_segments = false;
 };
 
 // Optional second opinion on the decoded n-best, applied before the paths become candidates.

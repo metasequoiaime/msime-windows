@@ -16,6 +16,11 @@
         "settings"
       ]
     },
+    "openLogDirectory": {
+      "surfaces": [
+        "settings"
+      ]
+    },
     "openHelpcodeDirectory": {
       "surfaces": [
         "settings"
@@ -131,6 +136,34 @@
       "surfaces": [
         "settings"
       ]
+    },
+    "userDataBackupRequest": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "export",
+              "import"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "includeModels": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action",
+          "path"
+        ],
+        "additionalProperties": false
+      }
     },
     "copyText": {
       "surfaces": [
@@ -414,7 +447,8 @@
               "quanpin",
               "wubi",
               "english",
-              "quick"
+              "quick",
+              "latin"
             ]
           },
           "action": {
@@ -1120,6 +1154,29 @@
       },
       "required": [
         "ok"
+      ],
+      "additionalProperties": false
+    },
+    "userDataBackupDone": {
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "export",
+            "import"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "ok",
+        "message"
       ],
       "additionalProperties": false
     },

@@ -10,6 +10,8 @@
 #include "../core/sentence_association_options.h"
 #include "../neural/neural_decoder.h"
 #include "lattice_rerank.h"
+#include "latin_words.h"
+#include "prefix_completion.h"
 #include "quanpin_query.h"
 #include "engine/ngram/language_model.h"
 #include "engine/ngram/octagram/octagram_gram.h"
@@ -94,6 +96,9 @@ class QuanpinDictionary
 
     // 设置整句候选来源与去重补位选项。值发生变化时清一次缓存，避免旧候选被继续复用。
     void set_sentence_association(const SentenceAssociationOptions &options);
+    // 长词前缀补全（#1343）的开关，随每次查询下发。补全在 query() 末尾现插，不进任何候选缓存，开关变了
+    // 不必清；打分用的万象模型换了路径时重新解析，按前缀缓存的补全排序作废。
+    void set_prefix_completion(const metasequoia::PrefixCompletionOptions &options);
 
     // 光标前已上屏的文本，作为神经重排给模型看的上下文。宿主能拿到应用里的前文就给它，
     // 拿不到就不设——空上下文照样能排，只是模型只看句子本身、看不到上文。
@@ -179,6 +184,13 @@ class QuanpinDictionary
     // 直查逐行相同；随 reset_cache 清空（词库被写或换了开关时）。with_fuzzy 为假时不收模糊读音，
     // 见 lattice_best_path。
     quanpin::WordLatticeLookup lattice_lookup(int limit, bool with_fuzzy = true);
+    // 字母词表，第一次用到时从 db_ 载入，词库被写过后重读（见 quanpin::refresh_latin_words）。
+    // 调用方按值拿着用完：重读换掉的旧表要等手上这份放掉才释放。
+    std::shared_ptr<const quanpin::LatinWords> latin_words();
+    // 打出的字母串整串等于某个字母词的编码时把它插进候选，三个字母起再补两条以它开头的更长的词
+    // （txu 补 T恤衫）。排位见 quanpin::insert_latin_candidates。
+    void insert_latin_words(std::vector<WordItem> &result, const std::string &raw_input,
+                            const quanpin::Segments &segments, const std::string &code_for_selection);
     void set_fuzzy_pinyin(metasequoia::FuzzyPinyinOptions options);
     bool user_prefers_reading(const std::string &key);
     static void append_unique_words(std::vector<WordItem> &result, const std::vector<WordItem> &extra);
@@ -225,6 +237,17 @@ class QuanpinDictionary
     // 多音单字各读音的权重和，词格第一次查跨度时载入，此后不随 reset_cache 重载。
     // 见 quanpin::load_char_reading_totals。
     std::shared_ptr<const quanpin::CharReadingTotals> char_reading_totals_;
+    // 见 latin_words()。reset_cache 只置 stale，下次用到时重读（设置页加的字母词由此生效）。
+    std::shared_ptr<const quanpin::LatinWords> latin_words_;
+    bool latin_words_stale_ = false;
+    sqlite3_int64 latin_words_version_ = -1;
+    // 见 set_prefix_completion。缓存按前缀存打过分的补全，随 reset_cache 清（调频改了权重）。
+    metasequoia::PrefixCompletionOptions prefix_completion_;
+    quanpin::PrefixCompletionCache prefix_completion_cache_;
+    // 补全打分用的万象模型，路径来自 prefix_completion_.collocation_model（与整句加成的 collocation_db_
+    // 分开：整句加成关着时补全照样用它）。进程内按路径共享映射，不重复占内存。
+    std::shared_ptr<const gram::GramDb> prefix_completion_gram_;
+    quanpin::PrefixCompletionScorers prefix_completion_scorers();
     sqlite3 *db_ = nullptr;
     sqlite3_int64 data_version_ = -1;
     metasequoia::RuntimePaths paths_;

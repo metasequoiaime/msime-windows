@@ -271,7 +271,15 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         // 日文候选的键是罗马音，不在拼音词库里：调频、造词、云候选落库都会把它当拼音键写进日志，
         // 升级回放时日文词就成了中文候选（#869）。日文候选一律不往拼音词库写。
         const bool japanese_candidate = curWordItem.scheme == SchemeType::JapaneseRomaji;
-        isNeedUpdateWeight = !japanese_candidate && (mid_sentence_ranking || !is_first_page_first);
+        // 字母词（T恤）也不调频：拼音分表里没有它的行，调频改不到，只会白记选择计数（#1340）。
+        // 长词前缀补全（#1343）的键比首选长，和同页候选不是一个读音，不按排位挪位置，选中时只在它自己的
+        // 键下加权（见下面 EnqueueBumpPinyinWeightTask）。
+        isNeedUpdateWeight = !japanese_candidate && !curWordItem.latin_word && !curWordItem.prefix_completion &&
+                             (mid_sentence_ranking || !is_first_page_first);
+        if (curWordItem.prefix_completion && !curWordItem.canonical_pinyin.empty())
+        {
+            EnqueueBumpPinyinWeightTask(curWordItem.canonical_pinyin, curWordItem.word, client_id, activation_epoch);
+        }
         // 首词命中率（任务 10-14-stats-first-word-hit-rate）：所有真正上屏的中文候选提交在这里
         // 计一次分母，首选（第 1 页第 1 位，即 is_first_page_first）同时 +1 分子。英文模式、
         // 临时日语与合成候选（表情/颜文字/日期格式/U 模式/译文页）按 CountsTowardFirstWordSelection

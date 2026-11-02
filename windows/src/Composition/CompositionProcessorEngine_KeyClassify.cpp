@@ -103,6 +103,31 @@ bool IsJapaneseKeyMode(const WCHAR *raw, DWORD_PTR length)
                                             GetTemporaryJapanesePolicy(), raw, static_cast<std::size_t>(length));
 }
 
+// 直接辅助码下用引导键进入末尾辅助码（UsesDirectHelpcodeEndTrigger）：输入末尾形状合适的引导键（Server 发来的
+// 反引号、分号），以及删掉它留下的末尾段开头的退格（Ctrl/Alt 组合不在这里，Ctrl+Backspace 仍按单元删）。两者
+// 都由 Server 改写输入串并回 CompositionRestored；改写不了时 Server 照旧把引导键当标点回帧。发送时打上
+// FanyImePipeFlags::DirectHelpcodeEndTriggerRewrite，Server 以这个标记为准（见 KeyEventSink.cpp）。分号先让给
+// ing 韵母，日语模式不收。
+bool IsDirectHelpcodeEndTriggerRewriteKeyAt(UINT uCode, WCHAR wch, const WCHAR *buffer, DWORD_PTR length,
+                                            DWORD_PTR caret)
+{
+    if (buffer == nullptr || length == 0 || !UsesDirectHelpcodeEndTrigger() || IsJapaneseKeyMode(buffer, length))
+    {
+        return false;
+    }
+    const std::size_t size = static_cast<std::size_t>(length);
+    const std::size_t at = static_cast<std::size_t>(min(caret, length));
+    if (uCode == VK_BACK)
+    {
+        return FanyImeDirectHelpcode::IsEndTriggerBackspaceAt(buffer, size, at);
+    }
+    const unsigned keys = Global::DirectHelpcodeEndTriggerKeys.load(std::memory_order_relaxed);
+    const bool backtick = uCode == VK_OEM_3 && wch == L'`' && (keys & FanyImeEndHelpcode::kBacktick) != 0;
+    const bool semicolon = uCode == VK_OEM_1 && wch == L';' && (keys & FanyImeEndHelpcode::kSemicolon) != 0 &&
+                           !IsMicrosoftShuangpinIngKeyAt(uCode, wch, buffer, length, caret);
+    return (backtick || semicolon) && FanyImeDirectHelpcode::AcceptsEndTriggerAt(buffer, size, at);
+}
+
 bool IsJapaneseLongVowelKey(UINT uCode, WCHAR wch, const WCHAR *raw, DWORD_PTR length)
 {
     return ClassifyJapaneseKey(uCode, wch, 0, Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed),
@@ -362,6 +387,17 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
         {
             pKeyState->Category = CATEGORY_COMPOSING;
             pKeyState->Function = FUNCTION_INPUT;
+        }
+        return TRUE;
+    }
+
+    if (IsDirectHelpcodeEndTriggerRewriteKeyAt(uCode, pwch ? *pwch : 0, _keystrokeBuffer.Get(),
+                                               _keystrokeBuffer.GetLength(), _caretPosition))
+    {
+        if (pKeyState)
+        {
+            pKeyState->Category = CATEGORY_COMPOSING;
+            pKeyState->Function = FUNCTION_SERVER_COMPOSITION_REWRITE;
         }
         return TRUE;
     }
@@ -928,6 +964,12 @@ bool CCompositionProcessorEngine::IsVModeInputKey(WCHAR wch, const WCHAR *buffer
     return buffer != nullptr && FanyImeVModeInput::AcceptsAt(buffer, static_cast<std::size_t>(length),
                                                              static_cast<std::size_t>(min(caret, length)), wch,
                                                              Global::VModeTrigger.load(std::memory_order_relaxed));
+}
+
+bool CCompositionProcessorEngine::IsDirectHelpcodeEndTriggerRewriteKey(UINT uCode, WCHAR wch, const WCHAR *buffer,
+                                                                       DWORD_PTR length, DWORD_PTR caret)
+{
+    return IsDirectHelpcodeEndTriggerRewriteKeyAt(uCode, wch, buffer, length, caret);
 }
 
 // 分号触发的句中辅助码段在按键缓冲里记成反引号，末尾辅助码（间接）的触发键记成 kEndMarker，与 Server 的

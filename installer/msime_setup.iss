@@ -1101,6 +1101,46 @@ begin
       IntToStr(ResultCode) + '）。');
 end;
 
+{ 登录任务的 Priority 默认是 7（Below normal），watchdog 和它拉起的 Server 会一起被降级；
+  任务还会默认在电池上不启动/被停止，并在 72 小时后强制结束。schtasks /Create 没有这些参数，
+  这里用 Set-ScheduledTask 补齐并读回校验。配置失败必须让安装明确失败，不能静默留下旧设置。}
+procedure ConfigureWatchdogLogonTask;
+var
+  Script: String;
+  Params: String;
+  ResultCode: Integer;
+begin
+  ResultCode := -1;
+  Script :=
+    '$ErrorActionPreference=''Stop''; ' +
+    '$n=''{#MyWatchdogTaskName}''; ' +
+    '$s=(Get-ScheduledTask -TaskName $n).Settings; ' +
+    '$s.Priority=4; ' +
+    '$s.DisallowStartIfOnBatteries=$false; ' +
+    '$s.StopIfGoingOnBatteries=$false; ' +
+    '$s.ExecutionTimeLimit=''PT0S''; ' +
+    'Set-ScheduledTask -TaskName $n -Settings $s | Out-Null; ' +
+    '$c=(Get-ScheduledTask -TaskName $n).Settings; ' +
+    'if ($c.Priority -ne 4 -or $c.DisallowStartIfOnBatteries -or ' +
+    '$c.StopIfGoingOnBatteries -or $c.ExecutionTimeLimit -ne ''PT0S'') ' +
+    '{ exit 1 }';
+  Params := '-NoProfile -NonInteractive -Command "' + Script + '"';
+  if
+    (not Exec(
+      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Params,
+      '',
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode
+    )) or
+    (ResultCode <> 0)
+  then
+    RaiseException(
+      '无法配置输入法登录任务（退出码：' +
+      IntToStr(ResultCode) + '）。');
+end;
+
 procedure TryDeleteTree(const Path: String);
 begin
   { 忽略返回值：被占用文件保留，其他能删除的文件仍继续清理。}
@@ -1818,6 +1858,7 @@ procedure CurStepChanged(CurStep: TSetupStep);begin
     ReplayUserDictionary;
 #endif
     CreateWatchdogLogonTask;
+    ConfigureWatchdogLogonTask;
     EnsureImeUserDataDir;
     { Keep the old autostart intact until its scheduled-task replacement has
       been created successfully, then remove the Explorer-delayed Run entry. }

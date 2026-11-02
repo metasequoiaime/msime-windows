@@ -37,6 +37,8 @@ Issue 已经逐条核过并按可接手程度打了标签，可以直接筛：
 
 **要动代码的话，本仓的环境要求、从源码构建、打包和提交前检查全部写在 [CONTRIBUTING.md](CONTRIBUTING.md) 里。**
 
+输入引擎、词库和其他平台的源码都在主仓库 [metasequoiaime/msime](https://github.com/metasequoiaime/msime)，Windows 版的改动如果涉及共享引擎，也请在那里提 issue。
+
 ## 文档
 
 - [功能说明](docs/features.md)：功能简介、各功能的用法与软件截图

@@ -5,6 +5,7 @@ export type ClientMessage =
   | { "type": "configRequest"; "protocolVersion"?: 1 }
   | { "type": "skinCatalogRequest"; "protocolVersion"?: 1 }
   | { "type": "openSkinDirectory"; "protocolVersion"?: 1 }
+  | { "type": "openLogDirectory"; "protocolVersion"?: 1 }
   | { "type": "openHelpcodeDirectory"; "protocolVersion"?: 1 }
   | { "type": "openShuangpinDirectory"; "protocolVersion"?: 1 }
   | { "type": "collocationModelDownload"; "protocolVersion"?: 1; "data": { "modelId": string } }
@@ -21,6 +22,7 @@ export type ClientMessage =
   | { "type": "latticeModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "openHandwritingPanel"; "protocolVersion"?: 1 }
   | { "type": "restartServer"; "protocolVersion"?: 1 }
+  | { "type": "userDataBackupRequest"; "protocolVersion"?: 1; "data": { "action": "export" | "import"; "path": string; "includeModels"?: boolean } }
   | { "type": "copyText"; "protocolVersion"?: 1; "data": string }
   | { "type": "openExternalUrl"; "protocolVersion"?: 1; "data": string }
   | { "type": "dragStart"; "protocolVersion"?: 1 }
@@ -33,7 +35,7 @@ export type ClientMessage =
   | { "type": "apiCredentialTest"; "protocolVersion"?: 1; "data": { "requestId": string; "service": "translation.tencent" | "translation.aliyun" | "translation.niutrans" | "translation.custom" | "translation.ai" | "voice.asr" | "voice.polish" | "ai.assistant"; "config": { [key: string]: unknown } } }
   | { "type": "apiModelList"; "protocolVersion"?: 1; "data": { "requestId": string; "service": "ai.assistant" | "voice.asr" | "voice.polish"; "config": { [key: string]: unknown } } }
   | { "type": "aiProviderSync"; "protocolVersion"?: 1; "data": { "requestId": string; "entries": Array<{ "id": string; "name": string; "endpoint": string; "token": string; "model": string }> } }
-  | { "type": "dictionaryRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "dictionary": "quanpin" | "wubi" | "english" | "quick"; "action": "query" | "create" | "update" | "delete" | "import" | "importHans" | "export"; "word"?: string; "code"?: string; "content"?: string; "weight"?: number; "oldWord"?: string; "oldCode"?: string; "display"?: string; "oldDisplay"?: string; "offset"?: number; "limit"?: number } }
+  | { "type": "dictionaryRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "dictionary": "quanpin" | "wubi" | "english" | "quick" | "latin"; "action": "query" | "create" | "update" | "delete" | "import" | "importHans" | "export"; "word"?: string; "code"?: string; "content"?: string; "weight"?: number; "oldWord"?: string; "oldCode"?: string; "display"?: string; "oldDisplay"?: string; "offset"?: number; "limit"?: number } }
   | { "type": "statsRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "overview" | "clearAll" | "openDirectory" } }
   | { "type": "defaultImeRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "setDefault" | "openSystemSettings" } }
   | { "type": "gameCompatRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "apply"; "enabled"?: boolean; "name"?: string } }
@@ -79,12 +81,14 @@ export type ServerMessage =
   | { "type": "apiModelListResult"; "protocolVersion"?: 1; "requestId": string; "ok": boolean; "message": string; "models"?: Array<string> }
   | { "type": "aiProviderSyncResult"; "protocolVersion"?: 1; "requestId": string; "ok": boolean; "message": string }
   | { "type": "restartServerDone"; "protocolVersion"?: 1; "ok": boolean }
+  | { "type": "userDataBackupDone"; "protocolVersion"?: 1; "action": "export" | "import"; "ok": boolean; "message": string }
   | { "type": "dictionaryResponse"; "protocolVersion"?: 1; "requestId": string; "action"?: string; "dictionary"?: string; "ok": boolean; "message": string; "rows": Array<{ "word": string; "code"?: string; "display"?: string; "weight"?: number }>; "content"?: string; "filename"?: string; "offset"?: number; "hasMore"?: boolean; [key: string]: unknown }
   | { "type": "statsResponse"; "protocolVersion"?: 1; "requestId": string; "action": string; "ok": boolean; "message": string; "overview"?: { "hasData": boolean; "firstDayKey": number; "lastDayKey": number; "days": number; "totalChars": number; "totalActiveMs": number; "todayDayKey": number; "todayChars": number; "todayActiveMs": number; "averagePerDay": number; "currentStreak": number; "longestStreak": number; "bestDayKey": number; "bestDayChars": number; "todaySpeed": number; "averageSpeed": number; "fastestSpeed": number; "fastestDayKey": number; "todayFirstWordRatio": number | null; "totalFirstWordRatio": number | null; "todayFirstWordTotal": number; "categories": { "cjk": number; "latin": number; "digit": number; "punct": number; "other": number }; "todayHourly": Array<number>; "daily": Array<{ "dayKey": number; "cjk": number; "latin": number; "digit": number; "punct": number; "other": number; "activeMs": number; "firstWordHits": number; "firstWordTotal": number }> }; "removedDays"?: number; [key: string]: unknown };
 export type SettingsMessage =
   | { "type": "configRequest"; "protocolVersion"?: 1 }
   | { "type": "skinCatalogRequest"; "protocolVersion"?: 1 }
   | { "type": "openSkinDirectory"; "protocolVersion"?: 1 }
+  | { "type": "openLogDirectory"; "protocolVersion"?: 1 }
   | { "type": "openHelpcodeDirectory"; "protocolVersion"?: 1 }
   | { "type": "openShuangpinDirectory"; "protocolVersion"?: 1 }
   | { "type": "collocationModelDownload"; "protocolVersion"?: 1; "data": { "modelId": string } }
@@ -101,6 +105,7 @@ export type SettingsMessage =
   | { "type": "latticeModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "openHandwritingPanel"; "protocolVersion"?: 1 }
   | { "type": "restartServer"; "protocolVersion"?: 1 }
+  | { "type": "userDataBackupRequest"; "protocolVersion"?: 1; "data": { "action": "export" | "import"; "path": string; "includeModels"?: boolean } }
   | { "type": "copyText"; "protocolVersion"?: 1; "data": string }
   | { "type": "openExternalUrl"; "protocolVersion"?: 1; "data": string }
   | { "type": "dragStart"; "protocolVersion"?: 1 }
@@ -113,7 +118,7 @@ export type SettingsMessage =
   | { "type": "apiCredentialTest"; "protocolVersion"?: 1; "data": { "requestId": string; "service": "translation.tencent" | "translation.aliyun" | "translation.niutrans" | "translation.custom" | "translation.ai" | "voice.asr" | "voice.polish" | "ai.assistant"; "config": { [key: string]: unknown } } }
   | { "type": "apiModelList"; "protocolVersion"?: 1; "data": { "requestId": string; "service": "ai.assistant" | "voice.asr" | "voice.polish"; "config": { [key: string]: unknown } } }
   | { "type": "aiProviderSync"; "protocolVersion"?: 1; "data": { "requestId": string; "entries": Array<{ "id": string; "name": string; "endpoint": string; "token": string; "model": string }> } }
-  | { "type": "dictionaryRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "dictionary": "quanpin" | "wubi" | "english" | "quick"; "action": "query" | "create" | "update" | "delete" | "import" | "importHans" | "export"; "word"?: string; "code"?: string; "content"?: string; "weight"?: number; "oldWord"?: string; "oldCode"?: string; "display"?: string; "oldDisplay"?: string; "offset"?: number; "limit"?: number } }
+  | { "type": "dictionaryRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "dictionary": "quanpin" | "wubi" | "english" | "quick" | "latin"; "action": "query" | "create" | "update" | "delete" | "import" | "importHans" | "export"; "word"?: string; "code"?: string; "content"?: string; "weight"?: number; "oldWord"?: string; "oldCode"?: string; "display"?: string; "oldDisplay"?: string; "offset"?: number; "limit"?: number } }
   | { "type": "statsRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "overview" | "clearAll" | "openDirectory" } }
   | { "type": "defaultImeRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "setDefault" | "openSystemSettings" } }
   | { "type": "gameCompatRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "apply"; "enabled"?: boolean; "name"?: string } }

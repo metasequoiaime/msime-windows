@@ -33,6 +33,10 @@ AiAssistant::Request g_latest;
 std::chrono::steady_clock::time_point g_last_input;
 AiAssistant::ApplyCallback g_callback;
 AiAssistant::detail::SuggestionCache g_candidate_cache;
+#if defined(MSIME_AI_ASSISTANT_TEST)
+// Tests set this hook before Start and clear it after Stop.
+std::function<void(const std::string &)> g_after_fetch_hook;
+#endif
 
 std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev::Client &jev_client)
 {
@@ -43,7 +47,7 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
     const bool token_missing =
         token.empty() && config.provider != "jev" && AiAssistant::ProviderUsesToken(config.provider);
     if (!config.enabled || token_missing || config.endpoint.empty() || config.model.empty() ||
-        request.pinyin_segments.empty() || g_generation.load() != generation)
+        request.pinyin_segments.empty() || !g_running || g_generation.load() != generation)
     {
         (void)0;
         return {};
@@ -61,6 +65,8 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
             const auto response = jev_client.Fetch(config.endpoint, config.token, body.dump(), [generation] {
                 return !g_running || g_generation.load() != generation;
             });
+            if (!g_running || g_generation.load() != generation)
+                return {};
             return response ? Jev::ParseChoice(*response, request.candidates) : std::string{};
         }
         catch (const std::exception &)
@@ -69,9 +75,10 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
         }
     }
     const nlohmann::json body = AiAssistant::detail::BuildRequestBody(request);
-    const auto fetched = ChatCompletions::FetchContent(config.endpoint, token, body.dump(),
-                                                       AiAssistant::detail::RequestTimeoutMs(config));
-    if (g_generation.load() != generation)
+    const auto fetched = ChatCompletions::FetchContent(
+        config.endpoint, token, body.dump(), AiAssistant::detail::RequestTimeoutMs(config),
+        [generation] { return !g_running || g_generation.load() != generation; });
+    if (!g_running || g_generation.load() != generation || fetched.failure == ChatCompletions::Failure::Cancelled)
         return {};
     if (!fetched.content)
     {
@@ -89,15 +96,15 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation, Jev:
         spdlog::warn("AI 联想回复无法解析 model={} {}", config.model, AiAssistant::detail::DescribeReplyFailure(reply));
         return {};
     }
-    if (g_generation.load() != generation)
+    if (!g_running || g_generation.load() != generation)
         return {};
     return reply.candidate;
 }
 
-void WorkerLoop()
+// observed 从 Start 时的代数开始：上一轮 Stop 之前留下的输入不属于这个 Worker。
+void WorkerLoop(uint64_t observed)
 {
     Jev::Client jev_client;
-    uint64_t observed = 0;
     while (g_running)
     {
         std::unique_lock lock(g_mutex);
@@ -130,10 +137,17 @@ void WorkerLoop()
         if (request.identity.empty())
             continue;
         const std::string candidate = Fetch(request, observed, jev_client);
-        if (!candidate.empty() && g_generation.load() == observed && g_callback)
+#if defined(MSIME_AI_ASSISTANT_TEST)
+        if (g_after_fetch_hook)
+            g_after_fetch_hook(candidate);
+#endif
+        if (!candidate.empty() && g_callback)
         {
             {
+                // 过期的结果不进缓存。回调之后代数仍可能变化，消费方按 observed 自行过滤。
                 std::lock_guard cache_lock(g_mutex);
+                if (!g_running || g_generation.load() != observed)
+                    continue;
                 g_candidate_cache.Store(AiAssistant::detail::BuildSuggestionCacheKey(request), candidate);
             }
             (void)0;
@@ -152,7 +166,7 @@ void Start(ApplyCallback callback)
     curl_global_init(CURL_GLOBAL_DEFAULT);
     g_callback = std::move(callback);
     g_running = true;
-    g_worker = std::thread(WorkerLoop);
+    g_worker = std::thread(WorkerLoop, g_generation.load());
 }
 void Stop()
 {
@@ -164,6 +178,7 @@ void Stop()
         g_worker.join();
     {
         std::lock_guard lock(g_mutex);
+        g_latest = {};
         g_candidate_cache.Clear();
     }
     curl_global_cleanup();
@@ -183,4 +198,13 @@ void Clear()
 {
     OnInputChanged({});
 }
+#if defined(MSIME_AI_ASSISTANT_TEST)
+namespace testing
+{
+void SetAfterFetchHook(std::function<void(const std::string &)> hook)
+{
+    g_after_fetch_hook = std::move(hook);
+}
+} // namespace testing
+#endif
 } // namespace AiAssistant

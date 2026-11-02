@@ -1,4 +1,5 @@
 #include "word_lattice.h"
+#include "latin_words.h"
 
 #include <algorithm>
 #include <cmath>
@@ -498,13 +499,17 @@ void merge_lattice_candidates(std::vector<WordItem> &candidates, const Segments 
 {
     if (!lookup || syllables.size() < 2)
         return;
-    if (!has_only_complete_pinyin_segments(syllables))
+    if (!options.allow_latin_segments && !has_only_complete_pinyin_segments(syllables))
         return;
 
     auto paths =
         options.precomputed_paths.empty() ? decode_word_lattice(syllables, lookup, options) : options.precomputed_paths;
     if (paths.empty())
         return;
+    // 神经模型的字表里没有拉丁字母，含字母词的句子在它看来是一串 <unk>：碰上 AA制 和「啊啊制」
+    // 这种比分它几乎一定挑纯汉字那句。词格自己的首选就含字母词时不请它重排，按词格的顺序。
+    static const std::vector<SourcedLatticeReranker> kNoRerankers;
+    const auto &active_rerankers = contains_latin_letter(paths.front().sentence) ? kNoRerankers : rerankers;
 
     // n-best 是解码的中间产物，不是要给用户看的东西：整个 n-best 铺出来，候选区会被一批
     // 只差一个字的整句占满。这里只留各来源的首选，n-best 的其余部分仅供重排挑选。
@@ -514,7 +519,7 @@ void merge_lattice_candidates(std::vector<WordItem> &candidates, const Segments 
     std::optional<std::vector<LatticePath>> keyboard_paths;
     std::vector<std::pair<std::vector<LatticePath>, CandidateSource>> other_ranked_sources;
     bool keyboard_enabled = false;
-    for (const SourcedLatticeReranker &entry : rerankers)
+    for (const SourcedLatticeReranker &entry : active_rerankers)
     {
         if (entry.source == CandidateSource::NeuralKeyboard)
             keyboard_enabled = true;

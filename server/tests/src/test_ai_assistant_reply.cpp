@@ -74,9 +74,9 @@ TEST_CASE(ai_reply_collapses_newlines_in_the_preview)
 TEST_CASE(chat_failure_descriptions_name_the_cause)
 {
     // 每种原因都要有一句独立的说法，不能都退化到同一句「失败」。
-    const std::vector<Failure> failures{Failure::Request,   Failure::Network,     Failure::Status,
-                                        Failure::Timeout,   Failure::TooLarge,    Failure::InvalidJson,
-                                        Failure::NoContent, Failure::EmptyContent};
+    const std::vector<Failure> failures{Failure::Request,     Failure::Network,   Failure::Status,
+                                        Failure::Timeout,     Failure::Cancelled, Failure::TooLarge,
+                                        Failure::InvalidJson, Failure::NoContent, Failure::EmptyContent};
     std::vector<std::string> descriptions;
     for (const auto failure : failures)
     {

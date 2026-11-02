@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -169,6 +170,82 @@ def read_wanxiang(path: Path) -> tuple[list[tuple[str, str, int]], int, int]:
     if not in_body:
         raise ValueError(f"{path}: 没有 `...`，不是 Rime 词库")
     return rows, defaulted, skipped
+
+
+# ---- 字母词 ----
+
+# 万象 mixed 里「拉丁字母 + 汉字」的词（T恤、AA制、卡拉OK）。全拼表读它时整条跳过（读音不是全拼），这里单独建表：
+# 每个字母自成一段，T恤 记成 t'xu、卡拉OK 记成 ka'la'o'k，引擎按打出的字母串整串或前缀匹配，再交给词格组句。
+# 不进 tbl_*：放进去简拼 tx 会冒出 T恤，i、u、v 开头的词也没有分表可放。
+LATIN_WORDS = f"{WANXIANG}/mixed.dict.yaml"
+CREATE_LATIN_WORDS = (
+    '\n            CREATE TABLE latin_words (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
+    '                "weight" INTEGER NOT NULL,\n                "exact_only" INTEGER NOT NULL DEFAULT 0,\n'
+    '                PRIMARY KEY ("key", "value")\n            ) WITHOUT ROWID\n            '
+)
+_LATIN_WORD = re.compile(r"[A-Za-z一-鿿]+\Z")
+_LATIN_RUN = re.compile(r"[A-Za-z]+")
+# 车牌（川A、浙E）占了 mixed 的三成。收进来，但标成 exact_only：只在整串正好是它时单独出候选，不补全、
+# 不进整句——浙E 的 zhe'e 全是完整音节，进了词格会混进普通整句（就浙E养），补全会让 zhe 冒出一串车牌。
+_LICENSE_PLATE = re.compile(r"[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-Z]\Z")
+
+
+def read_latin_words(path: Path) -> tuple[list[tuple[str, str, int, int]], int]:
+    """mixed.dict.yaml 里只含拉丁字母与基本区汉字、两样都有的词。返回 ([(键, 词, 权重, exact_only)], 跳过的行数)。
+
+    读音里与词中字母串原样相同的段是字母（`kǎ'lā'OK` 的 OK），其余是带调拼音、一个汉字一段。带数字、符号的词
+    （3C认证、USB-C）和读音对不上字数的行不收；车牌收，exact_only 记 1。mixed 没有权重列：按文件顺序给递减的权重，
+    同码的词保持万象的先后。
+    """
+    convert = _toneless()
+    entries: list[tuple[str, str, int]] = []
+    skipped = 0
+    in_body = False
+    for line in textutil.universal_lines(textutil.without_bom(textutil.read(path))):
+        if not in_body:
+            in_body = line.strip() == "..."
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        fields = line.split("\t")
+        value = fields[0].strip()
+        reading = fields[1].strip() if len(fields) > 1 else ""
+        if not _LATIN_WORD.match(value) or not _LATIN_RUN.search(value) or _LATIN_RUN.fullmatch(value) or not reading:
+            skipped += 1
+            continue
+        runs = _LATIN_RUN.findall(value)
+        syllables: list[str] = []
+        for segment in reading.replace(" ", "'").split("'"):
+            if runs and segment == runs[0]:
+                runs.pop(0)
+                continue
+            plain = convert(segment) if segment.isalpha() else ""
+            syllables.append(_ZERO_INITIAL.get(plain, plain))
+        hanzi = [c for c in value if not c.isascii()]
+        if runs or len(syllables) != len(hanzi) or not all(is_quanpin(s) for s in syllables):
+            skipped += 1
+            continue
+        readings = iter(syllables)
+        key = "'".join(c.lower() if c.isascii() else next(readings) for c in value)
+        entries.append((key, value, 1 if _LICENSE_PLATE.match(value) else 0))
+    rows, seen = [], set()
+    for order, (key, value, exact_only) in enumerate(entries):
+        if (key, value) not in seen:
+            seen.add((key, value))
+            rows.append((key, value, len(entries) - order, exact_only))
+    return rows, skipped
+
+
+def build_latin_words(connection: sqlite3.Connection, path: Path) -> str:
+    rows, skipped = read_latin_words(path)
+    with connection:
+        connection.execute("DROP TABLE IF EXISTS latin_words")
+        connection.execute(CREATE_LATIN_WORDS)
+        connection.executemany(
+            'INSERT INTO latin_words ("key", "value", "weight", "exact_only") VALUES (?, ?, ?, ?)', rows)
+    plates = sum(row[3] for row in rows)
+    return (f"{len(rows)} words ({plates} license plates offered only on an exact match), "
+            f"{skipped} lines with digits, symbols or an unmatched reading left out")
 
 
 # ---- 地名补充与自定义词条 ----

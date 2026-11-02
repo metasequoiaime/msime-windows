@@ -34,6 +34,26 @@ size_t WriteResponse(char *data, size_t size, size_t count, void *user)
     return bytes;
 }
 
+bool IsCancelled(const std::function<bool()> &cancelled) noexcept
+{
+    if (!cancelled)
+        return false;
+    try
+    {
+        return cancelled();
+    }
+    catch (...)
+    {
+        // Treat a failed check as cancellation and keep libcurl's C callback safe.
+        return true;
+    }
+}
+
+int CheckCancellation(void *user, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+    return IsCancelled(*static_cast<const std::function<bool()> *>(user)) ? 1 : 0;
+}
+
 std::string Narrow(const std::wstring &wide)
 {
     if (wide.empty())
@@ -134,9 +154,15 @@ std::string CurlErrorText(CURLcode code, const char *error_buffer)
 
 namespace ChatCompletions
 {
-Result FetchContent(const std::string &endpoint, const std::string &token, const std::string &payload, long timeout_ms)
+Result FetchContent(const std::string &endpoint, const std::string &token, const std::string &payload, long timeout_ms,
+                    const std::function<bool()> &cancelled)
 {
     Result result;
+    if (IsCancelled(cancelled))
+    {
+        result.failure = Failure::Cancelled;
+        return result;
+    }
     CURL *curl = curl_easy_init();
     if (!curl)
     {
@@ -165,6 +191,12 @@ Result FetchContent(const std::string &endpoint, const std::string &token, const
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMs);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    if (cancelled)
+    {
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, CheckCancellation);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &cancelled);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    }
 
     const CURLcode performed = curl_easy_perform(curl);
     long status = 0;
@@ -172,8 +204,12 @@ Result FetchContent(const std::string &endpoint, const std::string &token, const
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
-    // 超时和过大优先于 curl 的返回码判断：中止读取时 curl 报的是写回调失败，
-    // 真正的原因是我们主动收的手，不能当成网络故障展示给用户。
+    // 先区分主动取消、超时和响应过大，再处理其他 curl 错误。
+    if (performed == CURLE_ABORTED_BY_CALLBACK || (performed == CURLE_OK && IsCancelled(cancelled)))
+    {
+        result.failure = Failure::Cancelled;
+        return result;
+    }
     if (performed == CURLE_OPERATION_TIMEDOUT)
     {
         result.failure = Failure::Timeout;
@@ -264,6 +300,9 @@ std::string DescribeFailure(Failure failure, const std::string &detail)
         break;
     case Failure::Timeout:
         text = "请求超时";
+        break;
+    case Failure::Cancelled:
+        text = "请求已取消";
         break;
     case Failure::TooLarge:
         text = "响应过大";

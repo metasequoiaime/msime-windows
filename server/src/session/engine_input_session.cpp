@@ -83,6 +83,7 @@ void EngineInputSession::ApplyConfiguration()
                                              IsConfiguredEndHelpcodeUppercaseTrigger());
     session_.set_mid_sentence_helpcode_enabled(GetConfiguredShuangpinMidSentenceHelpcodeEnabled());
     session_.set_direct_helpcode_enabled(GetConfiguredShuangpinDirectHelpcodeEnabled());
+    session_.set_direct_helpcode_end_trigger_enabled(GetConfiguredShuangpinDirectHelpcodeEndTrigger());
     session_.set_direct_helpcode_markers(GetConfiguredShuangpinDirectHelpcodeSlash(),
                                          GetConfiguredShuangpinDirectHelpcodeUppercase());
     session_.set_mid_sentence_uppercase_trigger_enabled(GetConfiguredShuangpinMidSentenceHelpcodeUppercase());
@@ -99,6 +100,13 @@ void EngineInputSession::ApplyConfiguration()
     // converted quanpin syllables for shuangpin. Re-read on every key so setting
     // changes take effect immediately.
     session_.set_fuzzy_pinyin_options(GetConfiguredFuzzyPinyinOptions());
+    // 长词前缀补全（#1343），同样每次击键重读。打分优先用设置页激活的万象等语法模型：补全和整句加成是
+    // 两件事，整句加成关着时补全照样用它（文件不在时解析为空，退到 sc.lm 与随包神经模型）。补全关着时
+    // 不解析，省一次 stat。
+    auto prefix_completion = GetConfiguredPrefixCompletionOptions();
+    if (prefix_completion.enabled)
+        prefix_completion.collocation_model = ResolveCollocationModelPath(GetConfiguredAssocSentenceCollocationModel());
+    session_.set_prefix_completion_options(prefix_completion);
     // 整句候选来源与去重补位选项，每次击键重读，改设置立即生效。
     SentenceAssociationOptions association;
     association.word_lattice = GetConfiguredAssocSentenceWordLattice();
@@ -302,6 +310,16 @@ bool EngineInputSession::accepts_direct_helpcode_slash(std::size_t caret) const
     // 同上，按当前配置判断。
     return GetConfiguredShuangpinDirectHelpcodeEnabled() && GetConfiguredShuangpinDirectHelpcodeSlash() &&
            session_.accepts_direct_helpcode_slash_at(caret);
+}
+
+std::optional<std::string> EngineInputSession::direct_helpcode_end_trigger_prefix(const std::string &typed)
+{
+    // 同上，按当前配置判断。
+    if (!IsConfiguredDirectHelpcodeEndTriggerActive())
+    {
+        return std::nullopt;
+    }
+    return session_.direct_helpcode_end_trigger_prefix(typed);
 }
 
 bool EngineInputSession::has_mid_sentence_helpcode() const

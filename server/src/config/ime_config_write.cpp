@@ -166,3 +166,11 @@ bool NotifyImeServerRestart()
     // the caller reports that instead of silently doing nothing.
     return SendAuxConfigNotification(L"RestartServer");
 }
+
+bool NotifyImeServerStopForBackup()
+{
+    // Same transport as RestartServer. Unlike a restart this is not recoverable by
+    // polling: if the pipe is unavailable the caller decides whether the Server is
+    // already gone or the import has to fail without writing anything.
+    return SendAuxConfigNotification(L"StopServerForBackup");
+}

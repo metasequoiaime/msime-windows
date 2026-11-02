@@ -101,7 +101,13 @@ enum KEYSTROKE_FUNCTION
     // Server-authoritative composition rebuild after a page-boundary minus
     // appended a literal '-' to the raw spelling. The payload is the ordinary
     // creating-word frame. Append-only, like every function above.
-    FUNCTION_APPLY_COMPOSITION_RESTORE
+    FUNCTION_APPLY_COMPOSITION_RESTORE,
+
+    // Direct helpcode end trigger (UsesDirectHelpcodeEndTrigger): '`' / ';' that enters the end helpcode, and Backspace
+    // over the end block it opened. The Server rewrites the raw spelling (or answers the key as punctuation when it
+    // cannot), so the key goes through the async Server-candidate-key path and TSF applies the reply instead of
+    // editing its buffer. Append-only, like every function above.
+    FUNCTION_SERVER_COMPOSITION_REWRITE
 };
 
 //---------------------------------------------------------------------

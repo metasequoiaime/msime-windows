@@ -622,6 +622,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const std::wstring previous_mid_sentence_helpcode_semicolon =
                 FormatMidSentenceHelpcodeSemicolonWorkerPayload();
             const std::wstring previous_direct_helpcode = FormatDirectHelpcodeWorkerPayload();
+            const std::wstring previous_direct_helpcode_end_trigger = FormatDirectHelpcodeEndTriggerWorkerPayload();
             const std::wstring previous_v_mode = FormatVModeWorkerPayload();
             const std::wstring previous_mid_sentence_helpcode_uppercase =
                 FormatMidSentenceHelpcodeUppercaseWorkerPayload();
@@ -830,6 +831,12 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
                     BroadcastToTsfWorkerThreadViaNamedpipe(
                         Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeChanged,
                         FormatDirectHelpcodeWorkerPayload());
+                }
+                if (previous_direct_helpcode_end_trigger != FormatDirectHelpcodeEndTriggerWorkerPayload())
+                {
+                    BroadcastToTsfWorkerThreadViaNamedpipe(
+                        Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged,
+                        FormatDirectHelpcodeEndTriggerWorkerPayload());
                 }
                 if (previous_v_mode != FormatVModeWorkerPayload())
                 {

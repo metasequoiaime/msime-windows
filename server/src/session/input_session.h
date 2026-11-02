@@ -93,6 +93,12 @@ class IInputSession
     {
         return false;
     }
+    // 直接辅助码下用 ; 进入末尾辅助码时，typed（光标在末尾）去掉各音节辅码后的纯双拼；不能这样改写时为空。
+    // 语义见 engine direct_helpcode_end_trigger_prefix。默认不能。
+    virtual std::optional<std::string> direct_helpcode_end_trigger_prefix(const std::string &)
+    {
+        return std::nullopt;
+    }
     // 当前输入带着生效的句中辅助码约束（候选是筛过的）。默认没有。
     virtual bool has_mid_sentence_helpcode() const
     {

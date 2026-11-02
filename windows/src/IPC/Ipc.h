@@ -61,6 +61,9 @@ bool SupportsCompositionRestore();
 // 候选态下的普通左右键交给 Server 决定移高亮还是移光标：Server 打开了横排左右键选词、协商过 CompositionRestore
 // （光标移动要靠它的回复落地），且不是 UILess 宿主。
 bool UsesHorizontalArrowSelection();
+// 直接辅助码下用引导键进入末尾辅助码：Server 发来了生效的引导键（DirectHelpcodeEndTriggerChanged）、协商过
+// CompositionRestore（改写后的输入串要靠它的回复落地），且不是 UILess 宿主。
+bool UsesDirectHelpcodeEndTrigger();
 bool SupportsCaretStateIndicator();
 bool SupportsTrilingualCycle();
 bool SupportsInputStateShortcuts();
@@ -316,6 +319,10 @@ inline std::atomic<unsigned> EndHelpcodeTriggers{0};
 inline std::atomic_bool DirectHelpcodeEnabled{false};
 // 直接辅助码开着时 / 是不是四码的终止键（设置里可以只留「第二位辅码大写」）。没勾时 / 仍按标点处理。
 inline std::atomic_bool DirectHelpcodeSlashEnabled{true};
+// 直接辅助码下进入末尾辅助码的引导键（Server 发 DirectHelpcodeEndTriggerChanged），FanyImeEndHelpcode::kBacktick /
+// kSemicolon 的组合。输入末尾形状合适的引导键、以及删掉它留下的末尾段开头的退格都交给 Server 改写输入串，TSF 照
+// 它的 CompositionRestored 重建缓冲，规则见 engine/contracts/direct_helpcode.h。
+inline std::atomic<unsigned> DirectHelpcodeEndTriggerKeys{0};
 // V 模式（数字转中文、算式计算）由哪个前缀开启：双拼只认大写 V，全拼 V、v 都认，关着或不是全拼/双拼时
 // 不开。V 后面的数字和 . + - * / ( ) 按 engine/contracts/v_mode_input.h 的规则当编码键吃掉。
 inline std::atomic<FanyImeVModeInput::Trigger> VModeTrigger{FanyImeVModeInput::Trigger::Off};
