@@ -157,12 +157,22 @@ void ClearNotifiedVersionIfVersion(const std::string &version)
 
 std::string ReadFailedVersion()
 {
-    return ReadStateLine(FailedPath());
+    const std::string line = ReadStateLine(FailedPath());
+    const size_t tab = line.find('\t');
+    return tab == std::string::npos ? line : line.substr(0, tab);
 }
 
-void WriteFailedVersion(const std::string &version)
+std::string ReadFailedDigest()
 {
-    WriteStateLine(FailedPath(), version);
+    const std::string line = ReadStateLine(FailedPath());
+    const size_t tab = line.find('\t');
+    return tab == std::string::npos ? std::string() : line.substr(tab + 1);
+}
+
+void WriteFailedVersion(const std::string &version, const std::string &digest)
+{
+    // 连摘要一起记：同一版本重新上传了不同的包，摘要变了就不该再跳过。
+    WriteStateLine(FailedPath(), version + "\t" + digest);
 }
 
 // 轮询线程和安装失败路径都会写 progress.txt，底层临时文件名是固定的，必须串行。
@@ -439,7 +449,7 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
     error.clear();
     if (g_launching.load())
     {
-        error = L"安装程序已经在启动中。";
+        // 重复点击不是错误，调用方不要弹红色提示框。
         return false;
     }
     std::string version;
@@ -455,7 +465,7 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
     }
     if (version.empty() || digest.empty() || installer.empty())
     {
-        error = L"没有可安装的更新，请重新检查。";
+        // 弹窗是旧的，或者上一轮已经装完了；静默收敛，不打扰用户。
         return false;
     }
     // 只认自己写下的那一份：名字合法、和待安装版本一致。
@@ -489,7 +499,7 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
         ClearPendingSlotsIfVersion(version);
         // 文件留着，不反复重下 64 MB；notified 也留着，同一个版本不再一遍遍弹。
         // failed.txt 让下一轮轮询直接跳过这一版，保留 Failed 进度给设置页看。
-        WriteFailedVersion(version);
+        WriteFailedVersion(version, digest);
         WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0,
                            "安装包签名校验失败，请从发布页手动下载");
         error = L"安装包签名校验失败。请从发布页手动下载安装包。";
@@ -504,7 +514,6 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
     if (!g_launching.compare_exchange_strong(expected, true))
     {
         CloseHandle(file);
-        error = L"安装程序已经在启动中。";
         return false;
     }
     SHELLEXECUTEINFOW info{};
@@ -606,10 +615,11 @@ void CheckOnce()
         done({}, {}, {}, false);
         return;
     }
-    if (ReadFailedVersion() == candidate.version)
+    if (ReadFailedVersion() == candidate.version && ReadFailedDigest() == candidate.sha256)
     {
         // 这一版在启动前验签失败过。再下一遍同样会失败，保留 Failed 进度让设置页
-        // 显示原因，等新版本或用户手动处理。
+        // 显示原因，等新版本或用户手动处理。同一版本重新上传了不同的包时摘要会变，
+        // 这里会自动放行。
         DIAG_LOGF(L"[update] skipped failed version={}", Widen(candidate.version));
         done({}, {}, {}, false);
         return;

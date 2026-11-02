@@ -681,19 +681,30 @@ Result Download(const Request &request)
     std::filesystem::path part_path = request.directory / PartFileName(request.installer_name);
     const Clock::time_point deadline =
         Clock::now() + std::chrono::seconds((std::max)(request.deadline_seconds, std::uint64_t{60}));
+    const auto minimum_channel_budget = std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(60));
 
-    for (const std::string &channel : channels)
+    for (size_t channel_index = 0; channel_index < channels.size(); ++channel_index)
     {
+        const std::string &channel = channels[channel_index];
+        const Clock::time_point channel_started = Clock::now();
+        if (channel_started >= deadline)
+        {
+            std::filesystem::remove(part_path, ec);
+            result.outcome = Outcome::Failed;
+            result.message = "下载超时";
+            return result;
+        }
+        // 按剩余通道数分配预算。第一条通道再慢也不能把全局预算吃光，否则镜像
+        // 永远等不到机会，8 到 50 KB/s 的 GitHub 连接会直接拖死整次下载。
+        const auto remaining = deadline - channel_started;
+        const auto share = remaining / static_cast<long long>(channels.size() - channel_index);
+        const Clock::time_point channel_deadline =
+            (std::min)(deadline, channel_started + (std::max)(share, minimum_channel_budget));
         for (int attempt_index = 0; attempt_index < kAttemptsPerChannel; ++attempt_index)
         {
-            if (Clock::now() > deadline)
-            {
-                std::filesystem::remove(part_path, ec);
-                result.outcome = Outcome::Failed;
-                result.message = "下载超时";
-                return result;
-            }
-            Attempt attempt = FetchOnce(channel, part_path, deadline, request.on_progress);
+            if (Clock::now() >= channel_deadline)
+                break;
+            Attempt attempt = FetchOnce(channel, part_path, channel_deadline, request.on_progress);
             attempt.url = channel;
             result.attempts.push_back(attempt);
             if (attempt.outcome == Outcome::Ok)

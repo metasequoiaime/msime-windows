@@ -329,7 +329,7 @@ void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::s
         CloseHandle(file);
         std::error_code ec;
         std::filesystem::remove(path, ec);
-        FinishUpdateDownload(state, false, L"安装包签名校验失败，已丢弃，请重试");
+        FinishUpdateDownload(state, false, L"安装包签名校验失败，请从发布页手动下载");
         return;
     }
     SHELLEXECUTEINFOW info{};

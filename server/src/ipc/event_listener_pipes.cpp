@@ -1041,12 +1041,10 @@ void AuxPipeEventListenerLoopThread()
                             {
                                 RestartServerProcess();
                             }
-                            else
+                            else if (!error.empty())
                             {
-                                MessageBoxW(nullptr,
-                                            error.empty() ? L"安装包无法启动，请稍后在关于页重新检查更新。"
-                                                          : error.c_str(),
-                                            L"水杉输入法", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+                                MessageBoxW(nullptr, error.c_str(), L"水杉输入法",
+                                            MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
                             }
                         }).detach();
                     }
