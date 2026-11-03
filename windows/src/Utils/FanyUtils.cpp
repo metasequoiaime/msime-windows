@@ -84,7 +84,7 @@ std::wstring EnvironmentValue(const wchar_t *name)
 // The data directory the user picked during setup. This DLL is also built 32-bit and loads into
 // 32-bit hosts, so KEY_WOW64_64KEY is mandatory: without it the read is redirected to
 // Wow6432Node, where the 64-bit setup never wrote anything.
-std::wstring InstalledDataDir()
+std::wstring ReadInstalledDataDir()
 {
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Metasequoia\\MetasequoiaIME", 0,
@@ -113,6 +113,29 @@ std::wstring InstalledDataDir()
     // REG_SZ carries no guaranteed terminator and the stored length may or may not include one.
     value.resize(std::wcslen(value.c_str()));
     return value;
+}
+
+std::wstring InstalledDataDir()
+{
+    // Setup fixes DataDir for the lifetime of the host process.
+    static SRWLOCK lock = SRWLOCK_INIT;
+    static std::wstring *cached = nullptr;
+    AcquireSRWLockExclusive(&lock);
+    std::wstring result;
+    try
+    {
+        if (cached == nullptr)
+        {
+            cached = new std::wstring(ReadInstalledDataDir());
+        }
+        result = *cached;
+    }
+    catch (...)
+    {
+        // Retry the registry read if allocation fails.
+    }
+    ReleaseSRWLockExclusive(&lock);
+    return result;
 }
 
 // Same resolution order as the Server (server/src/utils/ime_paths.cpp) and the engine
@@ -152,21 +175,47 @@ std::filesystem::path SharedConfigPath()
 }
 } // namespace
 
-BOOL ReadConfiguredDefaultImeModeChinese()
+namespace
 {
-    const std::filesystem::path configPath = SharedConfigPath();
-    if (configPath.empty())
-    {
-        return TRUE;
-    }
+// A mode switch reads these values more than once on the host UI thread.
+// Check the file once per second and parse it only after a change.
+constexpr ULONGLONG kConfigRecheckMs = 1000;
 
-    std::ifstream input(configPath);
+struct InputConfigValues
+{
+    BOOL chinese = TRUE;
+    int punctuationLock = Global::PunctuationLock::Follow;
+    BOOL japanese = FALSE;
+};
+
+struct InputConfigCache
+{
+    bool pathResolved = false;
+    bool checked = false;
+    bool haveStamp = false;
+    ULONGLONG checkedTick = 0;
+    FILETIME lastWrite = {};
+    DWORD sizeLow = 0;
+    DWORD sizeHigh = 0;
+    InputConfigValues values;
+};
+
+SRWLOCK g_inputConfigLock = SRWLOCK_INIT;
+InputConfigCache g_inputConfig;
+std::filesystem::path *g_inputConfigPath = nullptr;
+
+bool ParseInputConfig(const std::filesystem::path &path, InputConfigValues &values)
+{
+    std::ifstream input(path);
     if (!input)
     {
-        return TRUE;
+        return false;
     }
 
     bool inInputSection = false;
+    bool sawDefaultMode = false;
+    bool sawPunctuationLock = false;
+    bool sawMode = false;
     std::string line;
     while (std::getline(input, line))
     {
@@ -195,75 +244,95 @@ BOOL ReadConfiguredDefaultImeModeChinese()
             continue;
         }
         const std::string key = TrimAscii(line.substr(0, eq));
-        if (key != "default_ime_mode")
-        {
-            continue;
-        }
         const std::string value = to_lower_copy(UnquoteTomlBasicString(TrimAscii(line.substr(eq + 1))));
-        return value != "english";
+        if (key == "default_ime_mode" && !sawDefaultMode)
+        {
+            values.chinese = value != "english";
+            sawDefaultMode = true;
+        }
+        else if (key == "punctuation_lock" && !sawPunctuationLock)
+        {
+            if (value == "chinese")
+            {
+                values.punctuationLock = Global::PunctuationLock::AlwaysChinese;
+            }
+            else if (value == "english")
+            {
+                values.punctuationLock = Global::PunctuationLock::AlwaysEnglish;
+            }
+            sawPunctuationLock = true;
+        }
+        else if (key == "mode" && !sawMode)
+        {
+            values.japanese = value == "japanese";
+            sawMode = true;
+        }
     }
-    return TRUE;
+    return !input.bad();
+}
+
+InputConfigValues ReadInputConfig()
+{
+    AcquireSRWLockExclusive(&g_inputConfigLock);
+    try
+    {
+        if (!g_inputConfig.pathResolved)
+        {
+            g_inputConfigPath = new std::filesystem::path(SharedConfigPath());
+            g_inputConfig.pathResolved = true;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        if (!g_inputConfig.checked || now - g_inputConfig.checkedTick >= kConfigRecheckMs)
+        {
+            g_inputConfig.checked = true;
+            g_inputConfig.checkedTick = now;
+            WIN32_FILE_ATTRIBUTE_DATA attributes{};
+            if (g_inputConfigPath->empty() ||
+                !GetFileAttributesExW(g_inputConfigPath->c_str(), GetFileExInfoStandard, &attributes))
+            {
+                g_inputConfig.values = InputConfigValues{};
+                g_inputConfig.haveStamp = false;
+            }
+            else if (!g_inputConfig.haveStamp ||
+                     CompareFileTime(&attributes.ftLastWriteTime, &g_inputConfig.lastWrite) != 0 ||
+                     attributes.nFileSizeLow != g_inputConfig.sizeLow ||
+                     attributes.nFileSizeHigh != g_inputConfig.sizeHigh)
+            {
+                InputConfigValues parsed;
+                if (ParseInputConfig(*g_inputConfigPath, parsed))
+                {
+                    g_inputConfig.values = parsed;
+                    g_inputConfig.lastWrite = attributes.ftLastWriteTime;
+                    g_inputConfig.sizeLow = attributes.nFileSizeLow;
+                    g_inputConfig.sizeHigh = attributes.nFileSizeHigh;
+                    g_inputConfig.haveStamp = true;
+                }
+                else
+                {
+                    g_inputConfig.haveStamp = false;
+                }
+            }
+        }
+    }
+    catch (...)
+    {
+        g_inputConfig.haveStamp = false;
+    }
+    const InputConfigValues result = g_inputConfig.values;
+    ReleaseSRWLockExclusive(&g_inputConfigLock);
+    return result;
+}
+} // namespace
+
+BOOL ReadConfiguredDefaultImeModeChinese()
+{
+    return ReadInputConfig().chinese;
 }
 
 int ReadConfiguredPunctuationLock()
 {
-    const std::filesystem::path configPath = SharedConfigPath();
-    if (configPath.empty())
-    {
-        return Global::PunctuationLock::Follow;
-    }
-
-    std::ifstream input(configPath);
-    if (!input)
-    {
-        return Global::PunctuationLock::Follow;
-    }
-
-    bool inInputSection = false;
-    std::string line;
-    while (std::getline(input, line))
-    {
-        const size_t comment = line.find('#');
-        if (comment != std::string::npos)
-        {
-            line = line.substr(0, comment);
-        }
-        line = TrimAscii(line);
-        if (line.empty())
-        {
-            continue;
-        }
-        if (line.front() == '[' && line.back() == ']')
-        {
-            inInputSection = (line == "[input]");
-            continue;
-        }
-        if (!inInputSection)
-        {
-            continue;
-        }
-        const size_t eq = line.find('=');
-        if (eq == std::string::npos)
-        {
-            continue;
-        }
-        const std::string key = TrimAscii(line.substr(0, eq));
-        if (key != "punctuation_lock")
-        {
-            continue;
-        }
-        const std::string value = to_lower_copy(UnquoteTomlBasicString(TrimAscii(line.substr(eq + 1))));
-        if (value == "chinese")
-        {
-            return Global::PunctuationLock::AlwaysChinese;
-        }
-        if (value == "english")
-        {
-            return Global::PunctuationLock::AlwaysEnglish;
-        }
-        return Global::PunctuationLock::Follow;
-    }
-    return Global::PunctuationLock::Follow;
+    return ReadInputConfig().punctuationLock;
 }
 
 void RefreshPunctuationLockFromConfig()
@@ -273,55 +342,7 @@ void RefreshPunctuationLockFromConfig()
 
 BOOL ReadConfiguredJapaneseInputMode()
 {
-    const std::filesystem::path configPath = SharedConfigPath();
-    if (configPath.empty())
-    {
-        return FALSE;
-    }
-
-    std::ifstream input(configPath);
-    if (!input)
-    {
-        return FALSE;
-    }
-
-    bool inInputSection = false;
-    std::string line;
-    while (std::getline(input, line))
-    {
-        const size_t comment = line.find('#');
-        if (comment != std::string::npos)
-        {
-            line = line.substr(0, comment);
-        }
-        line = TrimAscii(line);
-        if (line.empty())
-        {
-            continue;
-        }
-        if (line.front() == '[' && line.back() == ']')
-        {
-            inInputSection = (line == "[input]");
-            continue;
-        }
-        if (!inInputSection)
-        {
-            continue;
-        }
-        const size_t eq = line.find('=');
-        if (eq == std::string::npos)
-        {
-            continue;
-        }
-        const std::string key = TrimAscii(line.substr(0, eq));
-        if (key != "mode")
-        {
-            continue;
-        }
-        const std::string value = to_lower_copy(UnquoteTomlBasicString(TrimAscii(line.substr(eq + 1))));
-        return value == "japanese";
-    }
-    return FALSE;
+    return ReadInputConfig().japanese;
 }
 
 LanguageBarVisibility ReadConfiguredLanguageBarVisibility()
