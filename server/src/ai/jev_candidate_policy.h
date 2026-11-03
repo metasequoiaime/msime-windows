@@ -19,9 +19,12 @@ inline bool SameQuery(const metasequoia::OnlineQuery &a, const metasequoia::Onli
            a.identity == b.identity && a.query_text == b.query_text && a.cache_key == b.cache_key &&
            a.pinyin_segments == b.pinyin_segments && a.ai_eligible && b.ai_eligible;
 }
-// Only local dictionary and model candidates are offered to Jev or moved by its choice.
+// Only local dictionary and model candidates are offered to Jev or moved by its choice. Latin words
+// (T恤, 浙L) come from the dictionary too, but NormalizeMixedCandidateOrder places them; they stay out.
 inline bool IsPoolSource(const WordItem &item)
 {
+    if (item.latin_word)
+        return false;
     return item.source == CandidateSource::Database || item.source == CandidateSource::UserDatabase ||
            item.sentence_association || item.source == CandidateSource::NeuralDesktop ||
            item.source == CandidateSource::NeuralKeyboard || item.source == CandidateSource::Collocation;
@@ -45,8 +48,8 @@ inline std::vector<std::string> CandidatePool(const std::vector<WordItem> &items
     return result;
 }
 
-// Only the slots held by unpinned pool candidates are reordered, so cloud, English, date, emoji and
-// user-pinned rows keep their place in the sequence of candidates NormalizeMixedCandidateOrder gave
+// Only the slots held by unpinned pool candidates are reordered, so cloud, English, date, emoji, symbols,
+// latin words and user-pinned rows keep their place in the sequence of candidates NormalizeMixedCandidateOrder gave
 // them. Within those slots the local first/second choice stay first and the choice becomes the third.
 // In the traditional character set a candidate is a spelling group as FanyImeIpc::SpellingGroupStart
 // draws it: a group moves as a whole and takes one slot. Rows that do not move keep their place in the

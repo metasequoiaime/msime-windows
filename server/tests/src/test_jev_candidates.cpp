@@ -267,3 +267,15 @@ TEST_CASE(jev_is_builtin_but_not_a_chat_translation_model)
     REQUIRE(AiAssistant::ProviderStore::IsBuiltinProvider("jev"));
     REQUIRE(!AiTranslation::IsUsableConfig({"jev", Jev::kEndpoint, "test-only", Jev::kModel}));
 }
+
+TEST_CASE(jev_promotion_keeps_latin_words_in_place)
+{
+    // 归一化把 T恤 放在首页末位；Jev 挑中后面的 丁 时，T恤 不跟着让位。
+    std::vector<WordItem> items{{"a", "甲", 10}, {"b", "乙", 9}, {"c", "丙", 8}, {"x", "T恤", 7}, {"d", "丁", 6}};
+    items[3].latin_word = true;
+    REQUIRE(Jev::Promote(items, "丁"));
+    REQUIRE_EQ(items[2].word, "丁");
+    REQUIRE_EQ(items[3].word, "T恤");
+    REQUIRE_EQ(items[4].word, "丙");
+    REQUIRE(!Jev::Promote(items, "T恤"));
+}
