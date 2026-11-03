@@ -182,10 +182,11 @@ VisualPtr BuildToolsPage(PageContext &context)
             L"输入恰好等于某个 emoji 关键词时加入 emoji（排在候选项列表最后，不挤占正常汉字候选的位置）", emoji));
         details.Add(
             DetailsRow(context, L"颜文字混输", L"在候选项中加入匹配的颜文字（排在列表末尾的 emoji 之后）", kaomoji));
-        details.Add(DetailsRow(context, L"符号混输",
-                               L"输入恰好等于某个符号编码时加入符号，首个紧跟首选，例如 alpha → α、infinity → "
-                               L"∞、szq → ①、yi → ① ⑴ ⒈、dian → · 、、shuminghao → 《》 〈〉",
-                               symbol));
+        details.Add(
+            DetailsRow(context, L"符号混输",
+                       L"输入恰好等于某个符号编码时加入符号，首个占首页最后一个普通候选的位置，"
+                       L"例如 alpha → α、infinity → ∞、szq → ①、yi → ① ⑴ ⒈、dian → · 、、shuminghao → 《》 〈〉",
+                       symbol));
         details.Add(
             DetailsRow(context, L"快捷短语混入候选",
                        L"输入的编码与快捷短语的编码完全一致时，快捷短语直接出现在候选首位（固定位置的候选之后），"

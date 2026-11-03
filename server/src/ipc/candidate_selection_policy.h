@@ -2,6 +2,7 @@
 
 #include "engine/core/word_item.h"
 #include "engine/local_modes/date_time_query.h"
+#include "ordinary_slot_placement_policy.h"
 
 #include <algorithm>
 #include <limits>
@@ -109,7 +110,8 @@ inline size_t IndexAfterLocalCandidates(const std::vector<WordItem> &items, size
 //   require_exact  输入能读成拼音时置位：和输入完全相同的英文词优先占槽位，默认紧跟第一个中文
 //                  候选；没有精确匹配时由最前的补全词（zai → zaire）占槽位，默认退到首页末位。
 //   input          小写的当前输入，用来认精确匹配。
-//   page_size      每页候选数，给补全词的默认位置、槽位上限和首个 emoji 的位置用；0 表示不限。
+//   page_size      每页候选数，给补全词的默认位置、槽位上限、首个 emoji 与字母词、首个符号的位置用；
+//                  0 表示不限。
 //   first_page_count 首页最多显示几个英文词，落在首页的固定英文也算在内，但占槽位的英文总留一个；
 //                  默认仍为一个，不挤掉英文前面的中文首选、日期、云、AI 候选或首页 emoji。
 struct EnglishPlacement
@@ -152,13 +154,28 @@ inline std::optional<size_t> SlottedEnglishIndex(const std::vector<WordItem> &it
 // 补全词的默认位置和学到的英文槽位相应让到首页倒数第二位，两者都留在首页。
 // 日期时间只在 rq / sj / xq 这类唤醒词上出现，用户打它就是要日期，所以它排在所有异步候选前面，
 // 紧跟首个中文候选，展开全部格式的入口紧跟在它后面：Chinese, date/time, 📅日期, cloud, ...
-// 符号同理（只在整串等于编码时出现），首个符号排在日期时间之后、云候选之前，其余在末尾。
+// 字母词（WordItem::latin_word）与首个混输符号最后放：字母词按传进来的先后在前，首个符号在后，只占普通候选的
+// 位置，规则见 PlaceInOrdinarySlots；其余符号排在列表最后（颜文字、其余日期格式之后）。别的候选的位置与列表里
+// 没有字母词与符号时相同。
 // The learned English slot (EnglishPlacement) moves the English candidate away
 // from that default afterwards, and explicit English ranking choices are
 // reapplied last.
 inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t local_prefix_slots = 1,
                                          const EnglishPlacement &english_placement = {})
 {
+    // 字母词与首个符号先取出，固定位置的候选留在原下标，等于在不含它们的列表上放固定位置；列表已归一化过时，
+    // 这还原出上次放它们之前的列表，再归一化结果不变。
+    bool first_symbol_taken = false;
+    std::vector<WordItem> last_placed_group = TakeOutKeepingFixedInPlace(items, [&](const WordItem &item) {
+        if (item.latin_word)
+            return true;
+        if (item.source != CandidateSource::Symbol || first_symbol_taken)
+            return false;
+        first_symbol_taken = true;
+        return true;
+    });
+    std::stable_partition(last_placed_group.begin(), last_placed_group.end(),
+                          [](const WordItem &item) { return item.latin_word; });
     std::vector<WordItem> local_candidates;
     std::vector<WordItem> english_candidates;
     std::vector<WordItem> fixed_english_candidates;
@@ -169,7 +186,8 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
     std::optional<WordItem> date_time_menu;
     std::optional<WordItem> cloud_candidate;
     std::optional<WordItem> ai_candidate;
-    local_candidates.reserve(items.size());
+    // 最后放回取出的字母词与首个符号时不必再扩容。
+    local_candidates.reserve(items.size() + last_placed_group.size());
 
     for (auto &item : items)
     {
@@ -208,6 +226,8 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
                 date_time_menu = std::move(item);
             break;
         default:
+            // 快捷短语也在这里算本地候选；字母词与符号能占谁的位置另按 IsOrdinaryCandidateSource 判，那里
+            // 快捷短语不算普通候选。
             local_candidates.push_back(std::move(item));
             break;
         }
@@ -249,13 +269,6 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
         date_time_candidates.erase(date_time_candidates.begin());
         if (date_time_menu)
             insert_at(slot++, std::move(*date_time_menu));
-    }
-    // 符号只在整串等于某个编码时混进来（alpha、szq、yi），用户打的就是它：首个紧跟首个中文候选
-    // （和日期时间一样），其余排在颜文字之后。
-    if (!symbol_candidates.empty())
-    {
-        insert_at(slot++, std::move(symbol_candidates.front()));
-        symbol_candidates.erase(symbol_candidates.begin());
     }
     if (cloud_candidate)
     {
@@ -328,8 +341,6 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
         items.push_back(std::move(candidate));
     for (auto &candidate : kaomoji_candidates)
         items.push_back(std::move(candidate));
-    for (auto &candidate : symbol_candidates)
-        items.push_back(std::move(candidate));
     for (auto &candidate : date_time_candidates)
         items.push_back(std::move(candidate));
 
@@ -367,5 +378,10 @@ inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t lo
         [](const WordItem &left, const WordItem &right) { return left.fixed_position < right.fixed_position; });
     for (auto &candidate : fixed_english_candidates)
         insert_at(static_cast<size_t>(candidate.fixed_position - 1), std::move(candidate));
+
+    PlaceInOrdinarySlots(items, std::move(last_placed_group), page_size);
+    // 其余符号在首个符号之后追加：首个符号没有普通位置可占、排到末尾时，再归一化取到的首个符号还是它。
+    for (auto &candidate : symbol_candidates)
+        items.push_back(std::move(candidate));
 }
 } // namespace FanyImeIpc
