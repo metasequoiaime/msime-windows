@@ -373,10 +373,19 @@ InputConfigValues ReadInputConfig()
                 g_inputConfig.pathStable = stable;
             }
             WIN32_FILE_ATTRIBUTE_DATA attributes{};
-            if (g_inputConfigPath == nullptr || g_inputConfigPath->empty() ||
-                !GetFileAttributesExW(g_inputConfigPath->c_str(), GetFileExInfoStandard, &attributes))
+            if (g_inputConfigPath == nullptr || g_inputConfigPath->empty())
             {
                 g_inputConfig.values = InputConfigValues{};
+                g_inputConfig.haveStamp = false;
+            }
+            else if (!GetFileAttributesExW(g_inputConfigPath->c_str(), GetFileExInfoStandard, &attributes))
+            {
+                const DWORD error = GetLastError();
+                if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || !g_inputConfig.haveStamp)
+                {
+                    g_inputConfig.values = InputConfigValues{};
+                }
+                // Keep the last value for one temporary stat failure.
                 g_inputConfig.haveStamp = false;
             }
             else if (!g_inputConfig.haveStamp ||
