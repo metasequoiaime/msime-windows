@@ -2913,7 +2913,7 @@ std::vector<WordItem> QuanpinDictionary::query(const std::string &raw_input, con
     {
         const auto segments = resolve_segments(raw_input, segmentation, correction_aliases_enabled_);
         const std::string code = segmentation.empty() ? quanpin::join_segments(segments) : segmentation;
-        insert_latin_words(result, raw_input, segments, code);
+        insert_latin_words(result, raw_input, code);
         // 放在最后：首选要是这次查询最终的首选（模糊音合并、字母词插入都可能换掉它）。
         if (prefix_completion_.enabled)
             quanpin::insert_prefix_completion(result, code, prefix_completion_, db_, statement_cache_,
@@ -2966,7 +2966,7 @@ std::shared_ptr<const quanpin::LatinWords> QuanpinDictionary::latin_words()
 }
 
 void QuanpinDictionary::insert_latin_words(std::vector<WordItem> &result, const std::string &raw_input,
-                                           const quanpin::Segments &segments, const std::string &code_for_selection)
+                                           const std::string &code_for_selection)
 {
     const std::string code = quanpin::latin_code(raw_input);
     if (code.size() < quanpin::kLatinWordMinimumCode)
@@ -2977,5 +2977,5 @@ void QuanpinDictionary::insert_latin_words(std::vector<WordItem> &result, const 
     const auto completions = code.size() >= quanpin::kLatinWordMinimumCompletionCode
                                  ? latin->completions(code, quanpin::kLatinWordCompletionLimit)
                                  : std::vector<const quanpin::LatinWord *>{};
-    quanpin::insert_latin_candidates(result, latin->exact(code), completions, code_for_selection, segments);
+    quanpin::insert_latin_candidates(result, latin->exact(code), completions, code_for_selection, code_for_selection);
 }

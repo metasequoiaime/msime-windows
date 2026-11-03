@@ -40,8 +40,15 @@ class ShuangpinEngine
     std::unique_ptr<QuanpinDictionary> fuzzy_dictionary_;
     metasequoia::RuntimePaths paths_;
     HelpcodeUtils::SharedKeymap helpcodes_;
+    struct UnfilteredQuery
+    {
+        std::vector<WordItem> candidates;
+        // 输入去掉末尾辅码后的键串，没有辅码时就是整串键。读音盖到它最后一键的候选，选中时连辅码一起
+        // 吃掉整串。
+        std::string keys_before_helpcodes;
+    };
     // query 的主体；query 在它外面下发请求级选项、按句中辅助码收尾筛选。
-    std::vector<WordItem> query_unfiltered(const QueryRequest &request);
+    UnfilteredQuery query_unfiltered(const QueryRequest &request);
     // 能展开首字母候选时返回那个首字母，否则返回空串。
     std::string expandable_initial_code(const QueryRequest &request) const;
     std::vector<WordItem> append_fuzzy(std::vector<WordItem> exact, const std::string &raw_segmentation,

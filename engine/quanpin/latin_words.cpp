@@ -175,9 +175,35 @@ bool LatinWords::covers_incomplete_segments(const Segments &segments) const
     return true;
 }
 
+namespace
+{
+// 去掉分隔符后的键数。
+std::size_t key_count(const std::string &code)
+{
+    return static_cast<std::size_t>(std::count_if(code.begin(), code.end(), [](char ch) { return ch != '\''; }));
+}
+
+// 选中它会把整串输入吃掉：整句是对整串解出来的，其余候选的 pinyin 去掉分隔符后的键数不少于
+// keys_to_cover 的键数。
+bool covers_whole_input(const WordItem &item, std::size_t keys_to_cover)
+{
+    return item.sentence_association || key_count(item.pinyin) >= keys_to_cover;
+}
+
+// 开头那段覆盖整串输入的候选之后。
+std::size_t after_full_input_candidates(const std::vector<WordItem> &result, const std::string &covered_code)
+{
+    const std::size_t keys_to_cover = key_count(covered_code);
+    std::size_t at = 0;
+    while (at < result.size() && covers_whole_input(result[at], keys_to_cover))
+        ++at;
+    return at;
+}
+} // namespace
+
 void insert_latin_candidates(std::vector<WordItem> &result, const std::vector<const LatinWord *> &exact,
                              const std::vector<const LatinWord *> &completions, const std::string &selection_code,
-                             const Segments &typed_syllables)
+                             const std::string &covered_code)
 {
     if (exact.empty() && completions.empty())
         return;
@@ -206,13 +232,12 @@ void insert_latin_candidates(std::vector<WordItem> &result, const std::vector<co
         result.insert(result.begin() + static_cast<std::ptrdiff_t>(at), std::move(item));
         return at + 1;
     };
-    std::size_t at = generated_sentence_insert_position(result, typed_syllables);
-    for (const auto *word : exact)
-        at = place(word, at);
-    while (at < result.size() && is_sentence_guess(result[at]))
-        ++at;
-    for (const auto *word : completions)
-        at = place(word, at);
+    std::size_t at = after_full_input_candidates(result, covered_code);
+    for (const auto *words : {&exact, &completions})
+    {
+        for (const auto *word : *words)
+            at = place(word, at);
+    }
 }
 
 void prepend_latin_lexemes(const LatinWords &words, const Segments &span, const ngram::LanguageModel *model,

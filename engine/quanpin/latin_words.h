@@ -106,12 +106,16 @@ inline constexpr std::size_t kLatinWordMinimumCode = 2;
 inline constexpr std::size_t kLatinWordMinimumCompletionCode = 3;
 inline constexpr std::size_t kLatinWordCompletionLimit = 2;
 
-// 把整串命中（exact）和补全（completions）的字母词插进候选。整串命中和「键与输入完全相等」的词库行
-// 同档，排在它们之后、整句之前；补全再让过紧跟着的那几条整句。词格对整串也会解出同一个词（txu 的
-// 整句就是 T恤），那是猜出来的一行，换成这里的词条。selection_code 是选中后要吃掉的输入。
+// 把整串命中（exact）和补全（completions）的字母词插进候选：排在开头那段覆盖整串输入的候选之后，
+// 整串命中在前、补全在后，各自保持传进来的先后；只覆盖输入前一部分的候选排在它们后面，开头没有覆盖
+// 整串的候选时字母词排第一。普通候选彼此的先后不变。词格对整串也会解出同一个词（txu 的整句就是
+// T恤），那是猜出来的一行，换成这里的词条。
+// 覆盖整串：整句（sentence_association），或 pinyin 去掉分隔符后的键数不少于 covered_code 的键数。
+// covered_code 是读音要盖到的那一串，与候选的 pinyin 同一种写法（全拼是切分，双拼是键串）；双拼的末尾
+// 辅码键不在其中。selection_code 是字母词选中后要吃掉的输入。
 void insert_latin_candidates(std::vector<WordItem> &result, const std::vector<const LatinWord *> &exact,
                              const std::vector<const LatinWord *> &completions, const std::string &selection_code,
-                             const Segments &typed_syllables);
+                             const std::string &covered_code);
 
 // 词格的跨度查询里补上字母词：跨度里拼起来的字母等于某个字母词的编码时，把它放在 rows 最前
 // （词格每个跨度只取前 span_limit 行）。词库查询本来就跳过含 t、k 这类不完整音节的跨度，所以

@@ -1694,7 +1694,8 @@ std::shared_ptr<const ShuangpinLatinWords> ShuangpinDictionary::latin_codes()
     return latin_codes_;
 }
 
-void ShuangpinDictionary::insert_latin_words(std::vector<WordItem> &candidates, const std::string &raw_input)
+void ShuangpinDictionary::insert_latin_words(std::vector<WordItem> &candidates, const std::string &raw_input,
+                                             const std::string &keys_before_helpcodes)
 {
     std::string keys = remove_delimiters(raw_input);
     if (keys.size() < quanpin::kLatinWordMinimumCode ||
@@ -1706,9 +1707,7 @@ void ShuangpinDictionary::insert_latin_words(std::vector<WordItem> &candidates, 
     const auto completions = keys.size() >= quanpin::kLatinWordMinimumCompletionCode
                                  ? codes->completions(keys, quanpin::kLatinWordCompletionLimit)
                                  : std::vector<const quanpin::LatinWord *>{};
-    const auto typed_syllables = quanpin::split_segments(ShuangpinUtil::convert_seg_shuangpin_to_seg_complete_pinyin(
-        shuangpin::segment_input(raw_input, profile_), profile_));
-    quanpin::insert_latin_candidates(candidates, codes->exact(keys), completions, keys, typed_syllables);
+    quanpin::insert_latin_candidates(candidates, codes->exact(keys), completions, keys, keys_before_helpcodes);
 }
 
 void ShuangpinDictionary::insert_prefix_completion(std::vector<WordItem> &candidates, const std::string &raw_input,

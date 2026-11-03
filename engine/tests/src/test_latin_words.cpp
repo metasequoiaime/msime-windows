@@ -9,12 +9,15 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace
@@ -112,6 +115,14 @@ bool first_is(const metasequoia::InputSession &session, const std::string &word)
     return !session.candidates().empty() && session.candidates()[0].word == word;
 }
 
+// 第一个候选是 leader，紧跟着的第二个是字母词 latin。
+bool latin_follows_leader(const metasequoia::InputSession &session, const std::string &leader, const std::string &latin)
+{
+    const auto &candidates = session.candidates();
+    return candidates.size() > 1 && candidates[0].word == leader && candidates[1].word == latin &&
+           candidates[1].latin_word;
+}
+
 bool has_latin_word(const metasequoia::InputSession &session)
 {
     for (const auto &item : session.candidates())
@@ -122,6 +133,47 @@ bool has_latin_word(const metasequoia::InputSession &session)
     return false;
 }
 
+void require(bool condition, const std::string &message)
+{
+    if (!condition)
+        throw std::runtime_error(message);
+}
+
+std::vector<std::string> words_of(const metasequoia::InputSession &session)
+{
+    std::vector<std::string> words;
+    for (const auto &item : session.candidates())
+        words.push_back(item.word);
+    return words;
+}
+
+// 去掉字母词那几行之后剩下的候选，保持原来的先后。
+std::vector<std::string> ordinary_words_of(const metasequoia::InputSession &session)
+{
+    std::vector<std::string> words;
+    for (const auto &item : session.candidates())
+    {
+        if (!item.latin_word)
+            words.push_back(item.word);
+    }
+    return words;
+}
+
+// 失败信息里附上整张候选列表，红了不用另外加打印就能看出排成了什么样。
+std::string listing(const metasequoia::InputSession &session)
+{
+    std::string text;
+    for (const auto &word : words_of(session))
+        text += (text.empty() ? "" : " | ") + word;
+    return " Candidates: [" + text + "]";
+}
+
+std::size_t count_word(const metasequoia::InputSession &session, const std::string &word)
+{
+    const auto words = words_of(session);
+    return static_cast<std::size_t>(std::count(words.begin(), words.end(), word));
+}
+
 void prepare_dictionary(const std::filesystem::path &directory, bool with_latin_words)
 {
     std::filesystem::create_directories(directory);
@@ -130,6 +182,19 @@ void prepare_dictionary(const std::filesystem::path &directory, bool with_latin_
                                     "INSERT INTO tbl_1_m VALUES('mai','m','买',100);"
                                     "CREATE TABLE tbl_1_z(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
                                     "INSERT INTO tbl_1_z VALUES('zuo','z','做',100);"
+                                    "INSERT INTO tbl_1_z VALUES('zhe','z','这',500);"
+                                    "INSERT INTO tbl_1_z VALUES('zhi','z','知',500);"
+                                    "CREATE TABLE tbl_1_e(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+                                    "INSERT INTO tbl_1_e VALUES('e','e','鹅',100);"
+                                    "CREATE TABLE tbl_1_n(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+                                    "INSERT INTO tbl_1_n VALUES('na','n','那',500);"
+                                    "CREATE TABLE tbl_2_n(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+                                    "INSERT INTO tbl_2_n VALUES('na''bian','nb','那边',300);"
+                                    "INSERT INTO tbl_2_n VALUES('na''bian','nb','哪边',200);"
+                                    "CREATE TABLE tbl_1_j(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+                                    "INSERT INTO tbl_1_j VALUES('ji','j','机',500);"
+                                    "CREATE TABLE tbl_2_j(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+                                    "INSERT INTO tbl_2_j VALUES('ji''ben','jb','基本',300);"
                                     "CREATE TABLE tbl_2_t(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
                                     "INSERT INTO tbl_2_t VALUES('te''xu','tx','特许',100);"
                                     "INSERT INTO tbl_2_t VALUES('tong''xue','tx','同学',200);"
@@ -139,6 +204,10 @@ void prepare_dictionary(const std::filesystem::path &directory, bool with_latin_
                                     "INSERT INTO tbl_2_y VALUES('yi''jian','yj','一件',100);"
                                     "CREATE TABLE tbl_2_z(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
                                     "INSERT INTO tbl_2_z VALUES('zuo''bi','zb','作弊',100);"
+                                    "INSERT INTO tbl_2_z VALUES('zhe''li','zl','这里',300);"
+                                    "INSERT INTO tbl_2_z VALUES('zhe''lei','zl','这类',200);"
+                                    "INSERT INTO tbl_2_z VALUES('zhi''neng','zn','智能',300);"
+                                    "INSERT INTO tbl_2_z VALUES('zhi''neng','zn','职能',200);"
                                     "COMMIT;");
     if (!with_latin_words)
         return;
@@ -150,9 +219,33 @@ void prepare_dictionary(const std::filesystem::path &directory, bool with_latin_
             "INSERT INTO latin_words VALUES('ka''la''o''k','卡拉OK',8,0);"
             "INSERT INTO latin_words VALUES('a''a''zhi','AA制',7,0);"
             "INSERT INTO latin_words VALUES('b''chao','B超',6,0);"
+            // 与 B超 同码、权重更低：整串命中 bchao、补全 bch 都有两条。
+            "INSERT INTO latin_words VALUES('b''chao','B潮',1,0);"
             "INSERT INTO latin_words VALUES('u''pan','U盘',5,0);"
             "INSERT INTO latin_words VALUES('zhe''e','浙E',4,1);"
+            "INSERT INTO latin_words VALUES('zhe''l','浙L',4,1);"
+            "INSERT INTO latin_words VALUES('ji''b','吉B',4,1);"
+            "INSERT INTO latin_words VALUES('n''a''b''l''a''suan''zi','Nabla算子',3,0);"
+            "INSERT INTO latin_words VALUES('zhi''neng''i''c''ka','智能IC卡',3,0);"
             "COMMIT;");
+}
+
+// 蓝天辅码表（会话默认的辅码方案）里几个字的码。
+void prepare_helpcodes(const std::filesystem::path &directory)
+{
+    std::filesystem::create_directories(directory / "helpcodes");
+    std::ofstream(directory / "helpcodes" / "helpcode.txt", std::ios::binary)
+        << "特=ua\n同=ub\n知=nb\n智=nk\n职=nz\n这=lw\n";
+}
+
+// Google 整句解码器的模型取源码树里那一份。
+void prepare_google_model(const std::filesystem::path &directory)
+{
+    const auto model = metasequoia::path_from_utf8(METASEQUOIA_TEST_PINYIN_MODEL);
+    if (!std::filesystem::exists(model))
+        throw std::runtime_error("The Google decoder model is missing: " + metasequoia::path_to_utf8(model));
+    std::filesystem::copy_file(model, directory / metasequoia::assets::pinyin_model,
+                               std::filesystem::copy_options::overwrite_existing);
 }
 
 metasequoia::RuntimePaths paths_for(const std::filesystem::path &directory)
@@ -178,10 +271,10 @@ void test_quanpin_candidates(const metasequoia::RuntimePaths &paths)
         metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
         type(session, "txu");
         const auto &candidates = session.candidates();
-        require(!candidates.empty() && candidates[0].word == "T恤" && candidates[0].latin_word &&
-                    candidates[0].canonical_pinyin == "t'xu" && candidates[0].source == CandidateSource::Database,
-                "txu must offer T恤 first as a latin-word dictionary row.");
-        require(find_index(session, "T恤衫") == 1 && candidates[1].latin_word,
+        require(latin_follows_leader(session, "特许", "T恤") && candidates[1].canonical_pinyin == "t'xu" &&
+                    candidates[1].source == CandidateSource::Database,
+                "txu must offer T恤 right after 特许, which covers the whole input, as a latin-word dictionary row.");
+        require(find_index(session, "T恤衫") == 2 && candidates[2].latin_word,
                 "Three letters must also complete to the longer latin word right after it.");
         require(find_index(session, "特许") < candidates.size(),
                 "The ordinary abbreviated reading must stay among the candidates.");
@@ -227,9 +320,8 @@ void test_shuangpin(const metasequoia::RuntimePaths &paths)
     {
         metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
         type(session, "txu");
-        require(!session.candidates().empty() && session.candidates()[0].word == "T恤" &&
-                    session.candidates()[0].latin_word,
-                "Xiaohe txu must offer T恤 first.");
+        require(latin_follows_leader(session, "特许", "T恤"),
+                "Xiaohe txu must offer T恤 right after 特许, which covers the whole input.");
     }
     {
         metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
@@ -321,6 +413,215 @@ void test_old_dictionary(const metasequoia::RuntimePaths &paths)
     type(session, "maiyijiantxu");
     require(!has_latin_word(session) && find_index(session, "买一件T恤") == session.candidates().size(),
             "A dictionary without latin_words must behave as before.");
+}
+
+// 打完 input 后，候选开头正好是 covering（覆盖整串输入的候选，按夹具权重手排），紧接着是字母词 latin；
+// prefix_only 里每一个只覆盖输入的前一部分，都排在 latin 之后。
+void expect_latin_after_full_input(const metasequoia::InputSession &session, const std::string &input,
+                                   const std::vector<std::string> &covering, const std::string &latin,
+                                   const std::vector<std::string> &prefix_only)
+{
+    const auto words = words_of(session);
+    const std::string context = input + " / " + latin + ":" + listing(session);
+    require(words.size() > covering.size() &&
+                std::vector<std::string>(words.begin(), words.begin() + covering.size()) == covering,
+            "The candidates covering the whole input must lead in their own order for " + context);
+    const auto latin_index = covering.size();
+    require(words.size() > latin_index && words[latin_index] == latin && session.candidates()[latin_index].latin_word,
+            "The latin word must come right after the candidates covering the whole input for " + context);
+    require(count_word(session, latin) == 1, "The latin word must be offered exactly once for " + context);
+    for (const auto &word : prefix_only)
+    {
+        const auto index = find_index(session, word);
+        require(index < words.size() && index > latin_index,
+                "A candidate covering only a prefix of the input must stay after the latin word: " + word + " for " +
+                    context);
+    }
+}
+
+// 字母词排在开头那段覆盖整串输入的候选之后（MSIME-Windows #1370）：以声母结尾的输入没有键与输入
+// 一字不差的词库行，字母词也不能压过覆盖了整串的普通词。
+void test_latin_after_full_input(const metasequoia::RuntimePaths &paths)
+{
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "zhel");
+        expect_latin_after_full_input(session, "zhel", {"这里", "这类"}, "浙L", {"这"});
+    }
+    {
+        // 补全出来的字母词同样让过覆盖整串的词。
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "nab");
+        expect_latin_after_full_input(session, "nab", {"那边", "哪边"}, "Nabla算子", {"那"});
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "jib");
+        expect_latin_after_full_input(session, "jib", {"基本"}, "吉B", {"机"});
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "txu");
+        expect_latin_after_full_input(session, "txu", {"特许"}, "T恤", {});
+        const auto completion = find_index(session, "T恤衫");
+        require(completion < session.candidates().size() && completion == find_index(session, "T恤") + 1 &&
+                    session.candidates()[completion].latin_word,
+                "The completed latin word must follow the exact one directly." + listing(session));
+    }
+    {
+        // 词格对 t'xu 解出的整句就是 T恤：去掉那条整句，字母词只出一次，位置照旧在 特许 之后。
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        with_lattice(session);
+        type(session, "txu");
+        expect_latin_after_full_input(session, "txu", {"特许"}, "T恤", {});
+        require(find_index(session, "T恤衫") == find_index(session, "T恤") + 1,
+                "The completed latin word must follow the exact one directly with the lattice on." + listing(session));
+    }
+    {
+        // 词格整句覆盖整串输入，车牌排在它之后。
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        with_lattice(session);
+        type(session, "zhee");
+        expect_latin_after_full_input(session, "zhee", {"这鹅"}, "浙E", {"这"});
+        require(session.candidates()[0].source == CandidateSource::Generated,
+                "The leading candidate for zhee must be the lattice sentence." + listing(session));
+    }
+    {
+        // 同组的几条字母词按权重排：整串命中 B超（6）在 B潮（1）前，补全同样如此。
+        for (const char *input : {"bchao", "bch"})
+        {
+            metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+            type(session, input);
+            const auto &candidates = session.candidates();
+            require(candidates.size() > 1 && candidates[0].word == "B超" && candidates[0].latin_word &&
+                        candidates[1].word == "B潮" && candidates[1].latin_word,
+                    std::string("Latin words sharing a code must keep their weight order for ") + input + ":" +
+                        listing(session));
+        }
+    }
+    {
+        // 没有普通词覆盖整串时字母词排第一；那边 只覆盖 na'b，排在后面。
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "nabla");
+        expect_latin_after_full_input(session, "nabla", {}, "Nabla算子", {"那边", "那"});
+    }
+
+    // vin、vel 关掉双拼辅码再打：会话默认开着，奇数个键时末键当单码辅码（夹具没有辅码表也一样），
+    // 那条路见 test_shuangpin_helpcodes。
+    const auto &xiaohe = GetXiaoheShuangpinProfile();
+    {
+        // 小鹤 vi 是 zhi，vin 读作 zhi + n。
+        metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        type(session, "vin");
+        expect_latin_after_full_input(session, "xiaohe vin", {"智能", "职能"}, "智能IC卡", {"知"});
+    }
+    {
+        // 小鹤 ve 是 zhe。
+        metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        type(session, "vel");
+        expect_latin_after_full_input(session, "xiaohe vel", {"这里", "这类"}, "浙L", {"这"});
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
+        type(session, "nabla");
+        expect_latin_after_full_input(session, "xiaohe nabla", {}, "Nabla算子", {"那"});
+    }
+}
+
+// 小鹤 vin、vel 开着辅码（会话默认开）且有辅码表：末键 n、l 当单码辅码，辅码筛出的 知、这 排到最前，
+// 它们的 pinyin 只到 vi、ve，可选中后连辅码一起吃掉整串，同样算覆盖整串。
+void test_shuangpin_helpcodes(const metasequoia::RuntimePaths &paths)
+{
+    const auto &xiaohe = GetXiaoheShuangpinProfile();
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
+        type(session, "vin");
+        expect_latin_after_full_input(session, "xiaohe vin with helpcodes", {"知", "智能", "职能", "知"}, "智能IC卡",
+                                      {});
+        require(session.select_candidate(find_index(session, "知")).commit == "知" && !session.has_composition(),
+                "The helpcode-filtered candidate must consume the whole input when selected.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
+        type(session, "vel");
+        expect_latin_after_full_input(session, "xiaohe vel with helpcodes", {"这", "这里", "这类", "这"}, "浙L", {});
+    }
+}
+
+// 双拼开着 Google 整句：小鹤 vin 解出的整句排在最前，它也覆盖整串，字母词排在它和 智能、职能 之后。
+void test_shuangpin_google_sentence(const metasequoia::RuntimePaths &paths)
+{
+    metasequoia::InputSession session(SchemeType::Shuangpin, GetXiaoheShuangpinProfile(), paths);
+    // 关掉辅码，末键 n 只当声母：知 只覆盖 vi。
+    session.set_shuangpin_helpcode_enabled(false);
+    SentenceAssociationOptions association;
+    association.google = true;
+    session.set_sentence_association(association);
+    type(session, "vin");
+    const auto &candidates = session.candidates();
+    const auto sentence =
+        std::find_if(candidates.begin(), candidates.end(), [](const WordItem &item) { return !item.latin_word; });
+    require(sentence != candidates.end() && sentence->source == CandidateSource::Fallback &&
+                sentence->sentence_association,
+            "The Google decoder must lead the ordinary candidates of xiaohe vin with a sentence." + listing(session));
+    expect_latin_after_full_input(session, "xiaohe vin with Google sentences", {sentence->word, "智能", "职能"},
+                                  "智能IC卡", {"知"});
+}
+
+// 普通候选彼此的先后与没有字母词的词库逐项相同：字母词只是插进去，不挪动别的候选。
+// 打不出字母词的输入，整张候选列表都相同。
+void test_ordinary_order_unchanged(const metasequoia::RuntimePaths &paths, const metasequoia::RuntimePaths &old_paths)
+{
+    const auto compare = [](metasequoia::InputSession &current, metasequoia::InputSession &old,
+                            const std::string &input, bool lattice, bool expect_latin) {
+        if (lattice)
+        {
+            with_lattice(current);
+            with_lattice(old);
+        }
+        type(current, input);
+        type(old, input);
+        const std::string context =
+            input + (lattice ? " (lattice)" : "") + ":" + listing(current) + " vs" + listing(old);
+        require(!words_of(old).empty(), "The comparison input must have candidates: " + context);
+        require(has_latin_word(current) == expect_latin, "Unexpected latin-word presence for " + context);
+        require(ordinary_words_of(current) == words_of(old),
+                "Ordinary candidates must keep the order of a dictionary without latin words for " + context);
+    };
+    for (const auto &[input, lattice, expect_latin] : std::vector<std::tuple<std::string, bool, bool>>{
+             {"zhel", false, true},
+             {"nab", false, true},
+             {"jib", false, true},
+             {"txu", false, true},
+             {"txu", true, true},
+             {"nabla", false, true},
+             {"tongxue", false, false},
+             {"tx", false, false},
+             {"zhe", false, false},
+             {"maiyijian", true, false},
+             {"zuobi", true, false},
+         })
+    {
+        metasequoia::InputSession current(SchemeType::Quanpin, 0u, true, true, true, paths);
+        metasequoia::InputSession old(SchemeType::Quanpin, 0u, true, true, true, old_paths);
+        compare(current, old, input, lattice, expect_latin);
+    }
+    const auto &xiaohe = GetXiaoheShuangpinProfile();
+    for (const auto &[input, expect_latin] : std::vector<std::pair<std::string, bool>>{
+             {"vin", true},
+             {"vel", true},
+             {"txu", true},
+             {"vi", false},
+             {"nabm", false},
+             {"veli", false},
+         })
+    {
+        metasequoia::InputSession current(SchemeType::Shuangpin, xiaohe, paths);
+        metasequoia::InputSession old(SchemeType::Shuangpin, xiaohe, old_paths);
+        compare(current, old, input, false, expect_latin);
+    }
 }
 
 // 设置页导入、新增字母词时读音的各种写法（#1340 后续：用户字母词）。
@@ -431,7 +732,7 @@ void test_user_words(const std::filesystem::path &directory)
     require(first_is(shuangpin_session, "X光"),
             "A latin word added while the shuangpin session is open must show on the next key.");
     retype(quanpin_session, "txu");
-    require(first_is(quanpin_session, "T恤"), "Shipped latin words must stay after a reload.");
+    require(latin_follows_leader(quanpin_session, "特许", "T恤"), "Shipped latin words must stay after a reload.");
     retype(quanpin_session, "maiyijianxguang");
     require(!quanpin_session.candidates().empty() && quanpin_session.candidates()[0].word == "买一件X光",
             "A user latin word must also join sentences.");
@@ -492,7 +793,7 @@ void test_replay(const std::filesystem::path &root, const std::filesystem::path 
         {
             session.handle_command(metasequoia::Command::Cancel);
             type(session, "txu");
-            if (!first_is(session, "T恤"))
+            if (!latin_follows_leader(session, "特许", "T恤"))
                 throw std::runtime_error(std::string("Replay must keep the shipped latin words on ") + name);
         }
     }
@@ -517,6 +818,16 @@ int main()
         test_exact_only(paths);
         test_no_learning(current, paths);
         test_old_dictionary(paths_for(old));
+        test_latin_after_full_input(paths);
+        test_ordinary_order_unchanged(paths, paths_for(old));
+        const auto helpcoded = root / "helpcoded";
+        prepare_dictionary(helpcoded, true);
+        prepare_helpcodes(helpcoded);
+        test_shuangpin_helpcodes(paths_for(helpcoded));
+        const auto google = root / "google";
+        prepare_dictionary(google, true);
+        prepare_google_model(google);
+        test_shuangpin_google_sentence(paths_for(google));
         test_parse_entries();
         const auto user = root / "user";
         prepare_dictionary(user, true);
