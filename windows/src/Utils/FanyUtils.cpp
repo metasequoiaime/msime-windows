@@ -112,13 +112,20 @@ InstalledDataDirResult ReadInstalledDataDir()
                     : InstalledDataDirStatus::Retry,
                 {}};
     }
+    struct KeyGuard
+    {
+        HKEY handle;
+        ~KeyGuard()
+        {
+            RegCloseKey(handle);
+        }
+    } guard{key};
 
     DWORD type = 0;
     DWORD bytes = 0;
     const LSTATUS queryStatus = RegQueryValueExW(key, L"DataDir", nullptr, &type, nullptr, &bytes);
     if (queryStatus != ERROR_SUCCESS || type != REG_SZ || bytes < sizeof(wchar_t))
     {
-        RegCloseKey(key);
         return {queryStatus == ERROR_FILE_NOT_FOUND ? InstalledDataDirStatus::Absent : InstalledDataDirStatus::Retry,
                 {}};
     }
@@ -126,7 +133,6 @@ InstalledDataDirResult ReadInstalledDataDir()
     std::wstring value(bytes / sizeof(wchar_t) + 1, L'\0');
     const LSTATUS status =
         RegQueryValueExW(key, L"DataDir", nullptr, &type, reinterpret_cast<LPBYTE>(value.data()), &bytes);
-    RegCloseKey(key);
     if (status != ERROR_SUCCESS || type != REG_SZ)
     {
         return {InstalledDataDirStatus::Retry, {}};
@@ -142,18 +148,21 @@ InstalledDataDirResult ReadInstalledDataDir()
 
 std::wstring InstalledDataDir(bool *found)
 {
-    // Cache only a valid installed path. Retry missing or failed reads once per second.
+    // Cache only a valid installed path. Retry a missing key after 1, 5, then 30 seconds.
+    // Retry other read failures after one second.
     static SRWLOCK lock = SRWLOCK_INIT;
     static std::wstring *cached = nullptr;
     static ULONGLONG checkedTick = 0;
+    static ULONGLONG retryMs = kConfigRecheckMs;
     static bool checked = false;
+    static unsigned absentCount = 0;
     AcquireSRWLockExclusive(&lock);
     std::wstring result;
     *found = false;
     try
     {
         const ULONGLONG now = GetTickCount64();
-        if (cached == nullptr && (!checked || now - checkedTick >= kConfigRecheckMs))
+        if (cached == nullptr && (!checked || now - checkedTick >= retryMs))
         {
             checked = true;
             checkedTick = now;
@@ -161,6 +170,19 @@ std::wstring InstalledDataDir(bool *found)
             if (read.status == InstalledDataDirStatus::Found)
             {
                 cached = new std::wstring(std::move(read.path));
+            }
+            else if (read.status == InstalledDataDirStatus::Absent)
+            {
+                if (absentCount < 3)
+                {
+                    ++absentCount;
+                }
+                retryMs = absentCount == 1 ? kConfigRecheckMs : absentCount == 2 ? 5000 : 30000;
+            }
+            else
+            {
+                absentCount = 0;
+                retryMs = kConfigRecheckMs;
             }
         }
         if (cached != nullptr)
@@ -171,7 +193,8 @@ std::wstring InstalledDataDir(bool *found)
     }
     catch (...)
     {
-        // Retry after an allocation or path error.
+        absentCount = 0;
+        retryMs = kConfigRecheckMs;
     }
     ReleaseSRWLockExclusive(&lock);
     return result;
@@ -204,6 +227,7 @@ std::filesystem::path SharedDataDirectory(bool *stable)
     {
         return {};
     }
+    // Keep this path provisional so a later installer value can replace it.
     return std::filesystem::path(localAppData) / L"metasequoiaime";
 }
 
@@ -343,7 +367,7 @@ InputConfigValues ReadInputConfig()
                 g_inputConfig.pathStable = stable;
             }
             WIN32_FILE_ATTRIBUTE_DATA attributes{};
-            if (g_inputConfigPath->empty() ||
+            if (g_inputConfigPath == nullptr || g_inputConfigPath->empty() ||
                 !GetFileAttributesExW(g_inputConfigPath->c_str(), GetFileExInfoStandard, &attributes))
             {
                 g_inputConfig.values = InputConfigValues{};
@@ -559,8 +583,6 @@ SwitchLanguageHotkeys ParseSwitchLanguageHotkeys(const std::filesystem::path &co
 // Resolve fallback paths again after one second. A failed registry read can later recover.
 // Parse the file only when its timestamp or size changes. These values use constant initialization
 // because this DLL avoids global constructors and uses /Zc:threadSafeInit-.
-constexpr ULONGLONG kHotkeyConfigRecheckMs = 1000;
-
 struct HotkeyConfigCache
 {
     bool pathStable = false;
@@ -586,7 +608,7 @@ SwitchLanguageHotkeys ReadConfiguredSwitchLanguageHotkeys()
     try
     {
         const ULONGLONG now = GetTickCount64();
-        const bool due = !g_hotkeyConfig.checked || now - g_hotkeyConfig.checkedTick >= kHotkeyConfigRecheckMs;
+        const bool due = !g_hotkeyConfig.checked || now - g_hotkeyConfig.checkedTick >= kConfigRecheckMs;
         if (due)
         {
             g_hotkeyConfig.checked = true;
@@ -607,7 +629,7 @@ SwitchLanguageHotkeys ReadConfiguredSwitchLanguageHotkeys()
                 g_hotkeyConfig.pathStable = stable;
             }
             WIN32_FILE_ATTRIBUTE_DATA attributes{};
-            if (!g_hotkeyConfigPath->empty() &&
+            if (g_hotkeyConfigPath != nullptr && !g_hotkeyConfigPath->empty() &&
                 GetFileAttributesExW(g_hotkeyConfigPath->c_str(), GetFileExInfoStandard, &attributes))
             {
                 const bool changed = !g_hotkeyConfig.haveStamp ||
@@ -625,8 +647,8 @@ SwitchLanguageHotkeys ReadConfiguredSwitchLanguageHotkeys()
             }
             else
             {
-                // A missing config means defaults, as the uncached read returned; the stamp
-                // stays unset so the file is picked up as soon as the Server writes it.
+                // A missing config means defaults, as the uncached read returned.
+                // The next check reads a new file within one second.
                 g_hotkeyConfig.value = SwitchLanguageHotkeys{};
                 g_hotkeyConfig.haveStamp = false;
             }
@@ -660,7 +682,7 @@ bool ReadConfiguredCandidateTranslationsEnabled()
     static SRWLOCK lock = SRWLOCK_INIT;
     AcquireSRWLockExclusive(&lock);
     const ULONGLONG now = GetTickCount64();
-    if (!cache.checked || now - cache.checkedTick >= kHotkeyConfigRecheckMs)
+    if (!cache.checked || now - cache.checkedTick >= kConfigRecheckMs)
     {
         cache.checked = true;
         cache.checkedTick = now;
@@ -754,7 +776,7 @@ bool ReadConfiguredVimMode()
     static SRWLOCK lock = SRWLOCK_INIT;
     AcquireSRWLockExclusive(&lock);
     const ULONGLONG now = GetTickCount64();
-    if (!cache.checked || now - cache.checkedTick >= 1000)
+    if (!cache.checked || now - cache.checkedTick >= kConfigRecheckMs)
     {
         cache.checked = true;
         cache.checkedTick = now;
