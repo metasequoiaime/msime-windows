@@ -115,6 +115,11 @@ InstalledDataDirResult ReadInstalledDataDir()
     struct KeyGuard
     {
         HKEY handle;
+        explicit KeyGuard(HKEY key) : handle(key)
+        {
+        }
+        KeyGuard(const KeyGuard &) = delete;
+        KeyGuard &operator=(const KeyGuard &) = delete;
         ~KeyGuard()
         {
             RegCloseKey(handle);
@@ -150,6 +155,7 @@ std::wstring InstalledDataDir(bool *found)
 {
     // Cache only a valid installed path. Retry a missing key after 1, 5, then 30 seconds.
     // Retry other read failures after one second.
+    // A new custom DataDir can take 30 seconds to reach an active host.
     static SRWLOCK lock = SRWLOCK_INIT;
     static std::wstring *cached = nullptr;
     static ULONGLONG checkedTick = 0;
