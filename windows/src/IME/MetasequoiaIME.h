@@ -18,6 +18,9 @@
 class CLangBarItemButton;
 class CCandidateListUIPresenter;
 class CCompositionProcessorEngine;
+struct DeferredShadowState;
+struct KeyCharacter;
+struct PunctuationKeyInput;
 
 const DWORD WM_CheckGlobalCompartment = WM_USER;
 const DWORD WM_ConnectNamedpipe = WM_USER + 1;
@@ -326,7 +329,8 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     // plain arrow move and the Server-driven unit jump.
     HRESULT _SetCompositionCaretSelection(TfEditCookie ec, _In_ ITfContext *pContext);
     HRESULT _HandleCompositionPunctuation(TfEditCookie ec, _In_ ITfContext *pContext, UINT code, WCHAR wch,
-                                          uint64_t requestId, const std::wstring &prefetchedText);
+                                          uint64_t requestId, const std::wstring &prefetchedText,
+                                          const CustomPunctuationPick &custom);
     // Character immediately before the caret / composition start (0 if unavailable).
     WCHAR _GetPrecedingDocumentChar(TfEditCookie ec, _In_ ITfContext *pContext);
     // The characters immediately before the caret / composition start, oldest
@@ -343,9 +347,10 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     // Paired punctuation: the closing half is committed together with the
     // opening half and the caret then steps back between them, so every pair
     // still waiting to be closed is tracked. Pressing the closing half steps
-    // over the existing one instead of typing a second.
-    static WCHAR _GetPairedPunctuationClosingFor(WCHAR opening);
-    void _PushPairedPunctuation(WCHAR opening, WCHAR closing);
+    // over the existing one instead of typing a second. openedByKey is the key
+    // that produced the pair; a key the custom punctuation took over steps over
+    // the closing half it produced itself when pressed again.
+    void _PushPairedPunctuation(WCHAR opening, WCHAR closing, WCHAR openedByKey);
     void _ClearPairedPunctuationStack();
     bool _TryStepOverPairedPunctuation(TfEditCookie ec, _In_ ITfContext *pContext, WCHAR closing);
     void _NoteKeyForPairedPunctuation(UINT code);
@@ -355,7 +360,7 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
 
     // Smart punctuation: backspacing the ASCII punctuation we just committed
     // means that form was unwanted, so the spot stays on Chinese punctuation.
-    std::wstring _ResolveSmartPunctuation(WCHAR wch, WCHAR precedingChar);
+    std::wstring _ResolveSmartPunctuation(WCHAR wch, WCHAR precedingChar, const CustomPunctuationPick &custom);
     // Reversible conversion: a space after the just-committed Chinese
     // punctuation converts it to ASCII, and the same punctuation key right
     // after the conversion reverts it. Both run inside an edit session; the
@@ -366,12 +371,14 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     bool _CanInterceptSmartPunctuationConvert();
     bool _CanInterceptSmartPunctuationRevert(WCHAR wch);
     void _ClearSmartPunctuationAction();
-    void _NoteCommittedChinesePunctuation(const std::wstring &committedText, bool autoClosedPair, WCHAR beforeChar);
+    void _NoteCommittedChinesePunctuation(const std::wstring &committedText, bool autoClosedPair, bool customSymbol,
+                                          WCHAR beforeChar);
     void _WriteDirectSmartPunctuationState(WCHAR triggerKey, WCHAR chinese, WCHAR ascii, WCHAR beforeChar);
+    // custom is the key's custom punctuation pick: a revert writes back what the key produces now.
     HRESULT _RequestSmartPunctuationEditSession(_In_ ITfContext *pContext, WCHAR wch, KEYSTROKE_FUNCTION function,
-                                                uint64_t expectedFocusGeneration);
+                                                const CustomPunctuationPick &custom, uint64_t expectedFocusGeneration);
     HRESULT _ExecuteSmartPunctuationAction(TfEditCookie ec, _In_ ITfContext *pContext, WCHAR wch,
-                                           KEYSTROKE_FUNCTION function);
+                                           KEYSTROKE_FUNCTION function, const CustomPunctuationPick &custom);
     // Replaces the character immediately left of the caret inside the document.
     // The range must read back as `expected` first: a host whose text store
     // holds no committed text (terminals, proxy stores) accepts the shift but
@@ -388,7 +395,7 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     // Terminal fallback when the smart-punctuation edit session could not be
     // requested at all: write the key's own character back so it is not lost.
     HRESULT _ExecuteSmartPunctuationFallback(TfEditCookie ec, _In_ ITfContext *pContext, WCHAR wch,
-                                             KEYSTROKE_FUNCTION function);
+                                             KEYSTROKE_FUNCTION function, const CustomPunctuationPick &custom);
     // Commit-time fingerprint: the character that preceded the punctuation. A
     // mismatch means the caret was moved onto historical text that looks the
     // same as the spot just committed.
@@ -470,7 +477,8 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     void _HandOffUnreadyCommitReply(uint64_t requestId, uint64_t deferredReplayToken, UINT message,
                                     ULONGLONG commitReplyDeadlineTick, UINT code, WCHAR wch,
                                     KEYSTROKE_FUNCTION keystrokeFunction, const std::wstring &prefetchedText,
-                                    uint64_t focusToken, uint64_t compositionEpoch);
+                                    uint64_t focusToken, uint64_t compositionEpoch,
+                                    const CustomPunctuationPick &customPunctuation);
     // The committing sessions record, for the length of their key handler, which
     // poll message owns the request they apply (0 when none does), so the reply
     // read inside the handler knows whether a not-ready reply can be handed back.
@@ -530,14 +538,16 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
         // 0 until the first slice starts it. Kept on the request so a re-posted
         // slice resumes the same window instead of restarting it.
         ULONGLONG commitReplyDeadlineTick = 0;
+        // The custom punctuation the key's classification read; the punctuation the request commits uses it.
+        CustomPunctuationPick customPunctuation;
     };
     // Bound on _pendingAsyncKeyMessages. Every path that takes a fresh slot,
     // posting a key or a session handing its request back, checks it.
     static constexpr size_t kMaxPendingAsyncKeys = 64;
-    bool _PostAsyncKeyRequest(UINT message, UINT code, WCHAR wch, uint64_t requestId, std::wstring prefetchedText = {},
-                              uint64_t expectedFocusToken = 0, uint64_t expectedCompositionEpoch = 0,
-                              uint64_t deferredReplayToken = 0,
-                              KEYSTROKE_FUNCTION keystrokeFunction = FUNCTION_FINALIZE_CANDIDATELIST);
+    bool _PostAsyncKeyRequest(UINT message, UINT code, WCHAR wch, uint64_t requestId, std::wstring prefetchedText,
+                              uint64_t expectedFocusToken, uint64_t expectedCompositionEpoch,
+                              uint64_t deferredReplayToken, KEYSTROKE_FUNCTION keystrokeFunction,
+                              const CustomPunctuationPick &customPunctuation);
     bool _TakeAsyncKeyRequest(UINT message, UINT token, _Out_ AsyncKeyRequest &request);
     // One slice of a committing key's reply wait. The wait runs on the host UI
     // thread, so instead of blocking for the whole window this polls without
@@ -644,6 +654,10 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
                                   _In_opt_ const WCHAR *translatedWch, _In_opt_ const UINT *modifiersDown,
                                   _Out_ WCHAR *classifiedWch, _Out_ UINT *classifiedCode,
                                   _Out_ _KEYSTROKE_STATE *keyState);
+    // _ClassifyDeferredKeyDown 交给 DecidePunctuationKey 的输入（顿号设置由引擎填）：字符与 Shift 取自 key，
+    // 输入与候选窗按投影出来的 shadow，没有投影时按当前状态。
+    PunctuationKeyInput _DeferredPunctuationKeyInput(const KeyCharacter &key, UINT virtualKey,
+                                                     const DeferredShadowState &shadow);
     // Counts one printable character handed back to the application
     // (Statistics/stats_passthrough.h). keyboardKnownEnabled is true when the
     // caller already proved the keyboard is live through a non-zero
@@ -735,8 +749,9 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     // request (a session started off the key path, which cannot hand off; see
     // _HandOffUnreadyCommitReply).
     HRESULT _RequestDirectPunctuationEditSession(_In_ ITfContext *pContext, UINT code, WCHAR wch, uint64_t requestId,
-                                                 std::wstring prefetchedText, uint64_t expectedFocusToken = 0,
-                                                 uint64_t expectedCompositionEpoch = 0,
+                                                 std::wstring prefetchedText,
+                                                 const CustomPunctuationPick &customPunctuation,
+                                                 uint64_t expectedFocusToken = 0, uint64_t expectedCompositionEpoch = 0,
                                                  uint64_t deferredReplayToken = 0, UINT commitReplyMessage = 0,
                                                  ULONGLONG commitReplyDeadlineTick = 0);
 
@@ -768,6 +783,10 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     BOOL _IsKeyEaten(_In_ ITfContext *pContext, UINT codeIn, _Out_ UINT *pCodeOut, _Out_writes_(1) WCHAR *pwch,
                      _Out_opt_ _KEYSTROKE_STATE *pKeyState, _In_opt_ const WCHAR *translatedWch = nullptr,
                      bool freshCompositionState = false);
+    // _IsKeyEaten 交给 DecidePunctuationKey 的输入（顿号设置由引擎填）：字符与 Shift 取自 key，组合、候选窗与
+    // 造词撤回窗口取自当前状态；freshCompositionState 为真时按组合已经清空算。
+    PunctuationKeyInput _SyncPunctuationKeyInput(const KeyCharacter &key, UINT virtualKey, BOOL punctuationOpen,
+                                                 bool freshCompositionState);
 
     bool _IsCompositionActiveForKeyGuard();
     bool _ApplyBackspaceHoldGuard(WPARAM wParam, LPARAM lParam);
@@ -778,6 +797,10 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     VOID _DeleteCandidateList(BOOL fForce, _In_opt_ ITfContext *pContext);
 
     WCHAR ConvertVKey(UINT code);
+    // 这个虚拟键按当前键盘状态打出的字符，与同一份状态里 Shift 按没按着。
+    KeyCharacter ConvertVKeyWithShift(UINT code);
+    // 分类这次按键用的字符与 Shift：translatedWch 给出时字符就是它，Shift 读与按键消息同步的状态。
+    KeyCharacter _ClassifiedKeyCharacter(UINT code, _In_opt_ const WCHAR *translatedWch);
 
     BOOL _InitThreadFocusSink();
     void _UninitThreadFocusSink();
@@ -885,6 +908,7 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     {
         WCHAR opening = 0;
         WCHAR closing = 0;
+        WCHAR openedByKey = 0;
         uint64_t focusToken = 0;
     };
     std::vector<PairedPunctuationEntry> _pairedPunctuationStack;

@@ -245,7 +245,6 @@ BOOL CCompositionProcessorEngine::SetupLanguageProfile(LANGID langid, REFGUID gu
 
     SetupPreserved(pThreadMgr, tfClientId);
     InitializeMetasequoiaIMECompartment(pThreadMgr, tfClientId);
-    SetupPunctuationPair();
     SetupLanguageBar(pThreadMgr, tfClientId, isSecureMode);
     SetupKeystroke();
     SetupConfiguration();

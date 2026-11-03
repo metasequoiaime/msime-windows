@@ -373,6 +373,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"paired_punctuation", GetConfiguredPairedPunctuationEnabled()},
             {"enumeration_comma_backslash", GetConfiguredEnumerationCommaBackslashEnabled()},
             {"enumeration_comma_slash", GetConfiguredEnumerationCommaSlashEnabled()},
+            {"custom_punctuation", GetConfiguredCustomPunctuationEnabled()},
+            {"custom_punctuation_map", GetConfiguredCustomPunctuationMap()},
             {"punctuation_lock", GetConfiguredPunctuationLock()},
             {"fuzzy_pinyin", GetConfiguredFuzzyPinyinEnabled()},
             {"fuzzy_z_zh", fuzzy_rules.enabled(metasequoia::FuzzyPinyinRule::Z_ZH)},
@@ -743,6 +745,11 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEnumerationCommaBackslashEnabled(json::value_to<bool>(data.at("value")));
     if (path == "input.enumeration_comma_slash")
         return SetConfiguredEnumerationCommaSlashEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "input.custom_punctuation")
+        return SetConfiguredCustomPunctuationEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "input.custom_punctuation_map")
+        return SetConfiguredCustomPunctuationMap(
+            json::value_to<std::vector<std::string>>(json::parse(json::value_to<std::string>(data.at("value")))));
     if (path == "input.punctuation_lock")
         return SetConfiguredPunctuationLock(json::value_to<std::string>(data.at("value")));
     constexpr std::string_view input_section_prefix = "input.";
@@ -1460,8 +1467,9 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             g_worker->Submit([data] {
                 const bool saved = ApplyConfigUpdate(data);
                 const std::string path = json::value_to<std::string>(data.at("path"));
-                // The shortcut editor waits for persisted state even for a failed/no-op write.
-                const bool force_snapshot = IsInputStateShortcutPath(path);
+                // The shortcut editor waits for persisted state even for a failed/no-op write. A failed write
+                // resends the snapshot too, so the control the page already flipped returns to the stored value.
+                const bool force_snapshot = !saved || IsInputStateShortcutPath(path);
                 auto completion = ConfigCompletion(false, force_snapshot);
                 return [saved, completion = std::move(completion)] {
                     completion();

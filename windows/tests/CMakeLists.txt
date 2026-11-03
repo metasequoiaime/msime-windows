@@ -55,6 +55,11 @@ target_include_directories(test_multiline_commit PRIVATE ../src)
 target_compile_features(test_multiline_commit PRIVATE cxx_std_17)
 add_test(NAME multiline_commit COMMAND test_multiline_commit)
 
+add_executable(test_custom_punctuation custom_punctuation.cpp ../src/Composition/PunctuationKeyMap.cpp)
+target_include_directories(test_custom_punctuation PRIVATE ../src)
+target_compile_features(test_custom_punctuation PRIVATE cxx_std_17)
+add_test(NAME custom_punctuation COMMAND test_custom_punctuation)
+
 add_executable(test_input_state_shortcuts input_state_shortcuts.cpp)
 target_compile_features(test_input_state_shortcuts PRIVATE cxx_std_17)
 target_compile_definitions(test_input_state_shortcuts PRIVATE MSIME_SHORTCUT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../engine/contracts/tests/input_state_shortcuts.json")
@@ -183,3 +188,32 @@ add_executable(test_commit_reply_not_ready commit_reply_not_ready.cpp)
 target_include_directories(test_commit_reply_not_ready PRIVATE ../src "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_features(test_commit_reply_not_ready PRIVATE cxx_std_17)
 add_test(NAME commit_reply_not_ready COMMAND test_commit_reply_not_ready)
+
+# Exercise how a key's custom punctuation pick travels from classification to the committed text
+# without loading a TIP into a host. Both classifiers' input filling, the punctuation commit with
+# its paired-punctuation stack and the two message-window cases are compiled from the production
+# sources (see generate_custom_punctuation_wiring_fixture.py); every TSF member they call is a
+# double. Regenerate whenever one of those pieces changes.
+set(wiring_base_header "${CMAKE_CURRENT_SOURCE_DIR}/../src/IME/MetasequoiaIMEBaseStructure.h")
+set(wiring_ime_header "${CMAKE_CURRENT_SOURCE_DIR}/../src/IME/MetasequoiaIME.h")
+set(wiring_key_handler_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Key/KeyHandler.cpp")
+set(wiring_composition_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Composition/Composition.cpp")
+set(wiring_key_sink_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Key/KeyEventSink.cpp")
+set(wiring_deferred_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/Key/KeyEventSink_DeferredKeys.cpp")
+set(wiring_window_source "${CMAKE_CURRENT_SOURCE_DIR}/../src/IME/MetasequoiaIME_WindowProc.cpp")
+set(wiring_fixture_generator "${CMAKE_CURRENT_SOURCE_DIR}/generate_custom_punctuation_wiring_fixture.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${wiring_base_header}" "${wiring_ime_header}" "${wiring_key_handler_source}" "${wiring_composition_source}"
+    "${wiring_key_sink_source}" "${wiring_deferred_source}" "${wiring_window_source}" "${wiring_fixture_generator}"
+    "${commit_reply_fixture_generator}")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -B "${wiring_fixture_generator}"
+        "${wiring_base_header}" "${wiring_ime_header}" "${wiring_key_handler_source}" "${wiring_composition_source}"
+        "${wiring_key_sink_source}" "${wiring_deferred_source}" "${wiring_window_source}"
+        "${CMAKE_CURRENT_BINARY_DIR}/custom_punctuation_wiring_types_source.h"
+        "${CMAKE_CURRENT_BINARY_DIR}/custom_punctuation_wiring_source.h"
+    COMMAND_ERROR_IS_FATAL ANY)
+add_executable(test_custom_punctuation_wiring custom_punctuation_wiring.cpp ../src/Composition/PunctuationKeyMap.cpp)
+target_include_directories(test_custom_punctuation_wiring PRIVATE ../src "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_features(test_custom_punctuation_wiring PRIVATE cxx_std_17)
+add_test(NAME custom_punctuation_wiring COMMAND test_custom_punctuation_wiring)

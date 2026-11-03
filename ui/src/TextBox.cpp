@@ -180,6 +180,38 @@ void TextBox::SetAppearance(Appearance appearance)
     InvalidateVisual();
 }
 
+void TextBox::SelectAll()
+{
+    // Moving the selection reports it to the TSF store, which only exists after Attach.
+    if (!editor_ || !tsfInitialized_)
+    {
+        return;
+    }
+    editor_->SelectAll();
+    InvalidateVisual();
+}
+
+void TextBox::MoveCaretToStart()
+{
+    if (!editor_ || !tsfInitialized_)
+    {
+        return;
+    }
+    editor_->MoveSelection(0, 0);
+    editor_->SetCaretVisible(focused_ ? TRUE : FALSE);
+    InvalidateVisual();
+}
+
+size_t TextBox::GetSelectionStart() const
+{
+    return editor_ ? editor_->GetSelectionStart() : 0;
+}
+
+size_t TextBox::GetSelectionEnd() const
+{
+    return editor_ ? editor_->GetSelectionEnd() : 0;
+}
+
 void TextBox::SetText(const std::wstring &text)
 {
     if (!editor_)

@@ -168,6 +168,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_terminal_deactivation_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_dictionary_journal.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_config_template_merge.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_custom_punctuation_config.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_config_non_ascii_path.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_collocation_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_neural_model.cpp"
@@ -210,6 +211,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/config/ime_config.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_credentials.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_appearance.cpp"
+    "${CMAKE_SOURCE_DIR}/src/config/ime_config_custom_punctuation.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_fonts.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_general.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_input.cpp"
@@ -267,6 +269,7 @@ target_compile_definitions(${TEST_EXECUTABLE_NAME}
     PRIVATE
     MSIME_AI_ASSISTANT_TEST
     "MSIME_DEFAULT_CONFIG_PATH=\"${CMAKE_SOURCE_DIR}/../installer/default_config/config.default.toml\""
+    "MSIME_ASSET_CONFIG_PATH=\"${CMAKE_SOURCE_DIR}/assets/config/config.toml\""
     "MSIME_CUSTOM_SHUANGPIN_EXAMPLE_PATH=\"${CMAKE_SOURCE_DIR}/../docs/custom-shuangpin.example.toml\""
     "MSIME_DICTIONARY_REPLAY_EXE=\"$<TARGET_FILE:${DICTIONARY_REPLAY_EXECUTABLE_NAME}>\""
 )
@@ -310,6 +313,7 @@ set(SETTINGS_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/settings_ui_main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_dropdown_scroll.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_ai_model_list_scroll.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_custom_punctuation.cpp"
 )
 foreach(_source IN LISTS _settings_sources)
     if(_source MATCHES "settings_app\\.cpp$" OR NOT _source MATCHES "\\.cpp$")

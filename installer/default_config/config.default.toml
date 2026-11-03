@@ -305,6 +305,11 @@ paired_punctuation = true
 # 顿号自定义：中文标点下 \ 和 / 是否输出顿号「、」，至少保留一个；没开的键按原样输出
 enumeration_comma_backslash = true
 enumeration_comma_slash = true
+# 自定义标点：中文标点状态下按指定的键输出指定的符号，优先于顿号设置与默认标点
+custom_punctuation = false
+# 自定义标点的映射，每项 "[Shift+]<键名>=<符号>"，键名为 Backquote Minus Equal BracketLeft BracketRight
+# Backslash Semicolon Quote Comma Period Slash 之一；第一个 = 之后整段是符号，例 ["Shift+BracketLeft=「"]
+custom_punctuation_map = []
 # 标点锁定，可选："follow"（随中英文切换）, "chinese"（始终中文标点）, "english"（始终英文标点）
 punctuation_lock = "follow"
 # Vim 模式：在列出的应用里，交给应用的无修饰键 Esc 同时把输入法切到英文。按可执行文件名匹配，不区分大小写，

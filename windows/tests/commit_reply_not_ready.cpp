@@ -7,6 +7,7 @@
 // commit_reply_source.h (see generate_commit_reply_fixture.py). Only the pipe probe, the message
 // window and the clock are doubles here. Regenerate the fixture when any of those paths changes.
 
+#include "Composition/CustomPunctuationPick.h"
 #include "Key/DeferredKeyFailurePolicy.h"
 #include "../../engine/contracts/windows_ipc.h"
 
@@ -198,7 +199,8 @@ class CMetasequoiaIME
     void _HandOffUnreadyCommitReply(uint64_t requestId, uint64_t deferredReplayToken, UINT message,
                                     ULONGLONG commitReplyDeadlineTick, UINT code, WCHAR wch,
                                     KEYSTROKE_FUNCTION keystrokeFunction, const std::wstring &prefetchedText,
-                                    uint64_t focusToken, uint64_t compositionEpoch);
+                                    uint64_t focusToken, uint64_t compositionEpoch,
+                                    const CustomPunctuationPick &customPunctuation = {});
 
     // Recorded outcomes of a deferred key: exactly one of these must happen for every key.
     void _CompleteDeferredKeyReplay(uint64_t token)
@@ -385,12 +387,18 @@ int checkHandOffContract()
     // A request that never started a window opens one now, and never stays at 0: the poll only
     // re-dispatches requests whose wait has started, so a 0 here would hang the key forever.
     service._pendingAsyncKeyMessages.clear();
+    // The re-run punctuation commit must produce what the key was classified with, so the custom punctuation
+    // pick travels with the handed-back request.
+    CustomPunctuationPick fullStop;
+    fullStop.active = true;
+    fullStop.symbol[0] = L'．';
     service._HandOffUnreadyCommitReply(9000, 78, WM_AsyncPunctuationCommit, /*commitReplyDeadlineTick=*/0,
                                        /*code=*/0xBE, /*wch=*/L'.', FUNCTION_PUNCTUATION, /*prefetchedText=*/L"",
-                                       /*focusToken=*/5, /*compositionEpoch=*/7);
+                                       /*focusToken=*/5, /*compositionEpoch=*/7, fullStop);
     CHECK(service._pendingAsyncKeyMessages.size() == 1);
     CHECK(service._pendingAsyncKeyMessages.begin()->second.commitReplyDeadlineTick ==
           clockMs + FANY_IME_COMMIT_REPLY_TIMEOUT_MS);
+    CHECK(service._pendingAsyncKeyMessages.begin()->second.customPunctuation.Symbol() == L"．");
 
     // A session never held a poll slot of its own, so the hand-off must take a free one instead
     // of overwriting a key that is already waiting.

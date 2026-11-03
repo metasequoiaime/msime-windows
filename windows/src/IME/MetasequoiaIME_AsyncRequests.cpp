@@ -46,12 +46,14 @@ class CPunctuationCommitEditSession : public CEditSessionBase
   public:
     CPunctuationCommitEditSession(CMetasequoiaIME *pTextService, ITfContext *pContext, UINT code, WCHAR wch,
                                   uint64_t requestId, LARGE_INTEGER requestStartQpc, std::wstring prefetchedText,
-                                  uint64_t focusToken, uint64_t compositionEpoch, uint64_t deferredReplayToken,
-                                  UINT commitReplyMessage, ULONGLONG commitReplyDeadlineTick)
+                                  const CustomPunctuationPick &customPunctuation, uint64_t focusToken,
+                                  uint64_t compositionEpoch, uint64_t deferredReplayToken, UINT commitReplyMessage,
+                                  ULONGLONG commitReplyDeadlineTick)
         : CEditSessionBase(pTextService, pContext), _code(code), _wch(wch), _requestId(requestId),
-          _requestStartQpc(requestStartQpc), _prefetchedText(std::move(prefetchedText)), _focusToken(focusToken),
-          _compositionEpoch(compositionEpoch), _deferredReplayToken(deferredReplayToken),
-          _commitReplyMessage(commitReplyMessage), _commitReplyDeadlineTick(commitReplyDeadlineTick)
+          _requestStartQpc(requestStartQpc), _prefetchedText(std::move(prefetchedText)),
+          _customPunctuation(customPunctuation), _focusToken(focusToken), _compositionEpoch(compositionEpoch),
+          _deferredReplayToken(deferredReplayToken), _commitReplyMessage(commitReplyMessage),
+          _commitReplyDeadlineTick(commitReplyDeadlineTick)
     {
         if (_requestStartQpc.QuadPart == 0)
         {
@@ -95,8 +97,8 @@ class CPunctuationCommitEditSession : public CEditSessionBase
         }
         completion.superseded = false;
         const UINT outerCommitReplyMessage = _pTextService->_ExchangeSessionCommitReplyMessage(_commitReplyMessage);
-        HRESULT hr =
-            _pTextService->_HandleCompositionPunctuation(ec, _pContext, _code, _wch, _requestId, _prefetchedText);
+        HRESULT hr = _pTextService->_HandleCompositionPunctuation(ec, _pContext, _code, _wch, _requestId,
+                                                                  _prefetchedText, _customPunctuation);
         _pTextService->_ExchangeSessionCommitReplyMessage(outerCommitReplyMessage);
         completion.applied = hr == S_OK;
         completion.result = hr;
@@ -110,9 +112,9 @@ class CPunctuationCommitEditSession : public CEditSessionBase
             // reports not-ready from the highlighted-candidate branch, which this
             // session reaches only if the candidate state changed between the
             // dispatch and this run.
-            _pTextService->_HandOffUnreadyCommitReply(_requestId, _deferredReplayToken, _commitReplyMessage,
-                                                      _commitReplyDeadlineTick, _code, _wch, FUNCTION_PUNCTUATION,
-                                                      _prefetchedText, _focusToken, _compositionEpoch);
+            _pTextService->_HandOffUnreadyCommitReply(
+                _requestId, _deferredReplayToken, _commitReplyMessage, _commitReplyDeadlineTick, _code, _wch,
+                FUNCTION_PUNCTUATION, _prefetchedText, _focusToken, _compositionEpoch, _customPunctuation);
         }
         return hr;
     }
@@ -123,6 +125,7 @@ class CPunctuationCommitEditSession : public CEditSessionBase
     uint64_t _requestId;
     LARGE_INTEGER _requestStartQpc;
     std::wstring _prefetchedText;
+    CustomPunctuationPick _customPunctuation;
     uint64_t _focusToken;
     uint64_t _compositionEpoch;
     uint64_t _deferredReplayToken;
@@ -138,8 +141,9 @@ class CSmartPunctuationEditSession : public CEditSessionBase
 {
   public:
     CSmartPunctuationEditSession(CMetasequoiaIME *pTextService, ITfContext *pContext, WCHAR wch,
-                                 KEYSTROKE_FUNCTION function, uint64_t focusToken)
-        : CEditSessionBase(pTextService, pContext), _wch(wch), _function(function), _focusToken(focusToken)
+                                 KEYSTROKE_FUNCTION function, const CustomPunctuationPick &custom, uint64_t focusToken)
+        : CEditSessionBase(pTextService, pContext), _wch(wch), _function(function), _custom(custom),
+          _focusToken(focusToken)
     {
     }
 
@@ -152,12 +156,13 @@ class CSmartPunctuationEditSession : public CEditSessionBase
         {
             return S_FALSE;
         }
-        return _pTextService->_ExecuteSmartPunctuationAction(ec, _pContext, _wch, _function);
+        return _pTextService->_ExecuteSmartPunctuationAction(ec, _pContext, _wch, _function, _custom);
     }
 
   private:
     WCHAR _wch;
     KEYSTROKE_FUNCTION _function;
+    CustomPunctuationPick _custom;
     uint64_t _focusToken;
 };
 
@@ -170,8 +175,10 @@ class CSmartPunctuationFallbackEditSession : public CEditSessionBase
 {
   public:
     CSmartPunctuationFallbackEditSession(CMetasequoiaIME *pTextService, ITfContext *pContext, WCHAR wch,
-                                         KEYSTROKE_FUNCTION function, uint64_t focusToken)
-        : CEditSessionBase(pTextService, pContext), _wch(wch), _function(function), _focusToken(focusToken)
+                                         KEYSTROKE_FUNCTION function, const CustomPunctuationPick &custom,
+                                         uint64_t focusToken)
+        : CEditSessionBase(pTextService, pContext), _wch(wch), _function(function), _custom(custom),
+          _focusToken(focusToken)
     {
     }
 
@@ -181,12 +188,13 @@ class CSmartPunctuationFallbackEditSession : public CEditSessionBase
         {
             return S_FALSE;
         }
-        return _pTextService->_ExecuteSmartPunctuationFallback(ec, _pContext, _wch, _function);
+        return _pTextService->_ExecuteSmartPunctuationFallback(ec, _pContext, _wch, _function, _custom);
     }
 
   private:
     WCHAR _wch;
     KEYSTROKE_FUNCTION _function;
+    CustomPunctuationPick _custom;
     uint64_t _focusToken;
 };
 
@@ -285,12 +293,10 @@ HRESULT CMetasequoiaIME::_RequestDeferredApplicationTextEditSession(_In_ ITfCont
     return FAILED(requestHr) ? requestHr : editSessionHr;
 }
 
-HRESULT CMetasequoiaIME::_RequestDirectPunctuationEditSession(_In_ ITfContext *pContext, UINT code, WCHAR wch,
-                                                              uint64_t requestId, std::wstring prefetchedText,
-                                                              uint64_t expectedFocusToken,
-                                                              uint64_t expectedCompositionEpoch,
-                                                              uint64_t deferredReplayToken, UINT commitReplyMessage,
-                                                              ULONGLONG commitReplyDeadlineTick)
+HRESULT CMetasequoiaIME::_RequestDirectPunctuationEditSession(
+    _In_ ITfContext *pContext, UINT code, WCHAR wch, uint64_t requestId, std::wstring prefetchedText,
+    const CustomPunctuationPick &customPunctuation, uint64_t expectedFocusToken, uint64_t expectedCompositionEpoch,
+    uint64_t deferredReplayToken, UINT commitReplyMessage, ULONGLONG commitReplyDeadlineTick)
 {
     if (pContext == nullptr)
     {
@@ -301,7 +307,7 @@ HRESULT CMetasequoiaIME::_RequestDirectPunctuationEditSession(_In_ ITfContext *p
     QueryPerformanceCounter(&requestStartQpc);
 
     CPunctuationCommitEditSession *pEditSession = new (std::nothrow) CPunctuationCommitEditSession(
-        this, pContext, code, wch, requestId, requestStartQpc, std::move(prefetchedText),
+        this, pContext, code, wch, requestId, requestStartQpc, std::move(prefetchedText), customPunctuation,
         expectedFocusToken != 0 ? expectedFocusToken : _CaptureFocusSessionToken(),
         expectedCompositionEpoch != 0 ? expectedCompositionEpoch : _CaptureCompositionEpoch(), deferredReplayToken,
         commitReplyMessage, commitReplyDeadlineTick);
@@ -325,6 +331,7 @@ HRESULT CMetasequoiaIME::_RequestDirectPunctuationEditSession(_In_ ITfContext *p
 
 HRESULT CMetasequoiaIME::_RequestSmartPunctuationEditSession(_In_ ITfContext *pContext, WCHAR wch,
                                                              KEYSTROKE_FUNCTION function,
+                                                             const CustomPunctuationPick &custom,
                                                              uint64_t expectedFocusGeneration)
 {
     if (pContext == nullptr)
@@ -338,8 +345,8 @@ HRESULT CMetasequoiaIME::_RequestSmartPunctuationEditSession(_In_ ITfContext *pC
         return S_FALSE;
     }
 
-    CSmartPunctuationEditSession *pEditSession =
-        new (std::nothrow) CSmartPunctuationEditSession(this, pContext, wch, function, _CaptureFocusSessionToken());
+    CSmartPunctuationEditSession *pEditSession = new (std::nothrow)
+        CSmartPunctuationEditSession(this, pContext, wch, function, custom, _CaptureFocusSessionToken());
     if (pEditSession == nullptr)
     {
         return E_OUTOFMEMORY;
@@ -358,7 +365,7 @@ HRESULT CMetasequoiaIME::_RequestSmartPunctuationEditSession(_In_ ITfContext *pC
         // refuses every write leaves no other option.
         HRESULT fallbackHr = E_OUTOFMEMORY;
         CSmartPunctuationFallbackEditSession *pFallbackSession = new (std::nothrow)
-            CSmartPunctuationFallbackEditSession(this, pContext, wch, function, _CaptureFocusSessionToken());
+            CSmartPunctuationFallbackEditSession(this, pContext, wch, function, custom, _CaptureFocusSessionToken());
         if (pFallbackSession != nullptr)
         {
             HRESULT fallbackEditSessionHr = E_FAIL;
@@ -409,7 +416,8 @@ bool CMetasequoiaIME::_TakePendingServerCandidate(_Out_ UINT *pMsgType, _Out_ st
 bool CMetasequoiaIME::_PostAsyncKeyRequest(UINT message, UINT code, WCHAR wch, uint64_t requestId,
                                            std::wstring prefetchedText, uint64_t expectedFocusToken,
                                            uint64_t expectedCompositionEpoch, uint64_t deferredReplayToken,
-                                           KEYSTROKE_FUNCTION keystrokeFunction)
+                                           KEYSTROKE_FUNCTION keystrokeFunction,
+                                           const CustomPunctuationPick &customPunctuation)
 {
     switch (message)
     {
@@ -452,9 +460,9 @@ bool CMetasequoiaIME::_PostAsyncKeyRequest(UINT message, UINT code, WCHAR wch, u
             {
                 token = NextWindowMessageToken();
             } while (token == 0 || _pendingAsyncKeyMessages.count(token) != 0);
-            _pendingAsyncKeyMessages.emplace(token, AsyncKeyRequest{message, code, wch, requestId, focusToken,
-                                                                    compositionEpoch, deferredReplayToken,
-                                                                    keystrokeFunction, std::move(prefetchedText)});
+            _pendingAsyncKeyMessages.emplace(
+                token, AsyncKeyRequest{message, code, wch, requestId, focusToken, compositionEpoch, deferredReplayToken,
+                                       keystrokeFunction, std::move(prefetchedText), 0, customPunctuation});
         }
     }
     if (token == 0)
@@ -549,7 +557,8 @@ void CMetasequoiaIME::_HandOffUnreadyCommitReply(uint64_t requestId, uint64_t de
                                                  ULONGLONG commitReplyDeadlineTick, UINT code, WCHAR wch,
                                                  KEYSTROKE_FUNCTION keystrokeFunction,
                                                  const std::wstring &prefetchedText, uint64_t focusToken,
-                                                 uint64_t compositionEpoch)
+                                                 uint64_t compositionEpoch,
+                                                 const CustomPunctuationPick &customPunctuation)
 {
     AsyncKeyRequest request;
     request.message = message;
@@ -561,6 +570,7 @@ void CMetasequoiaIME::_HandOffUnreadyCommitReply(uint64_t requestId, uint64_t de
     request.deferredReplayToken = deferredReplayToken;
     request.keystrokeFunction = keystrokeFunction;
     request.prefetchedText = prefetchedText;
+    request.customPunctuation = customPunctuation;
     // Carry the window the first slice already started; a hand-off must not
     // extend how long a key can wait for its reply. Only a path that reached its
     // session without one starts a window here — the punctuation handler skips

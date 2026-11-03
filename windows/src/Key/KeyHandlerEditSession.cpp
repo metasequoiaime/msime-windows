@@ -104,7 +104,7 @@ STDAPI CKeyHandlerEditSession::DoEditSession(TfEditCookie ec)
     if (pKeyStateCategory)
     {
         KeyHandlerEditSessionDTO keyHandlerEditSessioDTO(ec, _pContext, _uCode, _wch, _KeyState.Function, _requestId,
-                                                         _prefetchedText);
+                                                         _prefetchedText, _KeyState.CustomPunctuation);
         const UINT outerCommitReplyMessage = _pTextService->_ExchangeSessionCommitReplyMessage(_commitReplyMessage);
         hResult = pKeyStateCategory->KeyStateHandler(_KeyState.Function, keyHandlerEditSessioDTO);
         _pTextService->_ExchangeSessionCommitReplyMessage(outerCommitReplyMessage);
@@ -134,9 +134,9 @@ STDAPI CKeyHandlerEditSession::DoEditSession(TfEditCookie ec)
         // DoEditSession runs. Hand the request back to the cooperative poll
         // here, so the same window keeps running and this session is re-run once
         // the reply is in. The deferred token stays in flight until then.
-        _pTextService->_HandOffUnreadyCommitReply(_requestId, _deferredReplayToken, _commitReplyMessage,
-                                                  _commitReplyDeadlineTick, _uCode, _wch, _KeyState.Function,
-                                                  _prefetchedText, _focusToken, _expectedCompositionEpoch);
+        _pTextService->_HandOffUnreadyCommitReply(
+            _requestId, _deferredReplayToken, _commitReplyMessage, _commitReplyDeadlineTick, _uCode, _wch,
+            _KeyState.Function, _prefetchedText, _focusToken, _expectedCompositionEpoch, _KeyState.CustomPunctuation);
     }
     DebugTsfKeyLatency(L"edit-session-body", _requestId, doEditSessionTimer.ElapsedMs(), hResult);
     DebugTsfIssue47(L"edit-session-complete", _requestId, _uCode, _wch, _KeyState.Category, _KeyState.Function, 1,

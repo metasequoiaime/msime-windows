@@ -46,7 +46,7 @@ int main()
            FanyImeProtocol::TemporaryJapaneseLongVowel) == 0);
     CHECK(FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged == 36);
     CHECK(FanyImeWorkerReplyType::UpdateInstallerReady == 40);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::CustomPunctuationChanged);
     for (wchar_t payload = L'0'; payload <= L'3'; ++payload)
     {
         CHECK(FanyImeTemporaryJapanese::IsValidPayload(payload));
@@ -245,7 +245,8 @@ int main()
     CHECK(FanyImeWorkerReplyType::HorizontalArrowSelectionChanged == 39);
     CHECK(FanyImeWorkerReplyType::UpdateInstallerReady == 40);
     CHECK(FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged == 41);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged);
+    CHECK(FanyImeWorkerReplyType::CustomPunctuationChanged == 42);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::CustomPunctuationChanged);
     // EnumerationCommaKeysChanged 的载荷：\ 和 / 各一位，两个都没勾按只有 \ 发。
     CHECK(FanyImeEnumerationComma::PayloadFor(true, false) == L'1' &&
           FanyImeEnumerationComma::PayloadFor(false, true) == L'2' &&

@@ -207,13 +207,26 @@ std::shared_ptr<Label> MakeDescription(std::wstring text);
 // Layout
 // ---------------------------------------------------------------------------------
 
-// Vertical stack with CSS-like margins on its children (msimeui::StackPanel plus
-// display:none support through Hideable children).
-class Column : public msimeui::StackPanel
+// Vertical stack with CSS-like margins on its children. A child that measures to nothing, width
+// and height both 0 (a hidden Hideable, or a Column without padding or margin whose children all
+// measure to nothing), takes no space and gets no gap. A child 0 wide but with some height, like
+// Spacer(0, 10), still takes its height and its gaps.
+class Column : public msimeui::Panel
 {
   public:
     explicit Column(float gap = 0.0f);
     Column &Add(VisualPtr child);
+    // Where a child narrower than the column sits; Stretch (the default) gives it the full width.
+    void SetHorizontalContentAlignment(msimeui::HorizontalAlignment alignment);
+
+    SizeF Measure(const SizeF &availableSize) override;
+    void Arrange(const RectF &finalRect) override;
+    void Render(msimeui::DeviceResources &dr) override;
+
+  private:
+    float gap_ = 0.0f;
+    msimeui::HorizontalAlignment horizontalAlignment_ = msimeui::HorizontalAlignment::Stretch;
+    std::vector<SizeF> sizes_;
 };
 
 // Horizontal flexbox: children keep their natural width except those added with a
@@ -573,6 +586,7 @@ struct DropdownOption
 
 class DropdownMenu;
 class DropdownPopup;
+class DropdownSearchBox;
 
 // `.dropdown` + `.dropdown-toggle` + `.dropdown-menu`.
 class Dropdown : public msimeui::Visual
@@ -618,6 +632,10 @@ class Dropdown : public msimeui::Visual
     std::string GetValue() const;
     void SetSelectedIndex(size_t index);
     size_t GetSelectedIndex() const;
+    // Back to no selection: the toggle shows nothing (or the placeholder of a searchable box).
+    void ClearSelection();
+    // The text the closed box shows: the override, the selected option's label, or an unknown value itself.
+    std::wstring CurrentLabel() const;
     void SetLabelOverride(std::wstring label);
     void SetDisabled(bool disabled);
 
@@ -641,7 +659,6 @@ class Dropdown : public msimeui::Visual
     void Open();
     void Close();
     void Commit(size_t index);
-    std::wstring CurrentLabel() const;
     TextStyle LabelStyle() const;
     void ApplySearch(const std::wstring &query);
 
@@ -660,7 +677,7 @@ class Dropdown : public msimeui::Visual
     ChangeHandler onChanged_;
     std::shared_ptr<DropdownMenu> menu_;
     std::shared_ptr<DropdownPopup> popup_;
-    std::shared_ptr<msimeui::TextBox> search_;
+    std::shared_ptr<DropdownSearchBox> search_;
     int searchThemedLight_ = -1;
 };
 
@@ -760,6 +777,13 @@ class Button : public msimeui::Visual
 
     void SetOnClick(std::function<void()> handler);
     void SetText(std::wstring text);
+    const std::wstring &GetText() const
+    {
+        return text_;
+    }
+    // Width the button takes to show `text` in its own font, padding and icon, before its
+    // minimum width applies.
+    float WidthFor(const std::wstring &text) const;
     void SetDisabled(bool disabled);
     bool IsDisabled() const
     {
@@ -786,6 +810,14 @@ class Button : public msimeui::Visual
     HCURSOR GetCursor() const override;
 
   private:
+    struct Metrics
+    {
+        TextStyle style;
+        float paddingX = 0.0f;
+        float height = 0.0f;
+        float minWidth = 0.0f;
+    };
+    Metrics LayoutMetrics() const;
     D2D1_COLOR_F FillColor() const;
     D2D1_COLOR_F BorderColor() const;
     D2D1_COLOR_F TextColor() const;
