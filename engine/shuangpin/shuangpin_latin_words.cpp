@@ -77,14 +77,18 @@ void ShuangpinLatinWords::build(std::shared_ptr<const quanpin::LatinWords> sourc
         }
         if (!encodable)
             continue;
+        const std::size_t covered = quanpin::segments_through_first_latin_run(segments, word.value);
+        std::size_t completion_keys = 0;
+        for (std::size_t i = 0; i < covered; ++i)
+            completion_keys += chars[i] < 0x80 ? 1 : 2;
         for (auto &code : codes)
         {
             max_code_length_ = (std::max)(max_code_length_, code.size());
-            codes_.emplace_back(std::move(code), &word);
+            codes_.push_back({std::move(code), &word, completion_keys});
         }
     }
-    std::sort(codes_.begin(), codes_.end(), [](const auto &left, const auto &right) {
-        return left.first != right.first ? left.first < right.first : left.second->weight > right.second->weight;
+    std::sort(codes_.begin(), codes_.end(), [](const Code &left, const Code &right) {
+        return left.keys != right.keys ? left.keys < right.keys : left.word->weight > right.word->weight;
     });
     codes_.erase(std::unique(codes_.begin(), codes_.end()), codes_.end());
 }
@@ -95,9 +99,9 @@ std::vector<const quanpin::LatinWord *> ShuangpinLatinWords::exact(const std::st
     if (keys.empty())
         return result;
     auto it = std::lower_bound(codes_.begin(), codes_.end(), keys,
-                               [](const auto &entry, const std::string &target) { return entry.first < target; });
-    for (; it != codes_.end() && it->first == keys; ++it)
-        result.push_back(it->second);
+                               [](const Code &entry, const std::string &target) { return entry.keys < target; });
+    for (; it != codes_.end() && it->keys == keys; ++it)
+        result.push_back(it->word);
     return result;
 }
 
@@ -108,12 +112,12 @@ std::vector<const quanpin::LatinWord *> ShuangpinLatinWords::completions(const s
     if (keys.empty() || limit == 0)
         return result;
     auto it = std::lower_bound(codes_.begin(), codes_.end(), keys,
-                               [](const auto &entry, const std::string &target) { return entry.first < target; });
-    for (; it != codes_.end() && it->first.compare(0, keys.size(), keys) == 0; ++it)
+                               [](const Code &entry, const std::string &target) { return entry.keys < target; });
+    for (; it != codes_.end() && it->keys.compare(0, keys.size(), keys) == 0; ++it)
     {
-        if (it->first.size() > keys.size() && !it->second->exact_only &&
-            std::find(result.begin(), result.end(), it->second) == result.end())
-            result.push_back(it->second);
+        if (it->keys.size() > keys.size() && !it->word->exact_only && keys.size() >= it->completion_keys &&
+            std::find(result.begin(), result.end(), it->word) == result.end())
+            result.push_back(it->word);
     }
     std::stable_sort(result.begin(), result.end(), [](const quanpin::LatinWord *left, const quanpin::LatinWord *right) {
         return left->weight > right->weight;

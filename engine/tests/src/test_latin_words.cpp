@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -208,6 +209,9 @@ void prepare_dictionary(const std::filesystem::path &directory, bool with_latin_
                                     "INSERT INTO tbl_2_z VALUES('zhe''lei','zl','这类',200);"
                                     "INSERT INTO tbl_2_z VALUES('zhi''neng','zn','智能',300);"
                                     "INSERT INTO tbl_2_z VALUES('zhi''neng','zn','职能',200);"
+                                    // dna 切成 d'na 的读法，覆盖整串：字母词只有补全出来的那几条。
+                                    "CREATE TABLE tbl_2_d(key TEXT, jp TEXT, value TEXT, weight INTEGER);"
+                                    "INSERT INTO tbl_2_d VALUES('da''na','dn','打那',100);"
                                     "COMMIT;");
     if (!with_latin_words)
         return;
@@ -222,6 +226,15 @@ void prepare_dictionary(const std::filesystem::path &directory, bool with_latin_
             // 与 B超 同码、权重更低：整串命中 bchao、补全 bch 都有两条。
             "INSERT INTO latin_words VALUES('b''chao','B潮',1,0);"
             "INSERT INTO latin_words VALUES('u''pan','U盘',5,0);"
+            // 补全词权重高过同前缀的整串命中词：upan 时整串命中的 U盘 仍在它前面。
+            "INSERT INTO latin_words VALUES('u''pan''suo','U盘锁',20,0);"
+            // 两段字母：第一段 e 打完就补，最后一段 e 要打到 erene。
+            "INSERT INTO latin_words VALUES('e''ren''e''ben','e人e本',3,0);"
+            // dna 补全：最重的 DNAS芯片 字母段 dnas 没打全，不占至多两条的名额；剩下三条只出最重的两条。
+            "INSERT INTO latin_words VALUES('d''n''a''s''xin''pian','DNAS芯片',9,0);"
+            "INSERT INTO latin_words VALUES('d''n''a''jian''ce','DNA检测',5,0);"
+            "INSERT INTO latin_words VALUES('d''n''a''jian''ding','DNA鉴定',4,0);"
+            "INSERT INTO latin_words VALUES('d''n''a''xu''lie','DNA序列',3,0);"
             "INSERT INTO latin_words VALUES('zhe''e','浙E',4,1);"
             "INSERT INTO latin_words VALUES('zhe''l','浙L',4,1);"
             "INSERT INTO latin_words VALUES('ji''b','吉B',4,1);"
@@ -449,10 +462,10 @@ void test_latin_after_full_input(const metasequoia::RuntimePaths &paths)
         expect_latin_after_full_input(session, "zhel", {"这里", "这类"}, "浙L", {"这"});
     }
     {
-        // 补全出来的字母词同样让过覆盖整串的词。
+        // 打全字母段 nabla 之后的补全：没有普通词覆盖整串，补出的字母词排第一。
         metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
-        type(session, "nab");
-        expect_latin_after_full_input(session, "nab", {"那边", "哪边"}, "Nabla算子", {"那"});
+        type(session, "nablas");
+        expect_latin_after_full_input(session, "nablas", {}, "Nabla算子", {});
     }
     {
         metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
@@ -474,7 +487,8 @@ void test_latin_after_full_input(const metasequoia::RuntimePaths &paths)
         with_lattice(session);
         type(session, "txu");
         expect_latin_after_full_input(session, "txu", {"特许"}, "T恤", {});
-        require(find_index(session, "T恤衫") == find_index(session, "T恤") + 1,
+        require(find_index(session, "T恤衫") < session.candidates().size() &&
+                    find_index(session, "T恤衫") == find_index(session, "T恤") + 1,
                 "The completed latin word must follow the exact one directly with the lattice on." + listing(session));
     }
     {
@@ -506,15 +520,23 @@ void test_latin_after_full_input(const metasequoia::RuntimePaths &paths)
         expect_latin_after_full_input(session, "nabla", {}, "Nabla算子", {"那边", "那"});
     }
 
-    // vin、vel 关掉双拼辅码再打：会话默认开着，奇数个键时末键当单码辅码（夹具没有辅码表也一样），
+    // vin、vingic、vel 关掉双拼辅码再打：会话默认开着，奇数个键时末键当单码辅码（夹具没有辅码表也一样），
     // 那条路见 test_shuangpin_helpcodes。
     const auto &xiaohe = GetXiaoheShuangpinProfile();
     {
-        // 小鹤 vi 是 zhi，vin 读作 zhi + n。
+        // 小鹤 vi 是 zhi，vin 读作 zhi + n：还没打到 智能IC卡 的字母段 ic，不补全。
         metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
         session.set_shuangpin_helpcode_enabled(false);
         type(session, "vin");
-        expect_latin_after_full_input(session, "xiaohe vin", {"智能", "职能"}, "智能IC卡", {"知"});
+        require(!has_latin_word(session) && first_is(session, "智能"),
+                "xiaohe vin stops before the letters ic: no latin word." + listing(session));
+    }
+    {
+        // 小鹤 智能 ving，打全字母段 ic 后补出 智能IC卡；智能 只覆盖前四个键。
+        metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        type(session, "vingic");
+        expect_latin_after_full_input(session, "xiaohe vingic", {}, "智能IC卡", {"智能"});
     }
     {
         // 小鹤 ve 是 zhe。
@@ -530,16 +552,127 @@ void test_latin_after_full_input(const metasequoia::RuntimePaths &paths)
     }
 }
 
+// 补全门槛：输入打全词里第一段连续字母之后才补出整条词。Nabla算子 的字母段是 nabla，卡拉OK 的是 ok
+// （在词尾，打全它就是整串命中，没有补全）。
+void test_completion_gate(const metasequoia::RuntimePaths &paths)
+{
+    const auto quanpin = [&](const std::string &input) {
+        auto session = std::make_unique<metasequoia::InputSession>(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(*session, input);
+        return session;
+    };
+    {
+        const auto session = quanpin("nab");
+        require(first_is(*session, "那边") && find_index(*session, "Nabla算子") == session->candidates().size(),
+                "nab covers only part of the letters nabla: Nabla算子 must not be completed." + listing(*session));
+    }
+    {
+        const auto session = quanpin("nabl");
+        require(find_index(*session, "Nabla算子") == session->candidates().size(),
+                "nabl stops one letter short of nabla: Nabla算子 must not be completed." + listing(*session));
+    }
+    for (const char *input : {"nabla", "nablas", "nablasuan"})
+    {
+        const auto session = quanpin(input);
+        const auto index = find_index(*session, "Nabla算子");
+        require(index < session->candidates().size() && session->candidates()[index].latin_word &&
+                    count_word(*session, "Nabla算子") == 1,
+                std::string("Typing all of nabla must complete Nabla算子 once for ") + input + listing(*session));
+    }
+    for (const char *input : {"kal", "kala", "kalao"})
+    {
+        const auto session = quanpin(input);
+        require(find_index(*session, "卡拉OK") == session->candidates().size(),
+                std::string("卡拉OK's letters come last: no completion before kalaok for ") + input +
+                    listing(*session));
+    }
+    {
+        // 字母段在开头且只有一个字母：txu 盖住了 t，T恤衫 照样补出。
+        const auto session = quanpin("txu");
+        require(find_index(*session, "T恤衫") < session->candidates().size(),
+                "txu covers the letter t: T恤衫 must still be completed." + listing(*session));
+    }
+    {
+        // 补全词 U盘锁 权重 20 高过整串命中的 U盘 5，仍排在 U盘 后面。
+        const auto session = quanpin("upan");
+        const auto exact = find_index(*session, "U盘");
+        const auto completion = find_index(*session, "U盘锁");
+        require(exact < session->candidates().size() && completion == exact + 1 &&
+                    session->candidates()[completion].latin_word,
+                "The exact latin word must stay ahead of a heavier completion." + listing(*session));
+    }
+
+    const auto &xiaohe = GetXiaoheShuangpinProfile();
+    const auto shuangpin = [&](const std::string &input) {
+        auto session = std::make_unique<metasequoia::InputSession>(SchemeType::Shuangpin, xiaohe, paths);
+        session->set_shuangpin_helpcode_enabled(false);
+        type(*session, input);
+        return session;
+    };
+    for (const char *input : {"nab", "nabl"})
+    {
+        const auto session = shuangpin(input);
+        require(find_index(*session, "Nabla算子") == session->candidates().size(),
+                std::string("Xiaohe ") + input + " must not complete Nabla算子." + listing(*session));
+    }
+    for (const char *input : {"nabla", "nablasr"})
+    {
+        const auto session = shuangpin(input);
+        require(find_index(*session, "Nabla算子") < session->candidates().size(),
+                std::string("Xiaohe ") + input + " covers nabla and must complete Nabla算子." + listing(*session));
+    }
+    // 智能IC卡 的字母段 ic 前面有两个汉字，各占两个键：ving、vingi 都还没打到 ic。
+    for (const char *input : {"ving", "vingi"})
+    {
+        const auto session = shuangpin(input);
+        require(find_index(*session, "智能IC卡") == session->candidates().size(),
+                std::string("Xiaohe ") + input + " stops before the letters ic: 智能IC卡 must not be completed." +
+                    listing(*session));
+    }
+}
+
+// 门槛按词里第一段字母算，补全至多两条，被门槛挡掉的词不占名额。
+void test_completion_gate_shapes(const metasequoia::RuntimePaths &paths)
+{
+    {
+        // e人e本：打完第一段 e 就够门槛，eren 还没打到第二段 e，照样补出。
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "eren");
+        const auto index = find_index(session, "e人e本");
+        require(index < session.candidates().size() && session.candidates()[index].latin_word,
+                "eren covers the first letter run e: e人e本 must be completed." + listing(session));
+    }
+    {
+        // dna 盖住了 DNA检测、DNA鉴定、DNA序列 的字母段，没盖住最重的 DNAS芯片 的 dnas。
+        // 打那 覆盖整串，补出来的字母词排在它后面，按权重取前两条。
+        metasequoia::InputSession session(SchemeType::Quanpin, 0u, true, true, true, paths);
+        type(session, "dna");
+        expect_latin_after_full_input(session, "dna", {"打那"}, "DNA检测", {});
+        const auto second = find_index(session, "DNA鉴定");
+        require(second < session.candidates().size() && second == find_index(session, "DNA检测") + 1,
+                "The second completion must follow the first." + listing(session));
+        require(find_index(session, "DNAS芯片") == session.candidates().size(),
+                "DNAS芯片's letters dnas are not all typed: it must not be completed." + listing(session));
+        require(find_index(session, "DNA序列") == session.candidates().size(),
+                "At most two latin words are completed." + listing(session));
+    }
+}
+
 // 小鹤 vin、vel 开着辅码（会话默认开）且有辅码表：末键 n、l 当单码辅码，辅码筛出的 知、这 排到最前，
 // 它们的 pinyin 只到 vi、ve，可选中后连辅码一起吃掉整串，同样算覆盖整串。
 void test_shuangpin_helpcodes(const metasequoia::RuntimePaths &paths)
 {
     const auto &xiaohe = GetXiaoheShuangpinProfile();
     {
+        // vin 没打到 智能IC卡 的字母段，没有字母词；辅码筛出的 知 照样吃掉整串。
         metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
         type(session, "vin");
-        expect_latin_after_full_input(session, "xiaohe vin with helpcodes", {"知", "智能", "职能", "知"}, "智能IC卡",
-                                      {});
+        const auto words = words_of(session);
+        require(!has_latin_word(session) && words.size() >= 4 &&
+                    std::vector<std::string>(words.begin(), words.begin() + 4) ==
+                        std::vector<std::string>{"知", "智能", "职能", "知"},
+                "xiaohe vin with helpcodes must keep the helpcode order 知 智能 职能 知 and offer no latin word." +
+                    listing(session));
         require(session.select_candidate(find_index(session, "知")).commit == "知" && !session.has_composition(),
                 "The helpcode-filtered candidate must consume the whole input when selected.");
     }
@@ -550,24 +683,23 @@ void test_shuangpin_helpcodes(const metasequoia::RuntimePaths &paths)
     }
 }
 
-// 双拼开着 Google 整句：小鹤 vin 解出的整句排在最前，它也覆盖整串，字母词排在它和 智能、职能 之后。
+// 双拼开着 Google 整句：小鹤 vingic 解出的整句排在最前，它也覆盖整串，字母词排在它之后；智能 只覆盖 ving。
 void test_shuangpin_google_sentence(const metasequoia::RuntimePaths &paths)
 {
     metasequoia::InputSession session(SchemeType::Shuangpin, GetXiaoheShuangpinProfile(), paths);
-    // 关掉辅码，末键 n 只当声母：知 只覆盖 vi。
     session.set_shuangpin_helpcode_enabled(false);
     SentenceAssociationOptions association;
     association.google = true;
     session.set_sentence_association(association);
-    type(session, "vin");
+    type(session, "vingic");
     const auto &candidates = session.candidates();
     const auto sentence =
         std::find_if(candidates.begin(), candidates.end(), [](const WordItem &item) { return !item.latin_word; });
-    require(sentence != candidates.end() && sentence->source == CandidateSource::Fallback &&
-                sentence->sentence_association,
-            "The Google decoder must lead the ordinary candidates of xiaohe vin with a sentence." + listing(session));
-    expect_latin_after_full_input(session, "xiaohe vin with Google sentences", {sentence->word, "智能", "职能"},
-                                  "智能IC卡", {"知"});
+    require(
+        sentence != candidates.end() && sentence->source == CandidateSource::Fallback && sentence->sentence_association,
+        "The Google decoder must lead the ordinary candidates of xiaohe vingic with a sentence." + listing(session));
+    expect_latin_after_full_input(session, "xiaohe vingic with Google sentences", {sentence->word}, "智能IC卡",
+                                  {"智能"});
 }
 
 // 普通候选彼此的先后与没有字母词的词库逐项相同：字母词只是插进去，不挪动别的候选。
@@ -592,7 +724,7 @@ void test_ordinary_order_unchanged(const metasequoia::RuntimePaths &paths, const
     };
     for (const auto &[input, lattice, expect_latin] : std::vector<std::tuple<std::string, bool, bool>>{
              {"zhel", false, true},
-             {"nab", false, true},
+             {"nab", false, false},
              {"jib", false, true},
              {"txu", false, true},
              {"txu", true, true},
@@ -610,7 +742,8 @@ void test_ordinary_order_unchanged(const metasequoia::RuntimePaths &paths, const
     }
     const auto &xiaohe = GetXiaoheShuangpinProfile();
     for (const auto &[input, expect_latin] : std::vector<std::pair<std::string, bool>>{
-             {"vin", true},
+             {"vin", false},
+             {"vingic", true},
              {"vel", true},
              {"txu", true},
              {"vi", false},
@@ -819,6 +952,8 @@ int main()
         test_no_learning(current, paths);
         test_old_dictionary(paths_for(old));
         test_latin_after_full_input(paths);
+        test_completion_gate(paths);
+        test_completion_gate_shapes(paths);
         test_ordinary_order_unchanged(paths, paths_for(old));
         const auto helpcoded = root / "helpcoded";
         prepare_dictionary(helpcoded, true);

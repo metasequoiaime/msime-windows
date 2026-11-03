@@ -92,9 +92,13 @@ void LatinWords::load(sqlite3 *db)
         word.value = value;
         word.weight = sqlite3_column_int64(statement, 2);
         word.exact_only = has_exact_only && sqlite3_column_int(statement, 3) != 0;
-        word.code = latin_code(split_segments(word.key));
+        const auto segments = split_segments(word.key);
+        word.code = latin_code(segments);
         if (word.code.empty() || word.value.empty())
             continue;
+        const auto covered = segments_through_first_latin_run(segments, word.value);
+        for (std::size_t i = 0; i < covered; ++i)
+            word.completion_code_length += segments[i].size();
         max_code_length_ = (std::max)(max_code_length_, word.code.size());
         words_.push_back(std::move(word));
     }
@@ -133,7 +137,7 @@ std::vector<const LatinWord *> LatinWords::completions(const std::string &code, 
                                [](const LatinWord &word, const std::string &target) { return word.code < target; });
     for (; it != words_.end() && it->code.compare(0, code.size(), code) == 0; ++it)
     {
-        if (it->code.size() > code.size() && !it->exact_only)
+        if (it->code.size() > code.size() && !it->exact_only && code.size() >= it->completion_code_length)
             result.push_back(&*it);
     }
     std::stable_sort(result.begin(), result.end(),
@@ -294,6 +298,21 @@ std::string latin_code(const std::string &raw_input)
             return {};
     }
     return code;
+}
+
+std::size_t segments_through_first_latin_run(const Segments &segments, const std::string &value)
+{
+    if (!utf8::is_valid(value.begin(), value.end()))
+        return segments.size();
+    std::vector<char32_t> chars;
+    utf8::unchecked::utf8to32(value.begin(), value.end(), std::back_inserter(chars));
+    if (chars.size() != segments.size())
+        return segments.size();
+    const auto is_letter = [](char32_t ch) { return (ch >= U'a' && ch <= U'z') || (ch >= U'A' && ch <= U'Z'); };
+    const auto first = std::find_if(chars.begin(), chars.end(), is_letter);
+    if (first == chars.end())
+        return segments.size();
+    return static_cast<std::size_t>(std::find_if_not(first, chars.end(), is_letter) - chars.begin());
 }
 
 bool contains_latin_letter(const std::string &text)

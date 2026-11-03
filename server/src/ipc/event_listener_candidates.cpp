@@ -10,6 +10,7 @@
 #include <utility>
 #include "ipc.h"
 #include "ipc/candidate_expansion_policy.h"
+#include "ipc/queried_candidate_arrangement_policy.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/input_key_policy.h"
 #include "utils/common_utils.h"
@@ -857,10 +858,14 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
             g_inputSession->has_active_helpcode());
         PlaceQuickPhrases(items, current_input);
         fixedPosMs = segment.Split();
-        if (g_inputSession->get_pinyin_sequence().size() == 1 && items.size() > 24)
-            items.resize(24);
-        // 单字母输入截到前 24 个候选之后再展开写法，截的仍是候选个数，不切开写法组。
-        items = WithTraditionalVariantsFor(std::move(items), character_set);
+        // 异步候选还没回来，字母词也要先在默认位置上；混输开关全关时这里就是它的最终位置。
+        const size_t page_size = CurrentEnglishPlacement(items).page_size;
+        items = FanyImeIpc::ArrangeQueriedCandidates(
+            std::move(items), g_inputSession->get_pinyin_sequence().size() == 1,
+            [&](std::vector<WordItem> queried) {
+                return WithTraditionalVariantsFor(std::move(queried), character_set);
+            },
+            page_size);
         spelled_by_character_set = true;
     }
 

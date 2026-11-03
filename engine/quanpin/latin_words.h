@@ -27,6 +27,9 @@ struct LatinWord
     // 车牌（浙E、鄂A）：只在整串正好是它时单独出候选，不补全、不进整句。浙E 的 zhe'e 全是完整音节，
     // 进了词格会混进普通整句（就浙E养）；补全会让 zhe 冒出一串车牌。
     bool exact_only = false;
+    // 补全门槛：输入至少要有这么多个键，才补出这个词。是 code 里到词中第一段连续拉丁字母为止的键数
+    // （Nabla算子 是 nabla 的 5 个，T恤衫 是 t 的 1 个，卡拉OK 是整串的 6 个，即只整串命中）。
+    std::size_t completion_code_length = 0;
 
     bool operator==(const LatinWord &other) const
     {
@@ -57,7 +60,8 @@ class LatinWords
     std::vector<const LatinWord *> exact(const std::string &code) const;
     // 同上，但不含 exact_only 的词：词格里用这个。
     std::vector<const LatinWord *> exact_in_sentence(const std::string &code) const;
-    // 编码以 code 开头、比它长的词（不含 exact_only），权重高的在前，至多 limit 个。
+    // 编码以 code 开头、比它长、且 code 打全了词里第一段字母（completion_code_length）的词，不含
+    // exact_only，权重高的在前，至多 limit 个。
     std::vector<const LatinWord *> completions(const std::string &code, std::size_t limit) const;
     // segments 里每个不是完整音节的段（t、k）是否都落在某个整段对齐的字母词里。
     // 是的话词格能用字母词把这条切分解通，否则那些段只能当简拼，词格解不出整句。
@@ -110,7 +114,9 @@ inline constexpr std::size_t kLatinWordCompletionLimit = 2;
 // 整串命中在前、补全在后，各自保持传进来的先后；只覆盖输入前一部分的候选排在它们后面，开头没有覆盖
 // 整串的候选时字母词排第一。普通候选彼此的先后不变。词格对整串也会解出同一个词（txu 的整句就是
 // T恤），那是猜出来的一行，换成这里的词条。
-// 覆盖整串：整句（sentence_association），或 pinyin 去掉分隔符后的键数不少于 covered_code 的键数。
+// 覆盖整串：整句（sentence_association），或 pinyin 去掉分隔符后的键数不少于 covered_code 的键数。这是按读音
+// 字母数与键数比较的长度判断，不是候选实际消费了整串：开着模糊音或拼音纠错时两者可能差一两位，字母词的位置
+// 跟着偏一两位。整句一律算覆盖整串，前提是调用方只对整串解出整句。
 // covered_code 是读音要盖到的那一串，与候选的 pinyin 同一种写法（全拼是切分，双拼是键串）；双拼的末尾
 // 辅码键不在其中。selection_code 是字母词选中后要吃掉的输入。
 void insert_latin_candidates(std::vector<WordItem> &result, const std::vector<const LatinWord *> &exact,
@@ -127,6 +133,9 @@ void prepend_latin_lexemes(const LatinWords &words, const Segments &span, const 
 std::string latin_code(const Segments &segments);
 // 输入串去掉分隔符、转小写；混进字母以外的字符时返回空串。
 std::string latin_code(const std::string &raw_input);
+// 键的段与词的字一一对应（t'xu ↔ T恤）时，从第一段到词里第一段连续拉丁字母的最后一个字共几段：T恤衫 是 1，
+// 卡拉OK 是 4，Nabla算子 是 5。对应不上（字数与段数不同、不是有效的 UTF-8、没有字母）时返回段数。
+std::size_t segments_through_first_latin_run(const Segments &segments, const std::string &value);
 // 词里有拉丁字母：神经重排的字表里没有它们，见 merge_lattice_candidates。
 bool contains_latin_letter(const std::string &text);
 } // namespace quanpin
