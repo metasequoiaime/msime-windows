@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <utility>
 #include "Define.h"
 #include "Globals.h"
 #include "FanyUtils.h"
@@ -19,6 +20,8 @@ namespace FanyUtils
 {
 namespace
 {
+constexpr ULONGLONG kConfigRecheckMs = 1000;
+
 std::string TrimAscii(const std::string &value)
 {
     size_t begin = 0;
@@ -84,55 +87,91 @@ std::wstring EnvironmentValue(const wchar_t *name)
 // The data directory the user picked during setup. This DLL is also built 32-bit and loads into
 // 32-bit hosts, so KEY_WOW64_64KEY is mandatory: without it the read is redirected to
 // Wow6432Node, where the 64-bit setup never wrote anything.
-std::wstring ReadInstalledDataDir()
+enum class InstalledDataDirStatus
+{
+    Found,
+    Absent,
+    Retry
+};
+
+struct InstalledDataDirResult
+{
+    InstalledDataDirStatus status;
+    std::wstring path;
+};
+
+InstalledDataDirResult ReadInstalledDataDir()
 {
     HKEY key = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Metasequoia\\MetasequoiaIME", 0,
-                      KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key) != ERROR_SUCCESS)
+    const LSTATUS openStatus = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Metasequoia\\MetasequoiaIME", 0,
+                                             KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key);
+    if (openStatus != ERROR_SUCCESS)
     {
-        return {};
+        return {openStatus == ERROR_FILE_NOT_FOUND || openStatus == ERROR_PATH_NOT_FOUND
+                    ? InstalledDataDirStatus::Absent
+                    : InstalledDataDirStatus::Retry,
+                {}};
     }
 
     DWORD type = 0;
     DWORD bytes = 0;
-    if (RegQueryValueExW(key, L"DataDir", nullptr, &type, nullptr, &bytes) != ERROR_SUCCESS || type != REG_SZ ||
-        bytes < sizeof(wchar_t))
+    const LSTATUS queryStatus = RegQueryValueExW(key, L"DataDir", nullptr, &type, nullptr, &bytes);
+    if (queryStatus != ERROR_SUCCESS || type != REG_SZ || bytes < sizeof(wchar_t))
     {
         RegCloseKey(key);
-        return {};
+        return {queryStatus == ERROR_FILE_NOT_FOUND ? InstalledDataDirStatus::Absent : InstalledDataDirStatus::Retry,
+                {}};
     }
 
-    std::wstring value(bytes / sizeof(wchar_t), L'\0');
+    std::wstring value(bytes / sizeof(wchar_t) + 1, L'\0');
     const LSTATUS status =
         RegQueryValueExW(key, L"DataDir", nullptr, &type, reinterpret_cast<LPBYTE>(value.data()), &bytes);
     RegCloseKey(key);
-    if (status != ERROR_SUCCESS)
+    if (status != ERROR_SUCCESS || type != REG_SZ)
     {
-        return {};
+        return {InstalledDataDirStatus::Retry, {}};
     }
     // REG_SZ carries no guaranteed terminator and the stored length may or may not include one.
     value.resize(std::wcslen(value.c_str()));
-    return value;
+    if (value.empty() || !std::filesystem::path(value).is_absolute())
+    {
+        return {InstalledDataDirStatus::Retry, {}};
+    }
+    return {InstalledDataDirStatus::Found, std::move(value)};
 }
 
-std::wstring InstalledDataDir()
+std::wstring InstalledDataDir(bool *found)
 {
-    // Setup fixes DataDir for the lifetime of the host process.
+    // Cache only a valid installed path. Retry missing or failed reads once per second.
     static SRWLOCK lock = SRWLOCK_INIT;
     static std::wstring *cached = nullptr;
+    static ULONGLONG checkedTick = 0;
+    static bool checked = false;
     AcquireSRWLockExclusive(&lock);
     std::wstring result;
+    *found = false;
     try
     {
-        if (cached == nullptr)
+        const ULONGLONG now = GetTickCount64();
+        if (cached == nullptr && (!checked || now - checkedTick >= kConfigRecheckMs))
         {
-            cached = new std::wstring(ReadInstalledDataDir());
+            checked = true;
+            checkedTick = now;
+            InstalledDataDirResult read = ReadInstalledDataDir();
+            if (read.status == InstalledDataDirStatus::Found)
+            {
+                cached = new std::wstring(std::move(read.path));
+            }
         }
-        result = *cached;
+        if (cached != nullptr)
+        {
+            result = *cached;
+            *found = true;
+        }
     }
     catch (...)
     {
-        // Retry the registry read if allocation fails.
+        // Retry after an allocation or path error.
     }
     ReleaseSRWLockExclusive(&lock);
     return result;
@@ -142,17 +181,21 @@ std::wstring InstalledDataDir()
 // (engine/core/data_path.h): environment override, then the location chosen during setup, then
 // the default under LocalAppData. All three must agree or the TSF reads a different config than
 // the one the Server writes.
-std::filesystem::path SharedDataDirectory()
+std::filesystem::path SharedDataDirectory(bool *stable)
 {
+    *stable = false;
     const std::wstring fromEnv = EnvironmentValue(L"METASEQUOIA_IME_DATA_DIR");
     if (!fromEnv.empty() && std::filesystem::path(fromEnv).is_absolute())
     {
+        *stable = true;
         return fromEnv;
     }
 
-    const std::wstring installed = InstalledDataDir();
-    if (!installed.empty() && std::filesystem::path(installed).is_absolute())
+    bool installedFound = false;
+    const std::wstring installed = InstalledDataDir(&installedFound);
+    if (installedFound)
     {
+        *stable = true;
         return installed;
     }
 
@@ -164,9 +207,14 @@ std::filesystem::path SharedDataDirectory()
     return std::filesystem::path(localAppData) / L"metasequoiaime";
 }
 
-std::filesystem::path SharedConfigPath()
+std::filesystem::path SharedConfigPath(bool *stable = nullptr)
 {
-    const std::filesystem::path directory = SharedDataDirectory();
+    bool pathStable = false;
+    const std::filesystem::path directory = SharedDataDirectory(&pathStable);
+    if (stable != nullptr)
+    {
+        *stable = pathStable;
+    }
     if (directory.empty())
     {
         return {};
@@ -179,8 +227,6 @@ namespace
 {
 // A mode switch reads these values more than once on the host UI thread.
 // Check the file once per second and parse it only after a change.
-constexpr ULONGLONG kConfigRecheckMs = 1000;
-
 struct InputConfigValues
 {
     BOOL chinese = TRUE;
@@ -190,7 +236,7 @@ struct InputConfigValues
 
 struct InputConfigCache
 {
-    bool pathResolved = false;
+    bool pathStable = false;
     bool checked = false;
     bool haveStamp = false;
     ULONGLONG checkedTick = 0;
@@ -276,17 +322,26 @@ InputConfigValues ReadInputConfig()
     AcquireSRWLockExclusive(&g_inputConfigLock);
     try
     {
-        if (!g_inputConfig.pathResolved)
-        {
-            g_inputConfigPath = new std::filesystem::path(SharedConfigPath());
-            g_inputConfig.pathResolved = true;
-        }
-
         const ULONGLONG now = GetTickCount64();
         if (!g_inputConfig.checked || now - g_inputConfig.checkedTick >= kConfigRecheckMs)
         {
             g_inputConfig.checked = true;
             g_inputConfig.checkedTick = now;
+            if (!g_inputConfig.pathStable)
+            {
+                bool stable = false;
+                const std::filesystem::path path = SharedConfigPath(&stable);
+                if (g_inputConfigPath == nullptr)
+                {
+                    g_inputConfigPath = new std::filesystem::path(path);
+                }
+                else if (*g_inputConfigPath != path)
+                {
+                    *g_inputConfigPath = path;
+                    g_inputConfig.haveStamp = false;
+                }
+                g_inputConfig.pathStable = stable;
+            }
             WIN32_FILE_ATTRIBUTE_DATA attributes{};
             if (g_inputConfigPath->empty() ||
                 !GetFileAttributesExW(g_inputConfigPath->c_str(), GetFileExInfoStandard, &attributes))
@@ -501,17 +556,15 @@ SwitchLanguageHotkeys ParseSwitchLanguageHotkeys(const std::filesystem::path &co
 }
 
 // The key sink asks for these hotkeys on every key down and key up, on the host's UI thread.
-// Resolving the path (environment + registry) and parsing the whole config.toml each time cost
-// up to four file reads per keystroke. The path cannot change for the life of the host process
-// (the environment is fixed and DataDir only changes on reinstall), so it is resolved once; the
-// file is re-parsed only when its timestamp or size changes, checked at most once per interval
-// so a settings change still lands within a second. Everything here is constant-initialized:
-// this DLL avoids global constructors and is built with /Zc:threadSafeInit-.
+// Resolve fallback paths again after one second. A failed registry read can later recover.
+// Parse the file only when its timestamp or size changes. These values use constant initialization
+// because this DLL avoids global constructors and uses /Zc:threadSafeInit-.
 constexpr ULONGLONG kHotkeyConfigRecheckMs = 1000;
 
 struct HotkeyConfigCache
 {
-    bool pathResolved = false;
+    bool pathStable = false;
+    bool checked = false;
     bool haveStamp = false;
     ULONGLONG checkedTick = 0;
     FILETIME lastWrite = {};
@@ -532,23 +585,30 @@ SwitchLanguageHotkeys ReadConfiguredSwitchLanguageHotkeys()
     SwitchLanguageHotkeys result = g_hotkeyConfig.value;
     try
     {
-        if (!g_hotkeyConfig.pathResolved)
-        {
-            g_hotkeyConfig.pathResolved = true;
-            const std::filesystem::path configPath = SharedConfigPath();
-            if (!configPath.empty())
-            {
-                g_hotkeyConfigPath = new std::filesystem::path(configPath);
-            }
-        }
-
         const ULONGLONG now = GetTickCount64();
-        const bool due = !g_hotkeyConfig.haveStamp || now - g_hotkeyConfig.checkedTick >= kHotkeyConfigRecheckMs;
-        if (g_hotkeyConfigPath != nullptr && due)
+        const bool due = !g_hotkeyConfig.checked || now - g_hotkeyConfig.checkedTick >= kHotkeyConfigRecheckMs;
+        if (due)
         {
+            g_hotkeyConfig.checked = true;
             g_hotkeyConfig.checkedTick = now;
+            if (!g_hotkeyConfig.pathStable)
+            {
+                bool stable = false;
+                const std::filesystem::path path = SharedConfigPath(&stable);
+                if (g_hotkeyConfigPath == nullptr)
+                {
+                    g_hotkeyConfigPath = new std::filesystem::path(path);
+                }
+                else if (*g_hotkeyConfigPath != path)
+                {
+                    *g_hotkeyConfigPath = path;
+                    g_hotkeyConfig.haveStamp = false;
+                }
+                g_hotkeyConfig.pathStable = stable;
+            }
             WIN32_FILE_ATTRIBUTE_DATA attributes{};
-            if (GetFileAttributesExW(g_hotkeyConfigPath->c_str(), GetFileExInfoStandard, &attributes))
+            if (!g_hotkeyConfigPath->empty() &&
+                GetFileAttributesExW(g_hotkeyConfigPath->c_str(), GetFileExInfoStandard, &attributes))
             {
                 const bool changed = !g_hotkeyConfig.haveStamp ||
                                      CompareFileTime(&attributes.ftLastWriteTime, &g_hotkeyConfig.lastWrite) != 0 ||
