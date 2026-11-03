@@ -350,30 +350,7 @@ bool CMetasequoiaIME::_SmartPunctuationFingerprintMatches(TfEditCookie ec, _In_ 
     return buffer[0] == beforeChar;
 }
 
-WCHAR CMetasequoiaIME::_GetPairedPunctuationClosingFor(WCHAR opening)
-{
-    switch (opening)
-    {
-    case L'“':
-        return L'”';
-    case L'‘':
-        return L'’';
-    case L'【':
-        return L'】';
-    case L'{':
-        return L'}';
-    case L'《':
-        return L'》';
-    case L'〈':
-        return L'〉';
-    case L'（':
-        return L'）';
-    default:
-        return 0;
-    }
-}
-
-void CMetasequoiaIME::_PushPairedPunctuation(WCHAR opening, WCHAR closing)
+void CMetasequoiaIME::_PushPairedPunctuation(WCHAR opening, WCHAR closing, WCHAR openedByKey)
 {
     if (opening == 0 || closing == 0)
     {
@@ -390,6 +367,7 @@ void CMetasequoiaIME::_PushPairedPunctuation(WCHAR opening, WCHAR closing)
     PairedPunctuationEntry entry;
     entry.opening = opening;
     entry.closing = closing;
+    entry.openedByKey = openedByKey;
     entry.focusToken = _CaptureFocusSessionToken();
     _pairedPunctuationStack.push_back(entry);
 }
@@ -798,7 +776,7 @@ void CMetasequoiaIME::_WriteDirectSmartPunctuationState(WCHAR triggerKey, WCHAR 
 }
 
 void CMetasequoiaIME::_NoteCommittedChinesePunctuation(const std::wstring &committedText, bool autoClosedPair,
-                                                       WCHAR beforeChar)
+                                                       bool customSymbol, WCHAR beforeChar)
 {
     if (committedText.empty() || !Global::SmartPunctuationEnabled.load(std::memory_order_relaxed))
     {
@@ -813,11 +791,12 @@ void CMetasequoiaIME::_NoteCommittedChinesePunctuation(const std::wstring &commi
         // leave the right one orphaned (〔《>〕). The space inserts normally.
         return;
     }
-    const WCHAR tail = committedText.back();
-    if (!CCompositionProcessorEngine::IsSmartPunctuationChinese(tail))
+    const WCHAR tail = SmartConversionTail(committedText, autoClosedPair, customSymbol);
+    if (tail == 0)
     {
         // ASCII commits (direct output, numpad '.') keep whatever
         // _ResolveSmartPunctuation recorded so the same key can revert them.
+        // What the custom punctuation produced never converts.
         return;
     }
 
@@ -914,7 +893,8 @@ void CMetasequoiaIME::_NoteKeyForSmartPunctuation(UINT code, WCHAR wch, bool isE
     _ClearSmartPunctuationAction();
 }
 
-std::wstring CMetasequoiaIME::_ResolveSmartPunctuation(WCHAR wch, WCHAR precedingChar)
+std::wstring CMetasequoiaIME::_ResolveSmartPunctuation(WCHAR wch, WCHAR precedingChar,
+                                                       const CustomPunctuationPick &custom)
 {
     if (_pCompositionProcessorEngine == nullptr)
     {
@@ -926,7 +906,7 @@ std::wstring CMetasequoiaIME::_ResolveSmartPunctuation(WCHAR wch, WCHAR precedin
     _ClearSmartPunctuationAction();
 
     const bool smartEnabled = Global::SmartPunctuationEnabled.load(std::memory_order_relaxed);
-    std::wstring resolved = _pCompositionProcessorEngine->ResolvePunctuation(wch, precedingChar);
+    std::wstring resolved = _pCompositionProcessorEngine->ResolvePunctuation(wch, precedingChar, custom);
     if (!CCompositionProcessorEngine::IsSmartAsciiPunctuationKey(wch) || !smartEnabled)
     {
         if (!resolved.empty())
@@ -945,8 +925,8 @@ std::wstring CMetasequoiaIME::_ResolveSmartPunctuation(WCHAR wch, WCHAR precedin
                                  Global::SmartPunctuationDirectLetterEnabled.load(std::memory_order_relaxed));
     if (committedAscii)
     {
-        const WCHAR *chinese = _pCompositionProcessorEngine->GetPunctuation(wch);
-        const WCHAR chineseChar = (chinese != nullptr && chinese[0] != L'\0' && chinese[1] == L'\0') ? chinese[0] : 0;
+        const std::wstring chinese = _pCompositionProcessorEngine->GetPunctuation(wch, custom);
+        const WCHAR chineseChar = chinese.size() == 1 ? chinese[0] : 0;
         if (chineseChar != 0)
         {
             _WriteDirectSmartPunctuationState(wch, chineseChar, wch, precedingChar);
@@ -961,7 +941,8 @@ std::wstring CMetasequoiaIME::_ResolveSmartPunctuation(WCHAR wch, WCHAR precedin
 }
 
 HRESULT CMetasequoiaIME::_ExecuteSmartPunctuationAction(TfEditCookie ec, _In_ ITfContext *pContext, WCHAR wch,
-                                                        KEYSTROKE_FUNCTION function)
+                                                        KEYSTROKE_FUNCTION function,
+                                                        const CustomPunctuationPick &custom)
 {
     const SmartPunctuationAction state = _smartPunctuationAction;
     // The action consumes the pending state either way: success keeps the
@@ -1042,14 +1023,10 @@ HRESULT CMetasequoiaIME::_ExecuteSmartPunctuationAction(TfEditCookie ec, _In_ IT
     // Revert: the punctuation key that produced the ASCII form is pressed
     // again inside the window. Replace it back with the Chinese form.
     const auto insertChinesePunctuation = [&]() -> HRESULT {
-        std::wstring chinese;
-        const WCHAR *punctuation =
-            _pCompositionProcessorEngine != nullptr ? _pCompositionProcessorEngine->GetPunctuation(wch) : nullptr;
-        if (punctuation != nullptr && punctuation[0] != L'\0')
-        {
-            chinese.assign(punctuation);
-        }
-        else if (state.chineseLeft != 0)
+        std::wstring chinese = _pCompositionProcessorEngine != nullptr
+                                   ? _pCompositionProcessorEngine->GetPunctuation(wch, custom)
+                                   : std::wstring();
+        if (chinese.empty() && state.chineseLeft != 0)
         {
             chinese.assign(1, state.chineseLeft);
         }
@@ -1104,21 +1081,17 @@ HRESULT CMetasequoiaIME::_ExecuteSmartPunctuationAction(TfEditCookie ec, _In_ IT
 }
 
 HRESULT CMetasequoiaIME::_ExecuteSmartPunctuationFallback(TfEditCookie ec, _In_ ITfContext *pContext, WCHAR wch,
-                                                          KEYSTROKE_FUNCTION function)
+                                                          KEYSTROKE_FUNCTION function,
+                                                          const CustomPunctuationPick &custom)
 {
     std::wstring fallback;
     if (function == FUNCTION_SMART_PUNCTUATION_CONVERT)
     {
         fallback = L" ";
     }
-    else
+    else if (_pCompositionProcessorEngine != nullptr)
     {
-        const WCHAR *punctuation =
-            _pCompositionProcessorEngine != nullptr ? _pCompositionProcessorEngine->GetPunctuation(wch) : nullptr;
-        if (punctuation != nullptr && punctuation[0] != L'\0')
-        {
-            fallback.assign(punctuation);
-        }
+        fallback = _pCompositionProcessorEngine->GetPunctuation(wch, custom);
     }
     if (fallback.empty())
     {

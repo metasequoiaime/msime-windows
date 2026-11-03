@@ -102,6 +102,8 @@ add_library(${PROJECT_NAME} SHARED
     "./src/Composition/CompositionProcessorEngine.h"
     "./src/Composition/CompositionProcessorEngine_KeyClassify.cpp"
     "./src/Composition/CompositionProcessorEngine_Modes.cpp"
+    "./src/Composition/PunctuationKeyMap.cpp"
+    "./src/Composition/PunctuationKeyMap.h"
     "./src/Composition/CompositionProcessorEngine_PreservedKeys.cpp"
     "./src/Composition/EndComposition.cpp"
     "./src/Composition/StartComposition.cpp"

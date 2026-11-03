@@ -790,7 +790,7 @@ std::shared_ptr<Label> MakeDescription(std::wstring text)
 // ---------------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------------
-Column::Column(float gap) : msimeui::StackPanel(gap)
+Column::Column(float gap) : gap_(gap)
 {
 }
 
@@ -798,6 +798,82 @@ Column &Column::Add(VisualPtr child)
 {
     AddChild(std::move(child));
     return *this;
+}
+
+void Column::SetHorizontalContentAlignment(msimeui::HorizontalAlignment alignment)
+{
+    horizontalAlignment_ = alignment;
+    InvalidateArrange();
+}
+
+namespace
+{
+bool MeasuredToNothing(const SizeF &size)
+{
+    return size.width <= 0.0f && size.height <= 0.0f;
+}
+} // namespace
+
+SizeF Column::Measure(const SizeF &availableSize)
+{
+    const SizeF inner = {std::max(availableSize.width - padding_.left - padding_.right, 0.0f),
+                         std::max(availableSize.height - padding_.top - padding_.bottom, 0.0f)};
+    sizes_.clear();
+    float width = 0.0f;
+    float height = 0.0f;
+    bool placedAny = false;
+    for (const auto &child : children_)
+    {
+        const SizeF size = child->MeasureInLayout(inner);
+        sizes_.push_back(size);
+        if (MeasuredToNothing(size))
+            continue;
+        width = std::max(width, size.width);
+        height += size.height + (placedAny ? gap_ : 0.0f);
+        placedAny = true;
+    }
+    return {std::min(width + padding_.left + padding_.right, availableSize.width),
+            std::min(height + padding_.top + padding_.bottom, availableSize.height)};
+}
+
+void Column::Arrange(const RectF &finalRect)
+{
+    bounds_ = finalRect;
+    const RectF inner = Deflate(finalRect, padding_);
+    float y = inner.y;
+    bool placedAny = false;
+    // A child added since the last measure has no measurement yet; it waits for the next pass.
+    for (size_t i = 0; i < children_.size() && i < sizes_.size(); ++i)
+    {
+        const SizeF size = sizes_[i];
+        const bool nothing = MeasuredToNothing(size);
+        if (!nothing && placedAny)
+            y += gap_;
+        float x = inner.x;
+        float width = inner.width;
+        if (horizontalAlignment_ != msimeui::HorizontalAlignment::Stretch)
+        {
+            width = std::min(size.width, inner.width);
+            if (horizontalAlignment_ == msimeui::HorizontalAlignment::Center)
+                x += (inner.width - width) * 0.5f;
+            else if (horizontalAlignment_ == msimeui::HorizontalAlignment::Trailing)
+                x += inner.width - width;
+        }
+        children_[i]->ArrangeInLayout({x, y, width, size.height});
+        if (nothing)
+            continue;
+        y += size.height;
+        placedAny = true;
+    }
+}
+
+void Column::Render(msimeui::DeviceResources &dr)
+{
+    for (const auto &child : children_)
+    {
+        if (dr.IsVisible(Inflate(child->GetBounds(), 24.0f)))
+            child->Render(dr);
+    }
 }
 
 Row::Row(float gap) : gap_(gap)
@@ -852,7 +928,7 @@ SizeF Row::Measure(const SizeF &availableSize)
         sizes_[i] = children_[i]->MeasureInLayout(
             {wrap_ ? inner.width : std::max(inner.width - fixedWidth, 0.0f), inner.height});
         fixedWidth += sizes_[i].width;
-        if (sizes_[i].width > 0.0f || sizes_[i].height > 0.0f)
+        if (!MeasuredToNothing(sizes_[i]))
             ++visibleCount;
     }
     if (!wrap_)
@@ -877,7 +953,7 @@ SizeF Row::Measure(const SizeF &availableSize)
     for (size_t i = 0; i < children_.size(); ++i)
     {
         const SizeF &size = sizes_[i];
-        const bool empty = size.width <= 0.0f && size.height <= 0.0f;
+        const bool empty = MeasuredToNothing(size);
         const float add = empty ? 0.0f : size.width + (line.end > line.begin && line.width > 0.0f ? gap_ : 0.0f);
         if (wrap_ && line.end > line.begin && line.width + add > inner.width + 0.5f)
         {
@@ -916,7 +992,7 @@ void Row::Arrange(const RectF &finalRect)
     {
         size_t visible = 0;
         for (size_t i = line.begin; i < line.end; ++i)
-            visible += (sizes_[i].width > 0.0f || sizes_[i].height > 0.0f) ? 1 : 0;
+            visible += MeasuredToNothing(sizes_[i]) ? 0 : 1;
         float x = inner.x;
         float gap = gap_;
         const float free = std::max(inner.width - line.width, 0.0f);
@@ -930,7 +1006,7 @@ void Row::Arrange(const RectF &finalRect)
         for (size_t i = line.begin; i < line.end; ++i)
         {
             const SizeF size = sizes_[i];
-            const bool empty = size.width <= 0.0f && size.height <= 0.0f;
+            const bool empty = MeasuredToNothing(size);
             if (!empty && !first)
                 x += gap;
             float childY = y;
@@ -1987,6 +2063,81 @@ class DropdownPopup : public msimeui::Popup
     float width_ = 0.0f;
 };
 
+// The search box of a searchable Dropdown. SelectForNewSearch selects the text it shows, so the
+// first character typed replaces that text and starts a new search.
+//
+// Dropdown calls SelectForNewSearch when the box gains the focus. On a click,
+// msimeui::Window::OnLeftButtonDown sets the focus first and then hands the same press to the
+// box, and that press would place the caret where it landed and drop the selection; the box lets
+// that one press through without moving the caret. A focus no press comes with (the window
+// regaining the focus) is followed by pointer moves or caret blinks before the next press, and
+// those end the wait.
+class DropdownSearchBox : public msimeui::TextBox
+{
+  public:
+    using msimeui::TextBox::TextBox;
+
+    void SelectForNewSearch()
+    {
+        SelectAll();
+        keepSelectionOnPress_ = true;
+    }
+
+    void OnFocusChanged(bool focused) override
+    {
+        if (!focused)
+            keepSelectionOnPress_ = false;
+        msimeui::TextBox::OnFocusChanged(focused);
+    }
+
+    bool OnMouseDown(const POINT &point, WPARAM keyState) override
+    {
+        if (std::exchange(keepSelectionOnPress_, false))
+        {
+            pressKeptSelection_ = true;
+            return true;
+        }
+        return msimeui::TextBox::OnMouseDown(point, keyState);
+    }
+
+    bool OnMouseUp(const POINT &point, WPARAM keyState) override
+    {
+        if (std::exchange(pressKeptSelection_, false))
+            return true;
+        return msimeui::TextBox::OnMouseUp(point, keyState);
+    }
+
+    bool OnMouseMove(const POINT &point, WPARAM keyState) override
+    {
+        keepSelectionOnPress_ = false;
+        return msimeui::TextBox::OnMouseMove(point, keyState);
+    }
+
+    bool OnTimer(UINT_PTR timerId) override
+    {
+        keepSelectionOnPress_ = false;
+        return msimeui::TextBox::OnTimer(timerId);
+    }
+
+    bool OnKeyDown(WPARAM key, LPARAM lParam) override
+    {
+        keepSelectionOnPress_ = false;
+        return msimeui::TextBox::OnKeyDown(key, lParam);
+    }
+
+    bool OnChar(wchar_t ch, LPARAM lParam) override
+    {
+        keepSelectionOnPress_ = false;
+        return msimeui::TextBox::OnChar(ch, lParam);
+    }
+
+  private:
+    // Set from gaining the focus until the press that came with it, if any.
+    bool keepSelectionOnPress_ = false;
+    // That press is under way: its release leaves the selection alone too.
+    bool pressKeptSelection_ = false;
+};
+
 Dropdown::Dropdown(std::vector<DropdownOption> options, Options settings)
     : options_(std::move(options)), settings_(settings)
 {
@@ -1994,7 +2145,7 @@ Dropdown::Dropdown(std::vector<DropdownOption> options, Options settings)
     popup_ = std::make_shared<DropdownPopup>(menu_);
     if (settings_.searchable)
     {
-        search_ = std::make_shared<msimeui::TextBox>(20.0f, settings_.placeholder);
+        search_ = std::make_shared<DropdownSearchBox>(20.0f, settings_.placeholder);
         search_->SetChromeVisible(false);
         search_->SetFontSize(kFontBody);
         search_->SetPlaceholderFontSize(kFontBody);
@@ -2007,9 +2158,17 @@ Dropdown::Dropdown(std::vector<DropdownOption> options, Options settings)
         search_->SetOnTextChanged([this](const std::wstring &text) { ApplySearch(text); });
         search_->SetOnFocusChanged([this](bool focused) {
             if (focused && !open_)
+            {
                 Open();
+                if (open_)
+                    search_->SelectForNewSearch();
+            }
             if (!focused)
+            {
+                // Left without a pick: the box shows the value again from its start, unselected.
                 search_->SetText(CurrentLabel());
+                search_->MoveCaretToStart();
+            }
         });
         search_->SetOnSubmit([this]() {
             if (open_ && !menu_->IsEmpty())
@@ -2088,6 +2247,16 @@ void Dropdown::SetSelectedIndex(size_t index)
 size_t Dropdown::GetSelectedIndex() const
 {
     return selected_;
+}
+
+void Dropdown::ClearSelection()
+{
+    selected_ = kNone;
+    unknownLabel_.clear();
+    if (search_ && !search_->IsFocused())
+        search_->SetText(CurrentLabel());
+    InvalidateMeasure();
+    InvalidateVisual();
 }
 
 void Dropdown::SetLabelOverride(std::wstring label)
@@ -2762,48 +2931,58 @@ void Button::SetTooltip(std::wstring)
 {
 }
 
-SizeF Button::Measure(const SizeF &availableSize)
+Button::Metrics Button::LayoutMetrics() const
 {
-    TextStyle style = BodyStyle();
-    float paddingX = 12.0f;
-    float height = 0.0f;
-    float minWidth = 0.0f;
+    Metrics m;
+    m.style = BodyStyle();
     switch (kind_)
     {
     case ButtonKind::Secondary:
-        paddingX = 12.0f;
-        height = LineHeight(style) + 10.0f + CssBorder() * 2.0f;
-        minWidth = 100.0f;
+        m.paddingX = 12.0f;
+        m.height = LineHeight(m.style) + 10.0f + CssBorder() * 2.0f;
+        m.minWidth = 100.0f;
         break;
     case ButtonKind::Primary:
     case ButtonKind::Neutral:
     case ButtonKind::Danger:
-        paddingX = 13.0f;
-        height = 34.0f;
+        m.paddingX = 13.0f;
+        m.height = 34.0f;
         break;
     case ButtonKind::Soft:
         // .cand-color-reset sets no font-family: system font.
-        style = ControlStyle();
-        style.size = kFontCaption;
-        paddingX = 10.0f;
-        height = LineHeight(style) + 8.0f + CssBorder() * 2.0f;
+        m.style = ControlStyle();
+        m.style.size = kFontCaption;
+        m.paddingX = 10.0f;
+        m.height = LineHeight(m.style) + 8.0f + CssBorder() * 2.0f;
         break;
     case ButtonKind::Link:
-        paddingX = 0.0f;
-        height = LineHeight(style);
+        m.paddingX = 0.0f;
+        m.height = LineHeight(m.style);
         break;
     }
     if (fontSize_ > 0.0f)
-        style.size = fontSize_;
+        m.style.size = fontSize_;
     if (height_ > 0.0f)
-        height = height_;
+        m.height = height_;
     if (minWidth_ >= 0.0f)
-        minWidth = minWidth_;
+        m.minWidth = minWidth_;
+    return m;
+}
+
+float Button::WidthFor(const std::wstring &text) const
+{
+    const Metrics m = LayoutMetrics();
     const bool bordered = kind_ != ButtonKind::Primary && kind_ != ButtonKind::Link;
-    float width = MeasureTextWidth(text_, style) + paddingX * 2.0f + (bordered ? CssBorder() * 2.0f : 0.0f);
+    float width = MeasureTextWidth(text, m.style) + m.paddingX * 2.0f + (bordered ? CssBorder() * 2.0f : 0.0f);
     if (!icon_.empty())
-        width += iconSize_ + (text_.empty() ? 0.0f : iconGap_);
-    return {std::min(std::max(width, minWidth), availableSize.width), height};
+        width += iconSize_ + (text.empty() ? 0.0f : iconGap_);
+    return width;
+}
+
+SizeF Button::Measure(const SizeF &availableSize)
+{
+    const Metrics m = LayoutMetrics();
+    return {std::min(std::max(WidthFor(text_), m.minWidth), availableSize.width), m.height};
 }
 
 void Button::Arrange(const RectF &finalRect)

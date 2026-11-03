@@ -3,6 +3,7 @@
 #include "stdafx.h"
 #include <vector>
 #include "assert.h"
+#include "../Composition/CustomPunctuationPick.h"
 #include <iostream>
 
 using std::endl;
@@ -127,12 +128,8 @@ struct _KEYSTROKE_STATE
 {
     KEYSTROKE_CATEGORY Category;
     KEYSTROKE_FUNCTION Function;
-};
-
-struct _PUNCTUATION
-{
-    WCHAR _Code;
-    WCHAR _Punctuation[3];
+    // 分类这次按键时查到的自定义标点，出符号时用它，不再查表。
+    CustomPunctuationPick CustomPunctuation;
 };
 
 BOOL CLSIDToString(REFGUID refGUID, _Out_writes_(39) WCHAR *pCLSIDString);
@@ -287,37 +284,4 @@ struct CCandidateListItem
         _FindKeyCode = rhs._FindKeyCode; // e.g. nihao
         return *this;
     }
-};
-
-class CPunctuationPair
-{
-  public:
-    CPunctuationPair();
-    CPunctuationPair(WCHAR code, const WCHAR *punctuation, const WCHAR *pair);
-
-    struct _PUNCTUATION _punctuation;
-    WCHAR _pairPunctuation[3];
-    BOOL _isPairToggle;
-};
-
-class CPunctuationNestPair
-{
-  public:
-    CPunctuationNestPair();
-    CPunctuationNestPair(              //
-        WCHAR codeBegin,               //
-        const WCHAR *punctuationBegin, //
-        const WCHAR *pairBegin,        //
-        const WCHAR codeEnd,           //
-        const WCHAR *punctuationEnd,   //
-        const WCHAR *pairEnd           //
-    );
-
-    struct _PUNCTUATION _punctuation_begin;
-    WCHAR _pairPunctuation_begin[3];
-
-    struct _PUNCTUATION _punctuation_end;
-    WCHAR _pairPunctuation_end[3];
-
-    int _nestCount;
 };

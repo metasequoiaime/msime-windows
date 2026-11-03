@@ -765,10 +765,10 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
                     pIME->_candidateMode == CANDIDATE_NONE && !pIME->_IsComposing();
                 if (useDirectPunctuationSession)
                 {
-                    pIME->_RequestDirectPunctuationEditSession(pContext, code, wch, request.requestId,
-                                                               std::move(request.prefetchedText), request.focusToken,
-                                                               request.compositionEpoch, request.deferredReplayToken,
-                                                               request.message, request.commitReplyDeadlineTick);
+                    pIME->_RequestDirectPunctuationEditSession(
+                        pContext, code, wch, request.requestId, std::move(request.prefetchedText),
+                        request.customPunctuation, request.focusToken, request.compositionEpoch,
+                        request.deferredReplayToken, request.message, request.commitReplyDeadlineTick);
                     handedOffReplay = true;
                 }
                 else
@@ -776,6 +776,7 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
                     _KEYSTROKE_STATE KeystrokeState;
                     KeystrokeState.Category = CATEGORY_COMPOSING;
                     KeystrokeState.Function = FUNCTION_PUNCTUATION;
+                    KeystrokeState.CustomPunctuation = request.customPunctuation;
                     // No prefetched text and a highlighted candidate is exactly
                     // the condition under which the session reads the commit
                     // reply itself, so this is also the only case where it can
@@ -958,7 +959,8 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         {
             pIME->_PostAsyncKeyRequest(WM_AsyncPunctuationCommit, code, wch, request.requestId,
                                        receivedData->candidate_string, request.focusToken, request.compositionEpoch,
-                                       request.deferredReplayToken);
+                                       request.deferredReplayToken, FUNCTION_FINALIZE_CANDIDATELIST,
+                                       request.customPunctuation);
         }
         else if (receivedData->msg_type == Global::DataFromServerMsgType::Normal)
         {
@@ -975,10 +977,11 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
             else if (pIME->_pCompositionProcessorEngine)
             {
                 const WCHAR preceding = commitText.empty() ? 0 : commitText.back();
-                commitText.append(pIME->_ResolveSmartPunctuation(wch, preceding));
+                commitText.append(pIME->_ResolveSmartPunctuation(wch, preceding, request.customPunctuation));
             }
             pIME->_PostAsyncKeyRequest(WM_AsyncPunctuationCommit, code, wch, request.requestId, std::move(commitText),
-                                       request.focusToken, request.compositionEpoch, request.deferredReplayToken);
+                                       request.focusToken, request.compositionEpoch, request.deferredReplayToken,
+                                       FUNCTION_FINALIZE_CANDIDATELIST, request.customPunctuation);
         }
         else
         {

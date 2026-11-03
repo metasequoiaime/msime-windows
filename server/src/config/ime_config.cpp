@@ -767,6 +767,18 @@ bool LoadImeConfig()
             g_enumeration_comma_slash_enabled = true;
         }
         {
+            std::vector<std::string> entries;
+            if (const auto *map = tbl["input"]["custom_punctuation_map"].as_array())
+            {
+                for (const auto &node : *map)
+                {
+                    if (auto entry = node.value<std::string>())
+                        entries.push_back(std::move(*entry));
+                }
+            }
+            StoreCustomPunctuationConfig(tbl["input"]["custom_punctuation"].value_or(false), entries);
+        }
+        {
             const std::string punctuation_lock = tbl["input"]["punctuation_lock"].value_or(std::string("follow"));
             g_punctuation_lock =
                 punctuation_lock == "chinese" || punctuation_lock == "english" ? punctuation_lock : "follow";

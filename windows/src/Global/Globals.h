@@ -131,7 +131,6 @@ extern const GUID MetasequoiaIMEGuidCompartmentDoubleSingleByte;
 extern const GUID MetasequoiaIMEGuidCompartmentPunctuation;
 
 extern const WCHAR FullWidthCharTable[];
-extern const struct _PUNCTUATION PunctuationTable[23];
 extern const std::unordered_set<WCHAR> CommitWithHighlightedCandPunc;
 
 extern const GUID MetasequoiaIMEGuidLangBarIMEMode;
