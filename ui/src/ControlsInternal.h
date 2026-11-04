@@ -32,10 +32,11 @@ ComPtr<IDWriteTextLayout> CreateCachedTextLayout(IDWriteFactory *factory, const 
                                                  DWRITE_PARAGRAPH_ALIGNMENT paragraphAlignment,
                                                  DWRITE_WORD_WRAPPING wordWrapping,
                                                  const std::vector<std::wstring> &fallbackFamilies = {});
-// Moves a text layout's draw origin so its first baseline sits on a whole device pixel. D2D rounds the
-// baseline to a pixel itself; doing it first keeps that rounding away from the half-pixel boundary, where
-// float noise in the transform (the composition atlas offset) would flip it from frame to frame.
-D2D1_POINT_2F SnapTextOriginToPixelBaseline(ID2D1RenderTarget *target, IDWriteTextLayout *layout, D2D1_POINT_2F origin);
+// Moves a text layout's draw origin onto the device pixel grid: the left edge and the first baseline land on
+// whole pixels. D2D rounds the baseline itself; doing it first keeps that rounding away from the half-pixel
+// boundary, where float noise in the transform (the composition atlas offset) would flip it from frame to
+// frame. Snapping the left edge keeps the same text rasterized the same wherever the row reflows it to.
+D2D1_POINT_2F SnapTextOriginToPixelGrid(ID2D1RenderTarget *target, IDWriteTextLayout *layout, D2D1_POINT_2F origin);
 void FillRoundedRect(DeviceResources &deviceResources, const RectF &bounds, float radius, D2D1_COLOR_F fill,
                      D2D1_COLOR_F stroke, float strokeWidth);
 void DrawLabel(DeviceResources &deviceResources, const std::wstring &text, float fontSize, bool bold,

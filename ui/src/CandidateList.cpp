@@ -671,25 +671,25 @@ void CandidateList::Render(DeviceResources &deviceResources)
         if (labelLayout && labelBrush)
         {
             target->DrawTextLayout(
-                SnapTextOriginToPixelBaseline(target, labelLayout.Get(), D2D1::Point2F(labelRect.x, labelRect.y)),
+                SnapTextOriginToPixelGrid(target, labelLayout.Get(), D2D1::Point2F(labelRect.x, labelRect.y)),
                 labelLayout.Get(), labelBrush, kColorClipTextOptions);
         }
         if (textLayout && textBrush)
         {
             target->DrawTextLayout(
-                SnapTextOriginToPixelBaseline(target, textLayout.Get(), D2D1::Point2F(textRect.x, textRect.y)),
+                SnapTextOriginToPixelGrid(target, textLayout.Get(), D2D1::Point2F(textRect.x, textRect.y)),
                 textLayout.Get(), textBrush, kColorClipTextOptions);
         }
         if (annotationLayout && annotationBrush)
         {
-            target->DrawTextLayout(SnapTextOriginToPixelBaseline(target, annotationLayout.Get(),
-                                                                 D2D1::Point2F(annotationRect.x, annotationRect.y)),
+            target->DrawTextLayout(SnapTextOriginToPixelGrid(target, annotationLayout.Get(),
+                                                             D2D1::Point2F(annotationRect.x, annotationRect.y)),
                                    annotationLayout.Get(), annotationBrush, kColorClipTextOptions);
         }
         if (translationLayout && translationBrush)
         {
-            target->DrawTextLayout(SnapTextOriginToPixelBaseline(target, translationLayout.Get(),
-                                                                 D2D1::Point2F(translationRect.x, translationRect.y)),
+            target->DrawTextLayout(SnapTextOriginToPixelGrid(target, translationLayout.Get(),
+                                                             D2D1::Point2F(translationRect.x, translationRect.y)),
                                    translationLayout.Get(), translationBrush, kColorClipTextOptions);
         }
     }

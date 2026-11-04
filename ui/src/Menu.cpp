@@ -232,9 +232,9 @@ void MenuFlyoutItem::Render(DeviceResources &deviceResources)
         }
         if (textLayout_)
         {
-            target->DrawTextLayout(controls_detail::SnapTextOriginToPixelBaseline(target, textLayout_.Get(),
-                                                                                  D2D1::Point2F(textX, bounds_.y)),
-                                   textLayout_.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            target->DrawTextLayout(
+                controls_detail::SnapTextOriginToPixelGrid(target, textLayout_.Get(), D2D1::Point2F(textX, bounds_.y)),
+                textLayout_.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
         if (hasSubmenu_)
         {

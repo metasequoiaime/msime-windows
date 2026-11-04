@@ -2944,7 +2944,7 @@ void TextBlock::Render(DeviceResources &deviceResources)
         return;
     }
 
-    const D2D1_POINT_2F origin = controls_detail::SnapTextOriginToPixelBaseline(
+    const D2D1_POINT_2F origin = controls_detail::SnapTextOriginToPixelGrid(
         target, cachedTextLayout_.Get(),
         D2D1::Point2F(bounds_.x + textLayoutPadding_.left, bounds_.y + textLayoutPadding_.top));
     const float originX = origin.x;

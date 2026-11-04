@@ -108,7 +108,7 @@ SizeF MeasureText(IDWriteFactory *factory, const std::wstring &text, float fontS
     return {std::ceil(metrics.widthIncludingTrailingWhitespace), std::ceil(metrics.height)};
 }
 
-D2D1_POINT_2F SnapTextOriginToPixelBaseline(ID2D1RenderTarget *target, IDWriteTextLayout *layout, D2D1_POINT_2F origin)
+D2D1_POINT_2F SnapTextOriginToPixelGrid(ID2D1RenderTarget *target, IDWriteTextLayout *layout, D2D1_POINT_2F origin)
 {
     if (!target || !layout)
         return origin;
@@ -117,7 +117,8 @@ D2D1_POINT_2F SnapTextOriginToPixelBaseline(ID2D1RenderTarget *target, IDWriteTe
     target->GetDpi(&dpiX, &dpiY);
     D2D1_MATRIX_3X2_F transform = {};
     target->GetTransform(&transform);
-    if (dpiY <= 0.0f || transform._12 != 0.0f || transform._21 != 0.0f || transform._22 <= 0.0f)
+    if (dpiX <= 0.0f || dpiY <= 0.0f || transform._12 != 0.0f || transform._21 != 0.0f || transform._11 <= 0.0f ||
+        transform._22 <= 0.0f)
         return origin;
     DWRITE_TEXT_METRICS metrics = {};
     if (FAILED(layout->GetMetrics(&metrics)) || metrics.lineCount == 0)
@@ -128,14 +129,23 @@ D2D1_POINT_2F SnapTextOriginToPixelBaseline(ID2D1RenderTarget *target, IDWriteTe
         return origin;
     const DWRITE_LINE_METRICS &firstLine = lines.front();
 
-    const float scaleY = transform._22 * dpiY / 96.0f;
     // The atlas offset is whole device pixels but reaches here as DIPs (x 96/dpi) and comes back with
     // float noise, e.g. 30.999998 one frame and 31.000002 the next. Treat a near-whole translation as
     // whole, so the rounding below depends only on the layout and is the same every frame.
-    const float translation = transform._32 * dpiY / 96.0f;
-    const float wholeTranslation = std::round(translation);
-    const float pixelTranslation = std::fabs(translation - wholeTranslation) < 0.01f ? wholeTranslation : translation;
-    const float baseline = (origin.y + metrics.top + firstLine.baseline) * scaleY + pixelTranslation;
+    const auto toPixelTranslation = [](float translation) {
+        const float whole = std::round(translation);
+        return std::fabs(translation - whole) < 0.01f ? whole : translation;
+    };
+    const float scaleX = transform._11 * dpiX / 96.0f;
+    const float scaleY = transform._22 * dpiY / 96.0f;
+    const float translationX = toPixelTranslation(transform._31 * dpiX / 96.0f);
+    const float translationY = toPixelTranslation(transform._32 * dpiY / 96.0f);
+
+    // Horizontally, start the layout on a whole pixel. At 125% a CJK glyph is 22.5 px wide, so items after
+    // a growing candidate land on alternating half pixels and their glyphs rasterize differently each key.
+    const float left = origin.x * scaleX + translationX;
+    origin.x += (std::round(left) - left) / scaleX;
+    const float baseline = (origin.y + metrics.top + firstLine.baseline) * scaleY + translationY;
     origin.y += (std::round(baseline) - baseline) / scaleY;
     return origin;
 }
