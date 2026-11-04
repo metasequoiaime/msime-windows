@@ -5,6 +5,7 @@ add_executable(${TEST_EXECUTABLE_NAME}
     src/test_animated_image.cpp
     src/test_animation.cpp
     src/test_card_shadow.cpp
+    src/test_candidate_text_grid.cpp
     src/test_device_resources.cpp
     src/test_fonts.cpp
     src/test_image.cpp

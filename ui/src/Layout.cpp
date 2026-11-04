@@ -2997,9 +2997,10 @@ void TextBlock::Render(DeviceResources &deviceResources)
         }
     }
 
-    target->DrawTextLayout(
-        D2D1::Point2F(originX, originY), cachedTextLayout_.Get(), brush,
-        static_cast<D2D1_DRAW_TEXT_OPTIONS>(D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT));
+    target->DrawTextLayout(D2D1::Point2F(originX, originY), cachedTextLayout_.Get(), brush,
+                           static_cast<D2D1_DRAW_TEXT_OPTIONS>(D2D1_DRAW_TEXT_OPTIONS_CLIP |
+                                                               D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT |
+                                                               D2D1_DRAW_TEXT_OPTIONS_NO_SNAP));
 }
 
 Spacer::Spacer(float height) : height_(height)

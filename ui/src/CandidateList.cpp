@@ -22,8 +22,10 @@ using namespace controls_detail;
 
 namespace
 {
-constexpr D2D1_DRAW_TEXT_OPTIONS kColorClipTextOptions =
-    static_cast<D2D1_DRAW_TEXT_OPTIONS>(D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+// NO_SNAP: SnapTextOriginToPixelGrid already put the baseline on a whole pixel. D2D's own snap would add
+// a sub-pixel offset that depends on the composition atlas translation.
+constexpr D2D1_DRAW_TEXT_OPTIONS kColorClipTextOptions = static_cast<D2D1_DRAW_TEXT_OPTIONS>(
+    D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_NO_SNAP);
 
 constexpr float kCandidateItemGap = 1.0f;
 

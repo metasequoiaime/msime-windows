@@ -234,7 +234,8 @@ void MenuFlyoutItem::Render(DeviceResources &deviceResources)
         {
             target->DrawTextLayout(
                 controls_detail::SnapTextOriginToPixelGrid(target, textLayout_.Get(), D2D1::Point2F(textX, bounds_.y)),
-                textLayout_.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                textLayout_.Get(), brush,
+                static_cast<D2D1_DRAW_TEXT_OPTIONS>(D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_NO_SNAP));
         }
         if (hasSubmenu_)
         {
