@@ -43,10 +43,11 @@ else()
     file(STRINGS "${MSIME_VERSION_FILE}" MSIME_PRODUCT_VERSION LIMIT_COUNT 1)
 endif()
 string(STRIP "${MSIME_PRODUCT_VERSION}" MSIME_PRODUCT_VERSION)
-# 版本主体必须是数字段；允许一个可选的连字符后缀（semver 预发布段），dev-build 用它携带
+# 版本主体必须是三段数字；允许一个可选的连字符后缀（semver 预发布段），dev-build 用它携带
 # 日期与 commit（0.7.1-dev.20261019.<hash>），设置窗口关于页原样显示。关于页的 ParseVersion
-# 会剥掉后缀做更新检查的数字比较，所以后缀不影响版本判定。
-if(NOT MSIME_PRODUCT_VERSION MATCHES "^[0-9]+(\\.[0-9]+)*(-[0-9A-Za-z.-]+)?$")
+# 会剥掉后缀做更新检查的数字比较，所以后缀不影响版本判定。段数写死三段是因为下面的
+# FILEVERSION 要取前三段，多一段会被静默忽略、少一段会让 quad 出现空字段。
+if(NOT MSIME_PRODUCT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$")
     message(FATAL_ERROR "Invalid product version in ${MSIME_VERSION_FILE}: '${MSIME_PRODUCT_VERSION}'")
 endif()
 configure_file(
@@ -54,6 +55,44 @@ configure_file(
     "${MSIME_GENERATED_DIR}/msime_version.h"
     @ONLY
 )
+
+# VERSIONINFO 的四个数字段与 TSF DLL 保持同一口径。正式版末位是 0；dev/nightly 的版本串形如
+# 0.7.1-dev.20261104.abcdef12，末位取日期里的 YYMMDD（6 位），与 apply_version.py 写进
+# MetasequoiaIME.rc 的 quad 逐字一致。展示串里的 8 位日期不能直接取：两边必须是同一串数字，
+# 否则 EXE 与 TSF DLL 的 FILEVERSION 对不上。
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _msime_version_base "${MSIME_PRODUCT_VERSION}")
+set(MSIME_VERSION_MAJOR "${CMAKE_MATCH_1}")
+set(MSIME_VERSION_MINOR "${CMAKE_MATCH_2}")
+set(MSIME_VERSION_PATCH "${CMAKE_MATCH_3}")
+set(MSIME_VERSION_BUILD 0)
+# CMake 的 regex 引擎不支持 {n} 区间，日期段要逐位写；dev-build-version.py 的日期固定 8 位。
+# 带 dev/nightly 标记却没有这段日期时直接报错：静默退回 0 会让 EXE 的 FILEVERSION 与
+# apply_version.py 盖进 TSF DLL 的日期不一致。
+if(MSIME_PRODUCT_VERSION MATCHES "-(dev|nightly)\\.")
+    if(MSIME_PRODUCT_VERSION MATCHES "-(dev|nightly)\\.([0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9])\\.")
+        string(SUBSTRING "${CMAKE_MATCH_2}" 2 6 MSIME_VERSION_BUILD)
+    else()
+        message(FATAL_ERROR "Product version '${MSIME_PRODUCT_VERSION}' has a dev/nightly suffix without a YYYYMMDD.<hash> stamp; the FILEVERSION build field would silently stay 0 while apply_version.py stamps a date into the TSF DLL")
+    endif()
+endif()
+set(MSIME_VERSION_QUAD "${MSIME_VERSION_MAJOR},${MSIME_VERSION_MINOR},${MSIME_VERSION_PATCH},${MSIME_VERSION_BUILD}")
+set(MSIME_VERSION_DOTTED "${MSIME_VERSION_MAJOR}.${MSIME_VERSION_MINOR}.${MSIME_VERSION_PATCH}.${MSIME_VERSION_BUILD}")
+
+# 模板在 configure 期展开成每个目标自己的 .rc，再挂进该目标。手写进四个 .rc 会让版本号出现四份，
+# 升级时总有一份漏改；TSF DLL 仍由 windows/src/IME/MetasequoiaIME.rc 与 apply_version.py 那套。
+function(msime_add_version_resource target description original_filename)
+    set(MSIME_VERSION_DESCRIPTION "${description}")
+    set(MSIME_VERSION_INTERNAL_NAME "${target}")
+    set(MSIME_VERSION_ORIGINAL_FILENAME "${original_filename}")
+    set(_msime_version_rc "${MSIME_GENERATED_DIR}/version_info_${target}.rc")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/resource/version_info.rc.in"
+        "${_msime_version_rc}"
+        @ONLY
+    )
+    target_sources(${target} PRIVATE "${_msime_version_rc}")
+endfunction()
+
 set(_msime_factory_skins "")
 foreach(_skin_id IN LISTS MSIME_FACTORY_SKIN_IDS)
     set(_skin_manifest "${MSIME_REPO_ROOT}/skins/default/${_skin_id}/skin.toml")
@@ -759,6 +798,17 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${MSIME_OPENCC_RUNTIME_FILES}
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/opencc
 )
+
+# 自定义 EXE 的统一 VERSIONINFO。上面每个 add_executable 分散在不同段落，调用集中在这里挂载，
+# 不用为了加版本资源逐个改动那些段落。
+msime_add_version_resource(${MY_EXECUTABLE_NAME} "Metasequoia IME background service" "${MY_EXECUTABLE_NAME}.exe")
+msime_add_version_resource(${WATCHDOG_EXECUTABLE_NAME} "Metasequoia IME watchdog" "${WATCHDOG_EXECUTABLE_NAME}.exe")
+msime_add_version_resource(${DICTIONARY_REPLAY_EXECUTABLE_NAME} "Metasequoia IME user dictionary replay tool" "${DICTIONARY_REPLAY_EXECUTABLE_NAME}.exe")
+msime_add_version_resource(${DICTIONARY_BUILD_EXECUTABLE_NAME} "Metasequoia IME dictionary build tool" "${DICTIONARY_BUILD_EXECUTABLE_NAME}.exe")
+msime_add_version_resource(${EMOJI_EXECUTABLE_NAME} "Metasequoia IME emoji panel" "${EMOJI_EXECUTABLE_NAME}.exe")
+msime_add_version_resource(${KEYBOARD_EXECUTABLE_NAME} "Metasequoia IME on-screen keyboard panel" "${KEYBOARD_EXECUTABLE_NAME}.exe")
+msime_add_version_resource(${HANDWRITING_EXECUTABLE_NAME} "Metasequoia IME handwriting panel" "${HANDWRITING_EXECUTABLE_NAME}.exe")
+msime_add_version_resource(${SETTINGS_EXECUTABLE_NAME} "Metasequoia IME settings" "${SETTINGS_EXECUTABLE_NAME}.exe")
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
