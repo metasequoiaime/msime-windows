@@ -31,6 +31,12 @@ const int MOVETO_BOTTOM = -1;
 //
 // _HandleCandidateFinalize
 //
+// 候选上屏的唯一入口：空格、数字键、鼠标点选都经 CKeyStateCandidate 的
+// HandleKeyFinalizeCandidatelist / HandleKeyConvert 走到这里。文本按下面的顺序落盘：
+//   组合存在     → _InsertTextToComposition（整段写进预编辑，_HandleCompleteCommitFirst 结束组合）
+//   组合不存在   → _AddComposingAndChar
+//   含换行的候选 → _CommitMultilineCandidate（清空并结束组合后逐行写文档）
+//
 //----------------------------------------------------------------------------
 
 HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfContext *pContext, uint64_t requestId,
