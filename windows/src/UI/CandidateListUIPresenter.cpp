@@ -51,6 +51,11 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
     {
         if (!pendingCommitCandidate.empty())
         {
+            if (pendingCommitCandidate.find(L'\n') != std::wstring::npos)
+            {
+                // 多行快捷短语：整段塞进组合后 Chromium 系宿主（QQ、Electron）会重排内容。
+                return _CommitMultilineCandidate(ec, pContext, pendingCommitCandidate);
+            }
             candidateString.Set(pendingCommitCandidate.c_str(), pendingCommitCandidate.length());
             hr = _InsertTextToComposition(ec, pContext, &candidateString);
             if (FAILED(hr))
@@ -104,6 +109,10 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
         {
             GlobalIme::word_for_creating_word = L"";
             GlobalIme::pending_create_word_preedit.clear();
+            if (serverCandidateString.find(L'\n') != std::wstring::npos)
+            {
+                return _CommitMultilineCandidate(ec, pContext, serverCandidateString);
+            }
             candidateString.Set(serverCandidateString.c_str(), serverCandidateString.length());
             hr = _InsertTextToComposition(ec, pContext, &candidateString);
             if (FAILED(hr))

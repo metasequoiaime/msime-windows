@@ -285,6 +285,9 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     HRESULT _HandleCompleteCommitFirst(TfEditCookie ec, _In_ ITfContext *pContext, bool requireSuccessfulEnd = false);
     HRESULT _HandleCancel(TfEditCookie ec, _In_ ITfContext *pContext);
     HRESULT _HandleEscapeCancel(TfEditCookie ec, _In_ ITfContext *pContext, uint64_t requestId);
+    // 多行候选（多行快捷短语）不借组合提交：先结束组合，再按行写进文档。
+    HRESULT _CommitMultilineCandidate(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
+    HRESULT _WriteTextAtSelection(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
     HRESULT _HandleToogleIMEMode(TfEditCookie ec, _In_ ITfContext *pContext);
     void _ClearCreatingWordState();
     HRESULT _HandleInsertText(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
