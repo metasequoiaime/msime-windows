@@ -670,23 +670,27 @@ void CandidateList::Render(DeviceResources &deviceResources)
         }
         if (labelLayout && labelBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(labelRect.x, labelRect.y), labelLayout.Get(), labelBrush,
-                                   kColorClipTextOptions);
+            target->DrawTextLayout(
+                SnapTextOriginToPixelBaseline(target, labelLayout.Get(), D2D1::Point2F(labelRect.x, labelRect.y)),
+                labelLayout.Get(), labelBrush, kColorClipTextOptions);
         }
         if (textLayout && textBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(textRect.x, textRect.y), textLayout.Get(), textBrush,
-                                   kColorClipTextOptions);
+            target->DrawTextLayout(
+                SnapTextOriginToPixelBaseline(target, textLayout.Get(), D2D1::Point2F(textRect.x, textRect.y)),
+                textLayout.Get(), textBrush, kColorClipTextOptions);
         }
         if (annotationLayout && annotationBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(annotationRect.x, annotationRect.y), annotationLayout.Get(),
-                                   annotationBrush, kColorClipTextOptions);
+            target->DrawTextLayout(SnapTextOriginToPixelBaseline(target, annotationLayout.Get(),
+                                                                 D2D1::Point2F(annotationRect.x, annotationRect.y)),
+                                   annotationLayout.Get(), annotationBrush, kColorClipTextOptions);
         }
         if (translationLayout && translationBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(translationRect.x, translationRect.y), translationLayout.Get(),
-                                   translationBrush, kColorClipTextOptions);
+            target->DrawTextLayout(SnapTextOriginToPixelBaseline(target, translationLayout.Get(),
+                                                                 D2D1::Point2F(translationRect.x, translationRect.y)),
+                                   translationLayout.Get(), translationBrush, kColorClipTextOptions);
         }
     }
 }

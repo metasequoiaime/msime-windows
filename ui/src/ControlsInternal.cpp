@@ -108,6 +108,38 @@ SizeF MeasureText(IDWriteFactory *factory, const std::wstring &text, float fontS
     return {std::ceil(metrics.widthIncludingTrailingWhitespace), std::ceil(metrics.height)};
 }
 
+D2D1_POINT_2F SnapTextOriginToPixelBaseline(ID2D1RenderTarget *target, IDWriteTextLayout *layout, D2D1_POINT_2F origin)
+{
+    if (!target || !layout)
+        return origin;
+    float dpiX = 96.0f;
+    float dpiY = 96.0f;
+    target->GetDpi(&dpiX, &dpiY);
+    D2D1_MATRIX_3X2_F transform = {};
+    target->GetTransform(&transform);
+    if (dpiY <= 0.0f || transform._12 != 0.0f || transform._21 != 0.0f || transform._22 <= 0.0f)
+        return origin;
+    DWRITE_TEXT_METRICS metrics = {};
+    if (FAILED(layout->GetMetrics(&metrics)) || metrics.lineCount == 0)
+        return origin;
+    std::vector<DWRITE_LINE_METRICS> lines(metrics.lineCount);
+    UINT32 lineCount = 0;
+    if (FAILED(layout->GetLineMetrics(lines.data(), static_cast<UINT32>(lines.size()), &lineCount)) || lineCount == 0)
+        return origin;
+    const DWRITE_LINE_METRICS &firstLine = lines.front();
+
+    const float scaleY = transform._22 * dpiY / 96.0f;
+    // The atlas offset is whole device pixels but reaches here as DIPs (x 96/dpi) and comes back with
+    // float noise, e.g. 30.999998 one frame and 31.000002 the next. Treat a near-whole translation as
+    // whole, so the rounding below depends only on the layout and is the same every frame.
+    const float translation = transform._32 * dpiY / 96.0f;
+    const float wholeTranslation = std::round(translation);
+    const float pixelTranslation = std::fabs(translation - wholeTranslation) < 0.01f ? wholeTranslation : translation;
+    const float baseline = (origin.y + metrics.top + firstLine.baseline) * scaleY + pixelTranslation;
+    origin.y += (std::round(baseline) - baseline) / scaleY;
+    return origin;
+}
+
 ComPtr<IDWriteTextLayout> CreateCachedTextLayout(IDWriteFactory *factory, const std::wstring &fontFamily,
                                                  const std::wstring &text, float fontSize,
                                                  DWRITE_FONT_WEIGHT fontWeight, float width, float height,
