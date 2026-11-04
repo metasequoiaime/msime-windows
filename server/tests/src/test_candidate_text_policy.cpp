@@ -1,5 +1,17 @@
+#include "ipc/candidate_display_text.h"
 #include "ipc/candidate_text_policy.h"
 #include "tests/includes/test_framework.h"
+
+TEST_CASE(quick_phrase_display_keeps_first_line_and_marks_the_rest)
+{
+    const std::string multi = "> [!tip]\n\n:::\n";
+    REQUIRE_EQ(FanyImeIpc::QuickPhraseDisplayText(multi), std::string("> [!tip] \xE2\x86\xB5"));
+    // 单行内容原样返回，不多一个标记。
+    REQUIRE_EQ(FanyImeIpc::QuickPhraseDisplayText(std::string("\xE4\xBD\xA0\xE5\xA5\xBD")),
+               std::string("\xE4\xBD\xA0\xE5\xA5\xBD"));
+    // 以换行开头的短语首行为空，只剩标记，但不会再带出后面的行。
+    REQUIRE_EQ(FanyImeIpc::QuickPhraseDisplayText(std::string("\nabc")), std::string(" \xE2\x86\xB5"));
+}
 
 TEST_CASE(candidate_text_policy_extracts_first_and_last_han_character)
 {
