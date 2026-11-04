@@ -1016,16 +1016,10 @@ VisualPtr BuildShortcutPage(PageContext &context)
     PageBuilder page(L"快捷键");
     SettingsModel *model = &context.model;
 
-    // .shortcut-intro: 13px / 1.6, muted, margin -4px 8px 18px
-    auto intro = std::make_shared<Label>(L"各快捷键的生效范围见下方说明。",
-                                         Font(13.0f, DWRITE_FONT_WEIGHT_NORMAL, 1.6f, true), TextRole::Muted);
-    page.AddRaw(intro, 18.0f);
-    intro->SetMargin({8.0f, -4.0f, 8.0f, 18.0f});
-
     // 简繁切换
     {
         auto column = std::make_shared<Column>(0.0f);
-        column->Add(Heading(L"简繁切换", L"仅在中文输入状态生效，切换时保留正在输入的内容"));
+        column->Add(Heading(L"简繁切换", L""));
         column->Add(
             Options({BindCheck(context, L"Ctrl + Shift + F", "keybindings.toggle_character_set_ctrl_shift_f")}));
         page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);
@@ -1034,12 +1028,11 @@ VisualPtr BuildShortcutPage(PageContext &context)
     // 中英文切换
     {
         auto column = std::make_shared<Column>(0.0f);
-        column->Add(Heading(L"中英文切换", L"勾选启用对应快捷键；Ctrl+Space 由 Windows 系统管理，此处不控制"));
+        column->Add(Heading(L"中英文切换", L"Ctrl+Space 由 Windows 系统管理，此处不控制"));
         column->Add(Options({BindCheck(context, L"Shift", "keybindings.switch_language_shift"),
                              BindCheck(context, L"Ctrl", "keybindings.switch_language_ctrl"),
                              BindCheck(context, L"Ctrl + Alt + Space", "keybindings.switch_language_ctrl_alt_space")}));
-        auto cycle = Heading(L"", L"开启后，上面勾选的快捷键按 中文 → 日文 → 英文 → 中文 "
-                                  L"依次切换；有输入时先上屏原始字母，中文和日文分别保留各自的输入方案");
+        auto cycle = Heading(L"", L"中文 → 日文 → 英文 → 中文 依次切换");
         cycle->SetMargin({0.0f, 12.0f, 0.0f, 0.0f});
         column->Add(cycle);
         column->Add(Options({BindCheck(context, L"允许中日英循环切换", "keybindings.trilingual_cycle")}));
@@ -1056,7 +1049,7 @@ VisualPtr BuildShortcutPage(PageContext &context)
         state.model = model;
         auto column = std::make_shared<Column>(0.0f);
         column->Add(Heading(L"输入状态切换",
-                            L"支持 Ctrl 或 Ctrl+Shift 组合。英文候选模式仅在中文输入状态生效，再按一次回到拼音输入"));
+                            L"支持 Ctrl 或 Ctrl+Shift 组合"));
         auto list = std::make_shared<Column>(0.0f);
         const std::pair<const char *, const wchar_t *> rows[] = {{"englishCandidatesHotkey", L"切换英文候选模式"},
                                                                  {"fullWidthHotkey", L"全角 / 半角切换"},
@@ -1069,8 +1062,8 @@ VisualPtr BuildShortcutPage(PageContext &context)
             list->Add(RuledRow(RowLabel(rows[i].second), editor, false, i > 0));
         }
         column->Add(std::make_shared<TopRule>(list));
-        column->Add(MakeDescription(L"全半角和标点快捷键在中英文状态下均生效。绑定后会占用当前软件的同名快捷键；"
-                                    L"标点模式锁定时，仍接收标点快捷键，标点模式保持锁定。"));
+        column->Add(MakeDescription(L"英文候选模式仅在中文输入状态生效，再按一次回到拼音输入"
+                                    L"全半角和标点快捷键在中英文状态下均生效"));
         page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);
 
         // applyInputStateShortcuts()
@@ -1109,19 +1102,16 @@ VisualPtr BuildShortcutPage(PageContext &context)
     // 提交
     {
         auto column = std::make_shared<Column>(0.0f);
-        column->Add(Heading(L"提交", L"双拼方案下，Enter 提交原始输入，Shift + Enter 提交转换后的全拼。"
-                                     L"敲大写字母时 Shift 常常没松开就按了回车，容易误触，可在此关闭"));
+        column->Add(Heading(L"提交", L"双拼方案下，Enter 提交原始输入，Shift + Enter 提交转换后的全拼。"));
         column->Add(
-            Options({BindCheck(context, L"Shift + Enter 提交转换后的全拼", "keybindings.commit_pinyin_shift_enter")}));
+            Options({BindCheck(context, L"Shift + Enter 提交将双拼转为全拼", "keybindings.commit_pinyin_shift_enter")}));
         page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);
     }
 
     // 翻页方式
     {
         auto column = std::make_shared<Column>(0.0f);
-        column->Add(Heading(L"翻页方式", L"勾选启用对应的候选翻页键。左 / 右只在候选窗为横排时生效：光标在拼音末尾时"
-                                         L"右键移动高亮，左键回到第一个候选后再按才移动光标。滚轮翻页依赖系统设置"
-                                         L"「当我悬停在非活动窗口上方时滚动它们」，该项关闭时滚轮不会到达候选窗口"));
+        column->Add(Heading(L"翻页方式", L"滚轮翻页需要开启系统设置「当我悬停在非活动窗口上方时滚动它们」"));
         column->Add(Options(
             {BindCheck(context, L"- / =", "general.paging_minus_equal"),
              BindCheck(context, L", / .", "general.paging_comma_period"),
@@ -1145,22 +1135,36 @@ VisualPtr BuildShortcutPage(PageContext &context)
             VisualPtr keys;
         };
         const std::vector<Entry> entries = {
-            {L"选择候选（小键盘数字同样可用）", Keys({L"Space", L"~或", L"1", L"|–", L"9"})},
-            {L"向前 / 向后翻页", Keys({L"-", L"|/", L"="})},
-            {L"向前 / 向后翻页", Keys({L",", L"|/", L"."})},
-            {L"向前 / 向后翻页", Keys({L"Shift", L"|+", L"Tab", L"|/", L"Tab"})},
-            {L"向前 / 向后翻页", Keys({L"Page Up", L"|/", L"Page Down"})},
-            {L"移动候选项", Keys({L"↑", L"|/", L"↓"})},
-            {L"编辑输入串", Keys({L"←", L"|/", L"→", L"~、", L"Backspace"})},
-            {L"按音节删除 / 按音节移动光标",
-             Keys({L"Ctrl", L"|+", L"Backspace", L"~、", L"Ctrl", L"|+", L"←", L"|/", L"→"})},
-            {L"删除光标后的字母", Keys({L"Delete"})},
+            {L"选择候选", Keys({L"Space", L"~或", L"1", L"|–", L"9"})},
+            {L"提交原始输入", Keys({L"Enter"})},
+            {L"取消输入", Keys({L"Esc"})},
+            {L"以词定字（需开启）", Keys({L"[", L"|/", L"]", L"~或", L"-", L"|/", L"="})},
+            {L"上屏高亮候选译文（需开启候选词翻译）", Keys({L"Ctrl", L"|+", L"Enter"})},
+            {L"上屏指定序号候选的译文（需开启候选词翻译）", Keys({L"Ctrl", L"|+", L"1", L"|–", L"9"})},
+        };
+        for (size_t i = 0; i < entries.size(); ++i)
+            list->Add(RuledRow(RowLabel(entries[i].label), entries[i].keys, true, i > 0));
+        column->Add(std::make_shared<TopRule>(list));
+        page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);
+    }
+
+    // 编辑操作
+    {
+        auto column = std::make_shared<Column>(0.0f);
+        column->Add(Heading(L"编辑操作", L"编辑原始输入串"));
+        auto list = std::make_shared<Column>(0.0f);
+        struct Entry
+        {
+            const wchar_t *label;
+            VisualPtr keys;
+        };
+        const std::vector<Entry> entries = {
             {L"手动分隔拼音（如 xi'an）", Keys({L"'"})},
-            {L"以词定字：上屏高亮候选的首字 / 末字（可在“输入”中改为 - / =）", Keys({L"[", L"|/", L"]"})},
-            {L"上屏高亮候选的译文（需开启候选中英互译；有多条释义时再选一条）", Keys({L"Ctrl", L"|+", L"Enter"})},
-            {L"上屏指定序号候选的译文（需开启候选中英互译）", Keys({L"Ctrl", L"|+", L"1", L"|–", L"9"})},
-            {L"提交原始输入 / 取消输入", Keys({L"Enter", L"|/", L"Esc"})},
-            {L"提交拼音（双拼方案下提交转换后的全拼，可在上方关闭）", Keys({L"Shift", L"|+", L"Enter"})},
+            {L"按音节移动光标", Keys({L"Ctrl", L"|+", L"←", L"|/", L"→"})},
+            {L"删除光标前的字母", Keys({L"Backspace"})},
+            {L"删除光标前的音节", Keys({L"Ctrl", L"|+", L"Backspace"})},
+            {L"删除光标后的字母", Keys({L"Delete"})},
+            {L"删除光标后的音节", Keys({L"Ctrl", L"|+", L"Delete"})},
         };
         for (size_t i = 0; i < entries.size(); ++i)
             list->Add(RuledRow(RowLabel(entries[i].label), entries[i].keys, true, i > 0));
@@ -1182,7 +1186,7 @@ VisualPtr BuildShortcutPage(PageContext &context)
         };
         const std::vector<Entry> entries = {
             {L"打开屏幕键盘", Keys({L"Ctrl", L"|+", L"Shift", L"|+", L"Win", L"|+", L"K"}), false},
-            {L"删除当前候选窗口中的第 1–8 项", Keys({L"Ctrl", L"|+", L"Shift", L"|+", L"Alt", L"|+", L"1–8"}), false},
+            {L"删除当前页的特定位置候选", Keys({L"Ctrl", L"|+", L"Shift", L"|+", L"Alt", L"|+", L"1–8"}), false},
             {L"清除输入法引擎缓存", Keys({L"Ctrl", L"|+", L"Shift", L"|+", L"Alt", L"|+", L"C"}), false},
             {L"重启输入法服务", Keys({L"Ctrl", L"|+", L"Shift", L"|+", L"Alt", L"|+", L"R"}), false},
             {L"立即退出输入法服务", Keys({L"Ctrl", L"|+", L"Shift", L"|+", L"Alt", L"|+", L"T"}), true},
