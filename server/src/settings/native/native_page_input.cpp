@@ -1940,8 +1940,7 @@ VisualPtr BuildInputPage(PageContext &context)
             return toggle;
         };
         s->smartHint = std::make_shared<Hideable>(DisabledHint(), false);
-        auto details = Col({Description(L"", 0.0f),
-                            DetailsRow(L"中文标点后按空格转为对应英文标点",
+        auto details = Col({DetailsRow(L"中文标点后按空格转为对应英文标点",
                                        L"。，！？；：、 以及单独出现的 “ ” 【 】 《 》 （ ） 转为对应英文标点",
                                        option("input.smart_punctuation_space_convert")),
                             DetailsRow(L"同键转回中文", L"转换或直出的英文标点，2 秒内再按同一标点键转回中文",
@@ -1957,14 +1956,11 @@ VisualPtr BuildInputPage(PageContext &context)
 
     page.AddSection(MakeRow(L"成对中文标点自动补全", L"输入左侧符号时自动补全右侧符号，并将光标置于中间",
                             Toggle(context, "input.paired_punctuation")));
-    page.AddSection(MakeRow(
-        L"默认中英文", L"",
+    page.AddSection(MakeRow(L"默认中英文", L"",
         BindDropdown(context, "input.default_ime_mode", Options({{"chinese", L"中文"}, {"english", L"英文"}}))));
-    page.AddSection(MakeRow(
-        L"中英文状态", L"",
+    page.AddSection(MakeRow(L"中英文状态", L"",
         BindDropdown(context, "input.ime_mode_scope", Options({{"app", L"按应用记忆"}, {"global", L"全局统一"}}))));
-    page.AddSection(MakeRow(
-        L"简繁输入", L"",
+    page.AddSection(MakeRow(L"简繁输入", L"",
         BindDropdown(context, "input.character_set", Options({{"simplified", L"简体"}, {"traditional", L"繁体"}}))));
 
     // ---- 整句候选 ----
@@ -1997,7 +1993,7 @@ VisualPtr BuildInputPage(PageContext &context)
         s->collocationList = std::make_shared<Column>(10.0f);
         s->collocationList->SetMargin({0.0f, 6.0f, 0.0f, 0.0f});
         auto collocationBlock =
-            Col({MakeSubTitle(L"octagram 语法模型"), MakeDescription(L""), s->collocationList});
+            Col({MakeSubTitle(L"octagram 语法模型"), s->collocationList});
         collocationBlock->SetMargin({0.0f, 0.0f, 10.0f, 0.0f});
         s->collocationToggle = BindToggle(context, "association.sentence_collocation_enabled");
 
