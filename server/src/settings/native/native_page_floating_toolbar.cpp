@@ -132,12 +132,12 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
     // ---- Toolbar card -------------------------------------------------------------
     auto toolbarCard = std::make_shared<FlushCard>();
     toolbarCard->Add(SettingBand(
-        std::make_shared<SettingRow>(MakeTitleBlock(L"在桌面显示悬浮工具栏", L"快速访问输入法状态与常用功能"),
+        std::make_shared<SettingRow>(MakeTitleBlock(L"在桌面显示悬浮工具栏", L""),
                                      BindToggle(context, "general.floating_toolbar"))));
 
     auto autoHide = SettingBand(std::make_shared<SettingRow>(
         OptionTitle(L"自动隐藏工具栏",
-                    L"工具栏显示一段时间无交互后淡出隐藏；鼠标悬停不隐藏，切换中英等状态变化时重新显示"),
+                    L"工具栏一段时间无交互后淡出隐藏；切换中英等状态变化时重新显示"),
         BindToggle(context, "general.floating_toolbar_auto_hide")));
     autoHide->SetTopRule(DividerColor);
     toolbarCard->Add(autoHide);
@@ -150,7 +150,7 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
     toolbarCard->Add(delay);
 
     auto shadowRow =
-        SettingBand(std::make_shared<SettingRow>(OptionTitle(L"工具栏阴影", L"在工具栏周围显示与候选窗一致的柔和阴影"),
+        SettingBand(std::make_shared<SettingRow>(OptionTitle(L"工具栏阴影", L""),
                                                  BindToggle(context, "general.floating_toolbar_shadow")));
     shadowRow->SetTopRule(DividerColor);
     toolbarCard->Add(shadowRow);
@@ -173,7 +173,7 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
     // ---- Caret state indicator card -------------------------------------------------
     auto caretCard = std::make_shared<FlushCard>();
     auto heading = SettingBand(std::make_shared<SettingRow>(
-        MakeTitleBlock(L"光标状态提示", L"在文字光标附近短暂显示输入法状态，可与悬浮工具栏同时开启"), nullptr));
+        MakeTitleBlock(L"光标状态提示", L"在文字光标附近短暂显示输入法状态"), nullptr));
     heading->SetBottomRule(DividerColor);
     caretCard->Add(heading);
     caretCard->Add(SettingBand(
@@ -181,13 +181,13 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
                                      BindToggle(context, "general.caret_state_indicator"))));
     caretCard->Add(SettingBand(std::make_shared<SettingRow>(
         OptionTitle(L"切换输入框时提示",
-                    L"焦点移到另一个输入框时（包括同一窗口内和其他窗口中的），也提示当前中英文状态"),
+                    L"焦点移到另一个输入框提示当前中英文状态"),
         BindToggle(context, "general.caret_state_indicator_on_focus"))));
 
     Dropdown::Options compact;
     compact.compact = true;
     caretCard->Add(
-        SettingBand(std::make_shared<SettingRow>(OptionTitle(L"提示位置", L"选择光标状态提示显示在光标的哪个方向"),
+        SettingBand(std::make_shared<SettingRow>(OptionTitle(L"提示位置", L""),
                                                  BindDropdown(context, "general.caret_state_indicator_position",
                                                               Options({{"top-left", L"左上方"},
                                                                        {"top", L"正上方"},
@@ -228,7 +228,7 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
 
     // ---- Components ---------------------------------------------------------------
     auto components = std::make_shared<Column>(0.0f);
-    components->Add(MakeRow(L"工具栏组件", L"勾选要显示在悬浮工具栏中的功能", nullptr));
+    components->Add(MakeRow(L"工具栏组件", L"", nullptr));
     auto list = std::make_shared<Column>(0.0f);
     list->Add(std::make_shared<RequiredOption>());
     const wchar_t *labels[6] = {L"全角 / 半角", L"中英文标点", L"简繁切换", L"表情与符号", L"屏幕键盘", L"设置"};
