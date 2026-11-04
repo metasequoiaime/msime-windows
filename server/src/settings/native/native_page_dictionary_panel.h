@@ -46,6 +46,8 @@ class DictInput : public msimeui::Container
     void SetText(const std::wstring &text);
     void SetPlaceholder(std::wstring placeholder);
     void SetOnSubmit(std::function<void()> handler);
+    // 多行框：Enter 换行，Ctrl+Enter 提交，高度给三行。
+    void SetMultiline(bool multiline);
     const std::shared_ptr<msimeui::TextBox> &Box() const
     {
         return box_;
@@ -59,6 +61,7 @@ class DictInput : public msimeui::Container
 
     std::shared_ptr<msimeui::TextBox> box_;
     int appliedState_ = -1;
+    float height_ = 42.0f;
 };
 
 // `display: grid; gap: 7px; margin-top: 14px` label above an input in `.dict-dialog`.
