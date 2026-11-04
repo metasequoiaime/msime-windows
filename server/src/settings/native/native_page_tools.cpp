@@ -132,8 +132,7 @@ VisualPtr BuildToolsPage(PageContext &context)
     // 剪贴板管理
     page.AddSection(std::make_shared<TopAlignedRow>(
         QuickTitleBlock(L"剪贴板管理",
-                        L"开启后，复制过的文本会显示在表情面板的剪贴板分页中。关闭后立即清空已保存的记录，"
-                        L"且只记录文本类型。"),
+                        L"开启后复制过的文本会显示在表情面板的剪贴板分页中；关闭后会清空已保存的记录。"),
         BindToggle(context, "utility.clipboard_history"), 2.0f));
 
     // 候选混输
@@ -162,10 +161,9 @@ VisualPtr BuildToolsPage(PageContext &context)
             },
             hint);
         auto &details = *section.details;
-        details.Add(DetailsDescription(
-            L"全拼 / 双拼输入中文时，把下面这些内容直接混进候选，不用切换到对应的快捷模式。五笔不混输。"));
+        details.Add(DetailsDescription(L"仅在全拼 / 双拼生效"));
         details.Add(DetailsRow(context, L"中英混输", L"在候选项中补充英文单词", zhEn));
-        auto triggerRow = MakeRow(L"英文触发字符数", L"预编辑字母达到该长度后才出现英文候选项", trigger, true);
+        auto triggerRow = MakeRow(L"英文触发字符数", L"达到该长度后才出现英文候选项", trigger, true);
         triggerRow->SetMargin({0.0f, 2.0f, 0.0f, 2.0f});
         auto triggerBlock = std::make_shared<Dimmable>(triggerRow);
         // .frequency-option-content { margin-top: 8px }
@@ -177,34 +175,21 @@ VisualPtr BuildToolsPage(PageContext &context)
                 block->SetDisabled(!model->GetBool("general.cn_en_mixed_input"));
         });
         details.Add(triggerBlock);
-        details.Add(DetailsRow(
-            context, L"emoji 混输",
-            L"输入恰好等于某个 emoji 关键词时加入 emoji（排在候选项列表最后，不挤占正常汉字候选的位置）", emoji));
+        details.Add(DetailsRow(context, L"emoji 混输", L"", emoji));
+        details.Add(DetailsRow(context, L"颜文字混输", L"", kaomoji));
         details.Add(
-            DetailsRow(context, L"颜文字混输", L"在候选项中加入匹配的颜文字（排在列表末尾的 emoji 之后）", kaomoji));
-        details.Add(
-            DetailsRow(context, L"符号混输",
-                       L"输入恰好等于某个符号编码时加入符号，首个占首页最后一个普通候选的位置，"
-                       L"例如 alpha → α、infinity → ∞、szq → ①、yi → ① ⑴ ⒈、dian → · 、、shuminghao → 《》 〈〉",
+            DetailsRow(context, L"特殊符号混输",
+                       L"例如 alpha → α、yi → ① ⑴ ⒈、shuminghao → 《》 〈〉",
                        symbol));
-        details.Add(
-            DetailsRow(context, L"快捷短语混入候选",
-                       L"输入的编码与快捷短语的编码完全一致时，快捷短语直接出现在候选首位（固定位置的候选之后），"
-                       L"不用按 Shift+K",
-                       quickCandidates));
-        details.Add(
-            DetailsRow(context, L"快捷短语参与调频",
-                       L"常越过快捷短语选别的候选时，快捷短语会往后退，最多退到首页最后一位；选中快捷短语会让它往"
-                       L"前挪。关闭后快捷短语始终在首位",
-                       quickFrequency));
+        details.Add(DetailsRow(context, L"快捷短语混入候选", L"", quickCandidates));
+        details.Add(DetailsRow(context, L"快捷短语参与调频", L"关闭后快捷短语始终在首位", quickFrequency));
         details.Add(DetailsRow(context, L"日期时间混入候选",
-                               L"输入 rq / riqi / date、sj / shijian / time、xq / xingqi / week "
-                               L"时，当前日期、时间或星期直接出现在首个候选之后，不用按 Shift+T",
+                               L"rq / riqi / date、sj / shijian / time、xq / xingqi / week "
+                               L"输入当前日期、时间或星期",
                                dateTime));
         details.Add(
             DetailsRow(context, L"日期格式入口",
-                       L"日期时间混入候选时，在第三位放一个「📅日期」，选中后候选框换成全部日期格式，和 Shift+T "
-                       L"模式相同",
+                       L"日期时间混入候选时，提供「📅日期」作为输入更多格式的入口",
                        dateMenu));
         details.Add(hint);
         page.AddSection(section.body);
@@ -225,14 +210,10 @@ VisualPtr BuildToolsPage(PageContext &context)
             },
             hint);
         auto &details = *section.details;
-        details.Add(
-            DetailsDescription(L"在任务栏语言栏（输入法指示器旁）分别控制中/英模式、全/半角、中文标点三个按钮的显"
-                               L"示。修改后需重启生效。"));
-        details.Add(DetailsRow(context, L"中/英模式按钮", L"显示中/英文输入模式切换按钮", imeMode));
-        details.Add(
-            DetailsRow(context, L"全/半角按钮", L"显示全角/半角切换按钮（只在使用桌面语言栏时才显示）", doubleSingle));
-        details.Add(DetailsRow(context, L"中文标点按钮", L"显示中文/英文标点切换按钮（只在使用桌面语言栏时才显示）",
-                               punctuation));
+        details.Add(DetailsDescription(L"修改后需重启生效"));
+        details.Add(DetailsRow(context, L"中/英模式按钮", L"", imeMode));
+        details.Add(DetailsRow(context, L"全/半角按钮", L"", doubleSingle));
+        details.Add(DetailsRow(context, L"中文标点按钮", L"", punctuation));
         details.Add(hint);
         page.AddSection(section.body);
     }
@@ -294,8 +275,7 @@ VisualPtr BuildToolsPage(PageContext &context)
     page.AddSection(centered(L"超级简拼(J 模式)",
                              L"仅双拼下可用。中文模式下按 Shift+J，之后输入的每个字母都作为简拼检索词库，"
                              L"并按当前双拼方案转换声母。例如小鹤 nu → n'sh（你说），与 ns → n's 不同。"
-                             L"全拼不需要该模式，直接输入声母就是简拼，包括 zh / ch / sh 声母，例如 nh → 你好、"
-                             L"eq → 而且、zhly → 张靓颖。空格上屏；数字选词。",
+                             L"空格上屏；数字选词。",
                              "utility.jianpin_mode"));
     page.AddSection(
         centered(L"临时英文(Y 模式)",
