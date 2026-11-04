@@ -635,6 +635,16 @@ bool TextBox::OnKeyDown(WPARAM key, LPARAM lParam)
     {
         switch (0xff & key)
         {
+        case VK_RETURN:
+            // A multi-line box uses Enter for line breaks, so submitting moves to Ctrl+Enter.
+            if (IsMultiline() && onSubmit_)
+            {
+                const auto handler = onSubmit_;
+                handler();
+                return true;
+            }
+            return false;
+
         case 'A':
             editor_->SelectAll();
             InvalidateVisual();
