@@ -131,13 +131,11 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
 
     // ---- Toolbar card -------------------------------------------------------------
     auto toolbarCard = std::make_shared<FlushCard>();
-    toolbarCard->Add(SettingBand(
-        std::make_shared<SettingRow>(MakeTitleBlock(L"在桌面显示悬浮工具栏", L""),
-                                     BindToggle(context, "general.floating_toolbar"))));
+    toolbarCard->Add(SettingBand(std::make_shared<SettingRow>(MakeTitleBlock(L"在桌面显示悬浮工具栏", L""),
+                                                              BindToggle(context, "general.floating_toolbar"))));
 
     auto autoHide = SettingBand(std::make_shared<SettingRow>(
-        OptionTitle(L"自动隐藏工具栏",
-                    L"工具栏一段时间无交互后淡出隐藏；切换中英等状态变化时重新显示"),
+        OptionTitle(L"自动隐藏工具栏", L"工具栏一段时间无交互后淡出隐藏；切换中英等状态变化时重新显示"),
         BindToggle(context, "general.floating_toolbar_auto_hide")));
     autoHide->SetTopRule(DividerColor);
     toolbarCard->Add(autoHide);
@@ -149,9 +147,8 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
         Thickness{48.0f, 20.0f, 24.0f, 20.0f});
     toolbarCard->Add(delay);
 
-    auto shadowRow =
-        SettingBand(std::make_shared<SettingRow>(OptionTitle(L"工具栏阴影", L""),
-                                                 BindToggle(context, "general.floating_toolbar_shadow")));
+    auto shadowRow = SettingBand(std::make_shared<SettingRow>(OptionTitle(L"工具栏阴影", L""),
+                                                              BindToggle(context, "general.floating_toolbar_shadow")));
     shadowRow->SetTopRule(DividerColor);
     toolbarCard->Add(shadowRow);
 
@@ -172,30 +169,28 @@ VisualPtr BuildFloatingToolbarPage(PageContext &context)
 
     // ---- Caret state indicator card -------------------------------------------------
     auto caretCard = std::make_shared<FlushCard>();
-    auto heading = SettingBand(std::make_shared<SettingRow>(
-        MakeTitleBlock(L"光标状态提示", L"在文字光标附近短暂显示输入法状态"), nullptr));
+    auto heading = SettingBand(
+        std::make_shared<SettingRow>(MakeTitleBlock(L"光标状态提示", L"在文字光标附近短暂显示输入法状态"), nullptr));
     heading->SetBottomRule(DividerColor);
     caretCard->Add(heading);
     caretCard->Add(SettingBand(
         std::make_shared<SettingRow>(OptionTitle(L"切换输入法状态时提示", L"切换输入模式、全半角或中英文标点时显示"),
                                      BindToggle(context, "general.caret_state_indicator"))));
-    caretCard->Add(SettingBand(std::make_shared<SettingRow>(
-        OptionTitle(L"切换输入框时提示",
-                    L"焦点移到另一个输入框提示当前中英文状态"),
-        BindToggle(context, "general.caret_state_indicator_on_focus"))));
+    caretCard->Add(SettingBand(
+        std::make_shared<SettingRow>(OptionTitle(L"切换输入框时提示", L"焦点移到另一个输入框提示当前中英文状态"),
+                                     BindToggle(context, "general.caret_state_indicator_on_focus"))));
 
     Dropdown::Options compact;
     compact.compact = true;
-    caretCard->Add(
-        SettingBand(std::make_shared<SettingRow>(OptionTitle(L"提示位置", L""),
-                                                 BindDropdown(context, "general.caret_state_indicator_position",
-                                                              Options({{"top-left", L"左上方"},
-                                                                       {"top", L"正上方"},
-                                                                       {"top-right", L"右上方"},
-                                                                       {"bottom-left", L"左下方"},
-                                                                       {"bottom", L"正下方"},
-                                                                       {"bottom-right", L"右下方"}}),
-                                                              compact))));
+    caretCard->Add(SettingBand(std::make_shared<SettingRow>(
+        OptionTitle(L"提示位置", L""), BindDropdown(context, "general.caret_state_indicator_position",
+                                                    Options({{"top-left", L"左上方"},
+                                                             {"top", L"正上方"},
+                                                             {"top-right", L"右上方"},
+                                                             {"bottom-left", L"左下方"},
+                                                             {"bottom", L"正下方"},
+                                                             {"bottom-right", L"右下方"}}),
+                                                    compact))));
 
     auto caret = std::make_shared<skinpreview::CaretStatePreview>();
     auto caretColumn = std::make_shared<Column>(0.0f);

@@ -131,8 +131,7 @@ VisualPtr BuildToolsPage(PageContext &context)
 
     // 剪贴板管理
     page.AddSection(std::make_shared<TopAlignedRow>(
-        QuickTitleBlock(L"剪贴板管理",
-                        L"开启后复制过的文本会显示在表情面板的剪贴板分页中；关闭后会清空已保存的记录。"),
+        QuickTitleBlock(L"剪贴板管理", L"开启后复制过的文本会显示在表情面板的剪贴板分页中；关闭后会清空已保存的记录。"),
         BindToggle(context, "utility.clipboard_history"), 2.0f));
 
     // 候选混输
@@ -178,19 +177,15 @@ VisualPtr BuildToolsPage(PageContext &context)
         details.Add(DetailsRow(context, L"emoji 混输", L"", emoji));
         details.Add(DetailsRow(context, L"颜文字混输", L"", kaomoji));
         details.Add(
-            DetailsRow(context, L"特殊符号混输",
-                       L"例如 alpha → α、yi → ① ⑴ ⒈、shuminghao → 《》 〈〉",
-                       symbol));
+            DetailsRow(context, L"特殊符号混输", L"例如 alpha → α、yi → ① ⑴ ⒈、shuminghao → 《》 〈〉", symbol));
         details.Add(DetailsRow(context, L"快捷短语混入候选", L"", quickCandidates));
         details.Add(DetailsRow(context, L"快捷短语参与调频", L"关闭后快捷短语始终在首位", quickFrequency));
         details.Add(DetailsRow(context, L"日期时间混入候选",
                                L"rq / riqi / date、sj / shijian / time、xq / xingqi / week "
                                L"输入当前日期、时间或星期",
                                dateTime));
-        details.Add(
-            DetailsRow(context, L"日期格式入口",
-                       L"日期时间混入候选时，提供「📅日期」作为输入更多格式的入口",
-                       dateMenu));
+        details.Add(DetailsRow(context, L"日期格式入口", L"日期时间混入候选时，提供「📅日期」作为输入更多格式的入口",
+                               dateMenu));
         details.Add(hint);
         page.AddSection(section.body);
     }

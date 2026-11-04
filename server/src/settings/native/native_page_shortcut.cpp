@@ -1048,8 +1048,7 @@ VisualPtr BuildShortcutPage(PageContext &context)
         state = RecorderState{};
         state.model = model;
         auto column = std::make_shared<Column>(0.0f);
-        column->Add(Heading(L"输入状态切换",
-                            L"支持 Ctrl 或 Ctrl+Shift 组合"));
+        column->Add(Heading(L"输入状态切换", L"支持 Ctrl 或 Ctrl+Shift 组合"));
         auto list = std::make_shared<Column>(0.0f);
         const std::pair<const char *, const wchar_t *> rows[] = {{"englishCandidatesHotkey", L"切换英文候选模式"},
                                                                  {"fullWidthHotkey", L"全角 / 半角切换"},
@@ -1103,8 +1102,8 @@ VisualPtr BuildShortcutPage(PageContext &context)
     {
         auto column = std::make_shared<Column>(0.0f);
         column->Add(Heading(L"提交", L"双拼方案下，Enter 提交原始输入，Shift + Enter 提交转换后的全拼。"));
-        column->Add(
-            Options({BindCheck(context, L"Shift + Enter 提交将双拼转为全拼", "keybindings.commit_pinyin_shift_enter")}));
+        column->Add(Options(
+            {BindCheck(context, L"Shift + Enter 提交将双拼转为全拼", "keybindings.commit_pinyin_shift_enter")}));
         page.AddRaw(std::make_shared<FlatSection>(column), 18.0f);
     }
 
@@ -1159,12 +1158,9 @@ VisualPtr BuildShortcutPage(PageContext &context)
             VisualPtr keys;
         };
         const std::vector<Entry> entries = {
-            {L"手动分隔拼音（如 xi'an）", Keys({L"'"})},
-            {L"按音节移动光标", Keys({L"Ctrl", L"|+", L"←", L"|/", L"→"})},
-            {L"删除光标前的字母", Keys({L"Backspace"})},
-            {L"删除光标前的音节", Keys({L"Ctrl", L"|+", L"Backspace"})},
-            {L"删除光标后的字母", Keys({L"Delete"})},
-            {L"删除光标后的音节", Keys({L"Ctrl", L"|+", L"Delete"})},
+            {L"手动分隔拼音（如 xi'an）", Keys({L"'"})}, {L"按音节移动光标", Keys({L"Ctrl", L"|+", L"←", L"|/", L"→"})},
+            {L"删除光标前的字母", Keys({L"Backspace"})}, {L"删除光标前的音节", Keys({L"Ctrl", L"|+", L"Backspace"})},
+            {L"删除光标后的字母", Keys({L"Delete"})},    {L"删除光标后的音节", Keys({L"Ctrl", L"|+", L"Delete"})},
         };
         for (size_t i = 0; i < entries.size(); ++i)
             list->Add(RuledRow(RowLabel(entries[i].label), entries[i].keys, true, i > 0));

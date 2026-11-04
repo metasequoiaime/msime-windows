@@ -1576,8 +1576,7 @@ VisualPtr BuildInputPage(PageContext &context)
             model->Update("input.mode", mode);
         });
         auto grid = std::make_shared<TwoColumns>(chinese, japanese);
-        page.AddSection(Col({MakeTitleBlock(L"输入模式", L"切换默认输入模式"),
-                             WithMarginTop(grid, 12.0f)}));
+        page.AddSection(Col({MakeTitleBlock(L"输入模式", L"切换默认输入模式"), WithMarginTop(grid, 12.0f)}));
     }
 
     // ---- 输入方案 ----
@@ -1670,15 +1669,13 @@ VisualPtr BuildInputPage(PageContext &context)
         s->chineseSections.push_back(AddHideableSection(
             page,
             Col({MakeRow(L"五笔方案", L"", scheme),
-                 ItemSetting(L"拼音混输", L"",
-                             Toggle(context, "input.wubi_mixed_pinyin"), true, false),
+                 ItemSetting(L"拼音混输", L"", Toggle(context, "input.wubi_mixed_pinyin"), true, false),
                  ItemSetting(L"z 键通配", L"开启后 z 可匹配码表中该位置的任意字母（含首位），常用于首码不确定时起头",
                              zMode, false, false),
                  ItemSetting(L"四码唯一时自动上屏",
                              L"若输入四码后能够唯一确定候选，则将此候选自动上屏，而无需按空格上屏",
                              Toggle(context, "input.wubi_four_code_auto_commit"), false, false),
-                 ItemSetting(L"第五码将首选上屏",
-                             L"当输入到第五码时，自动上屏前四码确定的首选项",
+                 ItemSetting(L"第五码将首选上屏", L"当输入到第五码时，自动上屏前四码确定的首选项",
                              Toggle(context, "input.wubi_fifth_code_top_commit"), false, true)})));
     }
 
@@ -1710,8 +1707,7 @@ VisualPtr BuildInputPage(PageContext &context)
                          Toggle(context, "quanpin.autocorrect_deletion"), false, false),
              ItemSetting(L"多字纠错", L"多敲一个相邻按键时纠正，如 sjhang → shang（上）",
                          Toggle(context, "quanpin.autocorrect_insertion"), false, false),
-             ItemSetting(L"显示 * 号纠错标记", L"",
-                         Toggle(context, "quanpin.autocorrect_marker"), false, true)}));
+             ItemSetting(L"显示 * 号纠错标记", L"", Toggle(context, "quanpin.autocorrect_marker"), false, true)}));
 
     // ---- 模糊音 ----
     {
@@ -1734,10 +1730,9 @@ VisualPtr BuildInputPage(PageContext &context)
         auto finalList = OptionList(finals);
         s->fuzzyRules = {std::make_shared<Dimmable>(initialList), std::make_shared<Dimmable>(finalList)};
         s->fuzzyHint = std::make_shared<Hideable>(DisabledHint(), false);
-        auto details =
-            Col({Description(L"全拼与双拼均生效", 0.0f),
-                 Padded(MakeSubTitle(L"声母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[0],
-                 Padded(MakeSubTitle(L"韵母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[1], s->fuzzyHint});
+        auto details = Col({Description(L"全拼与双拼均生效", 0.0f),
+                            Padded(MakeSubTitle(L"声母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[0],
+                            Padded(MakeSubTitle(L"韵母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[1], s->fuzzyHint});
         auto section = MakeToggleSection(L"模糊音", details);
         page.AddSection(Col({std::make_shared<SettingRow>(section.expander, master), section.details}));
     }
@@ -1829,9 +1824,8 @@ VisualPtr BuildInputPage(PageContext &context)
                                                    L"API Key（可选，以 Bearer Token 发送）", L"留空表示不鉴权", true),
                                              true}}))});
         s->aiSummary = std::make_shared<ApiField>(L"当前服务商与模型", L"未配置", false, true);
-        auto ai = Col({heading(L"复用 AI 辅助配置",
-                               L"使用「AI 与云联想」页服务商"),
-                       blockInput(grid({{s->aiSummary, true}}))});
+        auto ai = Col(
+            {heading(L"复用 AI 辅助配置", L"使用「AI 与云联想」页服务商"), blockInput(grid({{s->aiSummary, true}}))});
         s->providerFields["tencent"] = std::make_shared<Hideable>(tencent, true);
         s->providerFields["aliyun"] = std::make_shared<Hideable>(aliyun, false);
         s->providerFields["niutrans"] = std::make_shared<Hideable>(niutrans, false);
@@ -1862,14 +1856,11 @@ VisualPtr BuildInputPage(PageContext &context)
             {std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"显示词性", L"显示 n.、v. 等词性标记", s->showPosBlock)),
              std::make_shared<Divider>(Divider::Kind::Option),
-             blockInput(LanguageRow(L"只显示单条译文", L"Ctrl+Enter / Ctrl+1~9 仍可选择全部释义上屏",
-                                    s->singleSenseBlock)),
+             blockInput(
+                 LanguageRow(L"只显示单条译文", L"Ctrl+Enter / Ctrl+1~9 仍可选择全部释义上屏", s->singleSenseBlock)),
              std::make_shared<Divider>(Divider::Kind::Option),
-             blockInput(LanguageRow(L"在线翻译服务",
-                                    L"英语优先使用本地词库；本地未命中时使用所选在线服务",
-                                    provider)),
-             std::make_shared<Divider>(Divider::Kind::Option),
-             blockInput(LanguageRow(L"目标语种", L"", target)),
+             blockInput(LanguageRow(L"在线翻译服务", L"英语优先使用本地词库；本地未命中时使用所选在线服务", provider)),
+             std::make_shared<Divider>(Divider::Kind::Option), blockInput(LanguageRow(L"目标语种", L"", target)),
              std::make_shared<Divider>(Divider::Kind::Option), s->providerFields["tencent"],
              s->providerFields["aliyun"], s->providerFields["niutrans"], s->providerFields["custom"],
              s->providerFields["ai"], s->warningBox, s->credentialTest->View()});
@@ -1879,9 +1870,7 @@ VisualPtr BuildInputPage(PageContext &context)
             model->Update("general.candidate_translations", on);
             s->SetTranslationsEnabled(on);
         });
-        page.AddSection(
-            Col({MakeRow(L"候选词翻译", L"", master),
-                 s->translationOptions}));
+        page.AddSection(Col({MakeRow(L"候选词翻译", L"", master), s->translationOptions}));
         s->translationsToggle = master;
     }
 
@@ -1896,16 +1885,16 @@ VisualPtr BuildInputPage(PageContext &context)
         auto keys = std::make_shared<TopRuled>(
             Col({MakeSubTitle(L"以词定字快捷键"), OptionList({s->wordKeysBrackets, s->wordKeysMinusEqual})}), 16.0f);
         keys->SetMargin({0.0f, 18.0f, 0.0f, 0.0f});
-        page.AddSection(Col({MakeRow(L"以词定字", L"通过组词输入的方式减少单字筛选时间，选择高亮候选词的第一个或最后一个汉字",
-                                     Toggle(context, "input.word_to_character")),
-                             keys}));
+        page.AddSection(
+            Col({MakeRow(L"以词定字", L"通过组词输入的方式减少单字筛选时间，选择高亮候选词的第一个或最后一个汉字",
+                         Toggle(context, "input.word_to_character")),
+                 keys}));
     }
 
     page.AddSection(MakeRow(L"Esc 保留已选词",
                             L"首次按下 Esc 只清除还未选的拼音，再按一次 Esc 才取消所有词（小狼毫风格）",
                             Toggle(context, "input.escape_keeps_selected_word")));
-    page.AddSection(MakeRow(L"回车上屏英文时入库",
-                            L"将按回车上屏输入的英文写入英文词库，作为后续的候选出现",
+    page.AddSection(MakeRow(L"回车上屏英文时入库", L"将按回车上屏输入的英文写入英文词库，作为后续的候选出现",
                             Toggle(context, "input.enter_learns_english_word")));
 
     // ---- 固定标点 ----
@@ -1926,9 +1915,7 @@ VisualPtr BuildInputPage(PageContext &context)
         for (auto &check : AtLeastOneChecks(context, {{L"\\ 反斜杠", "input.enumeration_comma_backslash"},
                                                       {L"/ 斜杠", "input.enumeration_comma_slash"}}))
             keys.push_back(check);
-        page.AddSection(Col({MakeTitle(L"自定义顿号输出键"),
-                             Description(L"未勾选则按原样输出"),
-                             OptionList(keys)}));
+        page.AddSection(Col({MakeTitle(L"自定义顿号输出键"), Description(L"未勾选则按原样输出"), OptionList(keys)}));
     }
 
     // ---- 智能标点 ----
@@ -1956,11 +1943,14 @@ VisualPtr BuildInputPage(PageContext &context)
 
     page.AddSection(MakeRow(L"成对中文标点自动补全", L"输入左侧符号时自动补全右侧符号，并将光标置于中间",
                             Toggle(context, "input.paired_punctuation")));
-    page.AddSection(MakeRow(L"默认中英文", L"",
+    page.AddSection(MakeRow(
+        L"默认中英文", L"",
         BindDropdown(context, "input.default_ime_mode", Options({{"chinese", L"中文"}, {"english", L"英文"}}))));
-    page.AddSection(MakeRow(L"中英文状态", L"",
+    page.AddSection(MakeRow(
+        L"中英文状态", L"",
         BindDropdown(context, "input.ime_mode_scope", Options({{"app", L"按应用记忆"}, {"global", L"全局统一"}}))));
-    page.AddSection(MakeRow(L"简繁输入", L"",
+    page.AddSection(MakeRow(
+        L"简繁输入", L"",
         BindDropdown(context, "input.character_set", Options({{"simplified", L"简体"}, {"traditional", L"繁体"}}))));
 
     // ---- 整句候选 ----
@@ -1992,45 +1982,38 @@ VisualPtr BuildInputPage(PageContext &context)
 
         s->collocationList = std::make_shared<Column>(10.0f);
         s->collocationList->SetMargin({0.0f, 6.0f, 0.0f, 0.0f});
-        auto collocationBlock =
-            Col({MakeSubTitle(L"octagram 语法模型"), s->collocationList});
+        auto collocationBlock = Col({MakeSubTitle(L"octagram 语法模型"), s->collocationList});
         collocationBlock->SetMargin({0.0f, 0.0f, 10.0f, 0.0f});
         s->collocationToggle = BindToggle(context, "association.sentence_collocation_enabled");
 
-        auto content = Col(
-            {FrequencyRow(SubBlock(L"Trigram 模型整句", L"使用三元语言模型生成整句候选"),
-                          s->latticeToggle),
-             latticeSection,
-             FrequencyRow(SubBlock(L"Unigram 模型整句", L"基于 Google 拼音，速度快、准确率较高"),
-                          Toggle(context, "association.sentence_google")),
-             FrequencyRow(SubBlock(L"神经网络模型整句（效果优先）", L"处理时延较长，但准确率高"),
-                          s->neuralToggle),
-             neuralSection,
-             FrequencyRow(SubBlock(L"神经网络模型整句（速度优先）", L"轻量高速，效果良好"),
-                          Toggle(context, "association.sentence_neural_keyboard")),
-             FrequencyRow(
-                 SubBlock(
-                     L"上下文智能感知输入（实验）",
-                     L"使用轻量神经模型，根据上文智能感知并调整候选项，例如“冬天会下大”后输入 xue 优先选“雪”"),
-                 Toggle(context, "association.context_candidate_rerank")),
-             FrequencyRow(SubBlock(L"长词前缀补全",
-                                   L"例如“中华人民”补全为“中华人民共和国”"),
-                          Toggle(context, "association.prefix_completion")),
-             FrequencyRow(SubBlock(L"去重后补充次选",
-                                   L"某个模型的首选与已有候选重复时，显示该模型排名最高的下一条不同结果"),
-                          Toggle(context, "association.sentence_show_next_on_duplicate")),
-             FrequencyRow(SubBlock(L"显示整句来源标签",
-                                   L"在整句候选后显示〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕"
-                                   L"〔八股〕〔墨奇〕等来源标签"),
-                          Toggle(context, "association.sentence_source_badge")),
-             Padded(collocationBlock, {0.0f, 10.0f, 0.0f, 10.0f}),
-             FrequencyRow(SubBlock(L"octagram 语法整句", L"按字级搭配分选出更准确的首选"),
-                          s->collocationToggle),
-             FrequencyRow(
-                 SubBlock(L"Google 云候选",
-                          L"需要联网，把当前输入音节转换到全拼后（日文输入时是罗马字）发送到 Google 的"
-                          L" inputtools 服务获得云候选。发送信息不包含已上屏的文字、词库或设置。"),
-                 Toggle(context, "general.cloud_candidates"))});
+        auto content =
+            Col({FrequencyRow(SubBlock(L"Trigram 模型整句", L"使用三元语言模型生成整句候选"), s->latticeToggle),
+                 latticeSection,
+                 FrequencyRow(SubBlock(L"Unigram 模型整句", L"基于 Google 拼音，速度快、准确率较高"),
+                              Toggle(context, "association.sentence_google")),
+                 FrequencyRow(SubBlock(L"神经网络模型整句（效果优先）", L"处理时延较长，但准确率高"), s->neuralToggle),
+                 neuralSection,
+                 FrequencyRow(SubBlock(L"神经网络模型整句（速度优先）", L"轻量高速，效果良好"),
+                              Toggle(context, "association.sentence_neural_keyboard")),
+                 FrequencyRow(
+                     SubBlock(L"上下文智能感知输入（实验）",
+                              L"使用轻量神经模型，根据上文智能感知并调整候选项，例如“冬天会下大”后输入 xue 优先选“雪”"),
+                     Toggle(context, "association.context_candidate_rerank")),
+                 FrequencyRow(SubBlock(L"长词前缀补全", L"例如“中华人民”补全为“中华人民共和国”"),
+                              Toggle(context, "association.prefix_completion")),
+                 FrequencyRow(
+                     SubBlock(L"去重后补充次选", L"某个模型的首选与已有候选重复时，显示该模型排名最高的下一条不同结果"),
+                     Toggle(context, "association.sentence_show_next_on_duplicate")),
+                 FrequencyRow(SubBlock(L"显示整句来源标签",
+                                       L"在整句候选后显示〔Trigram〕〔Unigram〕〔神经D〕〔神经K〕〔万象〕"
+                                       L"〔八股〕〔墨奇〕等来源标签"),
+                              Toggle(context, "association.sentence_source_badge")),
+                 Padded(collocationBlock, {0.0f, 10.0f, 0.0f, 10.0f}),
+                 FrequencyRow(SubBlock(L"octagram 语法整句", L"按字级搭配分选出更准确的首选"), s->collocationToggle),
+                 FrequencyRow(SubBlock(L"Google 云候选",
+                                       L"需要联网，把当前输入音节转换到全拼后（日文输入时是罗马字）发送到 Google 的"
+                                       L" inputtools 服务获得云候选。发送信息不包含已上屏的文字、词库或设置。"),
+                              Toggle(context, "general.cloud_candidates"))});
         content->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         page.AddSection(
             Col({MakeTitleBlock(L"整句联想与云候选", L"输入多个拼音音节时，额外提供整句或云端给出的候选"), content}));
