@@ -561,46 +561,47 @@ BOOL CTextLayout::RectFromCharPosDipsRaw(UINT nPos, D2D1_RECT_F *prc)
 {
     *prc = D2D1::RectF();
 
-    if ((_nLineCnt > 0) && (_prgLines[0].nCnt == 0))
-    {
-        prc->left = _paddingLeftDips;
-        prc->top = _prgLines[0].top;
-        prc->right = _paddingLeftDips + PixelsToDipsX(kCaretWidthPixels);
-        prc->bottom = _prgLines[0].bottom;
-        return TRUE;
-    }
-
     for (UINT i = 0; i < _nLineCnt; i++)
     {
-        if ((_prgLines[i].nCnt > 0) && (nPos == _prgLines[i].nPos))
+        const LINEINFO &line = _prgLines[i];
+        if (line.nCnt == 0)
         {
-            *prc = _prgLines[i].prgCharInfo[0].rc;
-            prc->right = prc->left;
+            // An empty line has no character to take the caret rect from. It is the line a
+            // leading or trailing newline opened, so the line box is all the geometry there is;
+            // measuring from the text end instead puts the caret one line below it.
+            if (nPos != line.nPos)
+                continue;
+
+            prc->left = _paddingLeftDips;
+            prc->right = _paddingLeftDips + PixelsToDipsX(kCaretWidthPixels);
+            prc->top = line.top;
+            prc->bottom = line.bottom;
             return TRUE;
         }
 
-        if (nPos < _prgLines[i].nPos)
+        if (nPos < line.nPos)
             continue;
 
-        if (nPos >= _prgLines[i].nPos + _prgLines[i].nCnt)
+        if (nPos >= line.nPos + line.nCnt)
         {
-            if (((nPos - _prgLines[i].nPos) > 0) && (nPos == _prgLines[i].nPos + _prgLines[i].nCnt))
+            if (nPos == line.nPos + line.nCnt)
             {
-                *prc = _prgLines[i].prgCharInfo[nPos - _prgLines[i].nPos - 1].rc;
+                *prc = line.prgCharInfo[line.nCnt - 1].rc;
                 prc->left = prc->right;
                 return TRUE;
             }
             continue;
         }
 
-        *prc = _prgLines[i].prgCharInfo[nPos - _prgLines[i].nPos].rc;
+        *prc = line.prgCharInfo[nPos - line.nPos].rc;
         prc->right = prc->left;
         return TRUE;
     }
 
+    // Past the end of the laid-out text: the position is stale, so sit after the last line.
     prc->left = _paddingLeftDips;
     prc->right = _paddingLeftDips + PixelsToDipsX(kCaretWidthPixels);
-    prc->top = _paddingTopDips + (_nLineCnt * _lineHeightDips);
+    prc->top = _nLineCnt > 0 ? _prgLines[_nLineCnt - 1].bottom : _paddingTopDips;
     prc->bottom = prc->top + _lineHeightDips;
     return TRUE;
 }
