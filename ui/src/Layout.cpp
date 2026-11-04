@@ -2371,27 +2371,89 @@ void DrawNineSlice(ID2D1RenderTarget *target, ID2D1Bitmap *bitmap, const RectF &
             const D2D1_RECT_F part = D2D1::RectF(dx[col], dy[row], dx[col + 1], dy[row + 1]);
             // CSS border-image-repeat：横向平铺只作用于中列（上、中、下三段），
             // 纵向平铺只作用于中行（左、中、右三段），四角始终拉伸。
-            const bool tileX = nineSlice.repeatX && col == 1;
-            const bool tileY = nineSlice.repeatY && row == 1;
+            const NineSliceRepeat modeX = nineSlice.repeatX != NineSliceRepeat::Stretch && col == 1
+                                              ? nineSlice.repeatX
+                                              : NineSliceRepeat::Stretch;
+            const NineSliceRepeat modeY = nineSlice.repeatY != NineSliceRepeat::Stretch && row == 1
+                                              ? nineSlice.repeatY
+                                              : NineSliceRepeat::Stretch;
+            struct Tiling
+            {
+                int count = 1;
+                float scale = 1.0f;
+                // 块与块之间均分到的空隙（只有 Space 用）。
+                float gap = 0.0f;
+            };
+            const auto planAxis = [](NineSliceRepeat mode, float partSize, float sourceSize) {
+                Tiling tiling;
+                tiling.scale = partSize / sourceSize;
+                if (mode == NineSliceRepeat::Repeat)
+                {
+                    // 原尺寸平铺：交给 brush 的 WRAP 循环，末尾多出的部分被 part 裁掉。
+                    tiling.scale = 1.0f;
+                }
+                else if (mode == NineSliceRepeat::Round)
+                {
+                    // 缩放到整数块，平铺正好收口，边缘不会被截断。
+                    tiling.count = (std::max)(1, static_cast<int>(std::lround(partSize / sourceSize)));
+                    tiling.scale = partSize / (static_cast<float>(tiling.count) * sourceSize);
+                }
+                else if (mode == NineSliceRepeat::Space)
+                {
+                    // 原尺寸平铺，剩余空间均分到块与块之间；放不下两块时退回拉伸。
+                    const int count = static_cast<int>(std::floor(partSize / sourceSize));
+                    if (count >= 2)
+                    {
+                        tiling.count = count;
+                        tiling.scale = 1.0f;
+                        tiling.gap =
+                            (partSize - static_cast<float>(count) * sourceSize) / static_cast<float>(count - 1);
+                    }
+                }
+                return tiling;
+            };
+            const float srcWidth = source.right - source.left;
+            const float srcHeight = source.bottom - source.top;
+            const Tiling tilingX = planAxis(modeX, part.right - part.left, srcWidth);
+            const Tiling tilingY = planAxis(modeY, part.bottom - part.top, srcHeight);
+            const auto wrapMode = [](NineSliceRepeat mode) {
+                return mode == NineSliceRepeat::Repeat || mode == NineSliceRepeat::Round ? D2D1_EXTEND_MODE_WRAP
+                                                                                         : D2D1_EXTEND_MODE_CLAMP;
+            };
+            const D2D1_EXTEND_MODE extendX = wrapMode(modeX);
+            const D2D1_EXTEND_MODE extendY = wrapMode(modeY);
+            // Space 的块间有空隙，只能逐块摆放；其余模式整段一次填充
+            // （image brush 把源图左上角放在 brush 原点，平铺的轴按源图原尺寸或整数缩放循环）。
+            const bool spacedX = tilingX.gap > 0.0f;
+            const bool spacedY = tilingY.gap > 0.0f;
             ComPtr<ID2D1ImageBrush> brush;
             if (context)
             {
-                // An image brush puts the top-left of its source rectangle at the brush origin.
-                // Tiled axes keep the source at its native size (scale 1) and wrap past its edge.
-                const float scaleX = tileX ? 1.0f : (part.right - part.left) / (source.right - source.left);
-                const float scaleY = tileY ? 1.0f : (part.bottom - part.top) / (source.bottom - source.top);
-                const D2D1_MATRIX_3X2_F transform =
-                    D2D1::Matrix3x2F::Scale(scaleX, scaleY) * D2D1::Matrix3x2F::Translation(part.left, part.top);
-                context->CreateImageBrush(
-                    bitmap,
-                    D2D1::ImageBrushProperties(source, tileX ? D2D1_EXTEND_MODE_WRAP : D2D1_EXTEND_MODE_CLAMP,
-                                               tileY ? D2D1_EXTEND_MODE_WRAP : D2D1_EXTEND_MODE_CLAMP,
-                                               D2D1_INTERPOLATION_MODE_LINEAR),
-                    D2D1::BrushProperties(opacity, transform), brush.GetAddressOf());
-            }
-            if (brush)
-            {
-                context->FillRectangle(part, brush.Get());
+                const int columns = spacedX ? tilingX.count : 1;
+                const int rows = spacedY ? tilingY.count : 1;
+                const float tileWidth = srcWidth * tilingX.scale;
+                const float tileHeight = srcHeight * tilingY.scale;
+                for (int tileRow = 0; tileRow < rows; ++tileRow)
+                {
+                    for (int tileCol = 0; tileCol < columns; ++tileCol)
+                    {
+                        const float x = part.left + static_cast<float>(tileCol) * (tileWidth + tilingX.gap);
+                        const float y = part.top + static_cast<float>(tileRow) * (tileHeight + tilingY.gap);
+                        const D2D1_RECT_F tile = D2D1::RectF(x, y, spacedX ? x + tileWidth : part.right,
+                                                             spacedY ? y + tileHeight : part.bottom);
+                        const D2D1_MATRIX_3X2_F transform = D2D1::Matrix3x2F::Scale(tilingX.scale, tilingY.scale) *
+                                                            D2D1::Matrix3x2F::Translation(tile.left, tile.top);
+                        brush.Reset();
+                        context->CreateImageBrush(
+                            bitmap,
+                            D2D1::ImageBrushProperties(source, extendX, extendY, D2D1_INTERPOLATION_MODE_LINEAR),
+                            D2D1::BrushProperties(opacity, transform), brush.GetAddressOf());
+                        if (brush)
+                        {
+                            context->FillRectangle(tile, brush.Get());
+                        }
+                    }
+                }
             }
             else
             {

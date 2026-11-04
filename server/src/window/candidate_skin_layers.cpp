@@ -34,26 +34,68 @@ NineSlice ResolveNineSlice(const CandidateSkinCatalog::BorderImage &borderImage)
     return result;
 }
 
-Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double basePadding, bool vertical)
+const CandidateSkinCatalog::BorderImage *ResolveBorderImage(const CandidateSkinCatalog::Package &package,
+                                                            CandidateLayout layout)
 {
-    const CandidateSkinCatalog::BorderImage *image = package.borderImage ? &*package.borderImage : nullptr;
-    if (vertical && package.borderImageVertical)
+    const std::optional<CandidateSkinCatalog::BorderImage> &overrideImage =
+        layout == CandidateLayout::Horizontal ? package.borderImageHorizontal : package.borderImageVertical;
+    if (overrideImage)
     {
-        image = &*package.borderImageVertical;
+        return &*overrideImage;
     }
-    const CandidateSkinCatalog::InsetsDip *insetsPtr = package.contentInsetsDip ? &*package.contentInsetsDip : nullptr;
-    if (vertical && package.contentInsetsDipVertical)
+    return package.borderImage ? &*package.borderImage : nullptr;
+}
+
+const CandidateSkinCatalog::InsetsDip *ResolveContentInsets(const CandidateSkinCatalog::Package &package,
+                                                            CandidateLayout layout)
+{
+    const std::optional<CandidateSkinCatalog::InsetsDip> &overrideInsets =
+        layout == CandidateLayout::Horizontal ? package.contentInsetsDipHorizontal : package.contentInsetsDipVertical;
+    if (overrideInsets)
     {
-        insetsPtr = &*package.contentInsetsDipVertical;
+        return &*overrideInsets;
     }
+    return package.contentInsetsDip ? &*package.contentInsetsDip : nullptr;
+}
+
+bool ResolveContentInsetsClampToBorder(const CandidateSkinCatalog::Package &package, CandidateLayout layout)
+{
+    const std::optional<bool> &overrideClamp = layout == CandidateLayout::Horizontal
+                                                   ? package.contentInsetsClampToBorderHorizontal
+                                                   : package.contentInsetsClampToBorderVertical;
+    return overrideClamp.value_or(package.contentInsetsClampToBorder);
+}
+
+const CandidateSkinCatalog::InsetsDip *ResolveOuterInsets(const CandidateSkinCatalog::Package &package,
+                                                          CandidateLayout layout)
+{
+    const std::optional<CandidateSkinCatalog::InsetsDip> &overrideInsets =
+        layout == CandidateLayout::Horizontal ? package.outerInsetsDipHorizontal : package.outerInsetsDipVertical;
+    if (overrideInsets)
+    {
+        return &*overrideInsets;
+    }
+    return package.outerInsetsDip ? &*package.outerInsetsDip : nullptr;
+}
+
+Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double basePadding, CandidateLayout layout)
+{
+    const CandidateSkinCatalog::BorderImage *image = ResolveBorderImage(package, layout);
+    const CandidateSkinCatalog::InsetsDip *insetsPtr = ResolveContentInsets(package, layout);
     Edges border;
     if (image && !image->source.empty())
     {
         border = ResolveNineSlice(*image).width;
     }
+    const bool clampToBorder = ResolveContentInsetsClampToBorder(package, layout);
     if (insetsPtr)
     {
         const CandidateSkinCatalog::InsetsDip &insets = *insetsPtr;
+        if (!clampToBorder)
+        {
+            // 皮肤关了取大值：贴图的边宽里是黑底、可见边框更窄时，按写的数值让出空间。
+            return {insets.top, insets.right, insets.bottom, insets.left};
+        }
         return {(std::max)(insets.top, border.top), (std::max)(insets.right, border.right),
                 (std::max)(insets.bottom, border.bottom), (std::max)(insets.left, border.left)};
     }
@@ -75,5 +117,22 @@ Layers SplitDecorations(const std::vector<CandidateSkinCatalog::FreeDecoration> 
             .push_back(std::move(decoration));
     }
     return layers;
+}
+
+std::vector<CandidateSkinCatalog::FreeDecoration> FilterDecorationsForLayout(
+    const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations, bool horizontal)
+{
+    const std::string wanted = horizontal ? "horizontal" : "vertical";
+    std::vector<CandidateSkinCatalog::FreeDecoration> filtered;
+    filtered.reserve(decorations.size());
+    for (const auto &decoration : decorations)
+    {
+        if (decoration.layouts.empty() ||
+            std::find(decoration.layouts.begin(), decoration.layouts.end(), wanted) != decoration.layouts.end())
+        {
+            filtered.push_back(decoration);
+        }
+    }
+    return filtered;
 }
 } // namespace CandidateSkinLayers

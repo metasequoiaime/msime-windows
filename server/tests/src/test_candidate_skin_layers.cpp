@@ -80,6 +80,32 @@ TEST_CASE(candidate_skin_layers_content_padding_is_measured_from_the_panel_edge)
     REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 4, 130, 14, 55));
 }
 
+TEST_CASE(candidate_skin_layers_content_padding_can_skip_the_border_clamp)
+{
+    CandidateSkinCatalog::Package package;
+    package.schemaVersion = 2;
+    package.base = "canvas";
+    CandidateSkinCatalog::BorderImage image;
+    image.source = "assets/panel.png";
+    image.sliceDip = {24};
+    image.widthDip = {30, 40};
+    package.borderImage = image;
+    package.contentInsetsDip = CandidateSkinCatalog::InsetsDip{10.0, 12.0, 14.0, 16.0};
+    // 默认仍与边宽取大值。
+    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 30, 40, 30, 40));
+    // 皮肤显式关掉后完全按写的数值，横竖各自一份。
+    package.contentInsetsClampToBorder = false;
+    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 10, 12, 14, 16));
+
+    package.contentInsetsDipVertical = CandidateSkinCatalog::InsetsDip{4.0, 6.0, 8.0, 2.0};
+    package.contentInsetsClampToBorderVertical = false;
+    REQUIRE(SameEdges(
+        CandidateSkinLayers::ResolveContentPadding(package, 5.0, CandidateSkinLayers::CandidateLayout::Vertical), 4, 6,
+        8, 2));
+    package.contentInsetsClampToBorder = true;
+    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 30, 40, 30, 40));
+}
+
 TEST_CASE(candidate_skin_layers_vertical_content_padding_prefers_the_vertical_override)
 {
     CandidateSkinCatalog::Package package;
@@ -90,7 +116,9 @@ TEST_CASE(candidate_skin_layers_vertical_content_padding_prefers_the_vertical_ov
 
     // 横排不受竖排覆盖影响。
     REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 10, 150, 12, 66));
-    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0, true), 6, 12, 8, 10));
+    REQUIRE(SameEdges(
+        CandidateSkinLayers::ResolveContentPadding(package, 5.0, CandidateSkinLayers::CandidateLayout::Vertical), 6, 12,
+        8, 10));
 
     // 竖排的九宫格边宽仍会把文字推到边框里面。
     CandidateSkinCatalog::BorderImage vertical;
@@ -99,11 +127,52 @@ TEST_CASE(candidate_skin_layers_vertical_content_padding_prefers_the_vertical_ov
     vertical.widthDip = {20};
     package.borderImageVertical = vertical;
     REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0), 10, 150, 12, 66));
-    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0, true), 20, 20, 20, 20));
+    REQUIRE(SameEdges(
+        CandidateSkinLayers::ResolveContentPadding(package, 5.0, CandidateSkinLayers::CandidateLayout::Vertical), 20,
+        20, 20, 20));
 
     // 没写竖排内边距时竖排沿用横排的值，只换成竖排的边宽。
     package.contentInsetsDipVertical.reset();
-    REQUIRE(SameEdges(CandidateSkinLayers::ResolveContentPadding(package, 5.0, true), 20, 150, 20, 66));
+    REQUIRE(SameEdges(
+        CandidateSkinLayers::ResolveContentPadding(package, 5.0, CandidateSkinLayers::CandidateLayout::Vertical), 20,
+        150, 20, 66));
+}
+
+// 横排 / 竖排覆盖子表各自生效，互不继承；没写的排布回落到共用那份。
+TEST_CASE(candidate_skin_layers_resolve_per_layout_overrides)
+{
+    using CandidateSkinLayout = CandidateSkinLayers::CandidateLayout;
+    CandidateSkinCatalog::Package package;
+    CandidateSkinCatalog::BorderImage base;
+    base.source = "base.png";
+    base.sliceDip = {8};
+    CandidateSkinCatalog::BorderImage horizontal = base;
+    horizontal.source = "horizontal.png";
+    CandidateSkinCatalog::BorderImage vertical = base;
+    vertical.source = "vertical.png";
+    package.borderImage = base;
+    package.borderImageHorizontal = horizontal;
+    package.borderImageVertical = vertical;
+    REQUIRE_EQ(CandidateSkinLayers::ResolveBorderImage(package, CandidateSkinLayout::Horizontal)->source,
+               std::string("horizontal.png"));
+    REQUIRE_EQ(CandidateSkinLayers::ResolveBorderImage(package, CandidateSkinLayout::Vertical)->source,
+               std::string("vertical.png"));
+    package.borderImageVertical.reset();
+    REQUIRE_EQ(CandidateSkinLayers::ResolveBorderImage(package, CandidateSkinLayout::Vertical)->source,
+               std::string("base.png"));
+
+    package.contentInsetsDip = CandidateSkinCatalog::InsetsDip{1, 2, 3, 4};
+    package.contentInsetsDipHorizontal = CandidateSkinCatalog::InsetsDip{5, 6, 7, 8};
+    package.contentInsetsClampToBorderHorizontal = false;
+    REQUIRE_EQ(CandidateSkinLayers::ResolveContentInsets(package, CandidateSkinLayout::Horizontal)->left, 8.0);
+    REQUIRE_EQ(CandidateSkinLayers::ResolveContentInsets(package, CandidateSkinLayout::Vertical)->left, 4.0);
+    REQUIRE(!CandidateSkinLayers::ResolveContentInsetsClampToBorder(package, CandidateSkinLayout::Horizontal));
+    REQUIRE(CandidateSkinLayers::ResolveContentInsetsClampToBorder(package, CandidateSkinLayout::Vertical));
+
+    package.outerInsetsDip = CandidateSkinCatalog::InsetsDip{95, 8, 0, 0};
+    package.outerInsetsDipVertical = CandidateSkinCatalog::InsetsDip{0, 8, 0, 0};
+    REQUIRE_EQ(CandidateSkinLayers::ResolveOuterInsets(package, CandidateSkinLayout::Horizontal)->top, 95.0);
+    REQUIRE_EQ(CandidateSkinLayers::ResolveOuterInsets(package, CandidateSkinLayout::Vertical)->top, 0.0);
 }
 
 TEST_CASE(candidate_skin_layers_split_decorations_around_the_panel)
@@ -121,4 +190,22 @@ TEST_CASE(candidate_skin_layers_split_decorations_around_the_panel)
 
     // The default z_index (2) draws above the panel.
     REQUIRE(CandidateSkinLayers::SplitDecorations({CandidateSkinCatalog::FreeDecoration{}}).above.size() == 1);
+}
+
+TEST_CASE(candidate_skin_layers_filter_decorations_by_layout)
+{
+    CandidateSkinCatalog::FreeDecoration both = Decoration("both", 2);
+    CandidateSkinCatalog::FreeDecoration horizontal = Decoration("horizontal", 2);
+    horizontal.layouts = {"horizontal"};
+    CandidateSkinCatalog::FreeDecoration vertical = Decoration("vertical", 2);
+    vertical.layouts = {"vertical"};
+    const std::vector<CandidateSkinCatalog::FreeDecoration> decorations = {both, horizontal, vertical};
+
+    REQUIRE_EQ(Images(CandidateSkinLayers::FilterDecorationsForLayout(decorations, true)),
+               std::vector<std::string>({"both", "horizontal"}));
+    REQUIRE_EQ(Images(CandidateSkinLayers::FilterDecorationsForLayout(decorations, false)),
+               std::vector<std::string>({"both", "vertical"}));
+    // 没写 layouts 的横竖都画；全都写了不匹配的排布时为空。
+    REQUIRE(CandidateSkinLayers::FilterDecorationsForLayout({both}, false).size() == 1);
+    REQUIRE(CandidateSkinLayers::FilterDecorationsForLayout({vertical}, true).empty());
 }

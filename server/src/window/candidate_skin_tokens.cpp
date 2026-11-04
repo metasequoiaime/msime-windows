@@ -58,6 +58,7 @@ void ApplyGeometry(const CandidateSkinCatalog::CandidateGeometry &geometry, floa
             out = CandidateSkinCatalog::ResolveLength(*value, fontSize);
     };
     length(geometry.padding, tokens.containerPad);
+    length(geometry.minWidthDip, tokens.minWidthDip);
     length(geometry.itemGap, tokens.itemGap);
     length(geometry.itemExtraHeight, tokens.itemExtraHeight);
     if (geometry.numberInset)

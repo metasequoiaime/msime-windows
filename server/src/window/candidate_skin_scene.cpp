@@ -38,6 +38,22 @@ float ShadowAlphaScale(const std::string &shadow)
     return 1.0f;
 }
 
+msimeui::NineSliceRepeat ToNineSliceRepeat(CandidateSkinCatalog::BorderImageRepeat repeat)
+{
+    switch (repeat)
+    {
+    case CandidateSkinCatalog::BorderImageRepeat::Repeat:
+        return msimeui::NineSliceRepeat::Repeat;
+    case CandidateSkinCatalog::BorderImageRepeat::Round:
+        return msimeui::NineSliceRepeat::Round;
+    case CandidateSkinCatalog::BorderImageRepeat::Space:
+        return msimeui::NineSliceRepeat::Space;
+    case CandidateSkinCatalog::BorderImageRepeat::Stretch:
+        break;
+    }
+    return msimeui::NineSliceRepeat::Stretch;
+}
+
 msimeui::ImageStretch BackgroundStretch(const std::string &fit)
 {
     if (fit == "contain")
@@ -525,6 +541,9 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     const std::string &skinId = settings.skinId;
     const bool candLight = settings.light;
     const bool horizontalLayout = settings.horizontal;
+    const CandidateSkinLayers::CandidateLayout skinLayout = horizontalLayout
+                                                                ? CandidateSkinLayers::CandidateLayout::Horizontal
+                                                                : CandidateSkinLayers::CandidateLayout::Vertical;
     // 外部皮肤用声明支持当前布局与主题的那一份；不支持或读不出来就回退 fluent。
     std::optional<CandidateSkinCatalog::Package> package;
     if (!CandidateSkinCatalog::IsBuiltIn(skinId))
@@ -540,14 +559,15 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     // 再往下套用配色与尺寸。卷轴展开只做横排；开了它就不再放翻页箭头。
     const bool expandPanel =
         horizontalLayout && CandidateSkinCatalog::ResolveExpandPanel(skinsRoot, skinId, packagePtr);
-    const bool pageArrows = !expandPanel && CandidateSkinCatalog::ResolvePageArrows(skinsRoot, skinId, packagePtr);
+    const bool pageArrows =
+        !expandPanel && CandidateSkinCatalog::ResolvePageArrows(skinsRoot, skinId, packagePtr, horizontalLayout);
     if (!built_ || pageArrows != pageArrows_ || horizontalLayout != horizontal_ || expandPanel != expandPanel_)
     {
         Build(horizontalLayout, pageArrows, expandPanel);
         result.rebuilt = true;
     }
     const bool fitContent =
-        settings.fitContent || CandidateSkinCatalog::ResolveFitContent(skinsRoot, skinId, packagePtr);
+        settings.fitContent || CandidateSkinCatalog::ResolveFitContent(skinsRoot, skinId, packagePtr, horizontalLayout);
     result.fitContent = fitContent;
     const float fontSize = settings.fontSize;
     // 基底的外观来自它的皮肤清单（出厂清单叠上数据目录里那份），外部皮肤再覆盖自己写了的键。
@@ -656,8 +676,12 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
         msimeui::Thickness preeditMargin{tokens.preeditMargin.left, tokens.preeditMargin.top,
                                          tokens.preeditMargin.right, tokens.preeditMargin.bottom};
         // v2 的 line_gap_dip 只是预编辑行与候选之间的距离，列表与翻页箭头之间仍是 body 的 2 DIP 行距，
-        // 所以落在预编辑行的下外边距上，再抵掉那 2 DIP。
-        if (package && package->schemaVersion >= 2 && package->lineGapDip)
+        // 所以落在预编辑行的下外边距上，再抵掉那 2 DIP。皮肤按排布写了 preedit_margin_dip 时以它为准，
+        // line_gap_dip 不再覆盖下边距（否则勾选「行距」会把皮肤调好的位置顶回去）。
+        const bool skinSetPreeditMargin = package && (package->geometry.preeditMarginDip ||
+                                                      (horizontalLayout ? package->horizontalGeometry.preeditMarginDip
+                                                                        : package->verticalGeometry.preeditMarginDip));
+        if (package && package->schemaVersion >= 2 && package->lineGapDip && !skinSetPreeditMargin)
             preeditMargin.bottom = static_cast<float>(*package->lineGapDip) - kCandidateBodyRowSpacingDip;
         preedit_->SetMargin(preeditMargin);
     }
@@ -810,6 +834,7 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     std::wstring backgroundPath;
     const std::wstring packageRoot =
         package ? (skinsRoot / std::filesystem::u8path(package->id)).wstring() + L"\\" : std::wstring();
+    bool decorationShown = false;
     if (package)
     {
         decorationTopDip = static_cast<float>(package->decorationTopDip);
@@ -817,8 +842,17 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
             decorationPath = packageRoot + Widen(package->decorationImage);
         if (!package->backgroundImage.empty())
             backgroundPath = packageRoot + Widen(package->backgroundImage);
-        cardMinWidthDip = (std::max)({cardMinWidthDip, static_cast<float>(package->minWidthDip),
-                                      static_cast<float>(package->decorationWidthDip)});
+        // 老式装饰图也支持 layouts：没写的横竖都画，写了的只在对应排布里出现。
+        const bool decorationMatchesLayout =
+            package->decorationLayouts.empty() ||
+            std::find(package->decorationLayouts.begin(), package->decorationLayouts.end(),
+                      horizontalLayout ? "horizontal" : "vertical") != package->decorationLayouts.end();
+        decorationShown = !decorationPath.empty() && decorationTopDip > 0.0f && decorationMatchesLayout;
+        cardMinWidthDip = (std::max)(cardMinWidthDip, static_cast<float>(package->minWidthDip));
+        cardMinWidthDip = (std::max)(cardMinWidthDip, static_cast<float>(tokens.minWidthDip));
+        // 这张装饰图不在当前排布里时不占最小宽度。
+        if (decorationShown)
+            cardMinWidthDip = (std::max)(cardMinWidthDip, static_cast<float>(package->decorationWidthDip));
     }
     result.cardMinWidthDip = cardMinWidthDip;
     // 外框上方留给阴影的空白与装饰盒重叠，装饰盒高过它时不再额外留白。
@@ -826,7 +860,7 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     decorationCandidate_.reset();
     decorationWordShown_.clear();
     decorationWord_->SetText(L"");
-    if (decorationPath.empty() || decorationTopDip <= 0.0f)
+    if (!decorationShown)
     {
         decorationBoxWidthDip_ = 0.0f;
         decorationBoxHeightDip_ = 0.0f;
@@ -857,9 +891,11 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
         }
     }
     // v2 挂件挂在卡片外沿，要按 outer_insets_dip 往四边多留出空白，否则立绘被裁掉。
-    if (package && package->outerInsetsDip)
+    const CandidateSkinCatalog::InsetsDip *outerInsets =
+        package ? CandidateSkinLayers::ResolveOuterInsets(*package, skinLayout) : nullptr;
+    if (outerInsets)
     {
-        const CandidateSkinCatalog::InsetsDip &outer = *package->outerInsetsDip;
+        const CandidateSkinCatalog::InsetsDip &outer = *outerInsets;
         framePad.left += static_cast<float>(outer.left);
         framePad.right += static_cast<float>(outer.right);
         framePad.top += static_cast<float>(outer.top);
@@ -872,7 +908,11 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     {
         CandidateSkinLayers::Layers layers;
         if (package && package->schemaVersion >= 2)
-            layers = CandidateSkinLayers::SplitDecorations(package->freeDecorations);
+        {
+            // 挂件可以声明 layouts，横竖各用自己那一套；没声明的横竖都画。
+            layers = CandidateSkinLayers::SplitDecorations(
+                CandidateSkinLayers::FilterDecorationsForLayout(package->freeDecorations, horizontalLayout));
+        }
         skinOverlayBack_->SetItems(OverlayItems(layers.below, packageRoot));
         skinOverlayFront_->SetItems(OverlayItems(layers.above, packageRoot));
     }
@@ -902,7 +942,7 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     {
         // 内容从面板外缘量起：content_insets_dip，或九宫格边宽加基底内边距，不会压到边框贴图上。
         card_->SetPadding(
-            ToThickness(CandidateSkinLayers::ResolveContentPadding(*package, tokens.containerPad, !horizontalLayout)));
+            ToThickness(CandidateSkinLayers::ResolveContentPadding(*package, tokens.containerPad, skinLayout)));
     }
     else
     {
@@ -912,14 +952,15 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
     if (panelImage)
     {
         // CSS border-image 语义：切片以源图像素计，边宽以 DIP 计，fill 决定是否画中心块，
-        // repeat 决定中段是拉伸还是按源图原尺寸平铺。竖排写了 vertical 子表时换那张图和它自己的几何；
-        // 浅色主题有 light_source 时再换主题图。
-        const CandidateSkinCatalog::BorderImage &borderImage =
-            !horizontalLayout && package->borderImageVertical ? *package->borderImageVertical : *package->borderImage;
-        const CandidateSkinLayers::NineSlice nine = CandidateSkinLayers::ResolveNineSlice(borderImage);
+        // repeat 决定中段是拉伸还是平铺（stretch / repeat / round / space）。横排、竖排各有自己的
+        // 覆盖子表时换那张图和它自己的几何；浅色主题有 light_source 时再换主题图。
+        const CandidateSkinCatalog::BorderImage *borderImage =
+            CandidateSkinLayers::ResolveBorderImage(*package, skinLayout);
+        const CandidateSkinLayers::NineSlice nine = CandidateSkinLayers::ResolveNineSlice(*borderImage);
         card_->SetBackgroundNineSlice(
-            packageRoot + Widen(CandidateSkinCatalog::BorderImageSource(borderImage, candLight)),
-            msimeui::NineSlice{ToThickness(nine.slice), ToThickness(nine.width), nine.fill, nine.repeatX, nine.repeatY},
+            packageRoot + Widen(CandidateSkinCatalog::BorderImageSource(*borderImage, candLight)),
+            msimeui::NineSlice{ToThickness(nine.slice), ToThickness(nine.width), nine.fill,
+                               ToNineSliceRepeat(nine.repeatX), ToNineSliceRepeat(nine.repeatY)},
             1.0f);
     }
     else

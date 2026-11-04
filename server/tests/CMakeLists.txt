@@ -183,6 +183,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_supports.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_toolbar_image.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_border_image_vertical.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_decoration_layouts.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_palette.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_non_ascii_path_contract.cpp"
     "${CMAKE_SOURCE_DIR}/src/skin/candidate_skin_catalog.cpp"

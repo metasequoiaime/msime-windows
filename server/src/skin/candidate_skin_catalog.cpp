@@ -372,6 +372,32 @@ bool ReadBoxValues(const toml::table &table, const char *key, std::vector<double
     return true;
 }
 
+// 可正可负的四边数值（预编辑行外边距）：1、2 或 4 个 -500–500 的数，按 CSS 简写展开。
+// 负的上外边距把预编辑行往上挪，配合正的下外边距可以让后面的候选列表留在原处。
+bool ReadSignedBoxValues(const toml::table &table, const char *key, std::vector<double> &out)
+{
+    const toml::node *node = table.get(key);
+    if (!node)
+    {
+        return true;
+    }
+    const auto *array = node->as_array();
+    if (!array || (array->size() != 1 && array->size() != 2 && array->size() != 4))
+    {
+        return false;
+    }
+    for (const auto &item : *array)
+    {
+        const auto number = item.value<double>();
+        if (!number || !std::isfinite(*number) || *number < -500.0 || *number > 500.0)
+        {
+            return false;
+        }
+        out.push_back(*number);
+    }
+    return true;
+}
+
 // 可正可负的可选数值，缺省保持 out 不变。
 bool ReadSignedNumber(const toml::table &table, const char *key, double limit, double &out)
 {
@@ -403,7 +429,8 @@ bool ReadSignedNumber(const toml::table &table, const char *key, double limit, d
 
 bool ReadOptionalBool(const toml::table &table, const char *key, std::optional<bool> &out);
 
-// border_image 的平铺方式：同 CSS border-image-repeat，1 个或 2 个值「横向 纵向」，stretch（默认）/ repeat。
+// border_image 的平铺方式：同 CSS border-image-repeat，1 个或 2 个值「横向 纵向」，
+// stretch（默认）/ repeat / round / space。
 bool ReadBorderImageRepeat(const toml::table &table, BorderImage &out)
 {
     const toml::node *node = table.get("repeat");
@@ -436,21 +463,31 @@ bool ReadBorderImageRepeat(const toml::table &table, BorderImage &out)
     {
         return false;
     }
-    const auto parse = [](const std::string &value, bool &repeat) {
+    const auto parse = [](const std::string &value, BorderImageRepeat &repeat) {
         if (value == "stretch")
         {
-            repeat = false;
+            repeat = BorderImageRepeat::Stretch;
             return true;
         }
         if (value == "repeat")
         {
-            repeat = true;
+            repeat = BorderImageRepeat::Repeat;
+            return true;
+        }
+        if (value == "round")
+        {
+            repeat = BorderImageRepeat::Round;
+            return true;
+        }
+        if (value == "space")
+        {
+            repeat = BorderImageRepeat::Space;
             return true;
         }
         return false;
     };
-    bool repeatX = false;
-    bool repeatY = false;
+    BorderImageRepeat repeatX = BorderImageRepeat::Stretch;
+    BorderImageRepeat repeatY = BorderImageRepeat::Stretch;
     if (!parse(values[0], repeatX))
     {
         return false;
@@ -537,7 +574,7 @@ bool ReadBorderImage(const toml::table &table, const BorderImage *base, BorderIm
     }
     if (!ReadBorderImageRepeat(table, out))
     {
-        SetError(error, std::string(where) + ".repeat 必须是 stretch 或 repeat，1 个或 2 个值");
+        SetError(error, std::string(where) + ".repeat 必须是 stretch、repeat、round 或 space，1 个或 2 个值");
         return false;
     }
     return true;
@@ -940,18 +977,21 @@ bool ReadGeometry(const toml::table &table, CandidateGeometry &out)
         !ReadOptionalBool(table, "item_corners_follow_card", out.itemCornersFollowCard) ||
         !ReadOptionalBool(table, "justify_rows", out.justifyRows) ||
         !ReadOptionalBool(table, "trim_hidden_preedit_gap", out.trimHiddenPreeditGap) ||
+        !ReadLength(table, "min_width_dip", 1000.0, 10.0, out.minWidthDip) ||
+        !ReadOptionalBool(table, "fit_content", out.fitContent) ||
+        !ReadOptionalBool(table, "page_arrows", out.pageArrows) ||
         !ReadEnum(table, "page_arrow_style", {"chevron", "triangle"}, out.pageArrowStyle))
     {
         return false;
     }
     std::vector<double> margin;
-    if (!ReadBoxValues(table, "preedit_margin_dip", margin))
+    if (!ReadSignedBoxValues(table, "preedit_margin_dip", margin))
     {
         return false;
     }
     if (!margin.empty())
     {
-        // 按 CSS 简写展开：1 个值四边相同，2 个值是上下、左右，4 个值是上右下左。
+        // 按 CSS 简写展开：1 个值四边相同，2 个值是上下、左右，4 个值是上右下左。可以写负值。
         const double top = margin[0];
         const double right = margin.size() > 1 ? margin[1] : top;
         const double bottom = margin.size() > 2 ? margin[2] : top;
@@ -1406,6 +1446,13 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                 SetError(error, "candidate_window.decoration 无效");
                 return std::nullopt;
             }
+            // layouts 可选：不写时横竖都画。
+            if (decoration->contains("layouts") &&
+                !ReadEnumArray(*decoration, "layouts", {"horizontal", "vertical"}, package.decorationLayouts))
+            {
+                SetError(error, "candidate_window.decoration.layouts 只能是 horizontal 或 vertical");
+                return std::nullopt;
+            }
             package.decorationTopDip = BoundedNumber(*decoration, "top_inset_dip", 500.0);
             package.decorationWidthDip = BoundedNumber(*decoration, "width_dip", 1000.0);
             if (package.decorationTopDip <= 0.0 || package.decorationWidthDip <= 0.0)
@@ -1478,27 +1525,40 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                 {
                     return std::nullopt;
                 }
-                // 竖排覆盖：只写与横排不同的键，其余继承上面那份。
-                if (const toml::node *verticalNode = borderImageTable->get("vertical"))
+                // 横排 / 竖排覆盖：都只写与共用那份不同的键，其余继承。两张子表地位相同，
+                // 互不继承；解析顺序不影响结果。
+                const auto readOverride = [&](const char *key, std::optional<BorderImage> &target,
+                                              const std::string &where) {
+                    const toml::node *node = borderImageTable->get(key);
+                    if (!node)
+                    {
+                        return true;
+                    }
+                    const auto *table = node->as_table();
+                    if (!table)
+                    {
+                        SetError(error, where + " 必须是表");
+                        return false;
+                    }
+                    BorderImage image;
+                    if (!ReadBorderImage(*table, &bi, image, error, where.c_str()))
+                    {
+                        return false;
+                    }
+                    // 浅色图跟着 source 走：覆盖表换了 source 又没写 light_source 时，
+                    // 共用那张浅色图是按另一张图的几何画的，不能沿用。
+                    if (!table->contains("light_source") && table->contains("source") && image.source != bi.source)
+                    {
+                        image.lightSource.clear();
+                    }
+                    target = image;
+                    return true;
+                };
+                if (!readOverride("horizontal", package.borderImageHorizontal,
+                                  "candidate_window.border_image.horizontal") ||
+                    !readOverride("vertical", package.borderImageVertical, "candidate_window.border_image.vertical"))
                 {
-                    const auto *verticalTable = verticalNode->as_table();
-                    if (!verticalTable)
-                    {
-                        SetError(error, "candidate_window.border_image.vertical 必须是表");
-                        return std::nullopt;
-                    }
-                    BorderImage vertical;
-                    if (!ReadBorderImage(*verticalTable, &bi, vertical, error,
-                                         "candidate_window.border_image.vertical"))
-                    {
-                        return std::nullopt;
-                    }
-                    // 浅色主题的图不跟着继承：横排那张是按横排几何画的，套到竖排会错位。
-                    if (!verticalTable->contains("light_source"))
-                    {
-                        vertical.lightSource.clear();
-                    }
-                    package.borderImageVertical = vertical;
+                    return std::nullopt;
                 }
                 package.borderImage = bi;
             }
@@ -1522,26 +1582,61 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                     return std::nullopt;
                 }
                 package.contentInsetsDip = insets;
-                if (const toml::node *verticalNode = insetsTable->get("vertical"))
+                // 可选：是否仍与九宫格边宽取大值；不写时为 true。
+                bool clampToBorder = true;
+                std::optional<bool> clamp;
+                if (!ReadOptionalBool(*insetsTable, "clamp_to_border", clamp))
                 {
-                    const auto *verticalTable = verticalNode->as_table();
-                    if (!verticalTable)
+                    SetError(error, "candidate_window.content_insets_dip.clamp_to_border 必须是 true 或 false");
+                    return std::nullopt;
+                }
+                if (clamp)
+                {
+                    clampToBorder = *clamp;
+                }
+                package.contentInsetsClampToBorder = clampToBorder;
+                // 横排 / 竖排覆盖：只写要改的边，其余沿用上面那份；两张子表地位相同，互不继承。
+                const auto readOverride = [&](const char *key, std::optional<InsetsDip> &target,
+                                              std::optional<bool> &clampTarget, const std::string &where) {
+                    const toml::node *node = insetsTable->get(key);
+                    if (!node)
                     {
-                        SetError(error, "candidate_window.content_insets_dip.vertical 必须是表");
-                        return std::nullopt;
+                        return true;
                     }
-                    // 竖排只覆盖它写了的边，其余与横排共用。
-                    InsetsDip vertical = insets;
-                    const bool valid = ReadInsetSide(*verticalTable, "top", 200.0, vertical.top) &&
-                                       ReadInsetSide(*verticalTable, "right", 500.0, vertical.right) &&
-                                       ReadInsetSide(*verticalTable, "bottom", 200.0, vertical.bottom) &&
-                                       ReadInsetSide(*verticalTable, "left", 500.0, vertical.left);
+                    const auto *table = node->as_table();
+                    if (!table)
+                    {
+                        SetError(error, where + " 必须是表");
+                        return false;
+                    }
+                    InsetsDip override = insets;
+                    const bool valid = ReadInsetSide(*table, "top", 200.0, override.top) &&
+                                       ReadInsetSide(*table, "right", 500.0, override.right) &&
+                                       ReadInsetSide(*table, "bottom", 200.0, override.bottom) &&
+                                       ReadInsetSide(*table, "left", 500.0, override.left);
                     if (!valid)
                     {
-                        SetError(error, "candidate_window.content_insets_dip.vertical 数值超出范围");
-                        return std::nullopt;
+                        SetError(error, where + " 数值超出范围");
+                        return false;
                     }
-                    package.contentInsetsDipVertical = vertical;
+                    std::optional<bool> clampOverride;
+                    if (!ReadOptionalBool(*table, "clamp_to_border", clampOverride))
+                    {
+                        SetError(error, where + ".clamp_to_border 必须是 true 或 false");
+                        return false;
+                    }
+                    target = override;
+                    clampTarget = clampOverride;
+                    return true;
+                };
+                if (!readOverride("horizontal", package.contentInsetsDipHorizontal,
+                                  package.contentInsetsClampToBorderHorizontal,
+                                  "candidate_window.content_insets_dip.horizontal") ||
+                    !readOverride("vertical", package.contentInsetsDipVertical,
+                                  package.contentInsetsClampToBorderVertical,
+                                  "candidate_window.content_insets_dip.vertical"))
+                {
+                    return std::nullopt;
                 }
             }
 
@@ -1570,6 +1665,40 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                     return std::nullopt;
                 }
                 package.outerInsetsDip = outer;
+                // 横排 / 竖排覆盖：只写要改的边，其余沿用上面那份；写 0 可以取消共用那侧的预留。
+                const auto readOverride = [&](const char *key, std::optional<InsetsDip> &target,
+                                              const std::string &where) {
+                    const toml::node *node = outerTable->get(key);
+                    if (!node)
+                    {
+                        return true;
+                    }
+                    const auto *table = node->as_table();
+                    if (!table)
+                    {
+                        SetError(error, where + " 必须是表");
+                        return false;
+                    }
+                    InsetsDip override = outer;
+                    const bool valid = ReadInsetSide(*table, "top", 500.0, override.top) &&
+                                       ReadInsetSide(*table, "right", 500.0, override.right) &&
+                                       ReadInsetSide(*table, "bottom", 500.0, override.bottom) &&
+                                       ReadInsetSide(*table, "left", 500.0, override.left);
+                    if (!valid)
+                    {
+                        SetError(error, where + " 数值超出范围");
+                        return false;
+                    }
+                    target = override;
+                    return true;
+                };
+                if (!readOverride("horizontal", package.outerInsetsDipHorizontal,
+                                  "candidate_window.outer_insets_dip.horizontal") ||
+                    !readOverride("vertical", package.outerInsetsDipVertical,
+                                  "candidate_window.outer_insets_dip.vertical"))
+                {
+                    return std::nullopt;
+                }
             }
 
             if (const toml::node *decorationsNode = window->get("decorations"))
@@ -1602,6 +1731,13 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                                   dec.anchor))
                     {
                         SetError(error, "candidate_window.decorations.anchor 无效");
+                        return std::nullopt;
+                    }
+                    // 可选：只在横排或竖排显示，不写则两种排布都显示。
+                    if (decTable->contains("layouts") &&
+                        !ReadEnumArray(*decTable, "layouts", {"horizontal", "vertical"}, dec.layouts))
+                    {
+                        SetError(error, "candidate_window.decorations.layouts 必须是 horizontal / vertical 的数组");
                         return std::nullopt;
                     }
                     // offset_x_dip、offset_y_dip、z_index 可选；写了就必须是范围内的数（z_index 为整数）。
@@ -1853,11 +1989,20 @@ bool SwitchValue(const std::optional<DefaultSkin> &defaults, std::optional<bool>
 }
 } // namespace
 
-bool ResolvePageArrows(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package)
+bool ResolvePageArrows(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package,
+                       bool horizontal)
 {
-    if (package && package->pageArrows)
+    if (package)
     {
-        return *package->pageArrows;
+        const CandidateGeometry &layout = horizontal ? package->horizontalGeometry : package->verticalGeometry;
+        if (layout.pageArrows)
+        {
+            return *layout.pageArrows;
+        }
+        if (package->pageArrows)
+        {
+            return *package->pageArrows;
+        }
     }
     const std::string base = package ? package->base : skinId;
     // 配置里的皮肤既不是内置、也没能作为外部皮肤加载时，渲染端回退到 fluent，这里跟着回退。
@@ -1865,11 +2010,20 @@ bool ResolvePageArrows(const std::filesystem::path &skinsRoot, const std::string
     return SwitchValue(defaults, &DefaultSkin::pageArrows, base, kDefaultPageArrows);
 }
 
-bool ResolveFitContent(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package)
+bool ResolveFitContent(const std::filesystem::path &skinsRoot, const std::string &skinId, const Package *package,
+                       bool horizontal)
 {
-    if (package && package->fitContent)
+    if (package)
     {
-        return *package->fitContent;
+        const CandidateGeometry &layout = horizontal ? package->horizontalGeometry : package->verticalGeometry;
+        if (layout.fitContent)
+        {
+            return *layout.fitContent;
+        }
+        if (package->fitContent)
+        {
+            return *package->fitContent;
+        }
     }
     const std::string base = package ? package->base : skinId;
     const auto defaults = LoadDefault(skinsRoot, IsBuiltIn(base) ? base : "fluent");
