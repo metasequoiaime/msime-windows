@@ -59,6 +59,12 @@ json::object Result(bool ok, std::string message)
     return {{"ok", ok}, {"message", std::move(message)}, {"rows", json::array{}}};
 }
 
+// 快捷短语允许首尾空行（模板类短语常以空行结尾），但整条不能只有空白。
+bool IsBlankQuickPhrase(const std::string &phrase)
+{
+    return phrase.find_first_not_of(" \t\r\n") == std::string::npos;
+}
+
 void NotifyImeServerClearDictCache()
 {
     if (const HWND hwnd = FindWindowW(L"metasequoiaime_windows", L"metaseuqoiaimecandwnd"))
@@ -1626,7 +1632,7 @@ json::object ImportQuickPhrase(const json::object &request)
             Validation::NormalizeQuickPhraseText(Validation::UnescapeQuickPhraseField(fields[1]));
         std::transform(code.begin(), code.end(), code.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (!valid_code(code) || phrase.empty())
+        if (!valid_code(code) || IsBlankQuickPhrase(phrase))
         {
             append_error(line_no, "编码只能包含英文字母，短语不能为空");
             continue;
@@ -1745,7 +1751,7 @@ json::object HandleQuickPhrase(const json::object &request)
 
     if (action == "create" || action == "update")
         phrase = Validation::NormalizeQuickPhraseText(phrase);
-    if (!valid_code(code) || phrase.empty())
+    if (!valid_code(code) || IsBlankQuickPhrase(phrase))
         return Result(false, "编码只能包含英文字母，短语不能为空");
     if ((action == "create" || action == "update") && !Validation::QuickPhraseFitsNamedPipe(phrase))
         return Result(false, "快捷短语不能超过 199 个 wchar 字符");

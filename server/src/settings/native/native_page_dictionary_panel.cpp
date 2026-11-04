@@ -1,5 +1,6 @@
 #include "settings/native/native_page_dictionary_panel.h"
 
+#include "ipc/candidate_display_text.h"
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
 
@@ -74,15 +75,6 @@ void DrawCell(msimeui::DeviceResources &dr, const std::wstring &text, const Text
     if (ID2D1SolidColorBrush *brush = dr.GetSolidColorBrush(color))
         target->DrawTextLayout(D2D1::Point2F(rect.x, rect.y), layout.Get(), brush,
                                D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
-}
-
-// 多行短语在表格里只露首行，末尾补 ↵，与候选窗一致。
-std::wstring DisplayPhraseCell(const std::wstring &text)
-{
-    const auto newline = text.find(L'\n');
-    if (newline == std::wstring::npos)
-        return text;
-    return text.substr(0, newline) + L" \u21B5";
 }
 
 msimeui::ScrollViewer::Appearance TableScrollbar()
@@ -1067,7 +1059,7 @@ void DictionaryPanel::RenderRows()
         if (english)
             cells.push_back({Widen(row.word), Widen(row.display.empty() ? row.word : row.display), weight});
         else if (kind_ == Kind::Quick)
-            cells.push_back({Widen(row.code), DisplayPhraseCell(Widen(row.word)), weight});
+            cells.push_back({Widen(row.code), FanyImeIpc::QuickPhraseDisplayText(Widen(row.word)), weight});
         else
             cells.push_back({Widen(row.code), Widen(row.word), weight});
     }

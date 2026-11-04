@@ -308,8 +308,8 @@ std::string BuildCurrentCandidatePage()
         const std::string word = CandidateOutputText(item);
 
         CandidateViewItem view;
-        // 多行快捷短语在候选窗里只露首行，末尾补 ↵。提交与调频读 item.word，不受影响。
-        view.text = item.source == CandidateSource::QuickPhrase ? FanyImeIpc::QuickPhraseDisplayText(word) : word;
+        // 含换行的候选用首行加 ↵ 显示（目前只有多行快捷短语）。提交与调频读 item.word，不受影响。
+        view.text = FanyImeIpc::QuickPhraseDisplayText(word);
         if (show_autocorrect_marker && !item.corrected_from.empty() && !item.jianpin_expansion)
         {
             // Correction-sourced candidates carry a light visible marker (PRD R5/AC7),

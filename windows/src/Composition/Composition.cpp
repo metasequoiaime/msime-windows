@@ -1549,7 +1549,8 @@ HRESULT CMetasequoiaIME::_WriteTextAtSelection(TfEditCookie ec, _In_ ITfContext 
     TF_SELECTION selection;
     if (pContext->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched) != S_OK || fetched != 1)
     {
-        return S_FALSE;
+        // 多行提交拿不到选区就是失败：调用方按 FAILED 判错，绝不能报成 S_FALSE 让它当成功收尾。
+        return E_FAIL;
     }
 
     HRESULT hr = SafeRangeSetText(selection.range, ec, 0, text.c_str(), static_cast<LONG>(text.size()));
