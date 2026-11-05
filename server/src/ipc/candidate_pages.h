@@ -34,6 +34,7 @@ struct CandidateChoice
 {
     std::shared_ptr<const CandidatePage> page;
     WordItem item;
+    int index_in_page = 0;
     int absolute_index = 0;
     bool waited = false;
     bool timed_out = false;
@@ -79,6 +80,14 @@ class CandidatePages
                    std::chrono::milliseconds wait = std::chrono::milliseconds{80})
         : clock_(clock), surface_(surface), settle_(settle), wait_(wait)
     {
+    }
+
+    // True while a page is published for the current input. Callers use this to decide whether a resolution can
+    // trust the module instead of falling back to the worker's live list.
+    bool HasPage() const
+    {
+        std::lock_guard lock(mutex_);
+        return static_cast<bool>(published_);
     }
 
     // Silent publish: the page is what the next show will paint, but no frame is requested. The key path builds a
@@ -356,6 +365,7 @@ class CandidatePages
         CandidateChoice choice;
         choice.page = page;
         choice.item = (*page->items)[static_cast<std::size_t>(absolute)];
+        choice.index_in_page = index_in_page;
         choice.absolute_index = absolute;
         choice.waited = waited;
         choice.timed_out = timed_out;
@@ -369,7 +379,7 @@ class CandidatePages
     std::chrono::milliseconds settle_;
     std::chrono::milliseconds wait_;
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::string input_;
     std::uint64_t layout_epoch_ = 0;

@@ -417,6 +417,11 @@ std::optional<FanyImeIpc::CandidateChoice> CommitCandidateAt(int index_in_page)
     return Pages().pages.CommitAt(index_in_page);
 }
 
+bool HasCandidatePage()
+{
+    return Pages().pages.HasPage();
+}
+
 void NoteCandidatePagePainted(std::uint64_t generation, bool visible)
 {
     Pages().pages.Painted(generation, visible);

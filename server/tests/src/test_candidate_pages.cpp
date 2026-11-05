@@ -324,6 +324,8 @@ TEST_CASE(candidate_pages_commit_uses_the_rendered_page)
     const auto seen = pages->CommitSlot(0);
     REQUIRE(seen);
     REQUIRE(seen->item.word == "坏页");
+    REQUIRE(seen->index_in_page == 0);
+    REQUIRE(seen->absolute_index == 0);
 }
 
 TEST_CASE(candidate_pages_gesture_freezes_the_rendered_page)

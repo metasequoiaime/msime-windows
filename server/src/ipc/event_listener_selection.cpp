@@ -46,10 +46,9 @@ std::wstring BuildCreateWordPipePayloadWithCaret(bool client_supports_restore,
 // 编码要在 reset_state() 之前取；列表里有快捷短语就说明当前输入就是它们的编码。
 // 名次按「每组写法算一个」数：快捷短语组在繁体写法展开之前放置（PlaceQuickPhrases），学到的槽位要和
 // 放置时的计数一致。LearnEnglishSlot 用展开后的下标，因为英文在展开之后才摆放。
-void LearnQuickPhraseOrder(const WordItem &selected, size_t absolute_index, uint64_t client_id,
-                           uint64_t activation_epoch)
+void LearnQuickPhraseOrder(const WordItem &selected, size_t absolute_index, const std::vector<WordItem> &items,
+                           uint64_t client_id, uint64_t activation_epoch)
 {
-    const auto &items = Global::candidate_ui.items;
     if (!GetConfiguredQuickPhraseFrequencyEnabled() || absolute_index >= items.size())
         return;
     const auto group = std::find_if(items.begin(), items.end(),
@@ -81,9 +80,9 @@ void LearnQuickPhraseOrder(const WordItem &selected, size_t absolute_index, uint
 // 槽位要在 reset_state() 之前取输入。专用英文模式和 Y 模式整页都是英文，不走槽位。
 // 槽位与选中项都是展开后列表的下标：英文由 NormalizeMixedCandidateOrder 在繁体写法展开之后按显示位置
 // 摆放。LearnQuickPhraseOrder 按组计数，因为快捷短语在展开之前放置。
-void LearnEnglishSlot(const WordItem &selected, size_t absolute_index, uint64_t client_id, uint64_t activation_epoch)
+void LearnEnglishSlot(const WordItem &selected, size_t absolute_index, const std::vector<WordItem> &items,
+                      uint64_t client_id, uint64_t activation_epoch)
 {
-    const auto &items = Global::candidate_ui.items;
     if (!g_inputSession || g_english_input_mode || IsYModeInput(g_inputSession->get_pinyin_sequence_with_cases()) ||
         (g_inputSession->current_scheme_type() != SchemeType::Quanpin &&
          g_inputSession->current_scheme_type() != SchemeType::Shuangpin) ||
@@ -182,7 +181,7 @@ void WaitForCandidateRenderSync(UINT keycode)
 }
 
 void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_epoch, int forced_index_in_page,
-                         bool count_first_word)
+                         bool count_first_word, bool resolve_live_page)
 {
     /* 先清理一下状态 */
     Global::MsgTypeToTsf = Global::DataFromServerMsgType::Normal;
@@ -216,29 +215,63 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         return;
     }
 
-    // Keyboard selection must match the painted page. Mouse clicks carry an explicit index
-    // (forced_index_in_page >= 0) and keep the old behavior: waiting cannot restore the intent of a
-    // click that targeted a candidate of a page that is no longer on screen.
-    if (forced_index_in_page < 0 && (keycode == VK_SPACE || (keycode >= '1' && keycode <= '9')))
+    const bool is_space = keycode == VK_SPACE;
+    const bool is_digit_selection = keycode >= '1' && keycode <= '9';
+    const bool is_direct_selection = forced_index_in_page >= 0;
+
+    // The module owns the rendered page. Ask it for the choice; only fall back to the live list when no page has
+    // been published at all (for example before the first frame of a composition).
+    const bool module_page = !resolve_live_page && HasCandidatePage();
+    std::optional<FanyImeIpc::CandidateChoice> page_choice;
+    if (module_page)
     {
+        if (is_direct_selection)
+            page_choice = CommitCandidateAt(forced_index_in_page);
+        else if (is_space)
+            page_choice = CommitCandidateHighlighted();
+        else if (is_digit_selection)
+            page_choice = CommitCandidateSlot(static_cast<int>(keycode - '1'));
+    }
+    else if (!is_direct_selection && (is_space || is_digit_selection))
+    {
+        // Keyboard selection must match the painted page. Mouse clicks carry an explicit index
+        // (forced_index_in_page >= 0) and keep the old behavior: waiting cannot restore the intent of a
+        // click that targeted a candidate of a page that is no longer on screen.
         WaitForCandidateRenderSync(keycode);
     }
 
     EnsureCandidatePageReady();
 
-    const bool is_space = keycode == VK_SPACE;
-    const bool is_digit_selection = keycode >= '1' && keycode <= '9';
-    const bool is_direct_selection = forced_index_in_page >= 0;
-    const int index = is_direct_selection
-                          ? forced_index_in_page
-                          : (is_space ? Global::candidate_ui.selected_index_in_page : static_cast<int>(keycode - '1'));
-    WordItem curWordItem;
-    const int page_size =
+    int index = is_direct_selection
+                    ? forced_index_in_page
+                    : (is_space ? Global::candidate_ui.selected_index_in_page : static_cast<int>(keycode - '1'));
+    int page_size =
         Global::candidate_ui.page_size > 0 ? Global::candidate_ui.page_size : GetConfiguredCandidatePageSize();
-    const bool within_page_size = !is_digit_selection || index < page_size;
-    const bool is_valid_selection = within_page_size && (is_direct_selection || is_space || is_digit_selection) &&
-                                    index >= 0 && static_cast<size_t>(index) < Global::candidate_ui.page_words.size() &&
-                                    ResolveCandidateItem(index + 1, curWordItem);
+    int page_index = Global::candidate_ui.page_index;
+    std::size_t absolute_index =
+        static_cast<std::size_t>(page_index) * static_cast<std::size_t>(page_size) + static_cast<std::size_t>(index);
+    std::wstring selected_page_word;
+    WordItem curWordItem;
+    bool is_valid_selection = false;
+    if (page_choice)
+    {
+        index = page_choice->index_in_page;
+        page_size = page_choice->page->page_size > 0 ? page_choice->page->page_size : page_size;
+        page_index = page_choice->page->snapshot->page_index;
+        absolute_index = static_cast<std::size_t>(page_choice->absolute_index);
+        selected_page_word = page_choice->page->snapshot->page_words[static_cast<std::size_t>(index)];
+        curWordItem = page_choice->item;
+        is_valid_selection = true;
+    }
+    else if (!module_page)
+    {
+        const bool within_page_size = !is_digit_selection || index < page_size;
+        is_valid_selection = within_page_size && (is_direct_selection || is_space || is_digit_selection) &&
+                             index >= 0 && static_cast<size_t>(index) < Global::candidate_ui.page_words.size() &&
+                             ResolveCandidateItem(index + 1, curWordItem);
+        if (is_valid_selection)
+            selected_page_word = Global::candidate_ui.page_words[static_cast<std::size_t>(index)];
+    }
 
     if (is_valid_selection && metasequoia::local_modes::is_date_time_menu_item(curWordItem))
     {
@@ -261,7 +294,7 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         const std::string ranking_entry_key = ranking_keys.second;
         // First-page first slot is already the default commit; space/mouse/digit
         // should only learn when the user picked something else.
-        const bool is_first_page_first = Global::candidate_ui.page_index == 0 && index == 0;
+        const bool is_first_page_first = page_index == 0 && index == 0;
         // 句中辅助码筛过的候选页不能当调频的参照：选中的词在这一页里往往已经排第一，而用户下次
         // 不敲辅助码时看到的是没筛过的那份排序。改用去掉约束后的候选给它挪位置，所以选的是第一个
         // 也照样调（空格、数字键、鼠标点选都走这里）。要在推进组合之前取，推进后输入串就短了。
@@ -299,12 +332,10 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         const bool prior_segments_first =
             !was_creating_word_before_selection || GlobalIme::composition.creating_word.all_segments_first;
         const bool first_word_hit = is_first_page_first && prior_segments_first;
-        const size_t absolute_index =
-            static_cast<size_t>(Global::candidate_ui.page_index) * static_cast<size_t>(Global::candidate_ui.page_size) +
-            static_cast<size_t>(index);
-        LearnQuickPhraseOrder(curWordItem, absolute_index, client_id, activation_epoch);
-        LearnEnglishSlot(curWordItem, absolute_index, client_id, activation_epoch);
-        Global::candidate_ui.selected_text = Global::candidate_ui.page_words[index];
+        const auto &selection_items = page_choice ? *page_choice->page->items : Global::candidate_ui.items;
+        LearnQuickPhraseOrder(curWordItem, absolute_index, selection_items, client_id, activation_epoch);
+        LearnEnglishSlot(curWordItem, absolute_index, selection_items, client_id, activation_epoch);
+        Global::candidate_ui.selected_text = selected_page_word;
         std::string curWord = curWordItem.word;
         // 这一段上屏或接进造词的文字，与候选窗上显示的一致；要在推进组合、重建候选之前取。
         const std::string curOutputText = CandidateOutputText(curWordItem);
@@ -467,9 +498,9 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             // candidate position travels with it, together with the page prefix
             // it was recorded on, so a retraction can put that item back under
             // the highlight.
-            GlobalIme::composition.push_selection_snapshot(
-                selection_transition.consumed_raw_input_with_cases, Global::candidate_ui.page_index * page_size + index,
-                selection_page_prefix, selection_transition.consumed_terminal_helpcode_with_cases);
+            GlobalIme::composition.push_selection_snapshot(selection_transition.consumed_raw_input_with_cases,
+                                                           static_cast<int>(absolute_index), selection_page_prefix,
+                                                           selection_transition.consumed_terminal_helpcode_with_cases);
             /* 打开造词开关 */
             GlobalIme::composition.creating_word.active = true;
             GlobalIme::composition.creating_word.all_segments_first = first_word_hit;

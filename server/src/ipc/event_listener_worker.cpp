@@ -792,7 +792,9 @@ void WorkerThread()
                     break;
                 }
             }
-            ProcessSelectionKey(0, task.client_id, task.activation_epoch, index_in_page);
+            ProcessSelectionKey(0, task.client_id, task.activation_epoch, index_in_page,
+                                /*count_first_word=*/true,
+                                /*resolve_live_page=*/task.type == TaskType::UiCommitCandidateAt);
             if (Global::MsgTypeToTsf == Global::DataFromServerMsgType::Normal)
             {
                 // The worker packet is the complete edit-session-owned commit
