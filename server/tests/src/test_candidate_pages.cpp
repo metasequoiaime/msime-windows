@@ -418,6 +418,7 @@ TEST_CASE(candidate_pages_keyboard_commit_waits_for_the_pending_paint)
     REQUIRE(choice->item.word == "炮同");
     REQUIRE(choice->waited);
     REQUIRE(!choice->timed_out);
+    REQUIRE(surface.show_count == 3);
 }
 
 TEST_CASE(candidate_pages_keyboard_commit_times_out_on_the_rendered_page)

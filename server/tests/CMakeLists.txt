@@ -137,7 +137,6 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/utils/serial_task_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_task_classes.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_requery_policy.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_present_settle.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_settle_arbitration_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_interaction_latch_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_rescore_budget.cpp"

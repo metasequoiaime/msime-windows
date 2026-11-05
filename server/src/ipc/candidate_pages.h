@@ -358,6 +358,9 @@ class CandidatePages
         if (allow_wait && wait_.count() > 0 && surface_.visible() && !surface_.uiless() &&
             rendered_generation_ < published_generation_)
         {
+            // A silently published page has no frame on the way. Ask for one before waiting, or the timeout
+            // would always expire; the presenter dedups when the page is already on screen.
+            surface_.request_show();
             waited = true;
             timed_out = !cv_.wait_for(lock, wait_,
                                       [this] { return rendered_generation_ >= published_generation_ || !published_; });
