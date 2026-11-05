@@ -107,6 +107,45 @@ inline std::vector<Segments> fuzzy_segmentations(const Segments &segments, metas
     return paths;
 }
 
+// 候选的读音与敲出的音节只差在模糊规则上时置上 fuzzy。模糊音同样算一种纠错，候选窗据此
+// 和拼写纠错一样加 * 标记。词库行由 fuzzy_candidates 直接带标，词格产出的整句行没有经过
+// 那一层，这里按音节补。只认每个不同的音节都能由当前规则互相匹配的读法：正确拼写、
+// 乱序/邻键纠错、简拼展开和 ü 别名都不会被误标。不写 corrected_from，那个字段还承担预编辑
+// 与组合推进的判定。
+inline void mark_fuzzy_reading(WordItem &item, const std::string &typed_segmentation,
+                               metasequoia::FuzzyPinyinOptions options)
+{
+    if (!options.rules || item.fuzzy || item.canonical_pinyin.empty() || typed_segmentation.empty() ||
+        item.canonical_pinyin == typed_segmentation)
+    {
+        return;
+    }
+    const auto typed = split_segments(typed_segmentation);
+    const auto reading = split_segments(item.canonical_pinyin);
+    if (typed.empty() || reading.size() != typed.size())
+    {
+        return;
+    }
+    bool differs = false;
+    for (std::size_t i = 0; i < typed.size(); ++i)
+    {
+        if (reading[i] == typed[i])
+        {
+            continue;
+        }
+        const auto variants = fuzzy_syllables(typed[i], options);
+        if (std::find(variants.begin(), variants.end(), reading[i]) == variants.end())
+        {
+            return;
+        }
+        differs = true;
+    }
+    if (differs)
+    {
+        item.fuzzy = true;
+    }
+}
+
 // 把模糊候选归并进精确候选。group 是候选覆盖的输入长度，大的在前。精确列表的次序原样保留：
 // 整句、保护位、调频与纠错裁决的结果都留在原处（不能按 group 重排它——纠错读法的字母比敲的少，
 // 重排会把 jiuzheeyang 裁决出的「就这样」压到字面读法下面）。模糊行按 group、权重排好后
