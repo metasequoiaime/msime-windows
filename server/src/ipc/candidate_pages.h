@@ -91,7 +91,8 @@ class CandidatePages
     }
 
     // Silent publish: the page is what the next show will paint, but no frame is requested. The key path builds a
-    // page this way and the caller decides whether to show it; a new page also supersedes any pending settle frame.
+    // page this way and the caller decides whether to show it; a page for the same input also replaces the page a
+    // queued fast/late frame would have painted.
     void Publish(CandidatePage page)
     {
         std::lock_guard lock(mutex_);
@@ -289,10 +290,7 @@ class CandidatePages
         std::lock_guard lock(mutex_);
         rendered_visible_ = visible;
         if (!visible)
-        {
             rendered_.reset();
-            rendered_generation_ = 0;
-        }
     }
 
   private:
@@ -389,7 +387,7 @@ class CandidatePages
         return choice;
     }
 
-    static constexpr std::size_t kPageHistory = 8;
+    static constexpr std::size_t kPageHistory = 32;
 
     ClockPort &clock_;
     SurfacePort &surface_;
