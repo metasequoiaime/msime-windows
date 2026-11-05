@@ -212,6 +212,22 @@ TEST_CASE(candidate_pages_ignores_an_echo_older_than_the_rendered_page)
     REQUIRE(choice->item.word == "新页");
 }
 
+TEST_CASE(candidate_pages_update_current_schedules_the_published_page)
+{
+    FakeClock clock;
+    FakeSurface surface;
+    auto pages = MakePages(clock, surface);
+
+    pages->Publish(MakePage("photon", {"跑通"}));
+    REQUIRE(pages->UpdateCurrent(CandidateFreshness::Fast));
+    REQUIRE(surface.show_count == 0);
+
+    clock.Advance(milliseconds{120});
+    REQUIRE(surface.show_count == 1);
+    REQUIRE(surface.last.generation == 2);
+    REQUIRE(surface.last.items->front().word == "跑通");
+}
+
 TEST_CASE(candidate_pages_fast_updates_fold_into_one_frame)
 {
     FakeClock clock;

@@ -162,6 +162,20 @@ class CandidatePages
         return true;
     }
 
+    // Schedule one frame for the page that is already published. Callers use this after a silent Publish when an
+    // asynchronous source only needs to decide timing, not build another page.
+    bool UpdateCurrent(CandidateFreshness freshness)
+    {
+        std::shared_ptr<const CandidatePage> page;
+        {
+            std::lock_guard lock(mutex_);
+            page = published_;
+        }
+        if (!page)
+            return false;
+        return Update(*page, freshness);
+    }
+
     void Hide()
     {
         std::lock_guard lock(mutex_);
