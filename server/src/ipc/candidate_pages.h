@@ -371,9 +371,12 @@ class CandidatePages
         const auto page = (rendered_ && rendered_->input == input_) ? rendered_ : published_;
         if (!page || !page->snapshot || !page->items)
             return std::nullopt;
+        // With no painted page for the current input there is nothing older to fall back to: use the published
+        // page rather than dropping the key. This is the first-frame/timeout path; every other path prefers the
+        // page the user actually saw.
 
         const int count = static_cast<int>(page->snapshot->page_words.size());
-        if (index_in_page < 0 || index_in_page >= count || page->page_size <= 0)
+        if (index_in_page < 0 || index_in_page >= count || index_in_page >= page->page_size || page->page_size <= 0)
             return std::nullopt;
         const int start = page->snapshot->page_index * page->page_size;
         const int absolute = start + index_in_page;

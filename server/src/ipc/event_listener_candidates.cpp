@@ -504,8 +504,9 @@ FanyImeIpc::CandidatePage BuildCandidatePageValue(const std::wstring &candidate_
     FanyImeIpc::CandidatePage page;
     page.input = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
     // 页大小变化会重排整个列表；旧布局的绘制回显不得盖到新页上。
-    page.layout_epoch = static_cast<std::uint64_t>((std::max)(ui.page_size, 0));
-    page.page_size = ui.page_size;
+    const int page_size = ui.page_size > 0 ? ui.page_size : GetConfiguredCandidatePageSize();
+    page.layout_epoch = static_cast<std::uint64_t>(page_size);
+    page.page_size = page_size;
     page.snapshot = std::move(snapshot);
     page.items = std::make_shared<const std::vector<WordItem>>(ui.items);
     return page;
