@@ -144,6 +144,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_mixed_english_preservation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_translation_page_visibility.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_mixed_candidates_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_pages.cpp"
     "${CMAKE_SOURCE_DIR}/src/ipc/event_listener_task_class.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_input_cadence.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_sentence_association_options.cpp"
