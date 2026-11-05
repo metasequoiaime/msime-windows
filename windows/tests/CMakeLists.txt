@@ -50,6 +50,11 @@ target_include_directories(test_punctuation_commit_text PRIVATE ../src)
 target_compile_features(test_punctuation_commit_text PRIVATE cxx_std_17)
 add_test(NAME punctuation_commit_text COMMAND test_punctuation_commit_text)
 
+add_executable(test_multiline_commit multiline_commit.cpp)
+target_include_directories(test_multiline_commit PRIVATE ../src)
+target_compile_features(test_multiline_commit PRIVATE cxx_std_17)
+add_test(NAME multiline_commit COMMAND test_multiline_commit)
+
 add_executable(test_input_state_shortcuts input_state_shortcuts.cpp)
 target_compile_features(test_input_state_shortcuts PRIVATE cxx_std_17)
 target_compile_definitions(test_input_state_shortcuts PRIVATE MSIME_SHORTCUT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../engine/contracts/tests/input_state_shortcuts.json")

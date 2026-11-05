@@ -2,6 +2,7 @@
 #include "Globals.h"
 #include "MetasequoiaIME.h"
 #include "CompositionProcessorEngine.h"
+#include "MultilineCommit.h"
 #include <algorithm>
 #include <cwctype>
 #include <debugapi.h>
@@ -1518,22 +1519,13 @@ HRESULT CMetasequoiaIME::_CommitMultilineCandidate(TfEditCookie ec, _In_ ITfCont
     // 一次提交整段多行文本时，Chromium 系宿主（QQ、Electron 应用）会重排段落。逐行提交，
     // 每行都是一次普通的单行插入，行间换行用文档约定的 CRLF。
     HRESULT hr = S_OK;
-    size_t start = 0;
-    for (;;)
+    for (const std::wstring &segment : MultilineCommitSegments(text))
     {
-        const size_t newline = text.find(L'\n', start);
-        const size_t end = newline == std::wstring::npos ? text.size() : newline;
-        hr = _WriteTextAtSelection(ec, pContext, text.substr(start, end - start));
-        if (FAILED(hr) || newline == std::wstring::npos)
-        {
-            break;
-        }
-        hr = _WriteTextAtSelection(ec, pContext, L"\r\n");
+        hr = _WriteTextAtSelection(ec, pContext, segment);
         if (FAILED(hr))
         {
             break;
         }
-        start = newline + 1;
     }
 
     if (SUCCEEDED(hr))
