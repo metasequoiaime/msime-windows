@@ -95,11 +95,14 @@ class CandidatePages
     void Publish(CandidatePage page)
     {
         std::lock_guard lock(mutex_);
+        const bool input_changed = page.input != input_;
         pending_.reset();
-        fast_done_ = false;
-        late_done_ = false;
-        if (page.input != input_)
+        if (input_changed)
+        {
+            fast_done_ = false;
+            late_done_ = false;
             latched_ = false;
+        }
         StorePage(std::move(page));
     }
 
@@ -107,10 +110,14 @@ class CandidatePages
     void Show(CandidatePage page)
     {
         std::lock_guard lock(mutex_);
+        const bool input_changed = page.input != input_;
         pending_.reset();
-        fast_done_ = false;
-        late_done_ = false;
-        latched_ = false;
+        if (input_changed)
+        {
+            fast_done_ = false;
+            late_done_ = false;
+            latched_ = false;
+        }
         StorePage(std::move(page));
         surface_.request_show();
     }
