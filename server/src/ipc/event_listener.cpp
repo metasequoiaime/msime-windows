@@ -41,6 +41,7 @@
 #include "log/candidate_diag_log.h"
 #include "ipc/event_listener_internal.h"
 #include "ipc/candidate_interaction_latch_policy.h"
+#include "ipc/candidate_render_sync.h"
 #include "ai/jev_candidate_policy.h"
 
 using namespace event_listener_detail;
@@ -313,7 +314,8 @@ struct CandidatePagesRuntime
 {
     CandidatePageTimerQueue timer;
     CandidatePageSurface surface;
-    FanyImeIpc::CandidatePages pages{timer, surface};
+    FanyImeIpc::CandidatePages pages{timer, surface, std::chrono::milliseconds{120},
+                                     std::chrono::milliseconds{FanyImeIpc::kCandidateSelectionRenderWaitMaxMs}};
 };
 
 CandidatePagesRuntime &Pages()
@@ -424,8 +426,8 @@ bool HasCandidatePage()
 
 void NoteCandidatePagePainted(std::uint64_t generation, bool visible)
 {
-    Pages().pages.Painted(generation, visible);
-    Global::PublishRenderedCandidatePageGeneration(generation);
+    if (Pages().pages.Painted(generation, visible))
+        Global::PublishRenderedCandidatePageGeneration(generation);
 }
 
 void NoteCandidatePageGesture(std::uint64_t generation)

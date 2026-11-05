@@ -144,7 +144,9 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
 bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late)
 {
     const std::vector<WordItem> before = g_inputSession->get_candidates();
-    const size_t page_size = static_cast<size_t>((std::max)(GetConfiguredCandidatePageSize(), 1));
+    const int live_page_size =
+        Global::candidate_ui.page_size > 0 ? Global::candidate_ui.page_size : GetConfiguredCandidatePageSize();
+    const size_t page_size = static_cast<size_t>((std::max)(live_page_size, 1));
     const auto first_page = [page_size](const std::vector<WordItem> &items) {
         const size_t count = (std::min)(page_size, items.size());
         return std::vector<WordItem>(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(count));

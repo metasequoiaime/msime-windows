@@ -216,7 +216,7 @@ TEST_CASE(candidate_pages_keyboard_commit_waits_for_the_first_paint)
 {
     FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(clock, surface, milliseconds{500});
 
     pages->Show(MakePage("photon", {"跑通"}));
 
@@ -272,10 +272,10 @@ TEST_CASE(candidate_pages_ignores_an_echo_older_than_the_rendered_page)
     auto pages = MakePages(clock, surface, milliseconds{0});
 
     pages->Show(MakePage("photon", {"旧页"}));
-    pages->Painted(1, true);
+    REQUIRE(pages->Painted(1, true));
     pages->Show(MakePage("photon", {"新页"}));
-    pages->Painted(2, true);
-    pages->Painted(1, true);
+    REQUIRE(pages->Painted(2, true));
+    REQUIRE(!pages->Painted(1, true));
 
     const auto choice = pages->CommitSlot(0);
     REQUIRE(choice);
@@ -353,6 +353,21 @@ TEST_CASE(candidate_pages_immediate_paints_every_arrival)
     REQUIRE(surface.last.items->front().word == "AI候选");
 }
 
+TEST_CASE(candidate_pages_does_not_commit_a_page_from_a_previous_input)
+{
+    FakeClock clock;
+    FakeSurface surface;
+    auto pages = MakePages(clock, surface, milliseconds{0});
+
+    pages->Show(MakePage("old", {"旧页"}));
+    REQUIRE(pages->Painted(1, true));
+    pages->Show(MakePage("new", {"新页"}));
+
+    const auto choice = pages->CommitSlot(0);
+    REQUIRE(choice);
+    REQUIRE(choice->item.word == "新页");
+}
+
 TEST_CASE(candidate_pages_commit_uses_the_rendered_page)
 {
     FakeClock clock;
@@ -415,7 +430,7 @@ TEST_CASE(candidate_pages_keyboard_commit_waits_for_the_pending_paint)
 {
     FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(clock, surface, milliseconds{500});
 
     pages->Show(MakePage("photon", {"跑通"}));
     pages->Painted(1, true);

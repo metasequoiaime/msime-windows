@@ -130,7 +130,7 @@ void ReplayDeferredClientActivation()
     }
     FTB_DIAG_LOGF(L"replaying client activation deferred until candidate window existed");
     PostMessage(::global_hwnd, WM_IMEACTIVATE, 0, 0);
-    PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+    HideCandidatePages();
 }
 
 struct Task
@@ -974,7 +974,7 @@ void WorkerThread()
             g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
-            PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+            HideCandidatePages();
             break;
         }
 
@@ -994,7 +994,7 @@ void WorkerThread()
             g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
-            PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+            HideCandidatePages();
             break;
         }
 

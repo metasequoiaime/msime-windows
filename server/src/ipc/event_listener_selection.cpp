@@ -192,16 +192,41 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
     if (g_translation_candidates_active)
     {
         // 译文页：选中的就是要上屏的完整文本，既不调频也不造词，更不能把译文当候选词学进库。
-        if (forced_index_in_page < 0 && (keycode == VK_SPACE || (keycode >= '1' && keycode <= '9')))
+        const bool translation_page = HasCandidatePage();
+        std::optional<FanyImeIpc::CandidateChoice> translation_choice;
+        if (translation_page)
+        {
+            if (forced_index_in_page >= 0)
+                translation_choice = CommitCandidateAt(forced_index_in_page);
+            else if (keycode == VK_SPACE)
+                translation_choice = CommitCandidateHighlighted();
+            else if (keycode >= '1' && keycode <= '9')
+                translation_choice = CommitCandidateSlot(static_cast<int>(keycode - '1'));
+        }
+        else if (forced_index_in_page < 0 && (keycode == VK_SPACE || (keycode >= '1' && keycode <= '9')))
         {
             WaitForCandidateRenderSync(keycode);
         }
+
         EnsureCandidatePageReady();
         auto &ui = Global::candidate_ui;
-        const int index = forced_index_in_page >= 0
-                              ? forced_index_in_page
-                              : (keycode == VK_SPACE ? ui.selected_index_in_page : static_cast<int>(keycode - '1'));
-        if (index < 0 || static_cast<size_t>(index) >= ui.page_words.size())
+        int index = forced_index_in_page >= 0
+                        ? forced_index_in_page
+                        : (keycode == VK_SPACE ? ui.selected_index_in_page : static_cast<int>(keycode - '1'));
+        std::wstring selected;
+        bool valid = false;
+        if (translation_choice)
+        {
+            index = translation_choice->index_in_page;
+            selected = translation_choice->page->snapshot->page_words[static_cast<std::size_t>(index)];
+            valid = true;
+        }
+        else if (!translation_page && index >= 0 && static_cast<size_t>(index) < ui.page_words.size())
+        {
+            selected = ui.page_words[static_cast<std::size_t>(index)];
+            valid = true;
+        }
+        if (!valid)
         {
             // 这一页没有这个序号：什么都不上屏，译文页原样留着。走 SELECT_BY_NUMBER 的
             // TSF 路径只认 Normal / OutofRange 两种回复，这里必须是后者。
@@ -211,7 +236,7 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         // 同理，上屏必须回 Normal：_HandleCandidateFinalize 只在 Normal 时写入文本，
         // 而且它写的就是 candidate_string 本身，不会再补标点。
         Global::MsgTypeToTsf = Global::DataFromServerMsgType::Normal;
-        ui.selected_text = ui.page_words[index];
+        ui.selected_text = std::move(selected);
         return;
     }
 
@@ -238,6 +263,11 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         // (forced_index_in_page >= 0) and keep the old behavior: waiting cannot restore the intent of a
         // click that targeted a candidate of a page that is no longer on screen.
         WaitForCandidateRenderSync(keycode);
+    }
+
+    if (page_choice && page_choice->waited)
+    {
+        CAND_DIAG_LOGF(L"candidate-select-render-wait keycode={} timed_out={}", keycode, page_choice->timed_out);
     }
 
     EnsureCandidatePageReady();

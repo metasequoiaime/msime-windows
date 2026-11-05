@@ -244,7 +244,7 @@ class CandidatePages
     std::optional<CandidateChoice> CommitHighlighted()
     {
         std::unique_lock lock(mutex_);
-        const auto page = rendered_ ? rendered_ : published_;
+        const auto page = (rendered_ && rendered_->input == input_) ? rendered_ : published_;
         if (!page || !page->snapshot)
             return std::nullopt;
         const int index = page->snapshot->selected_index_in_page;
@@ -258,24 +258,26 @@ class CandidatePages
         return Commit(index_in_page, false);
     }
 
-    // UI thread: the presenter echoes the generation it actually painted (including the dedup path).
-    void Painted(std::uint64_t generation, bool visible)
+    // UI thread: the presenter echoes the generation it actually painted (including the dedup path). Returns true
+    // when this echo belongs to a page the module still knows; a stale or foreign echo must not advance the mirror.
+    bool Painted(std::uint64_t generation, bool visible)
     {
         std::lock_guard lock(mutex_);
         if (generation == 0 || generation > published_generation_ || generation < rendered_generation_)
-            return;
+            return false;
         const auto found = std::find_if(published_pages_.begin(), published_pages_.end(),
                                         [generation](const auto &page) { return page->generation == generation; });
         if (found == published_pages_.end() || (*found)->layout_epoch != layout_epoch_)
-            return;
+            return false;
         rendered_ = *found;
         rendered_generation_ = generation;
         rendered_visible_ = visible;
         cv_.notify_all();
+        return true;
     }
 
     // UI thread: the user interacted with the page it saw. Freeze only that page; a pending fast/late frame is
-    // discarded, and later async updates are rejected until the next Show().
+    // discarded, and later async updates are rejected until a page for a new input is published or the page is hidden.
     void Gesture(std::uint64_t generation)
     {
         std::lock_guard lock(mutex_);
@@ -354,8 +356,9 @@ class CandidatePages
 
         bool waited = false;
         bool timed_out = false;
+        const bool rendered_is_current = rendered_ && rendered_->input == input_;
         if (allow_wait && wait_.count() > 0 && surface_.visible() && !surface_.uiless() &&
-            rendered_generation_ < published_generation_)
+            (!rendered_is_current || rendered_generation_ < published_generation_))
         {
             // A silently published page has no frame on the way. Ask for one before waiting, or the timeout
             // would always expire; the presenter dedups when the page is already on screen.
@@ -365,7 +368,7 @@ class CandidatePages
                                       [this] { return rendered_generation_ >= published_generation_ || !published_; });
         }
 
-        const auto page = rendered_ ? rendered_ : published_;
+        const auto page = (rendered_ && rendered_->input == input_) ? rendered_ : published_;
         if (!page || !page->snapshot || !page->items)
             return std::nullopt;
 
