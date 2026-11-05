@@ -136,6 +136,8 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_serial_task_runner.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/serial_task_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_task_classes.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_requery_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_present_settle.cpp"
     "${CMAKE_SOURCE_DIR}/src/ipc/event_listener_task_class.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_input_cadence.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_sentence_association_options.cpp"

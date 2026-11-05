@@ -297,18 +297,26 @@ void WorkerThread()
                 SetTypingInProgress(false);
             }
             const auto gate_deadline = cadence.Deadline(idle_gate_ms);
-            if (gate_deadline == InputCadence::Clock::time_point{})
+            auto wake_deadline = gate_deadline;
+            if (const auto settle_deadline = CandidatePresentSettleDeadline())
+            {
+                if (wake_deadline == InputCadence::Clock::time_point{} || *settle_deadline < wake_deadline)
+                    wake_deadline = *settle_deadline;
+            }
+            if (wake_deadline == InputCadence::Clock::time_point{})
             {
                 // 闸门关着（或不在打字）：保持原来的无限等待。
                 pipe_queueCv.wait(lock, has_work);
             }
             else
             {
-                pipe_queueCv.wait_until(lock, gate_deadline, has_work);
+                pipe_queueCv.wait_until(lock, wake_deadline, has_work);
             }
             if (!pipe_running)
                 break;
-            if (cadence.ShouldCloseGate(InputCadence::Clock::now(), idle_gate_ms))
+            const auto now = InputCadence::Clock::now();
+            const bool flush_settle = CandidatePresentSettleIsDue(now);
+            if (!flush_settle && cadence.ShouldCloseGate(now, idle_gate_ms))
             {
                 // 到点且没有新按键：这段连续打字结束。先关闸再排重查，保证
                 // recompute_candidates 里重新应用的配置看到的是 Idle。
@@ -322,6 +330,13 @@ void WorkerThread()
                     refresh.type = TaskType::RefreshWithEnrichment;
                     PushTaskLocked(std::move(refresh));
                 }
+            }
+            if (flush_settle)
+            {
+                // 这帧只请求显示一次，不在锁里 PostMessage。
+                lock.unlock();
+                FlushCandidatePresentSettleIfDue(now);
+                continue;
             }
             // wait 与上面的超时分支都保证此刻队列非空；这里只是防御 TakeNextTaskLocked
             // 的 front() 没有空检查，别在后续改动里把「到点但没排到重查」变成空队列取任务。
@@ -1043,7 +1058,8 @@ void WorkerThread()
             }
             // Global::candidate_ui.items 是按键时那份副本，重查后必须重新组页才看得到新的
             // 整句候选；只刷新页面会把旧列表再发一遍。与 ApplyRescoredOrder 共用同一段。
-            (void)RequeryCandidatesPreservingOnline(owner);
+            // 这是停手后的晚到来源：快速定稿已经画过一帧时，允许它再补一帧；首屏没变则不会请求。
+            (void)RequeryCandidatesPreservingOnline(owner, /*late=*/true);
             break;
         }
         }

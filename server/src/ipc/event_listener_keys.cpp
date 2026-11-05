@@ -1111,6 +1111,8 @@ void HandleToolbarLanguageToggle(bool from_ime_enabled)
 void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
 {
     const ScopedServerKeyLatency latency{client_id, activation_epoch, request_id};
+    // 新的一键就是新的一段输入：上一段还没发布的异步定稿帧不该再抢在新首帧前面。
+    ResetCandidatePresentSettle();
     /* 先清理一下状态 */
     Global::MsgTypeToTsf = Global::DataFromServerMsgType::Normal;
     ScopedKeyStage read_packet{client_id, activation_epoch, request_id, L"handle-read-packet"};

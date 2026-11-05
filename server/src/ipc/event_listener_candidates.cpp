@@ -526,6 +526,18 @@ void RefreshCandidatePageUi(bool show_window)
         RequestShowCandidateWindow();
     }
 }
+
+void RefreshCandidatePageUiCoalesced()
+{
+    RefreshCandidatePageUi(false);
+    RequestShowCandidateWindowDeferred();
+}
+
+void RefreshCandidatePageUiLate()
+{
+    RefreshCandidatePageUi(false);
+    RequestShowCandidateWindowDeferred(true);
+}
 } // namespace event_listener_detail
 
 namespace FanyNamedPipe
@@ -761,6 +773,22 @@ class CandidateBuildTimer
     std::chrono::steady_clock::time_point last_ = start_;
 };
 
+std::vector<WordItem> PreservedMixedEnglishForInput(const std::vector<WordItem> &current, const std::string &input)
+{
+    std::vector<WordItem> preserved;
+    if (input.empty() || !GetConfiguredMixedCandidatesEnabled() || !GetConfiguredEnglishCandidatesEnabled())
+        return preserved;
+    const SchemeType scheme = g_inputSession->current_scheme_type();
+    if (scheme != SchemeType::Quanpin && scheme != SchemeType::Shuangpin)
+        return preserved;
+    for (const WordItem &item : current)
+    {
+        if (item.source == CandidateSource::EnglishDictionary && item.pinyin == input)
+            preserved.push_back(item);
+    }
+    return preserved;
+}
+
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
 {
     CandidateBuildTimer segment;
@@ -782,6 +810,10 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     }
     std::string pinyin = wstring_to_string(Global::PinyinString);
     const std::string current_input = g_inputSession->get_pinyin_sequence_with_cases();
+    // 混输英文只活在 ui.items 里，引擎候选里没有。同一次输入的异步重排会把整页重建，英文行先原样带过
+    // 重建，混输线程下一次回包仍会按最新规则替换它。只对普通拼音分支生效，Y/Emoji/日期等页面不动。
+    std::vector<WordItem> preserved_english;
+    bool preserve_mixed_english = false;
     std::vector<WordItem> items;
     if (g_english_input_mode)
     {
@@ -854,6 +886,11 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     else
     {
         items = g_inputSession->get_candidates();
+        if (!IsCandidateSubPageActive() && !GlobalIme::composition.creating_word.active)
+        {
+            preserved_english = PreservedMixedEnglishForInput(ui.items, EnglishInputKey());
+            preserve_mixed_english = !preserved_english.empty();
+        }
         queryMs = segment.Split();
         user_dictionary::apply_fixed_positions(
             user_dictionary::default_user_db_path(), CurrentRankingContextKey(), items,
@@ -896,6 +933,28 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     g_candidate_list_character_set = character_set;
     g_candidate_list_spelled_by_character_set = spelled_by_character_set;
     ui.set_items(std::move(items));
+    if (preserve_mixed_english && !preserved_english.empty())
+    {
+        auto &rebuilt = ui.items;
+        std::vector<WordItem> additions;
+        for (WordItem &item : preserved_english)
+        {
+            const bool duplicate = std::any_of(rebuilt.begin(), rebuilt.end(),
+                                               [&](const WordItem &existing) { return existing.word == item.word; });
+            if (!duplicate)
+                additions.push_back(std::move(item));
+        }
+        if (!additions.empty())
+        {
+            const size_t insert_at = (std::min)(static_cast<size_t>(1), rebuilt.size());
+            rebuilt.insert(rebuilt.begin() + static_cast<std::ptrdiff_t>(insert_at),
+                           std::make_move_iterator(additions.begin()), std::make_move_iterator(additions.end()));
+            FanyImeIpc::NormalizeMixedCandidateOrder(rebuilt, 1, CurrentEnglishPlacement(rebuilt));
+            ui.item_total_count = static_cast<int>(rebuilt.size());
+            CAND_DIAG_LOGF(L"mixed english preserved count={} input_units={}", additions.size(),
+                           EnglishInputKey().size());
+        }
+    }
     RefreshCandidatePageUi(false);
     PublishCandidateUiOwner(client_id, activation_epoch);
     const double uiMs = segment.Split();

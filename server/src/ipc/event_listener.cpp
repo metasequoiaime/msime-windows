@@ -40,6 +40,7 @@
 #include "conversion/traditional_spelling_index.h"
 #include "log/candidate_diag_log.h"
 #include "ipc/event_listener_internal.h"
+#include "ipc/candidate_present_settle_policy.h"
 #include "ai/jev_candidate_policy.h"
 
 using namespace event_listener_detail;
@@ -107,7 +108,10 @@ void LatchCandidateUiInteraction()
     const std::uint64_t generation = g_candidate_ui_interaction_generation.exchange(0, std::memory_order_acq_rel);
     // 只认用户操作时屏幕上那一页；之后已经换了一批候选，就不该冻结新的这批。
     if (generation != 0 && generation == Global::LoadCandidatePageSnapshot()->generation)
+    {
         Global::candidate_ui.begin_selection();
+        CancelCandidatePresentSettle();
+    }
 }
 
 bool CanMergeAsyncCandidates()
@@ -215,12 +219,99 @@ void RequestShowCandidateWindow()
     }
 }
 
+namespace
+{
+// Fast enrichment (mixed English, neural reorder) can republish the same composition many times while it
+// converges. The key path still paints its first frame immediately; later fast results are folded into a single
+// additional frame so row contents do not alternate on screen. Slow sources (cloud, AI) keep their own shows.
+using CandidateSettleClock = FanyImeIpc::CandidatePresentSettle::Clock;
+constexpr auto kCandidateSettleDelay = std::chrono::milliseconds(120);
+
+// Worker-thread only: every function below runs on the task thread.
+FanyImeIpc::CandidatePresentSettle g_candidate_settle;
+
+std::string CurrentCandidateSettleInput()
+{
+    return g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
+}
+} // namespace
+
+void RequestShowCandidateWindowDeferred(bool late)
+{
+    if (IsUiLessMode() || !::global_hwnd || !g_inputSession)
+    {
+        CAND_DIAG_LOGF(L"settle request skipped uiless={} hwnd_present={} session={}", IsUiLessMode(),
+                       ::global_hwnd != nullptr, g_inputSession != nullptr);
+        return;
+    }
+    if (IsDedicatedEnglishAnswerPending())
+    {
+        CAND_DIAG_LOGF(L"settle request deferred to english query raw_units={}",
+                       GlobalIme::composition.raw_input_with_cases.size());
+        return;
+    }
+    const std::string input = CurrentCandidateSettleInput();
+    if (input.empty() || Global::candidate_ui.items.empty())
+    {
+        CAND_DIAG_LOGF(L"settle request skipped empty input={} items={}", input.empty(),
+                       Global::candidate_ui.items.size());
+        return;
+    }
+    if (!CanMergeAsyncCandidates())
+    {
+        CAND_DIAG_LOGF(L"settle request skipped user interaction");
+        return;
+    }
+
+    const bool accepted = g_candidate_settle.Request(input, late, CandidateSettleClock::now(), kCandidateSettleDelay);
+    CAND_DIAG_LOGF(L"settle request late={} accepted={} armed={} late_pending={} raw_units={} candidate_count={}", late,
+                   accepted, g_candidate_settle.armed, g_candidate_settle.late_pending, input.size(),
+                   Global::candidate_ui.items.size());
+}
+
+std::optional<CandidateSettleClock::time_point> CandidatePresentSettleDeadline()
+{
+    if (!g_candidate_settle.armed)
+        return std::nullopt;
+    return g_candidate_settle.deadline;
+}
+
+bool CandidatePresentSettleIsDue(CandidateSettleClock::time_point now)
+{
+    return g_candidate_settle.Due(now);
+}
+
+void FlushCandidatePresentSettleIfDue(CandidateSettleClock::time_point now)
+{
+    if (!g_candidate_settle.Due(now))
+        return;
+    const std::string input = CurrentCandidateSettleInput();
+    const bool can_show =
+        g_inputSession && !input.empty() && !Global::candidate_ui.items.empty() && CanMergeAsyncCandidates();
+    const bool show = g_candidate_settle.Consume(now, input, can_show);
+    CAND_DIAG_LOGF(L"settle publish show={} can_show={} raw_units={} candidate_count={}", show, can_show, input.size(),
+                   Global::candidate_ui.items.size());
+    if (show)
+        RequestShowCandidateWindow();
+}
+
+void ResetCandidatePresentSettle()
+{
+    g_candidate_settle.Reset();
+}
+
+void CancelCandidatePresentSettle()
+{
+    g_candidate_settle.Cancel();
+}
+
 // Drop every published candidate page and hide the candidate window without
 // touching the composition session. The creating-word state can survive with no
 // pinyin left after a segment Backspace, and that state must not be reset just
 // because there is nothing left to offer as candidates.
 void HideCandidateWindowAndDropItems()
 {
+    CancelCandidatePresentSettle();
     // Drop published candidates before a queued show can re-render an
     // empty-preedit + stale-candidate view.
     Global::CandidateString.clear();

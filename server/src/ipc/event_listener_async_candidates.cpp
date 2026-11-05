@@ -10,6 +10,7 @@
 #include <utility>
 #include "ipc.h"
 #include "ipc/candidate_selection_policy.h"
+#include "ipc/candidate_requery_policy.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "global/globals.h"
@@ -22,6 +23,7 @@
 #include "english/english_ime.h"
 #include "config/ime_config.h"
 #include "mixed/mixed_candidates.h"
+#include "log/candidate_diag_log.h"
 
 using namespace event_listener_detail;
 
@@ -30,6 +32,11 @@ namespace
 std::string g_jev_word;
 std::string g_jev_identity;
 uint64_t g_jev_generation = 0;
+// 同一输入的重排回包会连着来：每次都在任务线程上重算整页，但第一页通常两三批就定了。给每个输入一个
+// 上限，超出的批次只让引擎缓存变新，下一键自然读到；否则一次打字会白白重算十几次。
+constexpr int kMaxRescoreRequeryPerInput = 4;
+std::string g_rescore_requery_input;
+int g_rescore_requery_count = 0;
 } // namespace
 
 namespace event_listener_detail
@@ -132,7 +139,7 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     PushUiLessCandidatesToOwner();
 }
 
-bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner)
+bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late)
 {
     const std::vector<WordItem> before = g_inputSession->get_candidates();
     // 云/AI 候选只活在 series cache 里，reset_cache 会把它们一起清掉，而它们的请求早已回来、不会
@@ -155,15 +162,14 @@ bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner
         }
     }
     const std::vector<WordItem> &after = g_inputSession->get_candidates();
-    if (after.size() == before.size() &&
-        std::equal(before.begin(), before.end(), after.begin(),
-                   [](const WordItem &a, const WordItem &b) { return a.word == b.word; }))
-        return false;
-
+    const size_t page_size = static_cast<size_t>((std::max)(GetConfiguredCandidatePageSize(), 1));
+    const bool visible_changed = FanyImeIpc::VisibleCandidatePageChanged(before, after, page_size);
+    // 首屏没变就不请求重画，但内部列表仍然要更新：用户马上翻页时读的是 ui.items，不能让他看到旧的后几页。
     PrepareCandidateList(owner.client_id, owner.activation_epoch);
-    RequestShowCandidateWindow();
+    if (visible_changed)
+        RequestShowCandidateWindowDeferred(late);
     PushUiLessCandidatesToOwner();
-    return true;
+    return visible_changed;
 }
 
 // 候选列表当初是按词格的静态顺序发出去的，因为打分那会儿还没算完。现在算完了：把引擎的候选缓存
@@ -184,6 +190,20 @@ void ApplyRescoredOrder()
     const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
     if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
         return;
+    const std::string input = g_inputSession->get_pinyin_sequence_with_cases();
+    if (input != g_rescore_requery_input)
+    {
+        g_rescore_requery_input = input;
+        g_rescore_requery_count = 0;
+    }
+    if (input.empty())
+        return;
+    if (g_rescore_requery_count >= kMaxRescoreRequeryPerInput)
+    {
+        CAND_DIAG_LOGF(L"rescore requery capped count={} input_units={}", g_rescore_requery_count, input.size());
+        return;
+    }
+    ++g_rescore_requery_count;
     (void)RequeryCandidatesPreservingOnline(owner);
 }
 
@@ -363,7 +383,7 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
     }
     const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
     if (glosses_changed && owner && IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
-        RefreshCandidatePageUi(true);
+        RefreshCandidatePageUiLate();
     if (!merge)
         CloudTranslation::RequestMisses(std::move(misses), generation);
 }
@@ -492,7 +512,7 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiCoalesced();
     PushUiLessCandidatesToOwner();
 }
 } // namespace FanyNamedPipe
