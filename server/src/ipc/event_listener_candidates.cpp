@@ -510,23 +510,28 @@ FanyImeIpc::CandidatePage BuildCandidatePageValue(const std::wstring &candidate_
     page.items = std::make_shared<const std::vector<WordItem>>(ui.items);
     return page;
 }
-} // namespace
 
-namespace event_listener_detail
-{
-void RefreshCandidatePageUi(bool show_window)
+FanyImeIpc::CandidatePage BuildPublishableCandidatePage()
 {
     RefreshJevSelection();
     PrepareCandidateTranslationRequest();
     const std::string candidate_string = BuildCurrentCandidatePage();
     // Host-drawn UI wants plain words (Microsoft IME style), not helpcodes.
     const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    auto page = BuildCandidatePageValue(published);
+    return BuildCandidatePageValue(published);
+}
+} // namespace
+
+namespace event_listener_detail
+{
+void RefreshCandidatePageUi(bool show_window)
+{
+    auto page = BuildPublishableCandidatePage();
     CAND_DIAG_LOGF(L"candidate UI refreshed show={} uiless={} items={} page_words={} selected={} page={} "
                    L"serialized_units={}",
                    show_window, IsUiLessMode(), Global::candidate_ui.items.size(),
                    Global::candidate_ui.page_words.size(), Global::candidate_ui.selected_index_in_page,
-                   Global::candidate_ui.page_index, candidate_string.size());
+                   Global::candidate_ui.page_index, page.snapshot ? page.snapshot->candidate_string.size() : 0);
     if (show_window)
         ShowCandidatePage(std::move(page));
     else
@@ -535,11 +540,7 @@ void RefreshCandidatePageUi(bool show_window)
 
 void RefreshCandidatePageUiCoalesced()
 {
-    RefreshJevSelection();
-    PrepareCandidateTranslationRequest();
-    const std::string candidate_string = BuildCurrentCandidatePage();
-    const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    auto page = BuildCandidatePageValue(published);
+    auto page = BuildPublishableCandidatePage();
     if (IsUiLessMode())
     {
         PublishCandidatePage(std::move(page));
@@ -550,11 +551,7 @@ void RefreshCandidatePageUiCoalesced()
 
 void RefreshCandidatePageUiLate()
 {
-    RefreshJevSelection();
-    PrepareCandidateTranslationRequest();
-    const std::string candidate_string = BuildCurrentCandidatePage();
-    const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    auto page = BuildCandidatePageValue(published);
+    auto page = BuildPublishableCandidatePage();
     if (IsUiLessMode())
     {
         PublishCandidatePage(std::move(page));
@@ -565,11 +562,7 @@ void RefreshCandidatePageUiLate()
 
 void RefreshCandidatePageUiImmediate()
 {
-    RefreshJevSelection();
-    PrepareCandidateTranslationRequest();
-    const std::string candidate_string = BuildCurrentCandidatePage();
-    const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    auto page = BuildCandidatePageValue(published);
+    auto page = BuildPublishableCandidatePage();
     if (IsUiLessMode())
     {
         PublishCandidatePage(std::move(page));
