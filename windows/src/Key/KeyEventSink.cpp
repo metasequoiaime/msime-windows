@@ -8,6 +8,8 @@
 #include "KeyRepeatGuard.h"
 #include "CapsLockInputPolicy.h"
 #include "PinyinCommitShortcutPolicy.h"
+#include "KeyCharacter.h"
+#include "PunctuationKeyClaim.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -27,6 +29,22 @@
 #include <chrono>
 #include "../../../engine/contracts/ipc_negotiation.h"
 #include "KeyEventSinkInternal.h"
+
+static_assert(KeyboardStateCodes::kShift == VK_SHIFT);
+static_assert(PunctuationKeyCodes::kMultiply == VK_MULTIPLY && PunctuationKeyCodes::kAdd == VK_ADD &&
+              PunctuationKeyCodes::kSubtract == VK_SUBTRACT && PunctuationKeyCodes::kDecimal == VK_DECIMAL &&
+              PunctuationKeyCodes::kDivide == VK_DIVIDE);
+static_assert(PunctuationKeyCodes::MainKeyboardKey('`') == VK_OEM_3 &&
+              PunctuationKeyCodes::MainKeyboardKey('-') == VK_OEM_MINUS &&
+              PunctuationKeyCodes::MainKeyboardKey('=') == VK_OEM_PLUS &&
+              PunctuationKeyCodes::MainKeyboardKey('[') == VK_OEM_4 &&
+              PunctuationKeyCodes::MainKeyboardKey(']') == VK_OEM_6 &&
+              PunctuationKeyCodes::MainKeyboardKey('\\') == VK_OEM_5 &&
+              PunctuationKeyCodes::MainKeyboardKey(';') == VK_OEM_1 &&
+              PunctuationKeyCodes::MainKeyboardKey('\'') == VK_OEM_7 &&
+              PunctuationKeyCodes::MainKeyboardKey(',') == VK_OEM_COMMA &&
+              PunctuationKeyCodes::MainKeyboardKey('.') == VK_OEM_PERIOD &&
+              PunctuationKeyCodes::MainKeyboardKey('/') == VK_OEM_2);
 #include "VimMode.h"
 
 using namespace key_event_sink_detail;
@@ -454,6 +472,7 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
     {
         pKeyState->Category = CATEGORY_NONE;
         pKeyState->Function = FUNCTION_NONE;
+        pKeyState->CustomPunctuation = {};
     }
     if (pwch)
     {
@@ -470,7 +489,8 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
     // Map virtual key to character code
     //
     BOOL isTouchKeyboardSpecialKeys = FALSE;
-    WCHAR wch = translatedWch ? *translatedWch : ConvertVKey(codeIn);
+    const KeyCharacter typedKey = _ClassifiedKeyCharacter(codeIn, translatedWch);
+    WCHAR wch = typedKey.character;
     *pCodeOut = VKeyFromVKPacketAndWchar(codeIn, wch);
     if ((wch == THIRDPARTY_NEXTPAGE) || (wch == THIRDPARTY_PREVPAGE))
     {
@@ -498,6 +518,16 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
     //
     CCompositionProcessorEngine *pCompositionProcessorEngine;
     pCompositionProcessorEngine = _pCompositionProcessorEngine;
+
+    // The custom punctuation table is read once per key, here: the pick travels with the key state to whatever
+    // produces the key's text, so a table the Worker swaps in meanwhile cannot change a key already claimed.
+    const PunctuationKeyInput punctuationInput =
+        _SyncPunctuationKeyInput(typedKey, *pCodeOut, isPunctuation, freshCompositionState);
+    const PunctuationKeyDecision punctuationKey = pCompositionProcessorEngine->DecidePunctuationKey(punctuationInput);
+    if (pKeyState)
+    {
+        pKeyState->CustomPunctuation = punctuationKey.custom;
+    }
 
     if (isOpen) // Chinese mode
     {
@@ -624,19 +654,14 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
     //
     // Punctuation
     //
-    // Numpad '/' stays the application's '/' even while main-keyboard '/' produces 、.
-    if (*pCodeOut != VK_DIVIDE && pCompositionProcessorEngine->IsPunctuation(wch))
+    if (punctuationKey.claimed)
     {
-        const CANDIDATE_MODE candidateMode = freshCompositionState ? CANDIDATE_NONE : _candidateMode;
-        if ((candidateMode == CANDIDATE_NONE || candidateMode == CANDIDATE_INCREMENTAL) && isPunctuation)
+        if (pKeyState)
         {
-            if (pKeyState)
-            {
-                pKeyState->Category = CATEGORY_COMPOSING;
-                pKeyState->Function = FUNCTION_PUNCTUATION;
-            }
-            return TRUE;
+            pKeyState->Category = CATEGORY_COMPOSING;
+            pKeyState->Function = FUNCTION_PUNCTUATION;
         }
+        return TRUE;
     }
 
     //
@@ -666,31 +691,52 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
 
 WCHAR CMetasequoiaIME::ConvertVKey(UINT code)
 {
-    //
-    // Map virtual key to scan code
-    //
-    UINT scanCode = 0;
-    scanCode = MapVirtualKey(code, 0);
+    return ConvertVKeyWithShift(code).character;
+}
 
-    //
-    // Keyboard state
-    //
+KeyCharacter CMetasequoiaIME::ConvertVKeyWithShift(UINT code)
+{
+    const UINT scanCode = MapVirtualKey(code, 0);
+
+    // GetKeyboardState is the state as of the key message being handled, so the character and the Shift bit read
+    // from this one copy always agree; GetAsyncKeyState would be the physical state by the time the host got here.
     BYTE abKbdState[256] = {'\0'};
     if (!GetKeyboardState(abKbdState))
     {
-        return 0;
+        return {};
     }
 
-    //
-    // Map virtual key to character code
-    //
-    WCHAR wch = '\0';
-    if (ToUnicode(code, scanCode, abKbdState, &wch, 1, 0) == 1)
+    return ReadKeyCharacter(abKbdState, [code, scanCode](const unsigned char(&state)[256]) {
+        WCHAR wch = '\0';
+        return ToUnicode(code, scanCode, state, &wch, 1, 0) == 1 ? wch : WCHAR(0);
+    });
+}
+
+KeyCharacter CMetasequoiaIME::_ClassifiedKeyCharacter(UINT code, _In_opt_ const WCHAR *translatedWch)
+{
+    if (translatedWch == nullptr)
     {
-        return wch;
+        return ConvertVKeyWithShift(code);
     }
+    // GetKeyState answers from the same message-synchronous state GetKeyboardState copies.
+    return KeyCharacter{*translatedWch, (GetKeyState(VK_SHIFT) & 0x8000) != 0};
+}
 
-    return 0;
+PunctuationKeyInput CMetasequoiaIME::_SyncPunctuationKeyInput(const KeyCharacter &key, UINT virtualKey,
+                                                              BOOL punctuationOpen, bool freshCompositionState)
+{
+    const CANDIDATE_MODE candidateMode = freshCompositionState ? CANDIDATE_NONE : _candidateMode;
+    PunctuationKeyInput input;
+    input.character = key.character;
+    input.virtualKey = virtualKey;
+    input.shiftDown = key.shiftDown;
+    input.punctuationOpen = punctuationOpen != FALSE;
+    input.compositionActive =
+        !freshCompositionState && (_IsComposing() || _pCompositionProcessorEngine->GetVirtualKeyLength() > 0);
+    input.candidateListShown = candidateMode != CANDIDATE_NONE;
+    input.createWordPending = !freshCompositionState && !GlobalIme::word_for_creating_word.empty();
+    input.candidateListRejectsPunctuation = candidateMode != CANDIDATE_NONE && candidateMode != CANDIDATE_INCREMENTAL;
+    return input;
 }
 
 //+---------------------------------------------------------------------------
@@ -1122,7 +1168,8 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
              probeState.Function == FUNCTION_SMART_PUNCTUATION_REVERT))
         {
             *pIsEaten = TRUE;
-            _RequestSmartPunctuationEditSession(pContext, probeWch, probeState.Function, expectedFocusGeneration);
+            _RequestSmartPunctuationEditSession(pContext, probeWch, probeState.Function, probeState.CustomPunctuation,
+                                                expectedFocusGeneration);
             return KeyDownDispatchResult::Complete;
         }
     }
@@ -1223,7 +1270,8 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
     if (*pIsEaten && (KeystrokeState.Function == FUNCTION_SMART_PUNCTUATION_CONVERT ||
                       KeystrokeState.Function == FUNCTION_SMART_PUNCTUATION_REVERT))
     {
-        _RequestSmartPunctuationEditSession(pContext, wch, KeystrokeState.Function, expectedFocusGeneration);
+        _RequestSmartPunctuationEditSession(pContext, wch, KeystrokeState.Function, KeystrokeState.CustomPunctuation,
+                                            expectedFocusGeneration);
         if (deferredReplayToken != 0)
         {
             _CompleteDeferredKeyReplay(deferredReplayToken);
@@ -1478,14 +1526,16 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
              KeystrokeState.Function == FUNCTION_SERVER_COMPOSITION_REWRITE) &&
             _msgWndHandle)
         {
-            _PostAsyncKeyRequest(WM_AsyncServerCandidateKey, code, wch, requestId, {}, 0, 0, deferredReplayToken);
+            _PostAsyncKeyRequest(WM_AsyncServerCandidateKey, code, wch, requestId, {}, 0, 0, deferredReplayToken,
+                                 FUNCTION_FINALIZE_CANDIDATELIST, KeystrokeState.CustomPunctuation);
             return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
                                             : KeyDownDispatchResult::Complete;
         }
 
         if (KeystrokeState.Function == FUNCTION_CYCLE_INPUT_MODE && _msgWndHandle)
         {
-            _PostAsyncKeyRequest(WM_AsyncCycleInputMode, code, wch, requestId, {}, 0, 0, deferredReplayToken);
+            _PostAsyncKeyRequest(WM_AsyncCycleInputMode, code, wch, requestId, {}, 0, 0, deferredReplayToken,
+                                 FUNCTION_FINALIZE_CANDIDATELIST, KeystrokeState.CustomPunctuation);
             return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
                                             : KeyDownDispatchResult::Complete;
         }
@@ -1505,7 +1555,8 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
         if ((finalizeKey || convertKey) && _msgWndHandle)
         {
             _PostAsyncKeyRequest(WM_AsyncFinalizeCandidate, code, wch, requestId, {}, 0, 0, deferredReplayToken,
-                                 finalizeKey ? KeystrokeState.Function : FUNCTION_FINALIZE_CANDIDATELIST);
+                                 finalizeKey ? KeystrokeState.Function : FUNCTION_FINALIZE_CANDIDATELIST,
+                                 KeystrokeState.CustomPunctuation);
             return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
                                             : KeyDownDispatchResult::Complete;
         }
@@ -1543,18 +1594,20 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
             }
             else
             {
-                const WCHAR *punctuation = _pCompositionProcessorEngine->GetPunctuation(wch);
-                punctuationCommitText = punctuation ? punctuation : L"";
+                punctuationCommitText =
+                    _pCompositionProcessorEngine->GetPunctuation(wch, KeystrokeState.CustomPunctuation);
             }
             _PostAsyncKeyRequest(WM_AsyncPunctuationCommit, code, wch, requestId, std::move(punctuationCommitText), 0,
-                                 0, deferredReplayToken);
+                                 0, deferredReplayToken, FUNCTION_FINALIZE_CANDIDATELIST,
+                                 KeystrokeState.CustomPunctuation);
             return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
                                             : KeyDownDispatchResult::Complete;
         }
 
         if (KeystrokeState.Function == FUNCTION_SELECT_BY_NUMBER && _msgWndHandle)
         {
-            _PostAsyncKeyRequest(WM_AsyncNumberCandidateCommit, code, wch, requestId, {}, 0, 0, deferredReplayToken);
+            _PostAsyncKeyRequest(WM_AsyncNumberCandidateCommit, code, wch, requestId, {}, 0, 0, deferredReplayToken,
+                                 FUNCTION_FINALIZE_CANDIDATELIST, KeystrokeState.CustomPunctuation);
             return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
                                             : KeyDownDispatchResult::Complete;
         }

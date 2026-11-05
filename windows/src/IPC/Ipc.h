@@ -3,6 +3,7 @@
 #include "KeyEventSendResult.h"
 #include "CapsLockPunctuationPolicy.h"
 #include "VoiceCompositionPipe.h"
+#include "PunctuationKeyMap.h"
 #include <Windows.h>
 #include <atomic>
 #include <cstddef>
@@ -298,6 +299,14 @@ inline std::atomic_bool PairedPunctuationEnabled{true};
 // 中文标点下出顿号的键，FanyImeEnumerationComma::kBackslash / kSlash 的组合。Server 连上之前（以及不发这个
 // 消息的旧 Server）保持历史行为：只有 \。规则见 engine/contracts/enumeration_comma.h。
 inline std::atomic<unsigned> EnumerationCommaKeys{FanyImeEnumerationComma::kLegacyKeys};
+// 中文标点状态下的自定义标点（Server 发 CustomPunctuationChanged）。Server 连上之前与不发这个消息的旧 Server
+// 都是空表，按键照默认映射。规则见 engine/contracts/custom_punctuation.h。常量初始化，所以这个函数内 static
+// 不带守卫位、也不登记析构，/Zc:threadSafeInit- 下几条线程同时第一次调用也安全。
+inline CustomPunctuationStore &CustomPunctuationTable()
+{
+    static CustomPunctuationStore store;
+    return store;
+}
 // 横排候选时左右方向键移动高亮（Server 发 HorizontalArrowSelectionChanged）。开着时候选态下的左右键交给 Server
 // 决定移高亮还是移光标，TSF 只应用回复；Server 连上之前和旧 Server 都是关，左右键照旧本地移光标。
 inline std::atomic_bool HorizontalArrowSelectionEnabled{false};

@@ -93,6 +93,14 @@ class TextBox : public Visual
     // Replaces the text without reporting it through the text-changed handler: that
     // handler is for edits the user makes.
     void SetText(const std::wstring &text);
+    // Selects the whole text, so the next character typed replaces it.
+    void SelectAll();
+    // Collapses the selection to a caret before the first character, which scrolls a
+    // single-line box back to the start of its text.
+    void MoveCaretToStart();
+    // Selection as character offsets; equal when it is a caret.
+    size_t GetSelectionStart() const;
+    size_t GetSelectionEnd() const;
     void SetPasswordMode(bool password);
     void SetMultiline(bool multiline);
     void SetEnabled(bool enabled);

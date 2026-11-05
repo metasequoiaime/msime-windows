@@ -345,3 +345,171 @@ TEST_CASE(settings_dropdown_presses_on_the_menu_do_not_reach_a_text_box_beneath)
     scene.harness.Click(scene.RowX(), scene.RowCentre(3, scroll));
     REQUIRE(scene.committed == std::vector<size_t>{12});
 }
+
+namespace
+{
+// A searchable dropdown showing Option 12.
+DropdownScene &SearchShowingTwelve()
+{
+    auto *scene = new DropdownScene(96.0f, 20, true);
+    scene->dropdown->SetValue("v12");
+    scene->harness.Layout();
+    REQUIRE(scene->dropdown->CurrentLabel() == L"Option 12");
+    return *scene;
+}
+
+// "7" alone matches Option 7 and Option 17; "7" typed into "Option 12" matches nothing.
+void TypeSevenAndPickTheFirstRow(DropdownScene &scene)
+{
+    scene.harness.Type(L'7');
+    scene.FindMenu();
+    scene.harness.Click(scene.RowX(), scene.RowCentre(0, 0.0f));
+}
+
+void ClickTheBox(DropdownScene &scene)
+{
+    const msimeui::RectF toggle = scene.dropdown->GetBounds();
+    scene.harness.Click(toggle.x + 20.0f, toggle.y + toggle.height * 0.5f);
+}
+
+// The search box, found where a click on the dropdown lands.
+msimeui::TextBox &SearchBox(DropdownScene &scene)
+{
+    const msimeui::RectF toggle = scene.dropdown->GetBounds();
+    auto *box =
+        dynamic_cast<msimeui::TextBox *>(scene.harness.VisualAt(toggle.x + 20.0f, toggle.y + toggle.height * 0.5f));
+    REQUIRE(box != nullptr);
+    return *box;
+}
+
+// The box shows `text`, all of it selected.
+void RequireAllSelected(DropdownScene &scene, const std::wstring &text)
+{
+    const msimeui::TextBox &box = SearchBox(scene);
+    REQUIRE(box.GetText() == text);
+    REQUIRE(box.GetSelectionStart() == 0);
+    REQUIRE(box.GetSelectionEnd() == text.size());
+}
+
+// The box shows `text` with a caret before its first character and no selection. A caret there
+// also scrolls a long label back to its start; the test window never lays the text out (that
+// waits for the first paint), so the scroll itself is not observable here.
+void RequireShownFromStart(DropdownScene &scene, const std::wstring &text)
+{
+    const msimeui::TextBox &box = SearchBox(scene);
+    REQUIRE(box.GetText() == text);
+    REQUIRE(box.GetSelectionStart() == 0);
+    REQUIRE(box.GetSelectionEnd() == 0);
+}
+} // namespace
+
+TEST_CASE(settings_dropdown_typing_into_an_opened_search_replaces_the_shown_value)
+{
+    // The test window gets its keyboard focus after the click, so the box is focused last.
+    DropdownScene &late = SearchShowingTwelve();
+    RequireShownFromStart(late, L"Option 12");
+    late.OpenSearch();
+    RequireAllSelected(late, L"Option 12");
+    TypeSevenAndPickTheFirstRow(late);
+    REQUIRE(late.committed == std::vector<size_t>{7});
+
+    // In a real window the focus arrives first and the press and release on the box follow it.
+    // The test window cannot deliver the focus inside the click, so a second click right after
+    // the box opened stands in for that press: it leaves the text selected.
+    DropdownScene &pressed = SearchShowingTwelve();
+    pressed.OpenSearch();
+    ClickTheBox(pressed);
+    RequireAllSelected(pressed, L"Option 12");
+    TypeSevenAndPickTheFirstRow(pressed);
+    REQUIRE(pressed.committed == std::vector<size_t>{7});
+}
+
+TEST_CASE(settings_dropdown_search_keeps_the_selection_for_one_press_only)
+{
+    DropdownScene &scene = SearchShowingTwelve();
+    scene.OpenSearch();
+    // The first press stands in for the one that brought the focus; the next one places the caret,
+    // so the 7 goes into the text instead of replacing it.
+    ClickTheBox(scene);
+    ClickTheBox(scene);
+    const msimeui::TextBox &box = SearchBox(scene);
+    REQUIRE(box.GetSelectionStart() == box.GetSelectionEnd());
+    scene.harness.Type(L'7');
+    REQUIRE(SearchBox(scene).GetText().size() == std::wstring(L"Option 12").size() + 1);
+}
+
+TEST_CASE(settings_dropdown_search_places_the_caret_after_the_window_regains_the_focus)
+{
+    DropdownScene &scene = SearchShowingTwelve();
+    scene.OpenSearch();
+    // A press on the box closes the menu and leaves the box focused.
+    ClickTheBox(scene);
+    // The window loses and regains the focus: the menu opens again with the text selected, and no
+    // press comes with it. The pointer then moves onto the box before the user clicks.
+    scene.harness.Window().DispatchImportedMessage(WM_KILLFOCUS, 0, 0);
+    scene.harness.GiveWindowKeyboardFocus();
+    RequireAllSelected(scene, L"Option 12");
+    const msimeui::RectF toggle = scene.dropdown->GetBounds();
+    const POINT over = scene.harness.Pixels(toggle.x + 24.0f, toggle.y + toggle.height * 0.5f);
+    scene.harness.Window().DispatchImportedMessage(WM_MOUSEMOVE, 0, MAKELPARAM(over.x, over.y));
+    ClickTheBox(scene);
+    const msimeui::TextBox &box = SearchBox(scene);
+    REQUIRE(box.GetSelectionStart() == box.GetSelectionEnd());
+}
+
+TEST_CASE(settings_dropdown_opening_the_search_without_typing_keeps_the_value)
+{
+    DropdownScene &escaped = SearchShowingTwelve();
+    escaped.OpenSearch();
+    escaped.harness.Key(VK_ESCAPE);
+    REQUIRE(escaped.committed.empty());
+    REQUIRE(escaped.dropdown->GetValue() == "v12");
+    REQUIRE(escaped.dropdown->CurrentLabel() == L"Option 12");
+    RequireShownFromStart(escaped, L"Option 12");
+
+    DropdownScene &clickedAway = SearchShowingTwelve();
+    clickedAway.OpenSearch();
+    clickedAway.harness.Click(20.0f, 20.0f);
+    REQUIRE(!clickedAway.MenuIsOpen());
+    REQUIRE(clickedAway.committed.empty());
+    REQUIRE(clickedAway.dropdown->GetValue() == "v12");
+    REQUIRE(clickedAway.dropdown->CurrentLabel() == L"Option 12");
+    RequireShownFromStart(clickedAway, L"Option 12");
+}
+
+namespace
+{
+// An opened searchable dropdown of three options showing Option 1, its label all selected. Three
+// options keep every row of the menu in view.
+DropdownScene &OpenedShowingOneOfThree()
+{
+    auto *scene = new DropdownScene(96.0f, 3, true, false);
+    scene->dropdown->SetValue("v1");
+    scene->harness.Layout();
+    RequireShownFromStart(*scene, L"Option 1");
+    scene->OpenSearch();
+    RequireAllSelected(*scene, L"Option 1");
+    return *scene;
+}
+} // namespace
+
+TEST_CASE(settings_dropdown_search_left_without_typing_drops_the_selection)
+{
+    DropdownScene &clickedAway = OpenedShowingOneOfThree();
+    clickedAway.harness.Click(20.0f, 20.0f);
+    RequireShownFromStart(clickedAway, L"Option 1");
+
+    DropdownScene &escaped = OpenedShowingOneOfThree();
+    escaped.harness.Key(VK_ESCAPE);
+    RequireShownFromStart(escaped, L"Option 1");
+
+    DropdownScene &pickedAgain = OpenedShowingOneOfThree();
+    pickedAgain.harness.Click(pickedAgain.RowX(), pickedAgain.RowCentre(1, 0.0f));
+    REQUIRE(pickedAgain.committed.empty());
+    REQUIRE(pickedAgain.dropdown->GetValue() == "v1");
+    RequireShownFromStart(pickedAgain, L"Option 1");
+
+    DropdownScene &windowLeft = OpenedShowingOneOfThree();
+    windowLeft.harness.Window().DispatchImportedMessage(WM_KILLFOCUS, 0, 0);
+    RequireShownFromStart(windowLeft, L"Option 1");
+}

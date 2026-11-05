@@ -687,6 +687,15 @@ bool GetConfiguredEnumerationCommaSlashEnabled();
 bool SetConfiguredEnumerationCommaSlashEnabled(bool enabled);
 // Worker payload for EnumerationCommaKeysChanged (FanyImeEnumerationComma::PayloadFor).
 std::wstring FormatEnumerationCommaWorkerPayload();
+// 自定义标点：总开关 input.custom_punctuation（出厂关），映射 input.custom_punctuation_map（字符串数组，出厂空）。
+// 元素格式与触发键见 engine/contracts/custom_punctuation.h。读配置时丢掉不合法的元素，同一触发键以先出现的为准。
+bool GetConfiguredCustomPunctuationEnabled();
+bool SetConfiguredCustomPunctuationEnabled(bool enabled);
+std::vector<std::string> GetConfiguredCustomPunctuationMap();
+// 有不合法的元素或两个元素触发键相同时整组不收，返回 false，配置不动。
+bool SetConfiguredCustomPunctuationMap(const std::vector<std::string> &entries);
+// Worker payload for CustomPunctuationChanged (FanyImeCustomPunctuation::FormatPayload)：总开关关着时为空串。
+std::wstring FormatCustomPunctuationWorkerPayload();
 // "follow" | "chinese" | "english" — punctuation stays put when switching CN/EN.
 const std::string &GetConfiguredPunctuationLock();
 bool SetConfiguredPunctuationLock(const std::string &lock);

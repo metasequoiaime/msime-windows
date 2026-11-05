@@ -10,6 +10,8 @@
 #include "KeyFocusRecovery.h"
 #include "KeyRepeatGuard.h"
 #include "CapsLockInputPolicy.h"
+#include "KeyCharacter.h"
+#include "PunctuationKeyClaim.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -33,12 +35,7 @@
 
 using namespace key_event_sink_detail;
 
-namespace
-{
-// Room for a fast burst typed while a slow edit session or a focus session
-// activation holds the FIFO. A key that does not fit is not eaten.
-constexpr size_t MAX_DEFERRED_KEY_DOWN_COUNT = static_cast<size_t>(MAX_PINYIN_LENGTH) * 2 + 32;
-
+// The composition state queued keys are classified against.
 struct DeferredShadowState
 {
     bool imeOpen = false;
@@ -54,6 +51,12 @@ struct DeferredShadowState
     // The projection is then discarded and the next key re-reads reality.
     bool projectionValid = true;
 };
+
+namespace
+{
+// Room for a fast burst typed while a slow edit session or a focus session
+// activation holds the FIFO. A key that does not fit is not eaten.
+constexpr size_t MAX_DEFERRED_KEY_DOWN_COUNT = static_cast<size_t>(MAX_PINYIN_LENGTH) * 2 + 32;
 
 bool IsBareModifierKey(UINT code)
 {
@@ -413,6 +416,25 @@ void CMetasequoiaIME::_ApplyDeferredPreservedKeyProjection(REFGUID preservedKey)
     }
 }
 
+PunctuationKeyInput CMetasequoiaIME::_DeferredPunctuationKeyInput(const KeyCharacter &key, UINT virtualKey,
+                                                                  const DeferredShadowState &shadow)
+{
+    // "Input in progress" is the projected buffer, a live candidate list or the #35 retraction window; without a
+    // projection the real state decides.
+    PunctuationKeyInput input;
+    input.character = key.character;
+    input.virtualKey = virtualKey;
+    input.shiftDown = key.shiftDown;
+    input.punctuationOpen = shadow.punctuationOpen;
+    input.compositionActive = shadow.inputLength != 0 || (!_deferredKeyProjectionValid && _IsComposing() != FALSE);
+    input.candidateListShown =
+        shadow.candidateActive || (!_deferredKeyProjectionValid && _candidateMode != CANDIDATE_NONE);
+    input.createWordPending = !GlobalIme::word_for_creating_word.empty();
+    input.candidateListRejectsPunctuation = shadow.candidateActive;
+    input.defaultKeysIgnoreCandidateList = true;
+    return input;
+}
+
 bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM wParam, LPARAM lParam,
                                                _In_opt_ const WCHAR *translatedWch, _In_opt_ const UINT *modifiersDown,
                                                _Out_ WCHAR *classifiedWch, _Out_ UINT *classifiedCode,
@@ -424,10 +446,12 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
         return false;
     }
 
-    *classifiedWch = translatedWch ? *translatedWch : ConvertVKey(static_cast<UINT>(wParam));
+    const KeyCharacter typedKey = _ClassifiedKeyCharacter(static_cast<UINT>(wParam), translatedWch);
+    *classifiedWch = typedKey.character;
     *classifiedCode = VKeyFromVKPacketAndWchar(static_cast<UINT>(wParam), *classifiedWch);
     keyState->Category = CATEGORY_NONE;
     keyState->Function = FUNCTION_NONE;
+    keyState->CustomPunctuation = {};
 
     const UINT capturedModifiers = modifiersDown ? *modifiersDown : CaptureIpcModifiers();
     const bool projectedImeOpen = _deferredKeyProjectionValid
@@ -537,6 +561,12 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
         return true;
     };
 
+    // Same single read of the custom punctuation table as _IsKeyEaten, against the projected state: the pick
+    // is queued with the key and used when it replays.
+    const PunctuationKeyInput punctuationInput = _DeferredPunctuationKeyInput(typedKey, *classifiedCode, shadow);
+    const PunctuationKeyDecision punctuationKey = _pCompositionProcessorEngine->DecidePunctuationKey(punctuationInput);
+    keyState->CustomPunctuation = punctuationKey.custom;
+
     // Backspace hold guard (#347): inside a hold that began in composition, a
     // repeat that arrives after the projected composition is gone must still be
     // claimed. Handing it back here would make it application text and delete
@@ -623,14 +653,8 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
             isInputKey = CCompositionProcessorEngine::IsVModeInputKey(*classifiedWch, shadow.rawInput.data(),
                                                                       shadow.rawInput.size(), shadow.caret);
         }
-        // Same "input in progress" as _IsKeyEaten: a live candidate list or the
-        // #35 retraction window keeps the key IME-owned even with an empty
-        // projected buffer, and without a projection the real state decides.
-        const bool inputInProgress =
-            shadow.inputLength != 0 || shadow.candidateActive || !GlobalIme::word_for_creating_word.empty() ||
-            (!_deferredKeyProjectionValid && (_IsComposing() != FALSE || _candidateMode != CANDIDATE_NONE));
-        if (ShouldPassCapsLockAlphabet((GetKeyState(VK_CAPITAL) & 0x0001) != 0, inputInProgress, *classifiedCode,
-                                       *classifiedWch))
+        if (ShouldPassCapsLockAlphabet((GetKeyState(VK_CAPITAL) & 0x0001) != 0, InputInProgress(punctuationInput),
+                                       *classifiedCode, *classifiedWch))
         {
             // Match the normal fresh-composition path for CapsLock with or without Shift
             isInputKey = false;
@@ -719,9 +743,7 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
         return false;
     }
 
-    // Same numpad '/' exception as _IsKeyEaten.
-    if (shadow.punctuationOpen && *classifiedCode != VK_DIVIDE &&
-        _pCompositionProcessorEngine->IsPunctuation(*classifiedWch))
+    if (punctuationKey.claimed)
     {
         return setKeyState(CATEGORY_COMPOSING, FUNCTION_PUNCTUATION);
     }

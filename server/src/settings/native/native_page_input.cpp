@@ -1,7 +1,9 @@
+#include "settings/native/native_page_custom_punctuation.h"
 #include "settings/native/native_page_voice_fields.h"
 #include "settings/native/native_settings_pages.h"
 
 #include "config/ai_provider.h"
+#include "utils/common_utils.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Fonts.h"
@@ -1964,6 +1966,9 @@ VisualPtr BuildInputPage(PageContext &context)
 
     page.AddSection(MakeRow(L"成对标点自动补全", L"输入左侧符号时自动补全右侧符号，并将光标置于中间",
                             Toggle(context, "input.paired_punctuation")));
+    page.AddSection(BuildCustomPunctuationSection(context, []() {
+        return LoadPunctuationSymbolCatalog(std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"others.db");
+    }));
     page.AddSection(MakeRow(
         L"默认中英文", L"",
         BindDropdown(context, "input.default_ime_mode", Options({{"chinese", L"中文"}, {"english", L"英文"}}))));

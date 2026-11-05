@@ -26,7 +26,8 @@ typedef struct KeyHandlerEditSessionDTO
     KeyHandlerEditSessionDTO::KeyHandlerEditSessionDTO(TfEditCookie tFEC, _In_ ITfContext *pTfContext, UINT virualCode,
                                                        WCHAR inputChar, KEYSTROKE_FUNCTION arrowKeyFunction,
                                                        uint64_t pipeRequestId,
-                                                       const std::wstring &sessionPrefetchedText)
+                                                       const std::wstring &sessionPrefetchedText,
+                                                       const CustomPunctuationPick &keyCustomPunctuation)
     {
         ec = tFEC;
         pContext = pTfContext;
@@ -35,6 +36,7 @@ typedef struct KeyHandlerEditSessionDTO
         arrowKey = arrowKeyFunction;
         requestId = pipeRequestId;
         prefetchedText = sessionPrefetchedText;
+        customPunctuation = keyCustomPunctuation;
     }
 
     TfEditCookie ec;
@@ -44,6 +46,7 @@ typedef struct KeyHandlerEditSessionDTO
     KEYSTROKE_FUNCTION arrowKey;
     uint64_t requestId;
     std::wstring prefetchedText;
+    CustomPunctuationPick customPunctuation;
 } KeyHandlerEditSessionDTO;
 
 class CKeyStateCategory
