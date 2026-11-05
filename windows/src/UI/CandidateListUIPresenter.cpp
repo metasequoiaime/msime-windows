@@ -31,6 +31,12 @@ const int MOVETO_BOTTOM = -1;
 //
 // _HandleCandidateFinalize
 //
+// 候选上屏的唯一入口：空格、数字键、鼠标点选都经 CKeyStateCandidate 的
+// HandleKeyFinalizeCandidatelist / HandleKeyConvert 走到这里。文本按下面的顺序落盘：
+//   组合存在     → _InsertTextToComposition（整段写进预编辑，_HandleCompleteCommitFirst 结束组合）
+//   组合不存在   → _AddComposingAndChar
+//   含换行的候选 → _CommitMultilineCandidate（清空并结束组合后逐行写文档）
+//
 //----------------------------------------------------------------------------
 
 HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfContext *pContext, uint64_t requestId,
@@ -51,6 +57,11 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
     {
         if (!pendingCommitCandidate.empty())
         {
+            if (pendingCommitCandidate.find(L'\n') != std::wstring::npos)
+            {
+                // 多行快捷短语：整段塞进组合后 Chromium 系宿主（QQ、Electron）会重排内容。
+                return _CommitMultilineCandidate(ec, pContext, pendingCommitCandidate);
+            }
             candidateString.Set(pendingCommitCandidate.c_str(), pendingCommitCandidate.length());
             hr = _InsertTextToComposition(ec, pContext, &candidateString);
             if (FAILED(hr))
@@ -104,6 +115,10 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
         {
             GlobalIme::word_for_creating_word = L"";
             GlobalIme::pending_create_word_preedit.clear();
+            if (serverCandidateString.find(L'\n') != std::wstring::npos)
+            {
+                return _CommitMultilineCandidate(ec, pContext, serverCandidateString);
+            }
             candidateString.Set(serverCandidateString.c_str(), serverCandidateString.length());
             hr = _InsertTextToComposition(ec, pContext, &candidateString);
             if (FAILED(hr))

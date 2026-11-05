@@ -147,6 +147,8 @@ session 直接消费；session 自己那次读（`TryReadCommitReplyFromServerPi
   安装/升级重新注册会覆盖名称，不读它用户的选择就静默丢了。开启时 `ActivateEx` 也不再对这些游戏忽略 UI-less 声明。
 - 生产日志不得记录用户原始按键、预编辑、候选词或提交文本。性能与 IPC 诊断记录耗时、请求 ID、
   token、状态和错误码即可；调试日志也应尽量避免持久化用户输入。
+- 诊断日志在 `%LOCALAPPDATA%\metasequoiaime\logs\`（`水杉IME诊断日志-tsf-*.log`，Server 每次重启新建），
+  开关是 `Global::TsfDiagnosticLogEnabled`；字段说明见 [docs/windows-tsf-dev.md](../docs/windows-tsf-dev.md)。
 
 ## 生成文件与配置真源
 
@@ -173,6 +175,8 @@ clang-format -i .\src\Path\Changed.cpp .\src\Path\Changed.h
 注意：新增的代码尽量保持这个风格就可以了，不要去尝试格式化原有的代码。不严格要求新增代码保持这个风格。
 
 ## 构建与验证
+
+本地快速验证 DLL 改动、查看诊断日志见 [docs/windows-tsf-dev.md](../docs/windows-tsf-dev.md)。
 
 环境：Windows、Visual Studio 2026、CMake 3.25+、vcpkg、Python 3.10+；首次准备：
 

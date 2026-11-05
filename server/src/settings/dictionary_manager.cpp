@@ -59,6 +59,12 @@ json::object Result(bool ok, std::string message)
     return {{"ok", ok}, {"message", std::move(message)}, {"rows", json::array{}}};
 }
 
+// 快捷短语允许首尾空行（模板类短语常以空行结尾），但整条不能只有空白。
+bool IsBlankQuickPhrase(const std::string &phrase)
+{
+    return phrase.find_first_not_of(" \t\r\n") == std::string::npos;
+}
+
 void NotifyImeServerClearDictCache()
 {
     if (const HWND hwnd = FindWindowW(L"metasequoiaime_windows", L"metaseuqoiaimecandwnd"))
@@ -291,7 +297,9 @@ json::object ExportUserDictionary(const std::string &dictionary)
     {
         const auto text = [&](int column) {
             const unsigned char *value = sqlite3_column_text(stmt.get(), column);
-            return SanitizeExportField(value ? reinterpret_cast<const char *>(value) : "");
+            const std::string raw = value ? reinterpret_cast<const char *>(value) : "";
+            // 快捷短语的换行和 Tab 交给 EscapeQuickPhraseField 转义，先压成空格就再也救不回来了。
+            return dictionary == "quick" ? raw : SanitizeExportField(raw);
         };
         const std::string key = text(0);
         const std::string value = text(1);
@@ -303,7 +311,7 @@ json::object ExportUserDictionary(const std::string &dictionary)
         if (dictionary == "quanpin" || dictionary == "wubi")
             content << value << '\t' << key << '\t' << weight << '\n';
         else if (dictionary == "quick")
-            content << key << '\t' << value << '\t' << weight << '\n';
+            content << key << '\t' << Validation::EscapeQuickPhraseField(value) << '\t' << weight << '\n';
         else
             content << key << '\t' << display << '\t' << weight << '\n';
         ++count;
@@ -1615,15 +1623,16 @@ json::object ImportQuickPhrase(const json::object &request)
         }
         if (fields.size() != 2 && fields.size() != 3)
         {
-            append_error(line_no, "格式错误，应为：编码<Tab>短语<Tab>权重");
+            append_error(line_no, "格式错误，应为：编码<Tab>短语<Tab>权重；短语内的换行请写成 \\n");
             continue;
         }
 
         std::string code = fields[0];
-        const std::string phrase = fields[1];
+        const std::string phrase =
+            Validation::NormalizeQuickPhraseText(Validation::UnescapeQuickPhraseField(fields[1]));
         std::transform(code.begin(), code.end(), code.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (!valid_code(code) || phrase.empty())
+        if (!valid_code(code) || IsBlankQuickPhrase(phrase))
         {
             append_error(line_no, "编码只能包含英文字母，短语不能为空");
             continue;
@@ -1713,7 +1722,7 @@ json::object HandleQuickPhrase(const json::object &request)
     if (action == "import")
         return ImportQuickPhrase(request);
     std::string code = StringValue(request, "code");
-    const std::string phrase = StringValue(request, "word");
+    std::string phrase = StringValue(request, "word");
     const int weight = (std::max)(0, IntValue(request, "weight", 10));
     std::transform(code.begin(), code.end(), code.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
@@ -1740,7 +1749,9 @@ json::object HandleQuickPhrase(const json::object &request)
         return Paging::Read(stmt.get(), request);
     }
 
-    if (!valid_code(code) || phrase.empty())
+    if (action == "create" || action == "update")
+        phrase = Validation::NormalizeQuickPhraseText(phrase);
+    if (!valid_code(code) || IsBlankQuickPhrase(phrase))
         return Result(false, "编码只能包含英文字母，短语不能为空");
     if ((action == "create" || action == "update") && !Validation::QuickPhraseFitsNamedPipe(phrase))
         return Result(false, "快捷短语不能超过 199 个 wchar 字符");

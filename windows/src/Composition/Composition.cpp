@@ -1501,6 +1501,68 @@ HRESULT CMetasequoiaIME::_AddCharAndFinalize(TfEditCookie ec, _In_ ITfContext *p
     return hr;
 }
 
+HRESULT CMetasequoiaIME::_CommitMultilineCandidate(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text)
+{
+    // 组合里的预编辑不是要上屏的内容：先清空并结束组合，剩下的就是普通的文档写入。
+    if (_pComposition != nullptr)
+    {
+        ITfRange *pRangeComposition = nullptr;
+        if (SUCCEEDED(_pComposition->GetRange(&pRangeComposition)) && pRangeComposition != nullptr)
+        {
+            SafeRangeSetText(pRangeComposition, ec, 0, nullptr, 0);
+            pRangeComposition->Release();
+        }
+        _TerminateComposition(ec, pContext);
+    }
+
+    // 一次提交整段多行文本时，Chromium 系宿主（QQ、Electron 应用）会重排段落。逐行提交，
+    // 每行都是一次普通的单行插入，行间换行用文档约定的 CRLF。
+    HRESULT hr = S_OK;
+    size_t start = 0;
+    for (;;)
+    {
+        const size_t newline = text.find(L'\n', start);
+        const size_t end = newline == std::wstring::npos ? text.size() : newline;
+        hr = _WriteTextAtSelection(ec, pContext, text.substr(start, end - start));
+        if (FAILED(hr) || newline == std::wstring::npos)
+        {
+            break;
+        }
+        hr = _WriteTextAtSelection(ec, pContext, L"\r\n");
+        if (FAILED(hr))
+        {
+            break;
+        }
+        start = newline + 1;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        MsimeStats::QueueStatisticsEvent(MsimeStats::ClassifyText(text.c_str(), text.size()));
+    }
+    return hr;
+}
+
+HRESULT CMetasequoiaIME::_WriteTextAtSelection(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text)
+{
+    ULONG fetched = 0;
+    TF_SELECTION selection;
+    if (pContext->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched) != S_OK || fetched != 1)
+    {
+        // 多行提交拿不到选区就是失败：调用方按 FAILED 判错，绝不能报成 S_FALSE 让它当成功收尾。
+        return E_FAIL;
+    }
+
+    HRESULT hr = SafeRangeSetText(selection.range, ec, 0, text.c_str(), static_cast<LONG>(text.size()));
+    if (SUCCEEDED(hr))
+    {
+        selection.range->Collapse(ec, TF_ANCHOR_END);
+        pContext->SetSelection(ec, 1, &selection);
+    }
+    selection.range->Release();
+    return hr;
+}
+
 HRESULT CMetasequoiaIME::_InsertTextToComposition(TfEditCookie ec, _In_ ITfContext *pContext,
                                                   _In_ CStringRange *pstrAddString)
 {

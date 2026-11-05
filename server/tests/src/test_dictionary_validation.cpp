@@ -106,6 +106,41 @@ TEST_CASE(QuickPhraseValidationMatchesNamedPipeWcharCapacity)
     REQUIRE(!SettingsDictionary::Validation::QuickPhraseFitsNamedPipe(std::string(198, 'a') + emoji));
 }
 
+TEST_CASE(QuickPhraseNormalizesEveryNewlineFlavorToLf)
+{
+    using SettingsDictionary::Validation::NormalizeQuickPhraseText;
+    REQUIRE_EQ(NormalizeQuickPhraseText("> [!tip]"), std::string("> [!tip]"));
+    REQUIRE_EQ(NormalizeQuickPhraseText("a\r\nb"), std::string("a\nb"));
+    REQUIRE_EQ(NormalizeQuickPhraseText("a\rb"), std::string("a\nb"));
+    REQUIRE_EQ(NormalizeQuickPhraseText("a\nb"), std::string("a\nb"));
+    // 结尾空行是模板类短语的正常写法，不能被折掉。
+    REQUIRE_EQ(NormalizeQuickPhraseText("a\r\n\r\n"), std::string("a\n\n"));
+}
+
+TEST_CASE(QuickPhraseImportExportEscapesRoundTrip)
+{
+    using SettingsDictionary::Validation::EscapeQuickPhraseField;
+    using SettingsDictionary::Validation::UnescapeQuickPhraseField;
+
+    const std::string phrase = "> [!tip]\n\nC:\\path\tcol";
+    const std::string escaped = EscapeQuickPhraseField(phrase);
+    REQUIRE_EQ(escaped, std::string("> [!tip]\\n\\nC:\\\\path\\tcol"));
+    REQUIRE(escaped.find('\n') == std::string::npos);
+    REQUIRE(escaped.find('\t') == std::string::npos);
+    REQUIRE_EQ(UnescapeQuickPhraseField(escaped), phrase);
+
+    // 手写文件里的正则和路径不能被当成转义吃掉。
+    REQUIRE_EQ(UnescapeQuickPhraseField("\\d+\\w"), std::string("\\d+\\w"));
+    REQUIRE_EQ(UnescapeQuickPhraseField("trailing\\"), std::string("trailing\\"));
+}
+
+TEST_CASE(QuickPhraseCapacityCountsNewlineCharacters)
+{
+    // 换行也走命名管道，每个占一个 wchar。
+    REQUIRE(SettingsDictionary::Validation::QuickPhraseFitsNamedPipe(std::string(197, 'a') + "\n\n"));
+    REQUIRE(!SettingsDictionary::Validation::QuickPhraseFitsNamedPipe(std::string(198, 'a') + "\n\n"));
+}
+
 TEST_CASE(CodedDictionaryImportRequiresTabsAndPreservesSpacesInWords)
 {
     std::string word;

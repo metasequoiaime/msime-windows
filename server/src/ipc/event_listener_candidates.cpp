@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <utility>
 #include "ipc.h"
+#include "ipc/candidate_display_text.h"
 #include "ipc/candidate_expansion_policy.h"
 #include "ipc/queried_candidate_arrangement_policy.h"
 #include "ipc/candidate_ui_owner.h"
@@ -250,7 +251,7 @@ std::wstring BuildUiLessCandidatePageW()
         {
             page += L',';
         }
-        page += ui.page_words[i];
+        page += FanyImeIpc::QuickPhraseDisplayText(ui.page_words[i]);
     }
     return page;
 }
@@ -307,7 +308,8 @@ std::string BuildCurrentCandidatePage()
         const std::string word = CandidateOutputText(item);
 
         CandidateViewItem view;
-        view.text = word;
+        // 含换行的候选用首行加 ↵ 显示（目前只有多行快捷短语）。提交与调频读 item.word，不受影响。
+        view.text = FanyImeIpc::QuickPhraseDisplayText(word);
         if (show_autocorrect_marker && !item.corrected_from.empty() && !item.jianpin_expansion)
         {
             // Correction-sourced candidates carry a light visible marker (PRD R5/AC7),
@@ -494,7 +496,8 @@ void PublishBuiltCandidatePage(const std::wstring &candidate_string)
         const size_t end = (std::min)(ui.items.size(), start + kExpandedCandidateLimit);
         snapshot->expanded_start = static_cast<int>(start);
         for (size_t i = start; i < end; ++i)
-            snapshot->expanded_words.push_back(string_to_wstring(CandidateOutputText(ui.items[i])));
+            snapshot->expanded_words.push_back(
+                string_to_wstring(FanyImeIpc::QuickPhraseDisplayText(CandidateOutputText(ui.items[i]))));
     }
     // Stamp before publishing so the UI thread can echo back exactly which page it painted.
     snapshot->generation = ++Global::candidate_page_generation;
@@ -681,7 +684,8 @@ int MoveToExpandedCandidate(int absolute_index, const std::wstring &expected_tex
     if (ui.page_size <= 0 || expected_text.empty())
         return -1;
     const auto matches = [&](size_t index) {
-        return string_to_wstring(CandidateOutputText(ui.items[index])) == expected_text;
+        return string_to_wstring(FanyImeIpc::QuickPhraseDisplayText(CandidateOutputText(ui.items[index]))) ==
+               expected_text;
     };
     // 点下去之后候选可能被异步结果插队；下标对不上时按显示文字重新定位，同字取最靠前的那个。
     size_t index = static_cast<size_t>((std::max)(absolute_index, 0));

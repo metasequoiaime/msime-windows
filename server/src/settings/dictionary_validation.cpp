@@ -248,4 +248,80 @@ bool QuickPhraseFitsNamedPipe(const std::string &phrase)
         return false;
     }
 }
+
+std::string NormalizeQuickPhraseText(const std::string &text)
+{
+    std::string normalized;
+    normalized.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] != '\r')
+        {
+            normalized += text[i];
+            continue;
+        }
+        normalized += '\n';
+        if (i + 1 < text.size() && text[i + 1] == '\n')
+            ++i;
+    }
+    return normalized;
+}
+
+std::string EscapeQuickPhraseField(const std::string &text)
+{
+    std::string escaped;
+    escaped.reserve(text.size());
+    for (char ch : NormalizeQuickPhraseText(text))
+    {
+        switch (ch)
+        {
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        default:
+            escaped += ch;
+            break;
+        }
+    }
+    return escaped;
+}
+
+std::string UnescapeQuickPhraseField(const std::string &text)
+{
+    std::string unescaped;
+    unescaped.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] != '\\' || i + 1 >= text.size())
+        {
+            unescaped += text[i];
+            continue;
+        }
+        switch (text[i + 1])
+        {
+        case 'n':
+            unescaped += '\n';
+            ++i;
+            break;
+        case 't':
+            unescaped += '\t';
+            ++i;
+            break;
+        case '\\':
+            unescaped += '\\';
+            ++i;
+            break;
+        default:
+            unescaped += text[i];
+            break;
+        }
+    }
+    return unescaped;
+}
 } // namespace SettingsDictionary::Validation
