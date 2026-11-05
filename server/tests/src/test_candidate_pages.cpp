@@ -249,6 +249,22 @@ TEST_CASE(candidate_pages_uiless_commit_never_waits_for_a_paint_echo)
     REQUIRE(!choice->timed_out);
 }
 
+TEST_CASE(candidate_pages_uiless_commit_highlighted_uses_the_published_page)
+{
+    FakeClock clock;
+    FakeSurface surface;
+    surface.is_uiless = true;
+    auto pages = MakePages(clock, surface);
+
+    pages->Show(MakePage("photon", {"跑通", "炮同"}, 0, 1));
+    const auto choice = pages->CommitHighlighted();
+
+    REQUIRE(choice);
+    REQUIRE(choice->item.word == "炮同");
+    REQUIRE(choice->index_in_page == 1);
+    REQUIRE(!choice->waited);
+}
+
 TEST_CASE(candidate_pages_ignores_an_echo_older_than_the_rendered_page)
 {
     FakeClock clock;

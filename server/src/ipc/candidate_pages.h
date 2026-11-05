@@ -243,9 +243,10 @@ class CandidatePages
     std::optional<CandidateChoice> CommitHighlighted()
     {
         std::unique_lock lock(mutex_);
-        if (!rendered_ || !rendered_->snapshot)
+        const auto page = rendered_ ? rendered_ : published_;
+        if (!page || !page->snapshot)
             return std::nullopt;
-        const int index = rendered_->snapshot->selected_index_in_page;
+        const int index = page->snapshot->selected_index_in_page;
         lock.unlock();
         return Commit(index, true);
     }

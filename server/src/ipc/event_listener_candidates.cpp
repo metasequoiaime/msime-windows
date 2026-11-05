@@ -539,7 +539,13 @@ void RefreshCandidatePageUiCoalesced()
     PrepareCandidateTranslationRequest();
     const std::string candidate_string = BuildCurrentCandidatePage();
     const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    UpdateCandidatePage(BuildCandidatePageValue(published), FanyImeIpc::CandidateFreshness::Fast);
+    auto page = BuildCandidatePageValue(published);
+    if (IsUiLessMode())
+    {
+        PublishCandidatePage(std::move(page));
+        return;
+    }
+    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Fast);
 }
 
 void RefreshCandidatePageUiLate()
@@ -548,7 +554,13 @@ void RefreshCandidatePageUiLate()
     PrepareCandidateTranslationRequest();
     const std::string candidate_string = BuildCurrentCandidatePage();
     const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    UpdateCandidatePage(BuildCandidatePageValue(published), FanyImeIpc::CandidateFreshness::Late);
+    auto page = BuildCandidatePageValue(published);
+    if (IsUiLessMode())
+    {
+        PublishCandidatePage(std::move(page));
+        return;
+    }
+    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Late);
 }
 
 void RefreshCandidatePageUiImmediate()
@@ -557,7 +569,13 @@ void RefreshCandidatePageUiImmediate()
     PrepareCandidateTranslationRequest();
     const std::string candidate_string = BuildCurrentCandidatePage();
     const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    UpdateCandidatePage(BuildCandidatePageValue(published), FanyImeIpc::CandidateFreshness::Immediate);
+    auto page = BuildCandidatePageValue(published);
+    if (IsUiLessMode())
+    {
+        PublishCandidatePage(std::move(page));
+        return;
+    }
+    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Immediate);
 }
 } // namespace event_listener_detail
 
