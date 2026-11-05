@@ -96,12 +96,18 @@ class CandidatePages
     {
         std::lock_guard lock(mutex_);
         const bool input_changed = page.input != input_;
-        pending_.reset();
         if (input_changed)
         {
+            pending_.reset();
             fast_done_ = false;
             late_done_ = false;
             latched_ = false;
+        }
+        else if (pending_)
+        {
+            // A synchronous rebuild on the same input is newer than the queued enrichment page; keep the frame
+            // that is already scheduled, but let it paint this page instead of the stale one.
+            pending_->page = page;
         }
         StorePage(std::move(page));
     }
