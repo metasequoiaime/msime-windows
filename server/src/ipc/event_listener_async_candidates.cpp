@@ -12,6 +12,7 @@
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/candidate_requery_policy.h"
 #include "ipc/candidate_rescore_budget.h"
+#include "ipc/translation_page_visibility.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "global/globals.h"
@@ -24,6 +25,7 @@
 #include "english/english_ime.h"
 #include "config/ime_config.h"
 #include "mixed/mixed_candidates.h"
+#include "utils/common_utils.h"
 #include "log/candidate_diag_log.h"
 
 using namespace event_listener_detail;
@@ -353,6 +355,7 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
     // Most lookups on a new keystroke hit words the previous page already
     // glossed; repainting for them cost a full candidate frame per keystroke.
     bool glosses_changed = false;
+    std::vector<std::string> changed_keys;
     for (auto &result : results)
     {
         std::string gloss = std::move(result.gloss);
@@ -373,13 +376,17 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
                 g_candidate_translation_glosses.clear();
             g_candidate_translation_glosses[identity] = {std::move(gloss), from_dictionary};
             glosses_changed = true;
+            changed_keys.push_back(result.key);
         }
         else if (!merge)
         {
             // The authoritative lookup found nothing: drop what an earlier
             // configuration may have cached for this word.
             if (g_candidate_translation_glosses.erase(identity) > 0)
+            {
                 glosses_changed = true;
+                changed_keys.push_back(result.key);
+            }
             const bool cloud_translatable = result.direction == EnglishIme::TranslationDirection::EnglishToChinese
                                                 ? CloudTranslation::IsCloudTranslatableEnglish(result.key)
                                                 : CloudTranslation::IsCloudTranslatableChinese(result.key);
@@ -388,7 +395,14 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
         }
     }
     const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
-    if (glosses_changed && owner && IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+    std::vector<std::string> page_words;
+    page_words.reserve(Global::candidate_ui.page_words.size());
+    for (const std::wstring &word : Global::candidate_ui.page_words)
+        page_words.push_back(wstring_to_string(word));
+    const bool visible_gloss_changed =
+        page_words.empty() || FanyImeIpc::AnyTranslatedKeyOnPage(page_words, changed_keys);
+    if (glosses_changed && visible_gloss_changed && owner &&
+        IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
         RefreshCandidatePageUiLate();
     if (!merge)
         CloudTranslation::RequestMisses(std::move(misses), generation);
