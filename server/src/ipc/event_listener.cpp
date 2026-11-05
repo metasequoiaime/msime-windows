@@ -257,8 +257,8 @@ class CandidatePageSurface : public FanyImeIpc::CandidatePages::SurfacePort
     {
         if (!page.snapshot)
             return;
-        Global::PublishCandidatePageSnapshot(page.snapshot);
         Global::candidate_page_generation.store(page.generation, std::memory_order_release);
+        Global::PublishCandidatePageSnapshot(page.snapshot);
         ::WriteDataToSharedMemory(page.snapshot->candidate_string, true);
     }
 
