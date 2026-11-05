@@ -137,7 +137,7 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiImmediate();
     PushUiLessCandidatesToOwner();
 }
 
@@ -248,7 +248,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
         g_jev_word = candidate;
         g_jev_identity = identity;
         g_jev_generation = generation;
-        RefreshCandidatePageUi(true);
+        RefreshCandidatePageUiImmediate();
         PushUiLessCandidatesToOwner();
         return;
     }
@@ -280,7 +280,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiImmediate();
     PushUiLessCandidatesToOwner();
 }
 
@@ -338,7 +338,7 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
     Global::candidate_ui.selection_started = false;
     Global::candidate_ui.clear_page();
     g_dedicated_english_answer_pending = false;
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiImmediate();
     PushUiLessCandidatesToOwner();
 }
 

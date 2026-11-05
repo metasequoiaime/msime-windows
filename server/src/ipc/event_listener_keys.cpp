@@ -958,7 +958,7 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
                                                  g_r_mode_triggered))
     {
         ResetRescoreRequeryBudget();
-        CancelCandidatePresentSettle();
+        CancelCandidatePageFrames();
         g_inputSession->set_pinyin_sequence("");
         g_inputSession->set_pinyin_sequence_with_cases("");
         g_inputSession->recompute_candidates();
@@ -1114,7 +1114,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
 {
     const ScopedServerKeyLatency latency{client_id, activation_epoch, request_id};
     // 新的一键就是新的一段输入：上一段还没发布的异步定稿帧不该再抢在新首帧前面。
-    ResetCandidatePresentSettle();
+    ResetCandidatePageFrames();
     /* 先清理一下状态 */
     Global::MsgTypeToTsf = Global::DataFromServerMsgType::Normal;
     ScopedKeyStage read_packet{client_id, activation_epoch, request_id, L"handle-read-packet"};

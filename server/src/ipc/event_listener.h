@@ -64,6 +64,10 @@ void EnqueueCandidateUiAction(CandidateUiAction action, int one_based_index, int
 // 鼠标开始操作当前显示的候选页时，通知工作线程保持这批候选的顺序。界面线程调用，只记下页面
 // 代次，由工作线程在处理下一个任务前认领（见 LatchCandidateUiInteraction）。
 void NoteCandidateUiInteraction(uint64_t page_generation);
+// 候选窗实际画出了哪一代页面：界面线程在绘制完成（含去重命中）后回显，选词以它为准。
+void NoteCandidatePagePainted(uint64_t page_generation, bool visible);
+// 候选窗显示/隐藏：隐藏后迟到页不得复活，选词也不再等一次不会到来的绘制。
+void NoteCandidatePageVisibility(bool visible);
 // Paging carries a step count rather than a candidate index. Steps coalesce
 // into a page task already queued for the same client, so spinning the wheel
 // cannot outrun the worker with a long run of engine-backed page moves.

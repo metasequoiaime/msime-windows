@@ -142,6 +142,27 @@ TEST_CASE(candidate_pages_show_publishes_first_frame)
     REQUIRE(surface.last.generation == 1);
 }
 
+TEST_CASE(candidate_pages_budget_resets_and_cancels_pending_frames)
+{
+    FakeClock clock;
+    FakeSurface surface;
+    auto pages = MakePages(clock, surface);
+
+    pages->Show(MakePage("photon", {"跑通"}));
+    REQUIRE(pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast));
+    clock.Advance(milliseconds{120});
+    REQUIRE(surface.show_count == 2);
+    REQUIRE(!pages->Update(MakePage("photon", {"跑痛"}), CandidateFreshness::Fast));
+
+    pages->ResetFrameBudget();
+    REQUIRE(pages->Update(MakePage("photon", {"跑痛"}), CandidateFreshness::Fast));
+    pages->CancelPending();
+    clock.Advance(milliseconds{120});
+    REQUIRE(surface.show_count == 2);
+    REQUIRE(!pages->Update(MakePage("photon", {"泡桐"}), CandidateFreshness::Fast));
+    REQUIRE(!pages->Update(MakePage("photon", {"泡桐"}), CandidateFreshness::Late));
+}
+
 TEST_CASE(candidate_pages_publish_defers_show_until_requested)
 {
     FakeClock clock;

@@ -473,10 +473,10 @@ void PrepareCandidateTranslationRequest()
     EnglishIme::RequestTranslations(std::move(queries), GetConfiguredTencentTmt().target_language == "en");
 }
 
-// Copy the page the worker just finished into an immutable snapshot for the UI thread. This is the single publish
-// point: set_items() and clear_page() are only intermediate steps of a rebuild, so publishing there would hand the UI a
-// half-built page.
-void PublishBuiltCandidatePage(const std::wstring &candidate_string)
+// Copy the page the worker just finished into an immutable value for the CandidatePages module. This is the single
+// build point: set_items() and clear_page() are only intermediate steps of a rebuild, so publishing there would hand
+// the UI a half-built page.
+FanyImeIpc::CandidatePage BuildCandidatePageValue(const std::wstring &candidate_string)
 {
     const auto &ui = Global::candidate_ui;
     auto snapshot = std::make_shared<Global::CandidatePageSnapshot>();
@@ -500,9 +500,15 @@ void PublishBuiltCandidatePage(const std::wstring &candidate_string)
             snapshot->expanded_words.push_back(
                 string_to_wstring(FanyImeIpc::QuickPhraseDisplayText(CandidateOutputText(ui.items[i]))));
     }
-    // Stamp before publishing so the UI thread can echo back exactly which page it painted.
-    snapshot->generation = ++Global::candidate_page_generation;
-    Global::PublishCandidatePageSnapshot(std::move(snapshot));
+
+    FanyImeIpc::CandidatePage page;
+    page.input = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
+    // 页大小变化会重排整个列表；旧布局的绘制回显不得盖到新页上。
+    page.layout_epoch = static_cast<std::uint64_t>((std::max)(ui.page_size, 0));
+    page.page_size = ui.page_size;
+    page.snapshot = std::move(snapshot);
+    page.items = std::make_shared<const std::vector<WordItem>>(ui.items);
+    return page;
 }
 } // namespace
 
@@ -515,29 +521,43 @@ void RefreshCandidatePageUi(bool show_window)
     const std::string candidate_string = BuildCurrentCandidatePage();
     // Host-drawn UI wants plain words (Microsoft IME style), not helpcodes.
     const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    ::WriteDataToSharedMemory(published, true);
-    PublishBuiltCandidatePage(published);
+    auto page = BuildCandidatePageValue(published);
     CAND_DIAG_LOGF(L"candidate UI refreshed show={} uiless={} items={} page_words={} selected={} page={} "
                    L"serialized_units={}",
                    show_window, IsUiLessMode(), Global::candidate_ui.items.size(),
                    Global::candidate_ui.page_words.size(), Global::candidate_ui.selected_index_in_page,
                    Global::candidate_ui.page_index, candidate_string.size());
     if (show_window)
-    {
-        RequestShowCandidateWindow();
-    }
+        ShowCandidatePage(std::move(page));
+    else
+        PublishCandidatePage(std::move(page));
 }
 
 void RefreshCandidatePageUiCoalesced()
 {
-    RefreshCandidatePageUi(false);
-    RequestShowCandidateWindowDeferred();
+    RefreshJevSelection();
+    PrepareCandidateTranslationRequest();
+    const std::string candidate_string = BuildCurrentCandidatePage();
+    const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
+    UpdateCandidatePage(BuildCandidatePageValue(published), FanyImeIpc::CandidateFreshness::Fast);
 }
 
 void RefreshCandidatePageUiLate()
 {
-    RefreshCandidatePageUi(false);
-    RequestShowCandidateWindowDeferred(true);
+    RefreshJevSelection();
+    PrepareCandidateTranslationRequest();
+    const std::string candidate_string = BuildCurrentCandidatePage();
+    const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
+    UpdateCandidatePage(BuildCandidatePageValue(published), FanyImeIpc::CandidateFreshness::Late);
+}
+
+void RefreshCandidatePageUiImmediate()
+{
+    RefreshJevSelection();
+    PrepareCandidateTranslationRequest();
+    const std::string candidate_string = BuildCurrentCandidatePage();
+    const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
+    UpdateCandidatePage(BuildCandidatePageValue(published), FanyImeIpc::CandidateFreshness::Immediate);
 }
 } // namespace event_listener_detail
 

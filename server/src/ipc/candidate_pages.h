@@ -176,6 +176,25 @@ class CandidatePages
         return Update(*page, freshness);
     }
 
+    // A new keystroke starts a new input: drop any pending frame and allow this input its own fast and late frames.
+    void ResetFrameBudget()
+    {
+        std::lock_guard lock(mutex_);
+        pending_.reset();
+        fast_done_ = false;
+        late_done_ = false;
+    }
+
+    // Selection, hide or another user action: a pending enrichment frame must not land on top of it, and later
+    // async results for this input must not retry the frame that was spent.
+    void CancelPending()
+    {
+        std::lock_guard lock(mutex_);
+        pending_.reset();
+        fast_done_ = true;
+        late_done_ = true;
+    }
+
     void Hide()
     {
         std::lock_guard lock(mutex_);
