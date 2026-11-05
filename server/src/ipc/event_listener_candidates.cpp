@@ -13,6 +13,7 @@
 #include "ipc/candidate_expansion_policy.h"
 #include "ipc/queried_candidate_arrangement_policy.h"
 #include "ipc/candidate_ui_owner.h"
+#include "ipc/candidate_mixed_english_preservation.h"
 #include "ipc/input_key_policy.h"
 #include "utils/common_utils.h"
 #include "utils/hanzi_pinyin.h"
@@ -775,18 +776,12 @@ class CandidateBuildTimer
 
 std::vector<WordItem> PreservedMixedEnglishForInput(const std::vector<WordItem> &current, const std::string &input)
 {
-    std::vector<WordItem> preserved;
     if (input.empty() || !GetConfiguredMixedCandidatesEnabled() || !GetConfiguredEnglishCandidatesEnabled())
-        return preserved;
+        return {};
     const SchemeType scheme = g_inputSession->current_scheme_type();
     if (scheme != SchemeType::Quanpin && scheme != SchemeType::Shuangpin)
-        return preserved;
-    for (const WordItem &item : current)
-    {
-        if (item.source == CandidateSource::EnglishDictionary && item.pinyin == input)
-            preserved.push_back(item);
-    }
-    return preserved;
+        return {};
+    return FanyImeIpc::PreservedMixedEnglish(current, input);
 }
 
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)

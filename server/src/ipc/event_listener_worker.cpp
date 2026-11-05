@@ -8,6 +8,7 @@
 #include <utility>
 #include "ipc.h"
 #include "ipc/selection_replay_guard.h"
+#include "ipc/candidate_settle_arbitration_policy.h"
 #include "ipc/async_request_origin.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/input_key_policy.h"
@@ -216,6 +217,22 @@ bool AnyTaskQueuedLocked()
     return false;
 }
 
+// 调用方持 queueMutex，且已知至少有一个任务。只回答「下一类是谁」，不取任务。
+TaskClass NextQueuedTaskClassLocked()
+{
+    std::array<TaskClassHead, kTaskClassCount> heads;
+    for (std::size_t i = 0; i < kTaskClassCount; ++i)
+    {
+        if (!taskQueues[i].empty())
+        {
+            heads[i].has_task = true;
+            heads[i].wait_ms = QueueWaitMilliseconds(taskQueues[i].front());
+            heads[i].enqueue_sequence = taskQueues[i].front().enqueue_sequence;
+        }
+    }
+    return NextTaskClass(heads);
+}
+
 // 调用方持 queueMutex。每类队首现算一次年龄，再交给纯函数决定下一类。
 Task TakeNextTaskLocked()
 {
@@ -315,7 +332,11 @@ void WorkerThread()
             if (!pipe_running)
                 break;
             const auto now = InputCadence::Clock::now();
-            const bool flush_settle = CandidatePresentSettleIsDue(now);
+            const bool settle_due = CandidatePresentSettleIsDue(now);
+            const bool has_queued_task = AnyTaskQueuedLocked();
+            const FanyImeIpc::SettleFlushDecision settle_decision = FanyImeIpc::DecideSettleFlush(
+                settle_due, has_queued_task, has_queued_task ? NextQueuedTaskClassLocked() : TaskClass::Foreground);
+            const bool flush_settle = settle_decision == FanyImeIpc::SettleFlushDecision::FlushSettle;
             if (!flush_settle && cadence.ShouldCloseGate(now, idle_gate_ms))
             {
                 // 到点且没有新按键：这段连续打字结束。先关闸再排重查，保证
@@ -340,7 +361,7 @@ void WorkerThread()
             }
             // wait 与上面的超时分支都保证此刻队列非空；这里只是防御 TakeNextTaskLocked
             // 的 front() 没有空检查，别在后续改动里把「到点但没排到重查」变成空队列取任务。
-            if (!AnyTaskQueuedLocked())
+            if (!has_queued_task)
                 continue;
             task = TakeNextTaskLocked();
             // 出队即放行：之后完成的批次结果不一定被这次重查读到，得能再排一个。

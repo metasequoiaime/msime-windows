@@ -11,6 +11,7 @@
 #include "ipc.h"
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/candidate_requery_policy.h"
+#include "ipc/candidate_rescore_budget.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "global/globals.h"
@@ -33,10 +34,9 @@ std::string g_jev_word;
 std::string g_jev_identity;
 uint64_t g_jev_generation = 0;
 // 同一输入的重排回包会连着来：每次都在任务线程上重算整页，但第一页通常两三批就定了。给每个输入一个
-// 上限，超出的批次只让引擎缓存变新，下一键自然读到；否则一次打字会白白重算十几次。
-constexpr int kMaxRescoreRequeryPerInput = 4;
-std::string g_rescore_requery_input;
-int g_rescore_requery_count = 0;
+// 上限，超出的批次只让引擎缓存变新，下一键自然读到；组合边界（提交/隐藏）要重置，避免同一串重新输入
+// 时继承上一段用掉的额度。
+FanyImeIpc::RescoreRequeryBudget g_rescore_requery_budget;
 } // namespace
 
 namespace event_listener_detail
@@ -191,20 +191,21 @@ void ApplyRescoredOrder()
     if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
         return;
     const std::string input = g_inputSession->get_pinyin_sequence_with_cases();
-    if (input != g_rescore_requery_input)
+    if (!g_rescore_requery_budget.TryAcquire(input))
     {
-        g_rescore_requery_input = input;
-        g_rescore_requery_count = 0;
-    }
-    if (input.empty())
-        return;
-    if (g_rescore_requery_count >= kMaxRescoreRequeryPerInput)
-    {
-        CAND_DIAG_LOGF(L"rescore requery capped count={} input_units={}", g_rescore_requery_count, input.size());
+        if (!input.empty())
+        {
+            CAND_DIAG_LOGF(L"rescore requery capped count={} input_units={}", g_rescore_requery_budget.count(),
+                           input.size());
+        }
         return;
     }
-    ++g_rescore_requery_count;
     (void)RequeryCandidatesPreservingOnline(owner);
+}
+
+void ResetRescoreRequeryBudget()
+{
+    g_rescore_requery_budget.Reset();
 }
 
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,

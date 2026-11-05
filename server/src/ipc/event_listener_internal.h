@@ -299,6 +299,8 @@ void ApplyRescoredOrder();
 // 但内部列表仍会更新（翻页要读到新结果）。调用方负责前置守卫（选词中/造词/子页、owner 有效性）。
 // 返回是否请求了新的首屏帧。
 bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late = false);
+// 组合边界（提交、隐藏、清理）重置重排重查额度；同一串重新输入时不得继承上一段用掉的次数。
+void ResetRescoreRequeryBudget();
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,
                       const std::optional<metasequoia::OnlineQuery> &query);
 void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string &input, uint64_t generation);

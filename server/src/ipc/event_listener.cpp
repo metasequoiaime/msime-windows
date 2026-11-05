@@ -40,6 +40,7 @@
 #include "conversion/traditional_spelling_index.h"
 #include "log/candidate_diag_log.h"
 #include "ipc/event_listener_internal.h"
+#include "ipc/candidate_interaction_latch_policy.h"
 #include "ipc/candidate_present_settle_policy.h"
 #include "ai/jev_candidate_policy.h"
 
@@ -106,8 +107,9 @@ bool IsCandidateSubPageActive()
 void LatchCandidateUiInteraction()
 {
     const std::uint64_t generation = g_candidate_ui_interaction_generation.exchange(0, std::memory_order_acq_rel);
-    // 只认用户操作时屏幕上那一页；之后已经换了一批候选，就不该冻结新的这批。
-    if (generation != 0 && generation == Global::LoadCandidatePageSnapshot()->generation)
+    const std::uint64_t rendered = Global::rendered_candidate_page_generation.load(std::memory_order_acquire);
+    // 只认用户操作时屏幕上那一页：已发布但还没画出来的一页不算。
+    if (FanyImeIpc::ShouldLatchCandidateInteraction(generation, rendered))
     {
         Global::candidate_ui.begin_selection();
         CancelCandidatePresentSettle();
@@ -285,6 +287,8 @@ void FlushCandidatePresentSettleIfDue(CandidateSettleClock::time_point now)
 {
     if (!g_candidate_settle.Due(now))
         return;
+    // 合并发布的快照可能已经比屏幕新：先把用户对已渲染页的操作结算掉，别让定稿帧盖在点击/选词上。
+    LatchCandidateUiInteraction();
     const std::string input = CurrentCandidateSettleInput();
     const bool can_show =
         g_inputSession && !input.empty() && !Global::candidate_ui.items.empty() && CanMergeAsyncCandidates();
@@ -991,6 +995,7 @@ void PushUiLessCandidatesToOwner()
 void ClearState()
 {
     const auto r_mode_original_session = g_r_mode_original_session;
+    ResetRescoreRequeryBudget();
     ClearSpecialModeTriggers();
     ClearCandidateUiOwner();
     UpdateCloudInput("");
