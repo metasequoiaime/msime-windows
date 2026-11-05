@@ -316,6 +316,7 @@ void CancelCandidatePresentSettle()
 void HideCandidateWindowAndDropItems()
 {
     CancelCandidatePresentSettle();
+    FanyNamedPipe::ResetRescoreRequeryBudget();
     // Drop published candidates before a queued show can re-render an
     // empty-preedit + stale-candidate view.
     Global::CandidateString.clear();

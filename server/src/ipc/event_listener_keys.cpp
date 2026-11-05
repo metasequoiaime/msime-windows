@@ -957,6 +957,8 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
     if (FanyImeIpc::ShouldEscapeKeepSelectedWord(GetConfiguredEscapeKeepsSelectedWord(), input_before_key.size(),
                                                  g_r_mode_triggered))
     {
+        ResetRescoreRequeryBudget();
+        CancelCandidatePresentSettle();
         g_inputSession->set_pinyin_sequence("");
         g_inputSession->set_pinyin_sequence_with_cases("");
         g_inputSession->recompute_candidates();

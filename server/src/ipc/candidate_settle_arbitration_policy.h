@@ -11,8 +11,8 @@ enum class SettleFlushDecision
 };
 
 // A due settle frame must not jump ahead of a queued foreground/user-action task: a hide, a selection or a new key
-// has to take effect first, and that task's latch may cancel the settle entirely. Enrichment and maintenance work
-// can wait behind the frame.
+// has to take effect first, and that task's latch may cancel the settle entirely. Enrichment tasks must also run
+// first: they are the fast results the settle is supposed to include. Maintenance can wait behind the frame.
 inline SettleFlushDecision DecideSettleFlush(bool settle_due, bool has_queued_task,
                                              FanyNamedPipe::TaskClass next_task_class)
 {
@@ -24,8 +24,8 @@ inline SettleFlushDecision DecideSettleFlush(bool settle_due, bool has_queued_ta
     {
     case FanyNamedPipe::TaskClass::Foreground:
     case FanyNamedPipe::TaskClass::UserAction:
-        return SettleFlushDecision::ProcessTask;
     case FanyNamedPipe::TaskClass::Enrichment:
+        return SettleFlushDecision::ProcessTask;
     case FanyNamedPipe::TaskClass::Maintenance:
         return SettleFlushDecision::FlushSettle;
     }

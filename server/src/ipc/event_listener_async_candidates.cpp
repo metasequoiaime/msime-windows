@@ -142,6 +142,12 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
 bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late)
 {
     const std::vector<WordItem> before = g_inputSession->get_candidates();
+    const size_t page_size = static_cast<size_t>((std::max)(GetConfiguredCandidatePageSize(), 1));
+    const auto first_page = [page_size](const std::vector<WordItem> &items) {
+        const size_t count = (std::min)(page_size, items.size());
+        return std::vector<WordItem>(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(count));
+    };
+    const std::vector<WordItem> before_page = first_page(Global::candidate_ui.items);
     // 云/AI 候选只活在 series cache 里，reset_cache 会把它们一起清掉，而它们的请求早已回来、不会
     // 再发一次——不补回来，重查一落地它们就从列表里消失了。重查不推进在线请求的 generation，
     // 所以用当前的 online_query 原样回填即可；回填时若同一句已被整句候选占了，引擎自己会拒绝。
@@ -161,11 +167,10 @@ bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner
                 g_inputSession->apply_online_candidate(*query, item.word, item.source);
         }
     }
-    const std::vector<WordItem> &after = g_inputSession->get_candidates();
-    const size_t page_size = static_cast<size_t>((std::max)(GetConfiguredCandidatePageSize(), 1));
-    const bool visible_changed = FanyImeIpc::VisibleCandidatePageChanged(before, after, page_size);
     // 首屏没变就不请求重画，但内部列表仍然要更新：用户马上翻页时读的是 ui.items，不能让他看到旧的后几页。
     PrepareCandidateList(owner.client_id, owner.activation_epoch);
+    const std::vector<WordItem> after_page = first_page(Global::candidate_ui.items);
+    const bool visible_changed = FanyImeIpc::VisibleCandidatePageChanged(before_page, after_page, page_size);
     if (visible_changed)
         RequestShowCandidateWindowDeferred(late);
     PushUiLessCandidatesToOwner();

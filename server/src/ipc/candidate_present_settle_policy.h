@@ -49,7 +49,7 @@ struct CandidatePresentSettle
         if (armed)
             return true;
 
-        late_pending = late && done;
+        late_pending = late;
         armed = true;
         deadline = now + delay;
         return true;
