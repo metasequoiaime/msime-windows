@@ -142,6 +142,76 @@ TEST_CASE(candidate_pages_show_publishes_first_frame)
     REQUIRE(surface.last.generation == 1);
 }
 
+TEST_CASE(candidate_pages_publish_defers_show_until_requested)
+{
+    FakeClock clock;
+    FakeSurface surface;
+    auto pages = MakePages(clock, surface);
+
+    pages->Publish(MakePage("photon", {"跑通"}));
+    REQUIRE(surface.publish_count == 1);
+    REQUIRE(surface.show_count == 0);
+    REQUIRE(surface.last.generation == 1);
+
+    pages->Show();
+    REQUIRE(surface.publish_count == 1);
+    REQUIRE(surface.show_count == 1);
+}
+
+TEST_CASE(candidate_pages_keyboard_commit_waits_for_the_first_paint)
+{
+    FakeClock clock;
+    FakeSurface surface;
+    auto pages = MakePages(clock, surface);
+
+    pages->Show(MakePage("photon", {"跑通"}));
+
+    std::thread painter([&pages] {
+        std::this_thread::sleep_for(milliseconds{10});
+        pages->Painted(1, true);
+    });
+    const auto choice = pages->CommitSlot(0);
+    painter.join();
+
+    REQUIRE(choice);
+    REQUIRE(choice->item.word == "跑通");
+    REQUIRE(choice->waited);
+    REQUIRE(!choice->timed_out);
+}
+
+TEST_CASE(candidate_pages_uiless_commit_never_waits_for_a_paint_echo)
+{
+    FakeClock clock;
+    FakeSurface surface;
+    surface.is_uiless = true;
+    auto pages = MakePages(clock, surface);
+
+    pages->Show(MakePage("photon", {"跑通"}));
+    const auto choice = pages->CommitSlot(0);
+
+    REQUIRE(choice);
+    REQUIRE(choice->item.word == "跑通");
+    REQUIRE(!choice->waited);
+    REQUIRE(!choice->timed_out);
+}
+
+TEST_CASE(candidate_pages_ignores_an_echo_older_than_the_rendered_page)
+{
+    FakeClock clock;
+    FakeSurface surface;
+    auto pages = MakePages(clock, surface, milliseconds{0});
+
+    pages->Show(MakePage("photon", {"旧页"}));
+    pages->Painted(1, true);
+    pages->Show(MakePage("photon", {"新页"}));
+    pages->Painted(2, true);
+    pages->Painted(1, true);
+
+    const auto choice = pages->CommitSlot(0);
+    REQUIRE(choice);
+    REQUIRE(choice->item.word == "新页");
+}
+
 TEST_CASE(candidate_pages_fast_updates_fold_into_one_frame)
 {
     FakeClock clock;

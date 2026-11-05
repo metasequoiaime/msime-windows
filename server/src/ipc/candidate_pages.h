@@ -81,6 +81,19 @@ class CandidatePages
     {
     }
 
+    // Silent publish: the page is what the next show will paint, but no frame is requested. The key path builds a
+    // page this way and the caller decides whether to show it; a new page also supersedes any pending settle frame.
+    void Publish(CandidatePage page)
+    {
+        std::lock_guard lock(mutex_);
+        pending_.reset();
+        fast_done_ = false;
+        late_done_ = false;
+        if (page.input != input_)
+            latched_ = false;
+        StorePage(std::move(page));
+    }
+
     // First frame, first choice, page move or layout change: publish and request a paint immediately.
     void Show(CandidatePage page)
     {
@@ -89,11 +102,14 @@ class CandidatePages
         fast_done_ = false;
         late_done_ = false;
         latched_ = false;
-        input_ = page.input;
-        layout_epoch_ = page.layout_epoch;
-        const auto published = Store(std::move(page));
-        published_ = published;
-        surface_.publish(*published);
+        StorePage(std::move(page));
+        surface_.request_show();
+    }
+
+    // Show the page that was already published, without stamping a new generation.
+    void Show()
+    {
+        std::lock_guard lock(mutex_);
         surface_.request_show();
     }
 
@@ -107,9 +123,9 @@ class CandidatePages
 
         if (freshness == CandidateFreshness::Immediate)
         {
-            const auto published = Store(std::move(page));
-            published_ = published;
-            surface_.publish(*published);
+            // Cloud/AI answers are newer than any pending settle frame; never let the older frame land after them.
+            pending_.reset();
+            StorePage(std::move(page));
             surface_.request_show();
             return true;
         }
@@ -189,7 +205,7 @@ class CandidatePages
     void Painted(std::uint64_t generation, bool visible)
     {
         std::lock_guard lock(mutex_);
-        if (generation == 0 || generation > published_generation_)
+        if (generation == 0 || generation > published_generation_ || generation < rendered_generation_)
             return;
         const auto found = std::find_if(published_pages_.begin(), published_pages_.end(),
                                         [generation](const auto &page) { return page->generation == generation; });
@@ -217,7 +233,10 @@ class CandidatePages
         std::lock_guard lock(mutex_);
         rendered_visible_ = visible;
         if (!visible)
+        {
             rendered_.reset();
+            rendered_generation_ = 0;
+        }
     }
 
   private:
@@ -244,10 +263,17 @@ class CandidatePages
             fast_done_ = true;
         if (pending.late)
             late_done_ = true;
-        const auto published = Store(std::move(pending.page));
+        StorePage(std::move(pending.page));
+        surface_.request_show();
+    }
+
+    void StorePage(CandidatePage page)
+    {
+        input_ = page.input;
+        layout_epoch_ = page.layout_epoch;
+        const auto published = Store(std::move(page));
         published_ = published;
         surface_.publish(*published);
-        surface_.request_show();
     }
 
     std::shared_ptr<const CandidatePage> Store(CandidatePage page)
@@ -269,20 +295,23 @@ class CandidatePages
     std::optional<CandidateChoice> Commit(int index_in_page, bool allow_wait)
     {
         std::unique_lock lock(mutex_);
-        if (!rendered_ || !rendered_visible_ || !rendered_->snapshot || !rendered_->items)
+        if (!published_ && !rendered_)
             return std::nullopt;
 
         bool waited = false;
         bool timed_out = false;
-        if (allow_wait && rendered_generation_ < published_generation_ && surface_.visible() && !surface_.uiless() &&
-            wait_.count() > 0)
+        if (allow_wait && wait_.count() > 0 && surface_.visible() && !surface_.uiless() &&
+            rendered_generation_ < published_generation_)
         {
             waited = true;
             timed_out = !cv_.wait_for(lock, wait_,
-                                      [this] { return rendered_generation_ >= published_generation_ || !rendered_; });
+                                      [this] { return rendered_generation_ >= published_generation_ || !published_; });
         }
 
-        const auto page = rendered_;
+        const auto page = rendered_ ? rendered_ : published_;
+        if (!page || !page->snapshot || !page->items)
+            return std::nullopt;
+
         const int count = static_cast<int>(page->snapshot->page_words.size());
         if (index_in_page < 0 || index_in_page >= count || page->page_size <= 0)
             return std::nullopt;
