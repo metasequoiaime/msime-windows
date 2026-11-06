@@ -149,12 +149,22 @@ Set-Location ..\server
 .\scripts\lcompile-release.ps1
 
 Set-Location ..\installer
-.\Prepare-PackageFiles.ps1 -RepoRoot .. -TsfDirectory windows -ServerDirectory server -NoticesDirectory .
+$version = (Get-Content ..\version.txt -Raw).Trim() + '-local'
+.\Prepare-PackageFiles.ps1 -RepoRoot .. -TsfDirectory windows -ServerDirectory server -NoticesDirectory . -TargetVersion $version
 .\Sign-PackageBinaries-Local.ps1
-.\Compile-Installer.ps1
+.\Compile-Installer.ps1 -TargetVersion $version
+.\Sign-Installer-Local.ps1
 ```
 
-`Sign-PackageBinaries-Local.ps1` 用的是本机测试证书，只用于内部安装验证；不要把本机证书指纹或私钥提交进仓库。
+`Sign-PackageBinaries-Local.ps1` 和 `Sign-Installer-Local.ps1` 用的是本机测试证书，只用于内部安装验证；不要把本机证书指纹或私钥提交进仓库。
+
+只想要包、不想启动安装程序时，可以直接用 `.\test.ps1 -NoInstall`；版本默认从 `version.txt` 派生 `<版本>-local`，用 `-TargetVersion` 覆盖。
+
+## 拆分 PR
+
+- **最小化 PR。** 修 bug 的 PR 只带让这个 bug 消失的最小改动。出现“顺手把发布、选择或状态机收进一个模块”这类重构冲动时，先合并修复 PR，再从 `develop` 开重构 PR；重构可以依赖已合并的修复，但不应该让修复等重构。
+- **Stacked PR。** 修复和重构必须同时评审时，先开修复 PR（base `develop`），再从它的 head 切重构分支，并把重构 PR 的 base 指向修复分支。修复 PR 合并后，把重构 PR 的 base 改回 `develop`，确认 CI 对应的是最新 head，再合并。
+- **测试跟随生产代码。** 测试放在它覆盖的生产代码所在的 PR：修复 PR 保留修复实际使用/新增策略的测试；被后续重构删除的旧策略测试留在修复 PR，随后续 PR 一起删除；只覆盖新模块的测试只放在重构 PR，不要提前塞进修复 PR。
 
 ## 改动前要知道的几条边界
 

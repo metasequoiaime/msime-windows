@@ -227,17 +227,19 @@ Set-Location ..\server
 .\scripts\lcompile-release.ps1
 
 Set-Location ..\installer
-.\Prepare-PackageFiles.ps1 -RepoRoot .. -TsfDirectory windows -ServerDirectory server -NoticesDirectory .
+$version = (Get-Content ..\version.txt -Raw).Trim() + '-local'
+.\Prepare-PackageFiles.ps1 -RepoRoot .. -TsfDirectory windows -ServerDirectory server -NoticesDirectory . -TargetVersion $version
 .\Sign-PackageBinaries-Local.ps1
-.\Compile-Installer.ps1
+.\Compile-Installer.ps1 -TargetVersion $version
+.\Sign-Installer-Local.ps1
 ```
 
 `Prepare-PackageFiles.ps1` 会收集 Server Release、x86/x64 TSF DLL、词库和前端资源；因此必须在两个
 C++ 组件编译完成且相关前端/词库产物已准备好之后运行。`Sign-PackageBinaries-Local.ps1` 使用本机
 测试证书，只用于内部安装验证；它可能创建证书并尝试写入本机受信任存储，不得把本机证书指纹或
 私钥提交到仓库。`Compile-Installer.ps1` 会调用 Inno Setup 命令行编译器 `ISCC.exe` 编译同目录的
-`msime_setup.iss`，安装包输出到该版本目录的 `Output\`。机器上须预先安装 Inno Setup 6.6+；若脚本
-无法自动找到编译器，可显式传入：
+`msime_setup.iss`，安装包输出到该版本目录的 `Output\`；`Sign-Installer-Local.ps1` 再给安装包本身
+签名。机器上须预先安装 Inno Setup 6.6+；若脚本无法自动找到编译器，可显式传入：
 
 ```powershell
 .\Compile-Installer.ps1 -IsccPath 'C:\Program Files\Inno Setup 7\ISCC.exe'
