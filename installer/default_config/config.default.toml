@@ -583,7 +583,6 @@ background_img = "" # 默认是空，没有背景图片
 #
 [utility]
 clipboard_history = false # 表情面板剪贴板历史，仅记录文本；关闭后立即清空。默认关闭：它记录用户复制的内容，属于需要用户主动开启的功能
-study_english_word = "false" # 背单词功能，开启后可以在候选项旁边显示英文
 quick_phrase = true # Shift+K 进入快捷短语模式
 quick_phrase_candidates = false # 全拼/双拼下把编码精确匹配的快捷短语混进候选，排在固定位置候选之后的首位
 quick_phrase_frequency = true # 快捷短语参与调频：常越过它选别的候选时整组后退，最多退到首页末位
