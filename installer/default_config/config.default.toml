@@ -585,14 +585,14 @@ background_img = "" # 默认是空，没有背景图片
 clipboard_history = false # 表情面板剪贴板历史，仅记录文本；关闭后立即清空。默认关闭：它记录用户复制的内容，属于需要用户主动开启的功能
 study_english_word = "false" # 背单词功能，开启后可以在候选项旁边显示英文
 quick_phrase = true # Shift+K 进入快捷短语模式
-quick_phrase_candidates = false # 全拼/双拼下把编码精确匹配的快捷短语混进候选，排在固定位置候选之后的首位
+quick_phrase_candidates = true # 全拼/双拼下把编码精确匹配的快捷短语混进候选，排在固定位置候选之后的首位
 quick_phrase_frequency = true # 快捷短语参与调频：常越过它选别的候选时整组后退，最多退到首页末位
 # 候选混输总开关：关闭后英文（general.cn_en_mixed_input）、emoji（general.emoji_mixed_input）、
 # 颜文字（general.kaomoji_mixed_input）、符号（general.symbol_mixed_input）、快捷短语（quick_phrase_candidates）、
 # 日期时间（date_time_candidates）都不再混进候选，各自的开关值保留
 mixed_candidates = true
-date_time_candidates = false # 全拼/双拼下输入 rq / riqi / date、sj / shijian / time、xq / xingqi / week 时，把当前日期、时间、星期混进候选
-date_time_menu = true # 日期时间混入候选时，在第三位放一个「📅日期」入口，选中后候选框换成全部日期格式（与 Shift+T 模式相同）
+date_time_candidates = true # 全拼/双拼下输入 rq / riqi / date、sj / shijian / time、xq / xingqi / week 时，把当前日期、时间、星期混进候选
+date_time_menu = false # 日期时间混入候选时，在第三位放一个「📅日期」入口，选中后候选框换成全部日期格式（与 Shift+T 模式相同）
 radical_mode = true # Shift+U 进入 U 模式（部件拆字反查）：输入部件拼音连写，候选出汉字并反显注音
 date_time_mode = true # Shift+T 进入日期与时间快捷输入模式（全拼/双拼/五笔）
 emoji_mode = false # Shift+E 进入 Emoji 快捷输入模式（支持全拼/简拼/双拼/英文）；默认关闭，避免截走大写 E 开头的英文
