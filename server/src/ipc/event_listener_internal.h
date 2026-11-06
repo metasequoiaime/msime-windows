@@ -18,6 +18,7 @@
 #include <vector>
 #include "ipc.h"
 #include "ipc/async_request_origin.h"
+#include "ipc/candidate_pages.h"
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/candidate_text_policy.h"
 #include "ipc/candidate_ui_owner.h"
@@ -195,14 +196,30 @@ void RefreshCandidatePageUi(bool show_window);
 // fast settle, because they intentionally arrive after the user stops typing.
 void RefreshCandidatePageUiCoalesced();
 void RefreshCandidatePageUiLate();
+// Cloud/AI/dedicated-English answers are not part of the settle budget: every arrival paints.
+void RefreshCandidatePageUiImmediate();
 void RequestShowCandidateWindowDeferred(bool late = false);
-std::optional<std::chrono::steady_clock::time_point> CandidatePresentSettleDeadline();
-bool CandidatePresentSettleIsDue(std::chrono::steady_clock::time_point now);
-void FlushCandidatePresentSettleIfDue(std::chrono::steady_clock::time_point now);
-// A new keystroke starts a new input: allow it its own single enrichment frame.
-void ResetCandidatePresentSettle();
-// Selection, hide or a counter action: a late enrichment frame would fight the user.
-void CancelCandidatePresentSettle();
+
+// event_listener.cpp — CandidatePages runtime. Worker-thread calls are serialized by the task queue; Painted,
+// Gesture and Visibility are the only UI-thread entries.
+void PublishCandidatePage(FanyImeIpc::CandidatePage page);
+void ShowCandidatePage(FanyImeIpc::CandidatePage page);
+void UpdateCandidatePage(FanyImeIpc::CandidatePage page, FanyImeIpc::CandidateFreshness freshness);
+bool UpdateCurrentCandidatePage(FanyImeIpc::CandidateFreshness freshness);
+void ShowPublishedCandidatePage();
+void HideCandidatePages();
+void ResetCandidatePageFrames();
+void CancelCandidatePageFrames();
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateSlot(int index_in_page);
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateHighlighted();
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateAt(int index_in_page);
+bool HasCandidatePage();
+void NoteCandidatePagePainted(std::uint64_t generation, bool visible);
+void NoteCandidatePageGesture(std::uint64_t generation);
+void NoteCandidatePageVisibility(bool visible);
+std::optional<std::chrono::steady_clock::time_point> CandidatePageTimerDeadline();
+bool CandidatePageTimerIsDue(std::chrono::steady_clock::time_point now);
+void FireDueCandidatePageTimers(std::chrono::steady_clock::time_point now);
 
 // event_listener_pipes.cpp
 void WakeNamedPipeListenersForShutdown();
@@ -289,8 +306,10 @@ bool RespellCandidatesForCharacterSetChange();
 void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id);
 void ClearState();
 // count_first_word = false 时这次上屏不进首词命中率（五笔四码唯一自动上屏：用户没有做选择）。
+// resolve_live_page: 展开面板点选的候选不在当前页上，MoveToExpandedCandidate 已把工作线程的页
+// 和高亮移到它那一项，这里只能按工作线程的列表结算，不能拿屏幕上那一页的页内下标去套。
 void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_epoch, int forced_index_in_page = -1,
-                         bool count_first_word = true);
+                         bool count_first_word = true, bool resolve_live_page = false);
 void WaitForCandidateRenderSync(UINT keycode);
 void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin, uint64_t generation,
                          const std::optional<metasequoia::OnlineQuery> &query);

@@ -270,7 +270,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             {
                 return WndProcCandWindow(hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
             }
-            Global::SetCandidateWindowRenderedVisible(false);
+            FanyNamedPipe::NoteCandidatePageVisibility(false);
             return 0;
         }
         const ULONGLONG updateStartedTick = GetTickCount64();
@@ -305,7 +305,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             // The frame already on screen is identical to the page just loaded, so the render echo is
             // honest even though nothing was repainted. Without it a digit/space selection would wait
             // out the full timeout on content that is already visible.
-            Global::PublishRenderedCandidatePageGeneration(candidatePage->generation);
+            FanyNamedPipe::NoteCandidatePagePainted(candidatePage->generation, true);
             CAND_DIAG_LOGF(L"candidate-frame path=dedup page_gen={}", candidatePage->generation);
             return 0;
         }
@@ -343,7 +343,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         g_candidate_hide_pending = false;
         CAND_DIAG_LOGF(L"hide message begin {}", DescribeCandidateHostState());
         ::is_global_wnd_cand_shown = false;
-        Global::SetCandidateWindowRenderedVisible(false);
+        FanyNamedPipe::NoteCandidatePageVisibility(false);
         g_last_rendered_candidate_signature.clear();
         KillTimer(hwnd, TIMER_ID_CANDIDATE_MOVE_SETTLE);
         g_candidate_session_anchor_valid = false;
