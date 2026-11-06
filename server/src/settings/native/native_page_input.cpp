@@ -1715,7 +1715,7 @@ VisualPtr BuildInputPage(PageContext &context)
                          Toggle(context, "quanpin.autocorrect_deletion"), false, false),
              ItemSetting(L"多字纠错", L"多敲一个相邻按键时纠正，如 sjhang → shang（上）；默认关闭",
                          Toggle(context, "quanpin.autocorrect_insertion"), false, false),
-             ItemSetting(L"显示纠错标记", L"纠错得到的候选末尾显示 * 号，便于和正常候选区分；不影响上屏文字",
+             ItemSetting(L"显示纠错标记", L"纠错和模糊音得到的候选末尾显示 * 号，便于和正常候选区分；不影响上屏文字",
                          Toggle(context, "quanpin.autocorrect_marker"), false, true)}));
 
     // ---- 模糊音 ----

@@ -2253,6 +2253,24 @@ void QuanpinDictionary::mark_autocorrect_candidates(std::vector<WordItem> &candi
     }
 }
 
+// 模糊读音同样算一种纠错：候选的读音与敲出的音节不同，只是差异来自模糊音规则。词库行由
+// fuzzy_candidates 直接带上 fuzzy，词格产出的整句行没有经过那一层，这里按音节补标。
+// 只认「每个不同的音节都是当前规则能互相匹配的读音」的候选：正确拼写、乱序/邻键纠错、
+// 简拼展开和 ü 别名都不会被误标。标记只影响候选窗的 * 显示，不写 corrected_from，因为
+// 那个字段还承担预编辑与组合推进的判定。
+void QuanpinDictionary::mark_fuzzy_candidates(std::vector<WordItem> &candidates, const std::string &segmentation,
+                                              metasequoia::FuzzyPinyinOptions options) const
+{
+    if (!options.rules || segmentation.empty())
+    {
+        return;
+    }
+    for (auto &item : candidates)
+    {
+        quanpin::mark_fuzzy_reading(item, segmentation, options);
+    }
+}
+
 int QuanpinDictionary::create_word(std::string pinyin, std::string word)
 {
     pinyin = remove_delimiters(pinyin);
@@ -2883,13 +2901,19 @@ std::vector<WordItem> QuanpinDictionary::query(const std::string &raw_input, con
     // 写回路径随后按这次查询的切分重切（cut_for_write），状态要和查询一致。
     correction_aliases_enabled_ = quanpin::correction_aliases_enabled(autocorrect);
     auto result = query_exact(raw_input, segmentation, autocorrect);
-    if (fuzzy.rules && !raw_input.empty())
+    // Marking must compare against the same reading the fuzzy pool was built from. Do not use
+    // pinyin_segmentation_ here: query_exact assigns the corrected or fault-arbitrated reading to
+    // it, which would make a literal candidate look like a fuzzy rewrite of the correction.
+    std::string typed_segmentation;
+    if (fuzzy.rules)
     {
-        // Keep ordinary cache slots free of preference-specific candidates.
-        const auto typed =
+        typed_segmentation =
             segmentation.empty()
                 ? quanpin::join_segments(resolve_segments(raw_input, segmentation, correction_aliases_enabled_))
                 : segmentation;
+    }
+    if (fuzzy.rules && !raw_input.empty())
+    {
         // Specificity is how many typed letters a candidate accounts for, not the raw
         // length of its stored key: alternative cuts ("xi'e" for "xie", "you'di'an"
         // for "you'dian") and fuzzy variants carry apostrophes, so comparing pinyin
@@ -2902,12 +2926,16 @@ std::vector<WordItem> QuanpinDictionary::query(const std::string &raw_input, con
             }
             return letters;
         };
-        result = quanpin::merge_fuzzy_candidates(std::move(result), fuzzy_candidates(typed, fuzzy), matched_letters);
+        result = quanpin::merge_fuzzy_candidates(std::move(result), fuzzy_candidates(typed_segmentation, fuzzy),
+                                                 matched_letters);
     }
     // Labeling runs after every mutation (including the fuzzy merge) so the
     // returned list and the published candidate list always agree.
     if (fuzzy.rules)
+    {
+        mark_fuzzy_candidates(result, typed_segmentation, fuzzy);
         keep_literal_mixed_words_first(result, raw_input);
+    }
     mark_autocorrect_candidates(result, raw_input);
     if (!raw_input.empty())
     {
