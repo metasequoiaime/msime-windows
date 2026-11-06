@@ -69,7 +69,7 @@ emoji_mixed_input = false
 # 中文输入状态下显示颜文字前缀候选（排在 emoji 之后）
 kaomoji_mixed_input = false
 # 中文输入状态下输入恰好等于符号编码（alpha、infinity、szq、xl，数字读音 yi → ① ⑴ ⒈，标点读音 dian → · 、、shuminghao → 《》 〈〉）时显示符号候选，首个紧跟首选，其余排在颜文字之后
-symbol_mixed_input = false
+symbol_mixed_input = true
 # 云候选
 cloud_candidates = true
 # TODO: 极简模式。极简模式下，候选窗口使用 d2d 绘制，界面只作展示候选项，无其他功能。
