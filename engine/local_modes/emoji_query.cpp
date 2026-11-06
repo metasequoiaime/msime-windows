@@ -108,4 +108,69 @@ LocalQueryResult query_mixed_emoji(const std::string &code, SchemeType scheme,
 {
     return run_emoji_query(code, scheme, database_path, limit, profile, true);
 }
+
+LocalQueryResult query_emoji_by_keyword(const std::string &keyword, int limit)
+{
+    return query_emoji_by_keyword(keyword, data_file_path(metasequoia::assets::other_dictionary), limit);
+}
+
+LocalQueryResult query_emoji_by_keyword(const std::string &keyword, const std::filesystem::path &database_path,
+                                        int limit)
+{
+    if (keyword.empty() || limit <= 0)
+    {
+        return {};
+    }
+    if (database_path.empty())
+    {
+        return query_failure("Emoji database is unavailable.");
+    }
+    const std::shared_ptr<sqlite3> database = open_local_database(database_path);
+    if (!database)
+    {
+        return query_failure("Emoji database is unavailable.");
+    }
+
+    // 模糊匹配：keywords 以空格分隔（建库脚本保证），只要某个关键词含有查询词就命中——「右」既命中把
+    // 「右」当独立关键词的 ➡️，也命中只在「向右指」「右边」这类长关键词里带「右」的 👉。但整词命中排在
+    // 子串命中之前：纯按目录顺序排会把 ➡️ 这种精确行挤到 LIMIT 之外。整词判据仍是两侧补空格，与旧的精确
+    // 语义一致。转义 LIKE 通配符，中文词不含这些字符，但英文词映射接入后调用侧可能传入含通配符的串。
+    std::string escaped;
+    escaped.reserve(keyword.size() + 8);
+    for (const char ch : keyword)
+    {
+        if (ch == '%' || ch == '_' || ch == '\\')
+        {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+
+    // ?1 是转义后的查询词，在 SQL 里拼成两种 pattern：子串匹配用于 WHERE（取所有含它的行），整词匹配
+    // 用于 ORDER BY 的 NOT LIKE——整词行取 0 排前、子串行取 1 排后，各自再按目录顺序（sort_order）。
+    constexpr const char *kKeywordSql =
+        "SELECT emoji FROM emoji WHERE keywords LIKE '%'||?1||'%' ESCAPE '\\' "
+        "ORDER BY (' '||keywords||' ') NOT LIKE '% '||?1||' %' ESCAPE '\\', sort_order LIMIT ?2";
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(database.get(), kKeywordSql, -1, &statement, nullptr) != SQLITE_OK)
+    {
+        return query_failure("Emoji database could not be queried.");
+    }
+    LocalQueryResult result;
+    sqlite3_bind_text(statement, 1, escaped.data(), static_cast<int>(escaped.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_int(statement, 2, limit);
+    while (sqlite3_step(statement) == SQLITE_ROW)
+    {
+        const unsigned char *text = sqlite3_column_text(statement, 0);
+        if (text == nullptr)
+        {
+            continue;
+        }
+        // emoji 表以 emoji 为主键，天然无重复；顺序即目录顺序（sort_order）。weight 不被面板读取，
+        // 面板按返回顺序平铺编号，这里留 0。
+        result.candidates.emplace_back(keyword, reinterpret_cast<const char *>(text), 0, CandidateSource::Emoji);
+    }
+    sqlite3_finalize(statement);
+    return result;
+}
 } // namespace metasequoia::local_modes

@@ -36,6 +36,10 @@ enum class TaskType
     UiPageDown,
     UiCommitCandidateAt,
     UiExpandCandidates,
+    // 竖排译文面板被点了外面：presenter 请工作线程把面板状态关掉。
+    UiCloseTranslationPanel,
+    // 候选词展开面板里点选了某条译义：与数字键 1..N 上屏同一条路径。
+    UiCommitExpansionPanelItem,
     ReloadInputSession,
     EnsureInputSessionMatchesConfig,
     ApplyCandidatePageSize,

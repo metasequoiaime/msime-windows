@@ -528,8 +528,10 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
         // converted spelling, including compositions without candidates, unless the user turned
         // that chord off in settings -- then it must fall through to the plain Enter path.
         if (!freshCompositionState &&
-            ((_candidateMode != CANDIDATE_NONE && (IsTranslationCommitShortcut(*pCodeOut, shortcutModifiers) ||
-                                                   IsTranslationDigitShortcut(*pCodeOut, shortcutModifiers))) ||
+            ((_candidateMode != CANDIDATE_NONE &&
+              (IsTranslationCommitShortcut(*pCodeOut, shortcutModifiers) ||
+               IsTranslationDigitShortcut(*pCodeOut, shortcutModifiers) ||
+               FanyUtils::IsCandidateExpansionShortcut(*pCodeOut, shortcutModifiers))) ||
              (!_serverUnavailableFallbackActive && pCompositionProcessorEngine->GetVirtualKeyLength() > 0 &&
               IsPinyinCommitShortcut(*pCodeOut, shortcutModifiers))))
         {
@@ -1497,7 +1499,12 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
         // would have to read the reply synchronously, so a key handler busy
         // longer than its budget would drop a commit the Server is about to
         // apply. Space and the two candidate-mode finalize functions all end in
-        // _HandleCandidateFinalize.
+        // _HandleCandidateFinalize. The VK_RETURN variant ends in
+        // _HandleCandidateFinalizeForVKReturn, which commits the raw composition
+        // locally and never waits for a Server reply, so it stays out of the
+        // prefetch: routing Enter through the pipe would add a round-trip to a
+        // key that needs nothing from the Server, and a hung Server would turn
+        // a plain Enter into a transport failure.
         const bool finalizeKey = KeystrokeState.Category == CATEGORY_CANDIDATE &&
                                  (KeystrokeState.Function == FUNCTION_FINALIZE_CANDIDATELIST ||
                                   KeystrokeState.Function == FUNCTION_FINALIZE_CANDIDATELIST_AND_INPUT);

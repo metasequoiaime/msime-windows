@@ -73,6 +73,11 @@ void EnqueueCandidateUiPaging(CandidateUiAction action, int steps);
 void EnqueueCandidateUiCommitAt(int absolute_index, std::wstring expected_text);
 // 卷轴展开面板打开或滚到底部：向会话再要一批候选，并重新发布带后续候选的候选页。
 void EnqueueCandidateUiExpand();
+// 竖排译文面板被点了外面：关掉面板状态并重新发布不带面板的一帧。
+void EnqueueCandidateUiCloseTranslationPanel();
+// 候选词展开面板里点选了某条译义：panel_index 是它在面板里的下标（0 起），与数字键 1..N 上屏
+// 走同一条路径；面板已经不在或下标越界时什么也不做。
+void EnqueueCandidateUiCommitExpansionPanel(int panel_index);
 void EnqueuePipeSessionInvalidatedTask(uint64_t client_id, uint64_t invalidation_epoch);
 void EnqueueReloadInputSessionTask();
 void EnqueueEnsureInputSessionMatchesConfigTask();

@@ -43,7 +43,7 @@ TEST_CASE(candidate_view_pos_toggle_updates_display_and_refresh_signature)
     item.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw, true);
     const auto shown_html = CandidateViewHtml(item);
     const auto shown_signature = CandidatePageSignature({item});
-    const CandidateFramePageState page{2, 1, true, true};
+    const CandidateFramePageState page{2, 1, true, true, false, 0, 0, std::wstring{}};
     const auto shown_frame = CandidateFrameSignature(L"xiao", {item}, 10, 20, page);
 
     item.translation = FanyImeIpc::FormatTranslationGlossForDisplay(raw, false);
@@ -75,7 +75,7 @@ TEST_CASE(candidate_frame_signature_includes_page_state)
     CandidateViewItem item;
     item.text = "candidate";
     const std::vector<CandidateViewItem> views{item};
-    const CandidateFramePageState page{0, 1, false, true};
+    const CandidateFramePageState page{0, 1, false, true, false, 0, 0, std::wstring{}};
     const std::wstring original = CandidateFrameSignature(L"preedit", views, 10, 20, page);
 
     REQUIRE_EQ(original, CandidateFrameSignature(L"preedit", views, 10, 20, page));
@@ -90,13 +90,71 @@ TEST_CASE(candidate_frame_signature_includes_page_state)
     REQUIRE(original != CandidateFrameSignature(L"preedit", views, 10, 20, changed));
 }
 
+TEST_CASE(candidate_frame_signature_includes_expansion_panel_state)
+{
+    CandidateViewItem item;
+    item.text = "candidate";
+    const std::vector<CandidateViewItem> views{item};
+    const CandidateFramePageState page{0, 1, false, true, false, 0, 0, std::wstring{}};
+    const std::wstring original = CandidateFrameSignature(L"preedit", views, 10, 20, page);
+
+    // 面板内 ↑↓ 只改 expansion_panel_selected：必须改变签名，否则快速移动会被 250ms 去抖吞掉，
+    // 面板高亮停在上一项而服务端真实选中已到下一项（空格上屏下一项）。
+    CandidateFramePageState changed = page;
+    changed.expansion_panel_active = true;
+    changed.expansion_panel_signature = L"1:a2:hi";
+    const std::wstring with_panel = CandidateFrameSignature(L"preedit", views, 10, 20, changed);
+    REQUIRE(original != with_panel);
+
+    changed.expansion_panel_selected = 1;
+    REQUIRE(with_panel != CandidateFrameSignature(L"preedit", views, 10, 20, changed));
+    changed.expansion_panel_selected = 2;
+    REQUIRE(with_panel != CandidateFrameSignature(L"preedit", views, 10, 20, changed));
+
+    changed = page;
+    changed.expansion_panel_active = true;
+    changed.expansion_panel_anchor = 1;
+    changed.expansion_panel_signature = L"1:a2:hi";
+    REQUIRE(with_panel != CandidateFrameSignature(L"preedit", views, 10, 20, changed));
+
+    // 条数不变、文本变（译文第二波回填、词性显示切换）：必须改变签名，否则面板停在旧文本。
+    changed = page;
+    changed.expansion_panel_active = true;
+    changed.expansion_panel_signature = L"1:a2:yo";
+    REQUIRE(with_panel != CandidateFrameSignature(L"preedit", views, 10, 20, changed));
+
+    // 条目数变（改「每类最多显示」）：文本签名自然不同。
+    changed = page;
+    changed.expansion_panel_active = true;
+    changed.expansion_panel_signature = L"1:a1:b2:hi";
+    REQUIRE(with_panel != CandidateFrameSignature(L"preedit", views, 10, 20, changed));
+}
+
+TEST_CASE(candidate_expansion_panel_signature_length_prefixes_fields)
+{
+    struct PanelItem
+    {
+        std::wstring tag;
+        std::wstring display;
+    };
+    const std::vector<PanelItem> ab_c{{L"", L"a,b"}, {L"", L"c"}};
+    const std::vector<PanelItem> a_bc{{L"", L"a"}, {L"", L"b,c"}};
+    REQUIRE(CandidateExpansionPanelSignature(ab_c) != CandidateExpansionPanelSignature(a_bc));
+    REQUIRE_EQ(CandidateExpansionPanelSignature(ab_c), CandidateExpansionPanelSignature(ab_c));
+
+    // tag 与 display 的边界也不能串位：tag="a2:b"+display="" 与 tag="a"+display="2:b" 必须不同。
+    const std::vector<PanelItem> boundary_a{{L"a2:b", L""}};
+    const std::vector<PanelItem> boundary_b{{L"a", L"2:b"}};
+    REQUIRE(CandidateExpansionPanelSignature(boundary_a) != CandidateExpansionPanelSignature(boundary_b));
+}
+
 TEST_CASE(candidate_frame_signature_keeps_preedit_selection_and_caret)
 {
     CandidateViewItem first, second;
     first.text = "first";
     second.text = "second";
     const std::vector<CandidateViewItem> views{first, second};
-    const CandidateFramePageState page{0, 1, false, true};
+    const CandidateFramePageState page{0, 1, false, true, false, 0, 0, std::wstring{}};
     const std::wstring original = CandidateFrameSignature(L"preedit", views, 10, 20, page);
 
     CandidateFramePageState changed = page;
@@ -115,7 +173,7 @@ TEST_CASE(candidate_frame_signature_keeps_length_prefixed_candidate_identity)
     a.text = "a";
     bc.text = "b,c";
 
-    const CandidateFramePageState page{0, 0, false, true};
+    const CandidateFramePageState page{0, 0, false, true, false, 0, 0, std::wstring{}};
     REQUIRE(CandidateFrameSignature(L"", {ab, c}, 10, 20, page) != CandidateFrameSignature(L"", {a, bc}, 10, 20, page));
 }
 
