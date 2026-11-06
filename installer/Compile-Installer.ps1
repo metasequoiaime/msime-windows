@@ -2,7 +2,9 @@
 param(
     [string]$IsccPath,
     [string]$IssPath = (Join-Path $PSScriptRoot 'msime_setup.iss'),
-    [switch]$Light
+    [switch]$Light,
+    # 安装包版本；缺省时优先读 Prepare-PackageFiles.ps1 留下的 metadata，再退回 .iss 默认值。
+    [string]$TargetVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,14 +79,48 @@ if (-not (Test-Path -LiteralPath $IssPath -PathType Leaf)) {
 $resolvedIssPath = (Resolve-Path -LiteralPath $IssPath).Path
 $resolvedIsccPath = Resolve-IsccPath -ExplicitPath $IsccPath
 
+$outputDirectory = Join-Path $PSScriptRoot 'Output'
+$packageVersionPath = Join-Path $outputDirectory 'package-version.json'
+$lastBuildPath = Join-Path $outputDirectory 'last-build.json'
+Remove-Item -LiteralPath $lastBuildPath -Force -ErrorAction SilentlyContinue
+
+$appVersion = $TargetVersion
+$versionInfo = $null
+if (-not $appVersion -and (Test-Path -LiteralPath $packageVersionPath -PathType Leaf)) {
+    $metadata = Get-Content -LiteralPath $packageVersionPath -Raw | ConvertFrom-Json
+    $appVersion = [string]$metadata.appVersion
+    $versionInfo = [string]$metadata.versionInfo
+}
+if (-not $appVersion) {
+    $issContent = Get-Content -LiteralPath $resolvedIssPath -Raw
+    if ($issContent -match '(?m)^#define\s+MyAppVersion\s+"(?<version>[^"]+)"') {
+        $appVersion = $Matches.version
+    }
+    if ($issContent -match '(?m)^#define\s+MyVersionInfo\s+"(?<version>[^"]+)"') {
+        $versionInfo = $Matches.version
+    }
+}
+if (-not $appVersion) {
+    throw '未能确定安装包版本：既没有 -TargetVersion，也没有 Prepare-PackageFiles.ps1 的 metadata。'
+}
+if (-not $versionInfo) {
+    $versionInfo = ($appVersion -replace '-.*$', '')
+}
+if ($versionInfo -notmatch '^[0-9]+(\.[0-9]+)*$') {
+    throw "VersionInfoVersion 只接受数字和点号：$versionInfo"
+}
+
 Write-Host "Inno Setup 编译器：$resolvedIsccPath"
 Write-Host "安装脚本：$resolvedIssPath"
+Write-Host "安装包版本：$appVersion（VersionInfo $versionInfo）"
 
 $isccArgs = @()
 if ($Light) {
     $isccArgs += '/DLightPackage=1'
     Write-Host '轻量模式：安装包不含词库，输出文件名带 _light。'
 }
+$isccArgs += "/DMyAppVersion=$appVersion"
+$isccArgs += "/DMyVersionInfo=$versionInfo"
 $isccArgs += $resolvedIssPath
 
 Push-Location $PSScriptRoot
@@ -98,4 +134,17 @@ finally {
     Pop-Location
 }
 
-Write-Host "安装包编译完成，输出目录：$(Join-Path $PSScriptRoot 'Output')"
+$suffix = if ($Light) { '_light' } else { '' }
+$installerPath = Join-Path $outputDirectory "MetasequoiaIME_Setup_v$appVersion$suffix.exe"
+if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+    throw "编译成功但找不到预期产物：$installerPath"
+}
+@{
+    appVersion    = $appVersion
+    versionInfo   = $versionInfo
+    light         = [bool]$Light
+    installerPath = (Resolve-Path -LiteralPath $installerPath).Path
+} | ConvertTo-Json | Set-Content -LiteralPath $lastBuildPath -Encoding utf8NoBOM
+Remove-Item -LiteralPath $packageVersionPath -Force -ErrorAction SilentlyContinue
+
+Write-Host "安装包编译完成：$installerPath"

@@ -6,6 +6,7 @@
 #
 # 只在需要对装好的那一份做崩溃分析时才用这个脚本：PDB 有 ~140 MB，而真正的二进制只有 ~20 MB，
 # Inno Setup 还要对它们做固实 LZMA2 压缩，打包会明显比 test.ps1 / test-light.ps1 慢。
+# 只构建不安装时加 -NoInstall；版本默认从 version.txt 派生，可用 -TargetVersion 覆盖。
 #
 # 编译是增量的，实现见 Invoke-LocalTest.ps1。
 
@@ -13,7 +14,10 @@
 param(
     # 默认走轻量包，和日常改 TSF / Server 的节奏一致；要连词库一起装就加 -Full。
     [switch]$Full,
-    [switch]$Reconfigure
+    [switch]$Reconfigure,
+    [switch]$NoInstall,
+    [string]$TargetVersion
 )
 $ErrorActionPreference = 'Stop'
-& (Join-Path $PSScriptRoot 'Invoke-LocalTest.ps1') -Light:(-not $Full) -IncludeSymbols -Reconfigure:$Reconfigure
+& (Join-Path $PSScriptRoot 'Invoke-LocalTest.ps1') -Light:(-not $Full) -IncludeSymbols -Reconfigure:$Reconfigure `
+    -NoInstall:$NoInstall -TargetVersion $TargetVersion
