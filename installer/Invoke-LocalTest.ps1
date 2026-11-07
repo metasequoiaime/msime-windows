@@ -20,7 +20,11 @@ param(
     # 固实 LZMA2 压缩，所以默认不打包；只有需要在装好的机器上直接做崩溃分析时才加这个开关。
     [switch]$IncludeSymbols,
     # 强制重跑 CMake configure（改了 preset、换了工具链或怀疑缓存不对时用）。
-    [switch]$Reconfigure
+    [switch]$Reconfigure,
+    # 只构建安装包，不启动安装程序。CI、脚本化验证和“只想要个包”的场景用这个。
+    [switch]$NoInstall,
+    # 安装包版本；默认从仓库根的 version.txt 派生 <版本>-local。
+    [string]$TargetVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,6 +38,19 @@ try {
     $repoRoot = Split-Path -Parent $PSScriptRoot
     $tsfCompile = Join-Path $repoRoot 'windows\scripts\lcompile-release-both.ps1'
     $serverCompile = Join-Path $repoRoot 'server\scripts\lcompile-release.ps1'
+
+    if (-not $TargetVersion) {
+        $versionFile = Join-Path $repoRoot 'version.txt'
+        if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
+            throw "缺少版本文件：$versionFile"
+        }
+        $baseVersion = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+        if (-not $baseVersion) {
+            throw "版本文件为空：$versionFile"
+        }
+        $TargetVersion = "$baseVersion-local"
+    }
+    Write-Host "安装包版本：$TargetVersion"
 
     # Both are directories of this repository now, so a missing one is a broken checkout rather
     # than a neighbour nobody cloned. Skipping the build and packaging whatever binaries happen to be
@@ -66,11 +83,14 @@ try {
     }
 
     & (Join-Path $PSScriptRoot 'Prepare-PackageFiles.ps1') -Light:$Light -IncludeSymbols:$IncludeSymbols `
-        -RepoRoot $repoRoot -TsfDirectory windows -ServerDirectory server -NoticesDirectory .
+        -RepoRoot $repoRoot -TsfDirectory windows -ServerDirectory server -NoticesDirectory . `
+        -TargetVersion $TargetVersion
     & (Join-Path $PSScriptRoot 'Sign-PackageBinaries-Local.ps1')
-    & (Join-Path $PSScriptRoot 'Compile-Installer.ps1') -Light:$Light
-    & (Join-Path $PSScriptRoot 'Sign-Installer-Local.ps1') -Light:$Light
-    & (Join-Path $PSScriptRoot 'Install.ps1') -Light:$Light
+    & (Join-Path $PSScriptRoot 'Compile-Installer.ps1') -Light:$Light -TargetVersion $TargetVersion
+    & (Join-Path $PSScriptRoot 'Sign-Installer-Local.ps1')
+    if (-not $NoInstall) {
+        & (Join-Path $PSScriptRoot 'Install.ps1')
+    }
 } finally {
     Pop-Location
 }

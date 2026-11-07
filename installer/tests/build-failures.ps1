@@ -77,6 +77,8 @@ try {
     New-Item -ItemType Directory -Force $installer | Out-Null
     [IO.File]::WriteAllText((Join-Path $installer 'Prepare-PackageFiles.ps1'), "throw 'Reached package staging after failure'")
     Copy-Item (Join-Path $source 'installer/Invoke-LocalTest.ps1') $installer
+    # 入口脚本先解析 version.txt 再编译，临时 fixture 里也要有，否则会停在版本检查而不是构建失败。
+    [IO.File]::WriteAllText((Join-Path $fixture 'version.txt'), "2026.9.1`n")
     foreach ($entry in @('test.ps1', 'test-light.ps1', 'test-symbols.ps1')) {
         Copy-Item (Join-Path $source "installer/$entry") $installer
         $rejected = $false
