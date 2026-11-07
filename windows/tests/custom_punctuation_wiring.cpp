@@ -584,16 +584,49 @@ void TheSameCustomKeyStepsOverTheClosingItAutoCompleted()
     CHECK(service.ime._pairedPunctuationStack.empty());
 }
 
+void CustomKeysPairWithThePairingSwitchOff()
+{
+    Service service;
+    Global::PairedPunctuationEnabled = false;
+    const cp::Table table = MakeTable({{L'{', L"「"}});
+    const CustomPunctuationPick shiftBracket = PickFor(table, L'{', kVkOemOpenBracket, true);
+
+    // 成对补全关着：自定义键出的 「 照样补出 」、光标放回中间，同一个键再按跨过它。
+    service.ime._HandleCompositionPunctuation(0, &service.context, kVkOemOpenBracket, L'{', 1, L"", shiftBracket);
+    CHECK(service.ime.committed.size() == 1 && service.ime.committed.back() == L"「」");
+    CHECK(service.ime.caretMoves.size() == 1 && service.ime.caretMoves.back() == -1);
+    CHECK(service.ime._pairedPunctuationStack.size() == 1);
+    service.ime.followingChar = L'」';
+    service.ime._HandleCompositionPunctuation(0, &service.context, kVkOemOpenBracket, L'{', 2, L"", shiftBracket);
+    CHECK(service.ime.committed.size() == 1);
+    CHECK(service.ime.caretMoves.size() == 2 && service.ime.caretMoves.back() == 1);
+    CHECK(service.ime._pairedPunctuationStack.empty());
+
+    // 没被接管的 [ 跟开关走：只出 【。
+    service.ime._HandleCompositionPunctuation(0, &service.context, kVkOemOpenBracket, L'[', 3, L"",
+                                              CustomPunctuationPick{});
+    CHECK(service.ime.committed.size() == 2 && service.ime.committed.back() == L"【");
+    CHECK(service.ime._pairedPunctuationStack.empty());
+
+    // 被排除的宿主里自定义键也不补。
+    Global::current_process_name = L"EXCEL.EXE";
+    service.ime._HandleCompositionPunctuation(0, &service.context, kVkOemOpenBracket, L'{', 4, L"", shiftBracket);
+    CHECK(service.ime.committed.size() == 3 && service.ime.committed.back() == L"「");
+    CHECK(service.ime._pairedPunctuationStack.empty());
+    Global::current_process_name = L"notepad.exe";
+    Global::PairedPunctuationEnabled = true;
+}
+
 void PunctuationCommitResolvesWithThePickItWasGiven()
 {
     Service service;
     Global::PairedPunctuationEnabled = false;
-    const cp::Table table = MakeTable({{L'-', L"——"}, {L'[', L"〔"}});
+    const cp::Table table = MakeTable({{L'-', L"——"}, {L'[', L"※"}});
 
     // 没有候选时：出 pick 里的符号。
     service.ime._HandleCompositionPunctuation(0, &service.context, kVkOemOpenBracket, L'[', 1, L"",
                                               PickFor(table, L'[', kVkOemOpenBracket, false));
-    CHECK(service.ime.committed.back() == L"〔");
+    CHECK(service.ime.committed.back() == L"※");
     // 同一个键不带 pick：默认映射。
     service.ime._HandleCompositionPunctuation(0, &service.context, kVkOemOpenBracket, L'[', 2, L"",
                                               CustomPunctuationPick{});
@@ -694,6 +727,7 @@ int main()
     SyncInputSeesCompositionCandidatesAndTheRetractionWindow();
     DeferredInputFollowsTheProjection();
     TheSameCustomKeyStepsOverTheClosingItAutoCompleted();
+    CustomKeysPairWithThePairingSwitchOff();
     PunctuationCommitResolvesWithThePickItWasGiven();
     PunctuationCommitMessageHandsThePickToTheSession();
     ServerCandidateReplyRepostsThePunctuationWithItsPick();

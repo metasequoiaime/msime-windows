@@ -865,6 +865,22 @@ void CustomKeysAreNotTreatedAsQuoteKeys()
     CHECK(ComposePairedCommit(true, L'[', true, L"※").closing == 0);
 }
 
+void CustomKeysPairWhateverTheSwitchSays()
+{
+    // 默认标点跟开关走；自定义键开关关着也补全；被排除的宿主里谁都不补。
+    CHECK(PairedPunctuationActiveFor(true, false, false));
+    CHECK(!PairedPunctuationActiveFor(false, false, false));
+    CHECK(PairedPunctuationActiveFor(true, false, true));
+    CHECK(PairedPunctuationActiveFor(false, false, true));
+    CHECK(!PairedPunctuationActiveFor(true, true, false));
+    CHECK(!PairedPunctuationActiveFor(false, true, true));
+    CHECK(!PairedPunctuationActiveFor(true, true, true));
+    // 开关关着时按自定义键选的「：补出 」。
+    const PairedCommit open = ComposePairedCommit(PairedPunctuationActiveFor(false, false, true), L'[', true, L"「");
+    CHECK(open.text == L"「」");
+    CHECK(open.closing == L'」');
+}
+
 void ExcelIsExcludedFromPairing()
 {
     CHECK(Global::IsPairedPunctuationExcludedProcess(L"EXCEL.EXE"));
@@ -950,6 +966,7 @@ int main()
     BraceStepsOverTheAutoClosedBrace();
     DefaultQuoteKeysStartAFreshPair();
     CustomKeysAreNotTreatedAsQuoteKeys();
+    CustomKeysPairWhateverTheSwitchSays();
     ExcelIsExcludedFromPairing();
     SmartConversionIgnoresSymbolsOutsideItsTable();
     CustomSymbolsNeverArmTheSpaceConversion();

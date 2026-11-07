@@ -1,5 +1,5 @@
 // 输入页「自定义标点」：符号目录、表格内容、以及用真实鼠标与键盘消息操作表格控件。
-// 期望值按施工规格手写：触发键 11 个、同一触发键不能两行、第二个下拉框随「成对标点自动补全」合并显示。
+// 期望值按施工规格手写：触发键 11 个、同一触发键不能两行、第二个下拉框把成对的符号合成一项。
 #include "tests/includes/settings_window_harness.h"
 #include "tests/includes/test_framework.h"
 #include "tests/includes/test_utf8_path.h"
@@ -171,45 +171,39 @@ TEST_CASE(custom_punctuation_catalog_without_either_category_lists_the_built_in_
     REQUIRE(LoadPunctuationSymbolCatalog(test::TempRoot() / L"msime-不存在的目录.db") == WithBuiltIns({}));
 }
 
-TEST_CASE(custom_punctuation_symbol_options_merge_pairs_only_when_pairing_is_on)
+TEST_CASE(custom_punctuation_symbol_options_merge_pairs)
 {
     const std::vector<std::wstring> catalog = WithAscii({L"「", L"」", L"【", L"】", L"。", L"‹"});
-    const auto off = BuildSymbolOptions(catalog, false);
-    const auto on = BuildSymbolOptions(catalog, true);
-    REQUIRE(off.size() == catalog.size());
-    std::set<std::wstring> offLabels;
-    for (const auto &option : off)
-    {
-        offLabels.insert(option.label);
-        REQUIRE(native_settings::Widen(option.value) == option.label);
-    }
-    REQUIRE(offLabels.count(L"」") == 1);
-    REQUIRE(offLabels.count(L"「」") == 0);
-
-    std::set<std::wstring> onLabels;
-    for (const auto &option : on)
-        onLabels.insert(option.label);
+    const auto options = BuildSymbolOptions(catalog);
+    std::set<std::wstring> labels;
+    for (const auto &option : options)
+        labels.insert(option.label);
     // 成对表里的 「」 【】 {} 合成一项，每对少一项；() [] <> 不在成对表里，照旧单列。
     // ‹ 的右半边 › 不在目录里，‹ 照样显示成对。
-    REQUIRE(onLabels.count(L"「」") == 1);
-    REQUIRE(onLabels.count(L"【】") == 1);
-    REQUIRE(onLabels.count(L"{}") == 1);
-    REQUIRE(onLabels.count(L"‹›") == 1);
-    REQUIRE(onLabels.count(L"」") == 0);
-    REQUIRE(onLabels.count(L"】") == 0);
-    REQUIRE(onLabels.count(L"}") == 0);
-    REQUIRE(onLabels.count(L"。") == 1);
-    REQUIRE(on.size() == off.size() - 3);
-    for (const auto &option : on)
+    REQUIRE(labels.count(L"「」") == 1);
+    REQUIRE(labels.count(L"【】") == 1);
+    REQUIRE(labels.count(L"{}") == 1);
+    REQUIRE(labels.count(L"‹›") == 1);
+    REQUIRE(labels.count(L"「") == 0);
+    REQUIRE(labels.count(L"」") == 0);
+    REQUIRE(labels.count(L"】") == 0);
+    REQUIRE(labels.count(L"}") == 0);
+    REQUIRE(labels.count(L"。") == 1);
+    REQUIRE(labels.count(L"(") == 1);
+    REQUIRE(labels.count(L")") == 1);
+    REQUIRE(options.size() == catalog.size() - 3);
+    for (const auto &option : options)
     {
         if (option.label == L"「」")
             REQUIRE(option.value == "「");
+        else if (option.label == L"。")
+            REQUIRE(option.value == "。");
     }
 
-    REQUIRE(SymbolLabel("「", true) == L"「」");
-    REQUIRE(SymbolLabel("「", false) == L"「");
-    REQUIRE(SymbolLabel("」", true) == L"」");
-    REQUIRE(SymbolLabel("——", true) == L"——");
+    REQUIRE(SymbolLabel("「") == L"「」");
+    REQUIRE(SymbolLabel("」") == L"」");
+    REQUIRE(SymbolLabel("——") == L"——");
+    REQUIRE(SymbolLabel("。") == L"。");
 }
 
 TEST_CASE(custom_punctuation_rows_refuse_a_second_row_with_the_same_trigger)
@@ -619,25 +613,28 @@ TEST_CASE(settings_custom_punctuation_add_stops_at_twenty_two_rows)
     REQUIRE(!scene.editor->AddButton()->IsDisabled());
 }
 
-TEST_CASE(settings_custom_punctuation_symbol_display_follows_pairing)
+TEST_CASE(settings_custom_punctuation_symbol_display_ignores_the_pairing_switch)
 {
     EditorScene &scene = EditorScene::Create();
     scene.Snapshot(true, {"Shift+BracketLeft=「", "Shift+BracketRight=」"}, true);
     REQUIRE(scene.SymbolShown(0) == L"「」");
-    // 右半边在成对时不单列，已选的右半边照样显示它自己。
+    // 右半边不单列，已选的右半边照样显示它自己。
     REQUIRE(scene.editor->Controls(1).symbol->GetValue().empty());
-    const auto pairedOptions = scene.editor->Controls(0).symbol->GetOptions();
+    REQUIRE(scene.editor->Controls(1).symbol->CurrentLabel() == L"」");
+    const auto options = scene.editor->Controls(0).symbol->GetOptions();
 
+    // 关掉成对标点自动补全：显示与选项都不变，也不写配置。
     scene.Snapshot(true, {"Shift+BracketLeft=「", "Shift+BracketRight=」"}, false);
-    REQUIRE(scene.SymbolShown(0) == L"「");
-    REQUIRE(scene.SymbolShown(1) == L"」");
-    const auto singleOptions = scene.editor->Controls(0).symbol->GetOptions();
-    // 目录里成对表的对有 「」 『』 〔〕 {} 四对：成对时少四项。
-    REQUIRE(singleOptions.size() == pairedOptions.size() + 4);
-    REQUIRE(scene.MapUpdates().empty());
-
-    scene.Snapshot(true, {"Shift+BracketLeft=「", "Shift+BracketRight=」"}, true);
     REQUIRE(scene.SymbolShown(0) == L"「」");
+    REQUIRE(scene.editor->Controls(1).symbol->CurrentLabel() == L"」");
+    const auto afterSwitch = scene.editor->Controls(0).symbol->GetOptions();
+    REQUIRE(afterSwitch.size() == options.size());
+    for (size_t i = 0; i < options.size(); ++i)
+    {
+        REQUIRE(afterSwitch[i].label == options[i].label);
+        REQUIRE(afterSwitch[i].value == options[i].value);
+    }
+    REQUIRE(scene.MapUpdates().empty());
 }
 
 TEST_CASE(custom_punctuation_catalog_reads_the_real_symbol_database)
@@ -662,23 +659,29 @@ TEST_CASE(custom_punctuation_options_keep_the_built_in_symbols_without_a_catalog
     // 符号目录读不到时，第二个下拉框照样能选到【】《》「」和默认映射的每个输出。
     const auto catalog = LoadPunctuationSymbolCatalog(test::TempRoot() / L"msime-不存在的目录.db");
     std::set<std::string> values;
-    for (const auto &option : BuildSymbolOptions(catalog, false))
+    std::set<std::wstring> labels;
+    for (const auto &option : BuildSymbolOptions(catalog))
+    {
         values.insert(option.value);
-    for (const wchar_t *symbol : {L"【", L"】", L"《", L"》", L"「", L"」"})
-        REQUIRE(values.count(native_settings::Narrow(symbol)) == 1);
-    for (const auto &output : kDefaultOutputs)
-        REQUIRE(values.count(native_settings::Narrow(output)) == 1);
-    std::set<std::wstring> pairedLabels;
-    for (const auto &option : BuildSymbolOptions(catalog, true))
-        pairedLabels.insert(option.label);
+        labels.insert(option.label);
+    }
     for (const wchar_t *label : {L"【】", L"《》", L"「」", L"〈〉"})
-        REQUIRE(pairedLabels.count(label) == 1);
+        REQUIRE(labels.count(label) == 1);
+    // 默认映射的输出要么自己是一项，要么是某一对的右半边、随左半边那一项出。
+    for (const auto &output : kDefaultOutputs)
+    {
+        const bool listed = values.count(native_settings::Narrow(output)) == 1;
+        bool closingOfListedPair = false;
+        for (const auto &label : labels)
+            closingOfListedPair = closingOfListedPair || (label.size() == 2 && output == label.substr(1));
+        REQUIRE(listed || closingOfListedPair);
+    }
 }
 
 TEST_CASE(custom_punctuation_symbol_options_keep_a_closing_half_whose_opening_is_missing)
 {
-    // 目录里只有右半边 」、没有 「：成对显示时 」 照样单列，不会选不到。
-    const auto on = BuildSymbolOptions(WithAscii({L"」", L"【", L"】"}), true);
+    // 目录里只有右半边 」、没有 「：」 照样单列，不会选不到。
+    const auto on = BuildSymbolOptions(WithAscii({L"」", L"【", L"】"}));
     std::set<std::wstring> labels;
     for (const auto &option : on)
         labels.insert(option.label);
@@ -714,18 +717,6 @@ TEST_CASE(settings_custom_punctuation_editing_a_row_keeps_an_unfinished_row)
     REQUIRE(scene.editor->Controls(1).key->GetValue() == "=");
 }
 
-TEST_CASE(settings_custom_punctuation_selected_closing_half_shows_itself_while_paired)
-{
-    EditorScene &scene = EditorScene::Create();
-    scene.Snapshot(true, {"Shift+BracketLeft=「", "Shift+BracketRight=」"}, true);
-    // 成对显示时 」 不在选项里，下拉框收起时照样显示它自己。
-    REQUIRE(scene.editor->Controls(0).symbol->CurrentLabel() == L"「」");
-    REQUIRE(scene.editor->Controls(1).symbol->CurrentLabel() == L"」");
-    scene.Snapshot(true, {"Shift+BracketLeft=「", "Shift+BracketRight=」"}, false);
-    REQUIRE(scene.editor->Controls(0).symbol->CurrentLabel() == L"「");
-    REQUIRE(scene.editor->Controls(1).symbol->CurrentLabel() == L"」");
-}
-
 TEST_CASE(settings_custom_punctuation_reads_the_catalog_only_once_the_table_shows)
 {
     int calls = 0;
@@ -737,15 +728,15 @@ TEST_CASE(settings_custom_punctuation_reads_the_catalog_only_once_the_table_show
     scene.Snapshot(false, {"Shift+BracketLeft=「"});
     scene.Snapshot(false, {"Shift+BracketLeft=「"}, false);
     REQUIRE(calls == 0);
-    // 打开总开关，表格显示：读一次，按当前的成对设置列出。
+    // 打开总开关，表格显示：读一次。
     scene.Snapshot(true, {"Shift+BracketLeft=「"}, false);
     REQUIRE(calls == 1);
-    REQUIRE(scene.editor->Controls(0).symbol->CurrentLabel() == L"「");
-    REQUIRE(scene.editor->Controls(0).symbol->GetValue() == "「");
-    // 之后切换成对补全只换显示，不再读。
-    scene.Snapshot(true, {"Shift+BracketLeft=「"}, true);
-    REQUIRE(calls == 1);
     REQUIRE(scene.editor->Controls(0).symbol->CurrentLabel() == L"「」");
+    REQUIRE(scene.editor->Controls(0).symbol->GetValue() == "「");
+    // 之后再收到快照（切换成对补全、改映射）不再读。
+    scene.Snapshot(true, {"Shift+BracketLeft=「"}, true);
+    scene.Snapshot(true, {"Shift+BracketLeft=「", "Minus=。"}, true);
+    REQUIRE(calls == 1);
 }
 
 TEST_CASE(settings_custom_punctuation_clear_refuses_a_duplicate_trigger_with_a_message)
@@ -915,7 +906,7 @@ TEST_CASE(settings_custom_punctuation_snapshot_after_the_page_is_released_reache
     std::vector<std::vector<unsigned char>> filler;
     for (size_t size = 16; size <= 8192; size += 8)
         filler.emplace_back(size, static_cast<unsigned char>(0xA5));
-    // 开关从关到开、映射和成对设置都换：编辑器还在的话，会重建行、读符号目录。
+    // 开关从关到开、映射也换：编辑器还在的话，会重建行、读符号目录。
     scene.Snapshot(true, {"Minus=。"}, false);
     scene.Snapshot(false, {}, true);
     scene.Snapshot(true, {"Equal==", "Minus=。"}, true);
@@ -929,7 +920,7 @@ namespace
 const std::wstring kRecordIdle = L"设置快捷键";
 const std::wstring kRecordWaiting = L"按下快捷键";
 const std::wstring kRecordShift = L"Shift";
-const std::wstring kSwitchSubtitle = L"可自定义标点输入，内含非常用符号（如「」『』〖〗）；联动成对补全";
+const std::wstring kSwitchSubtitle = L"可自定义标点输入，内含非常用符号（如「」『』）";
 
 // 布局用 float 算，相等比较留一点余量。
 bool Near(float a, float b)
@@ -1083,7 +1074,7 @@ TEST_CASE(settings_custom_punctuation_switch_row_says_what_the_feature_covers)
 
 TEST_CASE(settings_custom_punctuation_switch_subtitle_wraps_without_clipping_in_a_narrow_page)
 {
-    EditorScene &scene = EditorScene::CreateAt(96.0f, 320.0f);
+    EditorScene &scene = EditorScene::CreateAt(96.0f, 240.0f);
     scene.Snapshot(true, {"Equal=="});
     const msimeui::RectF view = scene.editor->View()->GetBounds();
     const msimeui::RectF table = scene.editor->Table()->GetBounds();
@@ -1091,7 +1082,7 @@ TEST_CASE(settings_custom_punctuation_switch_subtitle_wraps_without_clipping_in_
     auto *subtitle = LabelWithText(scene, header, kSwitchSubtitle);
     REQUIRE(subtitle != nullptr);
     const msimeui::RectF shown = subtitle->GetBounds();
-    // 320 宽放不下一行：折成多行。
+    // 240 宽放不下一行：折成多行。
     const float oneLine = subtitle->Measure({10000.0f, 10000.0f}).height;
     const float wrapped = subtitle->Measure({shown.width, 10000.0f}).height;
     scene.harness.Layout();

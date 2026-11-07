@@ -10,6 +10,13 @@
 //
 // keyIsCustom 表示这个键由自定义标点接管：它出的符号由用户指定，不走默认引号键的左右轮换。
 
+// 这个键按下时成对补全与跨越生不生效。被排除的宿主里一律不生效；自定义标点接管的键不看「成对标点自动补全」
+// 开关：选了成对表左半边的行总是补出右半边，开关只管默认标点。
+inline bool PairedPunctuationActiveFor(bool switchOn, bool hostExcluded, bool keyIsCustom)
+{
+    return !hostExcluded && (switchOn || keyIsCustom);
+}
+
 // 按下的键能跨过的右半边；不能时为 0。默认映射下的 " 与 ' 两侧共用一个键，解析出的字符说明不了
 // 用户想闭合，所以由键本身回答。
 inline wchar_t PairedStepOverCandidate(wchar_t key, bool keyIsCustom, const std::wstring &resolved)
@@ -41,7 +48,7 @@ struct PairedCommit
     wchar_t closing = 0;
 };
 
-// 成对补全生效（开关开着且宿主没被排除）时上屏的文本。默认引号键每次都开一对新的，不跟随左右轮换。
+// pairedActive 取 PairedPunctuationActiveFor 的结果，为真时补出右半边。默认引号键每次都开一对新的，不跟随左右轮换。
 inline PairedCommit ComposePairedCommit(bool pairedActive, wchar_t key, bool keyIsCustom, std::wstring text)
 {
     PairedCommit commit;

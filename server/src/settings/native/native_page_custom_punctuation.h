@@ -21,11 +21,11 @@ namespace native_settings
 // 符号；键盘的 32 个半角标点。库打不开或两种分类都没有时只有后三样。
 std::vector<std::wstring> LoadPunctuationSymbolCatalog(const std::filesystem::path &othersDb);
 
-// 第二个下拉框的选项。paired 为真（成对标点自动补全开着）时，成对表里的一对合成一项（值是左半边，
-// 标签是两半），右半边不再单列；为假时都单边显示。值是 UTF-8 符号。
-std::vector<DropdownOption> BuildSymbolOptions(const std::vector<std::wstring> &catalog, bool paired);
-// 已选符号在第二个下拉框里显示成什么。
-std::wstring SymbolLabel(const std::string &symbol, bool paired);
+// 第二个下拉框的选项。成对表里的一对合成一项（值是左半边，标签是两半），左半边在目录里时右半边不再单列。
+// 值是 UTF-8 符号。
+std::vector<DropdownOption> BuildSymbolOptions(const std::vector<std::wstring> &catalog);
+// 已选符号在第二个下拉框里显示成什么：成对表的左半边显示成一对，其余显示它自己。
+std::wstring SymbolLabel(const std::string &symbol);
 
 struct CustomPunctuationRow
 {
@@ -124,10 +124,8 @@ class CustomPunctuationEditor
     std::function<std::vector<std::wstring>()> catalogSource_;
     std::vector<std::wstring> catalog_;
     bool catalogLoaded_ = false;
-    bool paired_ = true;
-    // 第二个下拉框的选项已经列过，以及列的时候成对补全开没开。
+    // 第二个下拉框的选项已经列过。
     bool optionsListed_ = false;
-    bool optionsPaired_ = true;
     CustomPunctuationRows rows_;
     std::vector<std::string> lastEntries_;
     bool synced_ = false;

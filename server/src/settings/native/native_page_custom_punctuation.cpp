@@ -18,7 +18,6 @@ namespace cp = FanyImeCustomPunctuation;
 constexpr std::wstring_view kAsciiPunctuation = L"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 constexpr const char *kEnabledPath = "input.custom_punctuation";
 constexpr const char *kMapPath = "input.custom_punctuation_map";
-constexpr const char *kPairedPath = "input.paired_punctuation";
 
 // 一个分类的符号，按 sort_order；去重留第一次出现的位置。
 std::vector<std::wstring> QueryCategory(sqlite3 *db, const char *parentCategory)
@@ -185,28 +184,23 @@ std::vector<std::wstring> LoadPunctuationSymbolCatalog(const std::filesystem::pa
     return symbols;
 }
 
-std::vector<DropdownOption> BuildSymbolOptions(const std::vector<std::wstring> &catalog, bool paired)
+std::vector<DropdownOption> BuildSymbolOptions(const std::vector<std::wstring> &catalog)
 {
     std::vector<DropdownOption> options;
     for (const auto &symbol : catalog)
     {
-        if (paired)
-        {
-            const wchar_t opening = OpeningFor(SingleUnit(symbol));
-            if (opening != 0 && std::find(catalog.begin(), catalog.end(), std::wstring(1, opening)) != catalog.end())
-                continue;
-        }
+        const wchar_t opening = OpeningFor(SingleUnit(symbol));
+        if (opening != 0 && std::find(catalog.begin(), catalog.end(), std::wstring(1, opening)) != catalog.end())
+            continue;
         const std::string value = Narrow(symbol);
-        options.push_back({SymbolLabel(value, paired), value, false, {}});
+        options.push_back({SymbolLabel(value), value, false, {}});
     }
     return options;
 }
 
-std::wstring SymbolLabel(const std::string &symbol, bool paired)
+std::wstring SymbolLabel(const std::string &symbol)
 {
     std::wstring label = Widen(symbol);
-    if (!paired)
-        return label;
     const wchar_t closing = FanyImePairedPunctuation::ClosingFor(SingleUnit(label));
     if (closing != 0)
         label.push_back(closing);
@@ -304,7 +298,7 @@ CustomPunctuationEditor::CustomPunctuationEditor(PageContext &context,
         if (on)
             AddBlankRowIfEmpty();
     });
-    auto header = MakeRow(L"自定义标点", L"可自定义标点输入，内含非常用符号（如「」『』〖〗）；联动成对补全", toggle_);
+    auto header = MakeRow(L"自定义标点", L"可自定义标点输入，内含非常用符号（如「」『』）", toggle_);
 
     auto rows = std::make_shared<Column>(6.0f);
     std::vector<DropdownOption> keyOptions;
@@ -478,11 +472,8 @@ void CustomPunctuationEditor::Sync()
     const bool enabled = model.GetBool(kEnabledPath, false);
     table_->SetVisible(enabled);
 
-    const bool paired = model.GetBool(kPairedPath, true);
     // 第二个下拉框的选项只在表格显示时才列：总开关关着时不读符号目录。
-    const bool optionsStale = enabled && (!optionsListed_ || paired != optionsPaired_);
-    const bool pairedChanged = !synced_ || paired != paired_;
-    paired_ = paired;
+    const bool optionsStale = enabled && !optionsListed_;
 
     const std::vector<std::string> entries = ReadEntries(model.Find(kMapPath));
     const bool entriesChanged = !synced_ || entries != lastEntries_;
@@ -496,7 +487,7 @@ void CustomPunctuationEditor::Sync()
     }
     if (optionsStale)
         RefreshSymbolOptions();
-    if (entriesChanged || pairedChanged || optionsStale)
+    if (entriesChanged || optionsStale)
         Refresh();
 }
 
@@ -538,7 +529,7 @@ void CustomPunctuationEditor::Refresh()
         }
         else
         {
-            // 不在选项里的符号（例成对显示时的右半边）显示它自己。
+            // 不在选项里的符号（例成对表的右半边）显示它自己。
             slot.controls.symbol->SetValue(row.symbol);
         }
     }
@@ -553,11 +544,10 @@ void CustomPunctuationEditor::RefreshSymbolOptions()
         catalog_ = catalogSource_ ? catalogSource_() : std::vector<std::wstring>{};
         catalogLoaded_ = true;
     }
-    const std::vector<DropdownOption> options = BuildSymbolOptions(catalog_, paired_);
+    const std::vector<DropdownOption> options = BuildSymbolOptions(catalog_);
     for (const auto &slot : slots_)
         slot->controls.symbol->SetOptions(options);
     optionsListed_ = true;
-    optionsPaired_ = paired_;
 }
 
 void CustomPunctuationEditor::Commit()
