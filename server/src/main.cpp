@@ -236,14 +236,15 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     if (GetConfiguredCharacterSet() == "traditional")
         ChineseConverter::PreloadInBackground();
 
+    // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
+    // 这正是把下载放在 Server 而不是设置进程的原因。必须排在 CreateCandidateWindow
+    // 之前：那里面就是消息循环，进程活着期间不会返回，排在后面等于等到退出才起线程。
+    update_check::StartPolling();
+
     int ret = CreateCandidateWindow(hInstance);
     if (radical_warmup.joinable())
         radical_warmup.join();
     ChineseConverter::JoinBackgroundPreload();
-
-    // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
-    // 这正是把下载放在 Server 而不是设置进程的原因。
-    update_check::StartPolling();
 
     FanyNamedPipe::RegisterStatusSnapshotWindow(nullptr);
 

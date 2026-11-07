@@ -292,9 +292,11 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     shell32
     advapi32
     ole32
-    # native_settings_update_download.cpp 用 WinHTTP 取包、用 BCrypt 算摘要。
+    # native_settings_update_download.cpp 用 WinHTTP 取包、用 BCrypt 算摘要，启动前用 WinVerifyTrust 验签名。
     winhttp
     bcrypt
+    wintrust
+    crypt32
     ws2_32
     # zip_archive.cpp 用 zlib 的 CRC 与 deflate 解压。
     ZLIB::ZLIB
@@ -333,6 +335,8 @@ target_link_libraries(MetasequoiaImeSettingsUiTests PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
     bcrypt
+    wintrust
+    crypt32
     winhttp
     dwmapi
     dcomp

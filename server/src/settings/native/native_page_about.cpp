@@ -3,6 +3,7 @@
 #include "msime_version.h"
 #include "settings/native/native_settings_update_download.h"
 #include "settings/update_channel.h"
+#include "utils/network_proxy.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
@@ -15,6 +16,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <regex>
+#include <thread>
 
 using Microsoft::WRL::ComPtr;
 
@@ -72,6 +74,19 @@ int CompareVersions(const Version &left, const Version &right)
     return 0;
 }
 
+// 清单字段类型不对时 value() 会抛 type_error，设置窗口的消息处理不能让它逃出去。
+std::string JsonStringOrEmpty(const nlohmann::json &object, const char *key)
+{
+    const auto it = object.find(key);
+    return it != object.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+bool JsonBoolOr(const nlohmann::json &object, const char *key, const bool fallback)
+{
+    const auto it = object.find(key);
+    return it != object.end() && it->is_boolean() ? it->get<bool>() : fallback;
+}
+
 // GET over WinHTTP; empty on any failure. Runs on a worker thread.
 std::string HttpGet(const std::string &url)
 {
@@ -86,8 +101,10 @@ std::string HttpGet(const std::string &url)
     if (!WinHttpCrackUrl(wide.c_str(), 0, 0, &parts))
         return {};
     std::string body;
-    HINTERNET session =
-        WinHttpOpen(L"MetasequoiaImeSettings", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+    // 和其它联网路径一致地走用户配置的代理。这里以前直接用 AUTOMATIC_PROXY，
+    // 只认系统代理，[network] 里填的自定义代理被整个跳过：清单走了直连，安装包
+    // 却走代理，两条路结果不同，表现为检查时好时坏。
+    HINTERNET session = NetworkProxy::OpenWinHttpSession(L"MetasequoiaImeSettings/1.0");
     if (!session)
         return {};
     WinHttpSetTimeouts(session, 10000, 10000, 10000, 10000);
@@ -97,6 +114,11 @@ std::string HttpGet(const std::string &url)
             ? WinHttpOpenRequest(connection, L"GET", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                  parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)
             : nullptr;
+    if (request)
+    {
+        DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+        WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
+    }
     DWORD status = 0;
     DWORD statusSize = sizeof(status);
     if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) &&
@@ -356,10 +378,10 @@ inline void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const
 }
 
 // 下载结束后恢复按钮并给出结果。成功时先用清单摘要重新核对一遍磁盘上的文件，
-// 再交给系统打开：它已经校验过，接下来是 UAC 和 Inno Setup 自己的界面，每一步仍由
-// 用户确认。重核对是为了堵住「校验完成」到「用户点 UAC」之间被替换的窗口。
+// 并在启动前验证签名；句柄保持只共享读，安装程序起来之前别人改不了也删不掉。
+// 接下来是 UAC 和 Inno Setup 自己的界面，每一步仍由用户确认。
 void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::string &installer_path,
-                          const std::string &expected_digest, const std::string &message)
+                          const std::string &expected_digest, const std::string &message, const bool require_signature)
 {
     if (installer_path.empty())
     {
@@ -367,16 +389,60 @@ void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::s
         return;
     }
     const std::filesystem::path path = std::filesystem::u8path(installer_path);
-    if (!update_download::FileMatchesDigest(path, expected_digest))
+    HANDLE file = INVALID_HANDLE_VALUE;
+    if (!update_download::OpenVerifiedInstaller(path, expected_digest, file))
     {
         FinishUpdateDownload(state, false, L"安装包在打开前核对失败，请重试");
         return;
     }
-    const HINSTANCE opened = ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    if (reinterpret_cast<INT_PTR>(opened) <= 32)
+    if (require_signature && !update_download::VerifyAuthenticode(path))
+    {
+        CloseHandle(file);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        FinishUpdateDownload(state, false, L"安装包签名校验失败，请从发布页手动下载");
+        return;
+    }
+    SHELLEXECUTEINFOW info{};
+    info.cbSize = sizeof(info);
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
+    info.lpVerb = L"open";
+    info.lpFile = path.c_str();
+    const std::filesystem::path working_directory = path.parent_path();
+    info.lpDirectory = working_directory.c_str();
+    info.nShow = SW_SHOWNORMAL;
+    const bool opened = ShellExecuteExW(&info) != FALSE;
+    if (!opened)
+    {
+        CloseHandle(file);
         FinishUpdateDownload(state, false, L"安装包已下载，但无法自动打开，请重试");
-    else
-        FinishUpdateDownload(state, true, L"安装包已下载并通过校验，已打开安装程序");
+        return;
+    }
+    FinishUpdateDownload(state, true, L"安装包已下载并通过校验，已打开安装程序");
+    // 等安装器起来并打开安装包之后再放掉只读句柄。等待放到后台线程，设置窗口
+    // 不因为一次 UAC 或安装器初始化卡住。
+    const HANDLE process = info.hProcess;
+    try
+    {
+        std::thread([file, process] {
+            if (process != nullptr)
+            {
+                WaitForInputIdle(process, 5000);
+                CloseHandle(process);
+            }
+            else
+            {
+                Sleep(1000);
+            }
+            CloseHandle(file);
+        }).detach();
+    }
+    catch (...)
+    {
+        if (process != nullptr)
+            CloseHandle(process);
+        CloseHandle(file);
+    }
 }
 
 void ShowUpdateDialog(PageContext &context, const Version &latest, const std::string &releaseUrl,
@@ -394,8 +460,8 @@ void ShowUpdateDialog(PageContext &context, const Version &latest, const std::st
     // describeInstallerTrust
     static const std::regex installerName(R"(^MetasequoiaIME_Setup_v[\w.-]+\.exe$)", std::regex::icase);
     static const std::regex sha256(R"(^[0-9a-f]{64}$)");
-    const std::string name = manifest.value("installerName", std::string());
-    const std::string digest = manifest.value("installerSha256", std::string());
+    const std::string name = JsonStringOrEmpty(manifest, "installerName");
+    const std::string digest = JsonStringOrEmpty(manifest, "installerSha256");
     const bool nameValid = std::regex_match(name, installerName);
     if (manifest.contains("signed") && manifest["signed"].is_boolean() && !manifest["signed"].get<bool>())
     {
@@ -498,7 +564,7 @@ void CheckForUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
             static const std::regex tag(R"(^https://github\.com/metasequoiaime/([\w.-]+)/releases/tag/([\w.+-]+)$)");
             static const std::regex installer(R"(^MetasequoiaIME_Setup_v[\w.-]+\.exe$)", std::regex::icase);
             std::smatch match;
-            const std::string name = manifest.value("installerName", std::string());
+            const std::string name = JsonStringOrEmpty(manifest, "installerName");
             if (std::regex_match(releaseUrl, match, tag) && std::regex_match(name, installer))
                 mirror = std::string(kDownloadMirrorPrefix) + "https://github.com/metasequoiaime/" + match[1].str() +
                          "/releases/download/" + match[2].str() + "/" + name;
@@ -562,8 +628,9 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                 return;
             }
 
-            const std::string name = manifest.value("installerName", std::string());
-            const std::string digest = manifest.value("installerSha256", std::string());
+            const std::string name = JsonStringOrEmpty(manifest, "installerName");
+            const std::string digest = JsonStringOrEmpty(manifest, "installerSha256");
+            const bool signed_installer = JsonBoolOr(manifest, "signed", false);
             if (!update_download::IsInstallerName(name) || !update_download::IsSha256Hex(digest))
             {
                 // 清单没给可用的包装与摘要，退回到原来那条路：让用户自己去下载页。
@@ -600,7 +667,7 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                     }
                     return std::string("err\n\n\n") + result.message;
                 },
-                [weak](const std::string &encoded) {
+                [weak, signed_installer](const std::string &encoded) {
                     const std::shared_ptr<AboutState> locked = weak.lock();
                     if (!locked)
                         return;
@@ -618,10 +685,10 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                     const std::string digest = next(cursor);
                     const std::string note = cursor < encoded.size() ? encoded.substr(cursor) : std::string();
                     if (status == "ok")
-                        FinishUpdateDownload(locked, path, digest, note);
+                        FinishUpdateDownload(locked, path, digest, note, signed_installer);
                     else
                         FinishUpdateDownload(locked, std::string(), std::string(),
-                                             note.empty() ? std::string("下载失败") : note);
+                                             note.empty() ? std::string("下载失败") : note, false);
                 });
         });
 }

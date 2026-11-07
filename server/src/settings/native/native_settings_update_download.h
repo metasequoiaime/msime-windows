@@ -11,15 +11,18 @@
 // （msime-web 只认 MAJOR.MINOR.PATCH 的 tag，固定 tag「nightly」解析不出可比版本），
 // dev 构建的版本号每天变，比较结果没有意义。见 IsReleaseVersion。
 //
-// 每条通道最多试 3 次。每次从头开始，不做断点续传：续传要处理服务器不支持 Range
-// 的情况，风险大于收益，而一条已经证明慢的通道续下去也不会变快。
+// 每条通道每轮最多试 3 次，最多两轮。失败后从已经落盘的字节继续，用 Range 续传；
+// 服务器不认 Range 时退回整包重下。第一轮按剩余可用通道分配时间预算，第二轮用剩下
+// 的预算回到同一个临时文件续传，慢通道不会被一次预算切断。摘要最后统一整文件核对。
 //
-// 「慢」的判定是首段测速：连接建立后观察 10 秒（或收满 1 MB，先到为准），低于
-// 50 KB/s 就认为这条通道不顶用，关掉换下一条，不计入失败次数。测速期间收到的字节
-// 就是下载的开头，不重开会话。
+// 「慢」的判定是首段测速：连接建立后观察 30 秒（或收满 2 MB，先到为准），低于
+// 8 KB/s 就认为这条通道不顶用，关掉换下一条。10 秒 50 KB/s 的旧门槛会把「先卡
+// 半分钟再飙」的线路误判成死线，真正死掉的连接还有下面那条停滞判定兜住。
 //
-// 另有两条兜底：全程 20 秒收不到任何字节当作这次尝试失败；任何状态码不是 200 的响应
-// 都算失败，404 除外（见上）。
+// 另有两条兜底：连续 20 秒收不到任何字节当作这次尝试失败；任何状态码不是 200
+// 或 206 的响应都算失败，404 与 416 单独处理，换通道或从零重来。
+
+#include <Windows.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -45,11 +48,10 @@ struct Attempt
 {
     Outcome outcome = Outcome::Failed;
     std::string message;     // 给人看的中文说明，Ok 时为空
-    std::uint64_t bytes = 0; // 这次尝试收到的字节数
+    std::uint64_t bytes = 0; // 这次尝试结束时磁盘上已有的字节数，含续传前缀
+    std::uint64_t total = 0; // 服务端声明的整包长度，0 表示没声明
     std::uint64_t seconds = 0;
     std::string url;
-    // 边下边算出来的 SHA-256 十六进制串，只有 Ok 时非空。
-    std::string digest;
 };
 
 struct Result
@@ -75,8 +77,8 @@ struct Request
     std::uint64_t deadline_seconds = 900;
     // 测试用：把每个通道的地址换掉。空表示用真实地址。
     std::vector<std::string> override_channel_urls;
-    // 下载进度：(已收字节, 服务端声明的总长，0 表示没声明)。在下载线程上同步调用，
-    // 实现必须尽快返回；重试换通道时从 0 重新计。可以为空。
+    // 下载进度：(磁盘上已有的字节, 服务端声明的总长，0 表示没声明)。在下载线程上
+    // 同步调用，实现必须尽快返回；续传时报的是含前缀的累计值，不会回到 0。可以为空。
     std::function<void(std::uint64_t received, std::uint64_t total)> on_progress;
 };
 
@@ -94,6 +96,10 @@ std::vector<std::string> ChannelUrls(const std::string &release_url, const std::
 
 // 清单里的 installerSha256 是否合法：64 个小写十六进制字符。
 bool IsSha256Hex(const std::string &text);
+
+// 解析 206 响应的 Content-Range：`bytes 123-456/789`。start 是这段数据的起点，
+// total 是整包长度，`*` 表示未知时 total 为 0。格式不合法返回 false。
+bool ParseContentRange(const std::wstring &value, std::uint64_t &start, std::uint64_t &total);
 
 // 这个版本号能不能参与安装包下载。只有正式版可以：MAJOR.MINOR.PATCH，带 v/V 前缀
 // 也行，不允许任何预发布标签。nightly 与 dev 构建一律返回 false。
@@ -115,6 +121,15 @@ void PruneOldInstallers(const std::filesystem::path &directory, const std::strin
 // 重新核对文件的 SHA-256。下载目录与启动安装程序之间隔着用户点 UAC 的时间，
 // 这段时间里文件可能被同机的其他进程换掉，所以启动前再算一次。
 bool FileMatchesDigest(const std::filesystem::path &path, const std::string &expected_hex);
+
+// 打开一个只允许读共享的句柄，并在句柄上核对 SHA-256。成功后句柄交给调用方，
+// 调用方在拉起安装程序期间不要关闭它：其他进程拿不到写权限，改不了也删不掉。
+// 打开或校验失败时 file 保持 INVALID_HANDLE_VALUE。
+bool OpenVerifiedInstaller(const std::filesystem::path &path, const std::string &expected_hex, HANDLE &file);
+
+// 核对安装包的 Authenticode 签名和信任链。清单写明 signed=true 时在启动前调用，
+// 防止同机进程在摘要校验之后换成一个同样合法的安装包。
+bool VerifyAuthenticode(const std::filesystem::path &path);
 
 // 本次进程独占的安装包文件名：MetasequoiaIME_Setup_v0.11.1.exe.<pid>-<计数>.part。
 // 每个下载任务用自己的临时名，两个实例各写各的文件，互不覆盖；谁先完成谁把它改名成
