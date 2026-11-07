@@ -132,9 +132,17 @@ Source: "{#MySourceRoot}\tsf_dll\32\*.dll"; \
     DestDir: "{#MyTsfRoot32}\{code:GetVersionDir}"; \
     Flags: ignoreversion regserver 32bit
 
+; 64 位视图里只能放一个文件，而 Arm64 宿主和 x64 仿真宿主读的是同一份 InProcServer32。
+; 所以原生那一份在 Arm64 机器上必须是 Arm64X：一个文件里带 Arm64 与 Arm64EC 两套镜像，
+; 系统按加载方架构挑一套。装成普通 x64 DLL，ARM64 应用就没输入法；装成普通 Arm64 DLL，
+; 微信、Steam、Chrome x64 这些仿真宿主反而全丢。Arm64X 两者都覆盖。
 Source: "{#MySourceRoot}\tsf_dll\64\*.dll"; \
     DestDir: "{#MyTsfRoot64}\{code:GetVersionDir}"; \
-    Flags: ignoreversion regserver
+    Flags: ignoreversion regserver; Check: not IsArm64
+
+Source: "{#MySourceRoot}\tsf_dll\arm64\*.dll"; \
+    DestDir: "{#MyTsfRoot64}\{code:GetVersionDir}"; \
+    Flags: ignoreversion regserver; Check: IsArm64
 
 Source: "{#MySourceRoot}\tsf_dll\32\*.pdb"; \
     DestDir: "{#MyTsfRoot32}\{code:GetVersionDir}"; \
@@ -142,7 +150,11 @@ Source: "{#MySourceRoot}\tsf_dll\32\*.pdb"; \
 
 Source: "{#MySourceRoot}\tsf_dll\64\*.pdb"; \
     DestDir: "{#MyTsfRoot64}\{code:GetVersionDir}"; \
-    Flags: ignoreversion skipifsourcedoesntexist
+    Flags: ignoreversion skipifsourcedoesntexist; Check: not IsArm64
+
+Source: "{#MySourceRoot}\tsf_dll\arm64\*.pdb"; \
+    DestDir: "{#MyTsfRoot64}\{code:GetVersionDir}"; \
+    Flags: ignoreversion skipifsourcedoesntexist; Check: IsArm64
 
 Source: "{#MySourceRoot}\server_exe\*"; \
     DestDir: "{commonpf64}\metasequoiaime\server"; \

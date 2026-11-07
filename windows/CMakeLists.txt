@@ -198,3 +198,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE fmt::fmt-header-only)
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+# Windows on Arm needs one file that both native Arm64 hosts and x64-emulated hosts can load,
+# because InProcServer32 lives in a single 64-bit registry view. BUILD_AS_ARM64X is set by the
+# caller for the two passes that produce it; an ordinary build leaves it empty or undefined and
+# this block does nothing. See cmake/arm64x.cmake.
+if(BUILD_AS_ARM64X)
+    set(ARM64X_TARGETS ${PROJECT_NAME})
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm64x.cmake")
+endif()
