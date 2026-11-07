@@ -270,6 +270,19 @@ void EnsureMediumIntegrityWritableExistingPath(const std::wstring &path)
     ClearReadOnlyAttribute(path);
     ApplyUsersModifyAndMediumIntegrity(path);
 }
+
+// 数据目录至少得有这些东西之一。只有目录、里面什么都没有，说明拿到的不是真正的用户数据目录。
+bool LooksLikeImeDataDir(const std::wstring &dir)
+{
+    if (dir.empty() || GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES)
+        return false;
+    for (const wchar_t *probe : {L"\\config.toml", L"\\english.db", L"\\html"})
+    {
+        if (GetFileAttributesW((dir + probe).c_str()) != INVALID_FILE_ATTRIBUTES)
+            return true;
+    }
+    return false;
+}
 } // namespace
 
 namespace CommonUtils
@@ -277,12 +290,21 @@ namespace CommonUtils
 std::wstring get_local_appdata_path_w()
 {
     const std::wstring from_env = QueryEnvironmentW(L"LOCALAPPDATA");
+    const std::wstring known = QueryKnownFolder(FOLDERID_LocalAppData);
     if (IsUsableAbsolutePath(from_env))
     {
+        // 启动器的环境块可能带着另一个用户的 LOCALAPPDATA。从开始菜单 / 命令面板打开设置时，
+        // 配置和图标会一起找不到（#1174：读取现有 config.toml 返回 ERROR_FILE_NOT_FOUND，
+        // 而同一路径在别的进程里能读）。环境变量指过去没有数据、系统 Known Folder 里有，
+        // 就以 Known Folder 为准；测试用的临时目录本身有数据，不受影响。
+        if (IsUsableAbsolutePath(known) && !LooksLikeImeDataDir(from_env + L"\\" + kAppName) &&
+            LooksLikeImeDataDir(known + L"\\" + kAppName))
+        {
+            return known;
+        }
         return from_env;
     }
 
-    const std::wstring known = QueryKnownFolder(FOLDERID_LocalAppData);
     if (IsUsableAbsolutePath(known))
     {
         return known;

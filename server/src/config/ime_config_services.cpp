@@ -309,6 +309,15 @@ static bool SetTranslationProviderFromLegacyBool(const std::string &provider, bo
 
 bool SetConfiguredCustomTranslationBool(const std::string &key, bool value)
 {
+    // 校对开关是一个独立的布尔键，不走 enabled 的提供方推导：关掉它不该把整个翻译服务换掉。
+    if (key == "review")
+    {
+        if (!WriteConfiguredValue("custom_translation", key, value ? "true" : "false"))
+            return false;
+        g_custom_translation.review = value;
+        PublishTranslationConfig();
+        return true;
+    }
     return key == "enabled" && SetTranslationProviderFromLegacyBool("custom", value);
 }
 
@@ -319,9 +328,38 @@ bool SetConfiguredCustomTranslationString(const std::string &key, const std::str
         target = &g_custom_translation.endpoint;
     else if (key == "api_key")
         target = &g_custom_translation.api_key;
+    else if (key == "model")
+        target = &g_custom_translation.model;
+    else if (key == "prompt")
+        // 旧版单槽：写进第一槽，保持向后兼容。
+        target = &g_custom_translation.prompt_custom_1;
+    else if (key == "prompt_custom_1")
+        target = &g_custom_translation.prompt_custom_1;
+    else if (key == "prompt_custom_2")
+        target = &g_custom_translation.prompt_custom_2;
+    else if (key == "prompt_custom_3")
+        target = &g_custom_translation.prompt_custom_3;
+    else if (key == "prompt_id" && (value == "custom_1" || value == "custom_2" || value == "custom_3"))
+        target = &g_custom_translation.prompt_id;
+    else if (key == "format" && (value == "openai" || value == "responses" || value == "anthropic" ||
+                                 value == "gemini" || value == "deeplx"))
+        target = &g_custom_translation.format;
+    else if (key == "thinking" &&
+             (value.empty() || value == "disabled" || value == "low" || value == "high" || value == "max"))
+        target = &g_custom_translation.thinking;
     if (!target || !WriteConfiguredValue("custom_translation", key, EscapeTomlBasicString(value)))
         return false;
     *target = value;
+    if (key == "prompt" || key.compare(0, 14, "prompt_custom_") == 0 || key == "prompt_id")
+        g_custom_translation.prompt =
+            g_custom_translation.prompt_id == "custom_2"   ? g_custom_translation.prompt_custom_2
+            : g_custom_translation.prompt_id == "custom_3" ? g_custom_translation.prompt_custom_3
+                                                           : g_custom_translation.prompt_custom_1;
+    // 设置页只剩自定义服务一套表单：填进去任何一个字段就代表要用它，把生效提供方钉到 custom。
+    // 否则 [translation].provider 留空时按旧 enabled 布尔推导，出厂配置里 [niutrans].enabled 是 true，
+    // 用户填完地址与模型、点测试也通过，真实翻译却仍走小牛，界面上还看不到实际生效的是谁。
+    if (g_translation_provider != "custom" && !SetConfiguredTranslationString("provider", "custom"))
+        return false;
     PublishTranslationConfig();
     return true;
 }

@@ -88,6 +88,15 @@ string ShuangpinUtil::cvt_single_sp_to_pinyin(string sp_str, const ShuangpinProf
             ym_list.push_back(pair.first);
         }
     }
+    // 同一韵母额外接受的键（微软双拼 t / v 都能打 ue 与 üe）。排在主表之后，
+    // 归属仍由下面的「最后一个合法音节」决定，不改变其他方案的解码顺序。
+    for (const auto &alias : profile.final_aliases)
+    {
+        if (alias.second == sp_str.substr(1, 1))
+        {
+            ym_list.push_back(alias.first);
+        }
+    }
     if (sm == "" || ym_list.size() == 0)
     {
         return "";

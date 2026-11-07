@@ -285,3 +285,22 @@ TEST_CASE(EnglishDictionaryUpsertsGlossForCloudFallback)
     REQUIRE(EnglishDictionary::upsert_gloss(test::Utf8(database.path()), false, "metasequoia", "水杉"));
     REQUIRE_EQ(dictionary.query_chinese_gloss("metasequoia"), std::string("水杉"));
 }
+
+TEST_CASE(EnglishDictionaryServesEveryTargetLanguageLocally)
+{
+    TemporaryEnglishDatabase database;
+    EnglishDictionary dictionary(test::Utf8(database.path()));
+
+    // 英语仍然走 zh_en_glosses；其余语种落到 zh_glosses。
+    REQUIRE(EnglishDictionary::upsert_gloss(test::Utf8(database.path()), true, "水杉", "metasequoia"));
+    REQUIRE(EnglishDictionary::upsert_gloss(test::Utf8(database.path()), true, "水杉", "métaséquoia", "fr"));
+    REQUIRE(EnglishDictionary::upsert_gloss(test::Utf8(database.path()), true, "水杉", "メタセコイア", "ja"));
+
+    REQUIRE_EQ(dictionary.query_target_gloss("水杉", std::string()), std::string("metasequoia"));
+    REQUIRE_EQ(dictionary.query_target_gloss("水杉", "en"), std::string("metasequoia"));
+    REQUIRE_EQ(dictionary.query_target_gloss("水杉", "fr"), std::string("métaséquoia"));
+    REQUIRE_EQ(dictionary.query_target_gloss("水杉", "ja"), std::string("メタセコイア"));
+    // 本地没有这个语种：交给云端。
+    REQUIRE(dictionary.query_target_gloss("水杉", "th").empty());
+    REQUIRE(dictionary.query_target_gloss("银牌", "fr").empty());
+}

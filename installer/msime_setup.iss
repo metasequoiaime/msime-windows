@@ -19,11 +19,11 @@
 ; 本仓库不包含任何预置代码签名证书。
 
 #define MyAppName      "Metasequoia IME 水杉输入法"
-#define MyAppVersion   "0.0.1"
+#define MyAppVersion   "0.12.0"
 ; VersionInfoVersion 是 PE 的 VERSIONINFO，只接受数字和点号；dev 构建的 MyAppVersion 带
 ; -dev.<日期>.<hash> 后缀（Prepare-PackageFiles.ps1 会把数字部分同步写进这个 define），
 ; 文件名与 AppVersion 用完整串，这里只用数字段。
-#define MyVersionInfo  "0.0.1"
+#define MyVersionInfo  "0.12.0"
 #define MyAppPublisher "Metasequoia"
 #define MyAppExeName   "MetasequoiaImeServer.exe"
 #define MySettingsExeName "MetasequoiaImeSettings.exe"

@@ -39,9 +39,10 @@ bool IsRunning();
 void OnInputChanged(const std::string &input, bool dedicated_mode = false, size_t mixed_min_prefix = 2);
 void Clear();
 bool IsCurrent(const std::string &input, uint64_t generation, bool dedicated_mode = false);
-// Non-English target languages have no local dictionary and must go directly
-// to cloud translation.
-void RequestTranslations(std::vector<TranslationQuery> queries, bool use_local_dictionary = true);
+// 每个目标语种都先查本地词库：英语读 zh_en_glosses，其余语种读 zh_glosses，
+// 本地没有才交给云端。
+void RequestTranslations(std::vector<TranslationQuery> queries, bool use_local_dictionary = true,
+                         std::string target_language = {});
 void ClearTranslations();
 bool IsTranslationCurrent(uint64_t generation);
 } // namespace EnglishIme

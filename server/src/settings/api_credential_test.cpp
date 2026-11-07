@@ -11,6 +11,7 @@
 #include "cloud/tencent_tmt.h"
 #include "cloud/translation_gloss.h"
 #include "config/ai_provider.h"
+#include "config/credential_protection.h"
 #include "config/ime_config.h"
 #include "voice-input/doubao_asr_client.h"
 #include "voice-input/voice_providers.h"
@@ -130,6 +131,11 @@ HttpResponse PerformJsonRequest(const std::string &endpoint, const std::string &
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMs);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, kRequestTimeoutMs);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    // 用系统证书库校验：curl 自带的 CA 包在 Windows 上常常缺失，
+    // 走代理时会直接报 SSL connect error。
+#ifdef CURLSSLOPT_NATIVE_CA
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
+#endif
     response.code = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status);
     response.error = error;
@@ -385,6 +391,11 @@ ApiCredentialTest::Result TestBatchAsr(const ApiCredentialTest::Request &request
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMs);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, kRequestTimeoutMs);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    // 用系统证书库校验：curl 自带的 CA 包在 Windows 上常常缺失，
+    // 走代理时会直接报 SSL connect error。
+#ifdef CURLSSLOPT_NATIVE_CA
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
+#endif
     response.code = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status);
     response.error = error;
@@ -424,14 +435,31 @@ ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &requ
     }
     else
     {
-        const CustomTranslation::Config config{Value(request, "endpoint"), Value(request, "apiKey")};
+        CustomTranslation::Config config;
+        config.endpoint = Value(request, "endpoint");
+        config.api_key = Value(request, "apiKey");
+        // 页面回填的是配置里的 dpapi 密文（密码框里的那串点）。直接拿去当 Bearer 发出去
+        // 会 401，测试就永远报「未返回有效译文」。明文值原样保留。
+        if (CredentialProtection::IsProtected(config.api_key))
+            config.api_key = CredentialProtection::Unprotect(config.api_key).value_or(std::string{});
+        config.model = Value(request, "model");
+        config.prompt = Value(request, "prompt");
+        const std::string format = Value(request, "format");
+        config.format = (format == "responses" || format == "anthropic" || format == "gemini" || format == "deeplx")
+                            ? format
+                            : "openai";
+        // 中转站的模型常常默认思考，思考 token 会吃光 256 的预算、正文变空，
+        // 测试就报「服务未返回有效译文」。把页面上的思考强度一并带上。
+        config.thinking = Value(request, "thinking");
         if (!CustomTranslation::IsSupportedEndpoint(config.endpoint))
             return {false, "请先填写有效的翻译接口地址。"};
         translated = CustomTranslation::TextTranslateBatch(config, {"测试"}, "ZH", "EN");
     }
     if (!translated.empty() && !translated.front().empty())
         return {true, "连接成功，翻译服务配置有效。"};
-    return {false, "测试失败：服务未返回有效译文，请检查凭据、接口地址和网络。"};
+    const std::string detail = CustomTranslation::LastError();
+    return {false,
+            detail.empty() ? "测试失败：服务未返回有效译文，请检查凭据、接口地址和网络。" : "测试失败：" + detail};
 }
 } // namespace
 

@@ -159,6 +159,11 @@ const ShuangpinProfile &GetMicrosoftShuangpinProfile()
             {"ang", "h"}, {"an", "j"},   {"ao", "k"},  {"ai", "l"},   {"ing", ";"},  {"ei", "z"}, {"ie", "x"},
             {"iao", "c"}, {"ui", "v"},   {"ou", "b"},  {"in", "n"},   {"ian", "m"},
         },
+        // Windows 11 的微软拼音里 t / v 都能打 ue 与 üe：学 = xt / xv，略 = lv / lt（#1175）。
+        {
+            {"ue", "v"},
+            {"ve", "t"},
+        },
     };
     return profile;
 }

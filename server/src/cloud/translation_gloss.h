@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <string>
 
 namespace CloudTranslation
@@ -9,7 +10,8 @@ namespace CloudTranslation
 std::chrono::seconds FailureRetryDelay(unsigned failures);
 // Collapse whitespace for candidate-window gloss. Length is left to layout.
 std::string FormatGloss(const std::string &text);
-bool ShouldPersistGloss(const std::string &key, const std::string &formatted);
+// max_chars 默认 32（词条）；整句译文走调用方传的大上限。
+bool ShouldPersistGloss(const std::string &key, const std::string &formatted, size_t max_chars = 32);
 size_t Utf8Length(const std::string &text);
 bool IsUsableSecret(const std::string &value);
 std::string TrimSecret(const std::string &value);
