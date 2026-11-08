@@ -80,6 +80,13 @@ Boost 是静态链接但没有写进 `vcpkg.json`，所以只能用 classic 模�
   哪个 partial / module，那些文件只在 git 历史里（`ui-html/webview2/settings/ime-settings/src/`）。
   本地调试时可设 `METASEQUOIA_IME_SETTINGS_INSTANCE=<任意名>` 让开发版与已安装的设置窗口并存，
   并用 `METASEQUOIA_IME_CONFIG_DIR` 隔离配置。旧快捷方式传来的 `--d2d` / `--webview2` 参数会被忽略。
+- **页面 builder 只搭控件**：窗口打开后索引器会把还没访问过的页面逐个建出来做搜索索引
+  （`native_settings_window.cpp` 的 `BuildPageAndIndex` / `IndexNextPage`），所以 builder 里不解码图片、
+  不发请求——那类动作放到页面真正显示时（页面的 `Attach`）。词库面板就是这样把首次查询挂在
+  `DictTableScroll::Attach` 上的。
+- 设置页的控件与页面用 `tests/includes/settings_window_harness.h` 测，它持有一个从不显示的真实窗口：
+  文本框的 TSF 需要 HWND，把空指针传给 `Attach` 会在 `TextBox::Attach` 里崩。这些用例进
+  `MetasequoiaImeSettingsUiTests`，`tests/CMakeLists.txt` 会把设置程序的源文件全量链进去。
 
 ### 尺寸、坐标与 DPI
 
