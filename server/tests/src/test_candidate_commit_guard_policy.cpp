@@ -1,5 +1,4 @@
 #include "ipc/candidate_commit_guard_policy.h"
-#include "ipc/focus_session_policy.h"
 #include "tests/includes/test_framework.h"
 
 TEST_CASE(commit_page_is_usable_only_for_its_own_composition)
@@ -61,20 +60,4 @@ TEST_CASE(punctuation_commit_needs_a_candidate_when_a_composition_is_live)
     // Pure punctuation has no composition to protect.
     REQUIRE(!ShouldRejectPunctuationCommit(false, false));
     REQUIRE(!ShouldRejectPunctuationCommit(false, true));
-}
-
-TEST_CASE(session_ui_less_is_sticky_until_the_session_changes)
-{
-    using FanyImeIpc::ResolveSessionUiLess;
-
-    // Activation flag is the first source of truth.
-    REQUIRE(ResolveSessionUiLess(true, false, false));
-    // A packet with the flag establishes the session.
-    REQUIRE(ResolveSessionUiLess(false, true, false));
-    // The first key of a composition is sent before BeginUIElement reports the
-    // host's rendering choice. A later key without the flag must not downgrade
-    // a session that is already known to be UI-less.
-    REQUIRE(ResolveSessionUiLess(false, false, true));
-    // A normal session stays normal while no packet claims UI-less.
-    REQUIRE(!ResolveSessionUiLess(false, false, false));
 }

@@ -1396,11 +1396,15 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             {
                 // TSF would replace the preedit with the punctuation if we sent
                 // Normal with an empty candidate string. Leave the composition
-                // intact and answer like an out-of-range selection instead.
+                // intact and answer like an out-of-range selection instead. The
+                // reply must still go out: HandleImeKey has no common send step,
+                // and a missing reply is read as a transport failure.
                 CAND_DIAG_LOGF(L"punctuation-page-missing keycode=0x{:X} input_units={} page_units={}", Global::Keycode,
                                g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases().size() : 0,
                                Global::candidate_ui.page_words.size());
+                Global::candidate_ui.selected_text = L"OutofRange";
                 Global::MsgTypeToTsf = Global::DataFromServerMsgType::OutofRange;
+                SendCurrentDataToClient(client_id, activation_epoch, request_id);
                 return;
             }
             auto &ui = Global::candidate_ui;

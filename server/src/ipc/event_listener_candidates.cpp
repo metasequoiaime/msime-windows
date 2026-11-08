@@ -900,6 +900,7 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     // The identity travels with the page. Commit paths compare it with the live
     // composition so a page from an older input can never decide this key.
     ui.page_input = current_input;
+    ui.page_prefix_end = g_inputSession->prefix_end();
     RefreshCandidatePageUi(false);
     PublishCandidateUiOwner(client_id, activation_epoch);
     const double uiMs = segment.Split();
@@ -967,12 +968,20 @@ bool EnsureCandidatePageForComposition(uint64_t client_id, uint64_t activation_e
     {
         return false;
     }
-    const std::string raw = g_inputSession->get_pinyin_sequence_with_cases();
     auto &ui = Global::candidate_ui;
+    // Translation and date-time pages are deliberate sub-pages of the live
+    // composition. Rebuilding the normal page here would silently replace the
+    // page the user is selecting from.
+    if (IsCandidateSubPageActive())
+    {
+        return !ui.page_words.empty();
+    }
+    const std::string raw = g_inputSession->get_pinyin_sequence_with_cases();
     FanyImeIpc::CommitPageState state;
     state.page_has_words = !ui.page_words.empty();
     state.composition_empty = raw.empty();
-    state.page_matches_composition = state.composition_empty || ui.page_input == raw;
+    state.page_matches_composition =
+        state.composition_empty || (ui.page_input == raw && ui.page_prefix_end == g_inputSession->prefix_end());
     if (FanyImeIpc::CommitPageUsable(state))
     {
         return true;
@@ -986,7 +995,8 @@ bool EnsureCandidatePageForComposition(uint64_t client_id, uint64_t activation_e
                    ui.page_input.size());
     PrepareCandidateList(client_id, activation_epoch);
     state.page_has_words = !ui.page_words.empty();
-    state.page_matches_composition = state.composition_empty || ui.page_input == raw;
+    state.page_matches_composition =
+        state.composition_empty || (ui.page_input == raw && ui.page_prefix_end == g_inputSession->prefix_end());
     const bool usable = FanyImeIpc::CommitPageUsable(state);
     if (!usable)
     {

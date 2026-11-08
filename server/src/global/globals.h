@@ -343,6 +343,10 @@ struct CandidateUiState
     // with the live composition before touching the page: a page from an older
     // input must never decide what this key commits.
     std::string page_input;
+    // The prefix boundary the page was built with. Moving the caret can change
+    // the queried prefix without changing the input string, so the identity
+    // needs both fields.
+    std::size_t page_prefix_end = 0;
     std::wstring selected_text = L"";
     int page_size = 8;
     int page_index = 0;
