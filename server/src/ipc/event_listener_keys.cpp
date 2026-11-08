@@ -1392,8 +1392,16 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             ScopedKeyStage ensure_punct{client_id, activation_epoch, request_id, L"handle-candidates"};
             const bool page_ready = EnsureCandidatePageForComposition(client_id, activation_epoch);
             ensure_punct.Stop();
-            const std::wstring highlighted = FanyImeIpc::HighlightedCandidateText(
-                Global::candidate_ui.page_words, Global::candidate_ui.selected_index_in_page);
+            auto &ui = Global::candidate_ui;
+            if (!ui.page_words.empty())
+            {
+                // A stale highlight must not turn a usable page into a rejected
+                // commit that repeats as a no-op on every punctuation press.
+                ui.selected_index_in_page =
+                    std::clamp(ui.selected_index_in_page, 0, static_cast<int>(ui.page_words.size()) - 1);
+            }
+            const std::wstring highlighted =
+                FanyImeIpc::HighlightedCandidateText(ui.page_words, ui.selected_index_in_page);
             if (FanyImeIpc::ShouldRejectPunctuationCommit(has_active_composition, page_ready, highlighted.empty()))
             {
                 // TSF would replace the preedit with the punctuation if we sent
@@ -1403,13 +1411,12 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
                 // and a missing reply is read as a transport failure.
                 CAND_DIAG_LOGF(L"punctuation-page-missing keycode=0x{:X} input_units={} page_units={}", Global::Keycode,
                                g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases().size() : 0,
-                               Global::candidate_ui.page_words.size());
-                Global::candidate_ui.selected_text = L"OutofRange";
+                               ui.page_words.size());
+                ui.selected_text = L"OutofRange";
                 Global::MsgTypeToTsf = Global::DataFromServerMsgType::OutofRange;
                 SendCurrentDataToClient(client_id, activation_epoch, request_id);
                 return;
             }
-            auto &ui = Global::candidate_ui;
             ui.selected_text = highlighted;
 
             WordItem highlighted_item;
@@ -1463,13 +1470,23 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         }
         else
         {
-            ClearState();
-            // The creating word can outlive its raw spelling. A punctuation key
-            // still expects an answer from the candidate path; without one the
-            // TSF waits out its commit window and resets the session.
-            Global::candidate_ui.selected_text = L"OutofRange";
-            Global::MsgTypeToTsf = Global::DataFromServerMsgType::OutofRange;
-            SendCurrentDataToClient(client_id, activation_epoch, request_id);
+            if (GlobalIme::composition.creating_word.active)
+            {
+                // The creating word outlived its raw spelling. Answer Normal
+                // with no candidate text: TSF prepends its own
+                // word_for_creating_word mirror and commits the word plus the
+                // punctuation, then this reply's ClearState closes both sides.
+                Global::candidate_ui.selected_text.clear();
+                Global::MsgTypeToTsf = Global::DataFromServerMsgType::Normal;
+                SendCurrentDataToClient(client_id, activation_epoch, request_id);
+            }
+            else
+            {
+                // Pure punctuation with no composition: the TSF handles it
+                // locally and does not read a reply, so do not leave a dead
+                // frame in the reply pipe.
+                ClearState();
+            }
         }
         return;
     }
