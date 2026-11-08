@@ -123,7 +123,7 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
                 DebugTsfIssue47(L"commit-empty-candidate-guard", requestId, 0, L'\0', CATEGORY_CANDIDATE,
                                 FUNCTION_FINALIZE_CANDIDATELIST, 1, TRUE,
                                 _pCompositionProcessorEngine->GetVirtualKeyLength(), S_FALSE);
-                commitText = keyStrokebuffer.ToWString();
+                commitText = GlobalIme::word_for_creating_word + keyStrokebuffer.ToWString();
             }
             GlobalIme::word_for_creating_word = L"";
             GlobalIme::pending_create_word_preedit.clear();
