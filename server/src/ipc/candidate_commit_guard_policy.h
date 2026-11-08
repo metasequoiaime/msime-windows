@@ -33,9 +33,11 @@ constexpr bool ShouldRebuildCommitPage(const CommitPageState &state)
 
 // A punctuation key with a live composition must never answer Normal with an
 // empty candidate string: TSF would replace the preedit with the punctuation
-// and delete the typed characters.
-constexpr bool ShouldRejectPunctuationCommit(bool has_active_composition, bool page_has_candidate)
+// and delete the typed characters. An out-of-range highlight is the same
+// hazard even when the page itself has words.
+constexpr bool ShouldRejectPunctuationCommit(bool has_active_composition, bool page_has_candidate,
+                                             bool highlighted_text_empty)
 {
-    return has_active_composition && !page_has_candidate;
+    return has_active_composition && (!page_has_candidate || highlighted_text_empty);
 }
 } // namespace FanyImeIpc

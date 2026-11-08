@@ -55,9 +55,10 @@ TEST_CASE(punctuation_commit_needs_a_candidate_when_a_composition_is_live)
 {
     using FanyImeIpc::ShouldRejectPunctuationCommit;
 
-    REQUIRE(ShouldRejectPunctuationCommit(true, false));
-    REQUIRE(!ShouldRejectPunctuationCommit(true, true));
+    REQUIRE(ShouldRejectPunctuationCommit(true, false, false));
+    REQUIRE(ShouldRejectPunctuationCommit(true, true, true));
+    REQUIRE(!ShouldRejectPunctuationCommit(true, true, false));
     // Pure punctuation has no composition to protect.
-    REQUIRE(!ShouldRejectPunctuationCommit(false, false));
-    REQUIRE(!ShouldRejectPunctuationCommit(false, true));
+    REQUIRE(!ShouldRejectPunctuationCommit(false, false, false));
+    REQUIRE(!ShouldRejectPunctuationCommit(false, true, false));
 }

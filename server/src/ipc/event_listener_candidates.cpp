@@ -885,8 +885,18 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
         // fallback the key published; otherwise the next ShowCandidate drops the
         // only entry and Space has nothing to commit.
         const bool literal_spelling = current_input.find_first_of("-_+") != std::string::npos;
-        const std::string fallback = literal_spelling ? current_input : pinyin;
-        items.emplace_back(fallback, fallback, 1, CandidateSource::Fallback);
+        // PinyinString is filled by the Show packet, not by the key packet, so
+        // it can still hold the previous composition. Never publish an empty
+        // fallback word: a commit would then answer Normal with no text.
+        std::string fallback = literal_spelling ? current_input : pinyin;
+        if (fallback.empty())
+        {
+            fallback = current_input;
+        }
+        if (!fallback.empty())
+        {
+            items.emplace_back(fallback, fallback, 1, CandidateSource::Fallback);
+        }
         spelled_by_character_set = false;
     }
 

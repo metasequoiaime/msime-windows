@@ -1392,7 +1392,9 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             ScopedKeyStage ensure_punct{client_id, activation_epoch, request_id, L"handle-candidates"};
             const bool page_ready = EnsureCandidatePageForComposition(client_id, activation_epoch);
             ensure_punct.Stop();
-            if (FanyImeIpc::ShouldRejectPunctuationCommit(has_active_composition, page_ready))
+            const std::wstring highlighted = FanyImeIpc::HighlightedCandidateText(
+                Global::candidate_ui.page_words, Global::candidate_ui.selected_index_in_page);
+            if (FanyImeIpc::ShouldRejectPunctuationCommit(has_active_composition, page_ready, highlighted.empty()))
             {
                 // TSF would replace the preedit with the punctuation if we sent
                 // Normal with an empty candidate string. Leave the composition
@@ -1408,7 +1410,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
                 return;
             }
             auto &ui = Global::candidate_ui;
-            ui.selected_text = FanyImeIpc::HighlightedCandidateText(ui.page_words, ui.selected_index_in_page);
+            ui.selected_text = highlighted;
 
             WordItem highlighted_item;
             const bool highlighted_resolved = ResolveCandidateItem(ui.selected_index_in_page + 1, highlighted_item);
@@ -1462,6 +1464,12 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         else
         {
             ClearState();
+            // The creating word can outlive its raw spelling. A punctuation key
+            // still expects an answer from the candidate path; without one the
+            // TSF waits out its commit window and resets the session.
+            Global::candidate_ui.selected_text = L"OutofRange";
+            Global::MsgTypeToTsf = Global::DataFromServerMsgType::OutofRange;
+            SendCurrentDataToClient(client_id, activation_epoch, request_id);
         }
         return;
     }

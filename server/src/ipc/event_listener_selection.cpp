@@ -249,7 +249,8 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
     const bool within_page_size = !is_digit_selection || index < page_size;
     const bool is_valid_selection = within_page_size && (is_direct_selection || is_space || is_digit_selection) &&
                                     index >= 0 && static_cast<size_t>(index) < Global::candidate_ui.page_words.size() &&
-                                    ResolveCandidateItem(index + 1, curWordItem);
+                                    ResolveCandidateItem(index + 1, curWordItem) &&
+                                    !CandidateOutputText(curWordItem).empty();
 
     if (is_valid_selection && metasequoia::local_modes::is_date_time_menu_item(curWordItem))
     {
