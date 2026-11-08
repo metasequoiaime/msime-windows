@@ -35,6 +35,7 @@ Copy-Item windows\build64-release\Release\MetasequoiaImeTsf.dll $dir\
 | `stage=` | 按键走到了哪一步：`keydown-classified`、`edit-session-complete`、`deferred-replay-complete` 等 |
 | `composing=` / `buffer_len=` | 当前是否在组合中、组合里的字符数 |
 | `result=` | 该步骤的 HRESULT |
+| `uiless=` | 这一拍 TSF 是否认为宿主自己画候选。首键与组合开始时的取值不同，能直接看出 UILess 标志是否慢了一拍 |
 | `process=` | 宿主进程名，用来区分 QQ、浏览器、记事本 |
 | `[host-window]` | 组合开始与结束、UI element 的创建与销毁 |
 

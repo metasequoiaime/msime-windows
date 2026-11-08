@@ -1204,10 +1204,11 @@ void DebugTsfIssue47(const wchar_t *stage, uint64_t requestId, UINT code, WCHAR 
     const std::wstring message =
         fmt::format(L"[msime][issue47] seq={} stage={} request={} vk=0x{:02X} wch=U+{:04X} key={} "
                     L"key_class={} category={} function={} eaten={} composing={} buffer_len={} "
-                    L"result=0x{:08X} correlation={} process={}\n",
+                    L"result=0x{:08X} correlation={} uiless={} process={}\n",
                     sequence, stage, requestId, code, static_cast<unsigned int>(wch), keyText, keyClass, category,
                     function, eaten, composing ? 1 : 0, virtualKeyLength, static_cast<unsigned long>(result),
-                    correlationToken, Global::current_process_name.empty() ? L"unknown" : Global::current_process_name);
+                    correlationToken, Global::IsUiLessMode() ? 1 : 0,
+                    Global::current_process_name.empty() ? L"unknown" : Global::current_process_name);
     QueueTsfDiagnosticLog(message);
 }
 
