@@ -114,6 +114,18 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
         }
         else if (serverMsgType == Global::DataFromServerMsgType::Normal) // 只有正常情况下才会上屏
         {
+            if (serverCandidateString.empty() && _pTextService && _pTextService->_IsComposing() &&
+                _pTextService->GetCompositionProcessorEngine() &&
+                _pTextService->GetCompositionProcessorEngine()->GetVirtualKeyLength() > 0)
+            {
+                // The Server named no candidate for a live composition. An empty
+                // commit would replace the preedit with nothing and then finish
+                // the composition; keep it for the next key instead.
+                DebugTsfIssue47(L"commit-empty-candidate-guard", requestId, 0, L'\0', CATEGORY_CANDIDATE,
+                                FUNCTION_FINALIZE_CANDIDATELIST, 1, TRUE,
+                                _pTextService->GetCompositionProcessorEngine()->GetVirtualKeyLength(), S_FALSE);
+                return hr;
+            }
             GlobalIme::word_for_creating_word = L"";
             GlobalIme::pending_create_word_preedit.clear();
             if (serverCandidateString.find(L'\n') != std::wstring::npos)
@@ -1321,12 +1333,12 @@ HRESULT CCandidateListUIPresenter::BeginUIElement()
     // pbShow TRUE. A host that answers pbShow=FALSE also owns its rendering,
     // whatever the activation flags said: that answer is per composition and
     // is the one that describes the text the user is typing now.
-    const bool hostDrawsElement = CandidateUiLessPolicy::HostDrawsElement(hostShow != FALSE, Global::IgnoreHostUiLess,
-                                                                          _pTextService->_IsUiLessMode() != FALSE);
-    _isShowMode = hostDrawsElement ? TRUE : FALSE;
-    Global::CandidateUiLessMode = (hostDrawsElement == false);
+    const bool imeDrawsElement = CandidateUiLessPolicy::ImeDrawsElement(hostShow != FALSE, Global::IgnoreHostUiLess,
+                                                                        _pTextService->_IsUiLessMode() != FALSE);
+    _isShowMode = imeDrawsElement ? TRUE : FALSE;
+    Global::CandidateUiLessMode = (imeDrawsElement == false);
     _requestUiLessPageOnStart =
-        CandidateUiLessPolicy::ShouldRequestPageAfterBegin(wasUiLess, hostDrawsElement) ? TRUE : FALSE;
+        CandidateUiLessPolicy::ShouldRequestPageAfterBegin(wasUiLess, imeDrawsElement) ? TRUE : FALSE;
     QueueTsfHostWindowDiagnostic(
         L"begin-ui-element",
         fmt::format(L"hr={:#x} host_pbShow={} element_id={} activate_flags={:#x} uielement_enabled_only={} "
@@ -1358,10 +1370,11 @@ HRESULT CCandidateListUIPresenter::EndUIElement()
         _uiElementId = static_cast<DWORD>(-1);
     }
 
-    // Keep CandidateUiLessMode latched instead of clearing it here: the next
-    // composition's first key is sent before its BeginUIElement can run, and
-    // clearing the flag would make that key look like a normal host key. The
-    // next BeginUIElement refreshes the value from the host's own answer.
+    // Cleared here on purpose: the next composition's first key is sent before
+    // its BeginUIElement can report who draws the candidates, so the key must
+    // not inherit the previous composition's answer. BeginUIElement re-arms it
+    // and _StartCandidateList requests the page the key could not build.
+    Global::CandidateUiLessMode = false;
     // The next candidate session may talk to a restarted Server, whose generations start over.
     _lastUiLessGeneration = 0;
     _serverUiLessPageSeen = false;

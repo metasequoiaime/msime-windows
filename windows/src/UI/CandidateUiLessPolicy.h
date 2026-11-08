@@ -9,8 +9,8 @@
 namespace CandidateUiLessPolicy
 {
 // Mirrors the _isShowMode decision in CCandidateListUIPresenter::BeginUIElement.
-// true means the host paints the UI element, false means the IME owns rendering.
-constexpr bool HostDrawsElement(bool host_show, bool ignore_host_ui_less, bool activate_ui_less)
+// true means the IME draws the candidate UI; false means the host does.
+constexpr bool ImeDrawsElement(bool host_show, bool ignore_host_ui_less, bool activate_ui_less)
 {
     if (ignore_host_ui_less)
     {
@@ -28,8 +28,8 @@ constexpr bool HostDrawsElement(bool host_show, bool ignore_host_ui_less, bool a
 // that key went to the Server without the UI-less flag and the Server skipped
 // the candidate page. Ask for the page once the answer is known, so the first
 // character is not left without a candidate list.
-constexpr bool ShouldRequestPageAfterBegin(bool was_ui_less, bool host_draws_element)
+constexpr bool ShouldRequestPageAfterBegin(bool was_ui_less, bool ime_draws_element)
 {
-    return !was_ui_less && !host_draws_element;
+    return !was_ui_less && !ime_draws_element;
 }
 } // namespace CandidateUiLessPolicy

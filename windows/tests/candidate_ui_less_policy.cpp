@@ -5,47 +5,52 @@ int main()
 {
     using namespace CandidateUiLessPolicy;
 
-    // A normal host lets the IME draw its UI element.
-    if (!HostDrawsElement(true, false, false))
+    // A normal host asks for the UI element, so the IME draws it.
+    if (!ImeDrawsElement(true, false, false))
     {
         return 1;
     }
     // A host that answers pbShow=FALSE draws the candidates itself. This is the
     // Overwatch case: activation flags did not carry UIELEMENTENABLEDONLY.
-    if (HostDrawsElement(false, false, false))
+    if (ImeDrawsElement(false, false, false))
     {
         return 2;
     }
-    // IgnoreHostUiLess keeps the host window for Valve games even when the
-    // activation flags report UI-less.
-    if (!HostDrawsElement(false, true, true))
+    // IgnoreHostUiLess keeps the IME window for Valve games.
+    if (!ImeDrawsElement(false, true, true))
     {
         return 3;
     }
     // Activation flags still force UI-less for hosts that never answer.
-    if (HostDrawsElement(true, false, true))
+    if (ImeDrawsElement(true, false, true))
     {
         return 4;
     }
-
-    // The first composition starts before BeginUIElement can report the host's
-    // choice. Only that first one needs a page request; once the flag is
-    // latched, later first keys already carry it.
-    if (!ShouldRequestPageAfterBegin(false, false))
+    // The ignored-host override wins over the activation flag.
+    if (!ImeDrawsElement(false, true, false))
     {
         return 5;
     }
-    if (ShouldRequestPageAfterBegin(true, false))
+
+    // Every composition starts before BeginUIElement can report the host's
+    // choice. The session-level flag is cleared at EndUIElement, so the page
+    // request runs again for the next composition instead of relying on a
+    // latch that could leak into a password field or another document.
+    if (!ShouldRequestPageAfterBegin(false, false))
     {
         return 6;
     }
-    if (ShouldRequestPageAfterBegin(false, true))
+    if (ShouldRequestPageAfterBegin(true, false))
     {
         return 7;
     }
-    if (ShouldRequestPageAfterBegin(true, true))
+    if (ShouldRequestPageAfterBegin(false, true))
     {
         return 8;
+    }
+    if (ShouldRequestPageAfterBegin(true, true))
+    {
+        return 9;
     }
 
     return 0;
