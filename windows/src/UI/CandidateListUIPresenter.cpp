@@ -114,25 +114,24 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
         }
         else if (serverMsgType == Global::DataFromServerMsgType::Normal) // 只有正常情况下才会上屏
         {
-            if (serverCandidateString.empty() && _pTextService && _pTextService->_IsComposing() &&
-                _pTextService->GetCompositionProcessorEngine() &&
-                _pTextService->GetCompositionProcessorEngine()->GetVirtualKeyLength() > 0)
+            std::wstring commitText = serverCandidateString;
+            if (commitText.empty() && keystrokeBufLen > 0 && _IsComposing())
             {
-                // The Server named no candidate for a live composition. An empty
-                // commit would replace the preedit with nothing and then finish
-                // the composition; keep it for the next key instead.
+                // The Server cleared its composition but named no text. Commit
+                // the local preedit so both sides end the composition with the
+                // same content; an empty commit would delete the typed letters.
                 DebugTsfIssue47(L"commit-empty-candidate-guard", requestId, 0, L'\0', CATEGORY_CANDIDATE,
                                 FUNCTION_FINALIZE_CANDIDATELIST, 1, TRUE,
-                                _pTextService->GetCompositionProcessorEngine()->GetVirtualKeyLength(), S_FALSE);
-                return hr;
+                                _pCompositionProcessorEngine->GetVirtualKeyLength(), S_FALSE);
+                commitText = keyStrokebuffer.ToWString();
             }
             GlobalIme::word_for_creating_word = L"";
             GlobalIme::pending_create_word_preedit.clear();
-            if (serverCandidateString.find(L'\n') != std::wstring::npos)
+            if (commitText.find(L'\n') != std::wstring::npos)
             {
-                return _CommitMultilineCandidate(ec, pContext, serverCandidateString);
+                return _CommitMultilineCandidate(ec, pContext, commitText);
             }
-            candidateString.Set(serverCandidateString.c_str(), serverCandidateString.length());
+            candidateString.Set(commitText.c_str(), commitText.length());
             hr = _InsertTextToComposition(ec, pContext, &candidateString);
             if (FAILED(hr))
             {
