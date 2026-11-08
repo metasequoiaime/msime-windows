@@ -339,6 +339,10 @@ struct CandidateUiState
     std::vector<CandidateViewItem> page_views;
     std::vector<std::wstring> page_words;
     std::vector<std::wstring> page_glosses;
+    // Input string the published page was built for. Commit paths compare it
+    // with the live composition before touching the page: a page from an older
+    // input must never decide what this key commits.
+    std::string page_input;
     std::wstring selected_text = L"";
     int page_size = 8;
     int page_index = 0;

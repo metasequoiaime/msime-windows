@@ -11,6 +11,7 @@
 #include "ipc.h"
 #include "ipc/candidate_display_text.h"
 #include "ipc/candidate_expansion_policy.h"
+#include "ipc/candidate_commit_guard_policy.h"
 #include "ipc/queried_candidate_arrangement_policy.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/input_key_policy.h"
@@ -896,6 +897,9 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     g_candidate_list_character_set = character_set;
     g_candidate_list_spelled_by_character_set = spelled_by_character_set;
     ui.set_items(std::move(items));
+    // The identity travels with the page. Commit paths compare it with the live
+    // composition so a page from an older input can never decide this key.
+    ui.page_input = current_input;
     RefreshCandidatePageUi(false);
     PublishCandidateUiOwner(client_id, activation_epoch);
     const double uiMs = segment.Split();
@@ -946,8 +950,49 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     const double mixedMs = segment.Split();
 
     CAND_DIAG_LOGF(L"candidate build total_ms={:.1f} query_ms={:.1f} fixed_pos_ms={:.1f} branch_ms={:.1f} "
-                   L"ui_ms={:.1f} english_ms={:.1f} mixed_ms={:.1f} items={}",
-                   segment.TotalMs(), queryMs, fixedPosMs, branchMs, uiMs, englishMs, mixedMs, itemCount);
+                   L"ui_ms={:.1f} english_ms={:.1f} mixed_ms={:.1f} items={} input_units={}",
+                   segment.TotalMs(), queryMs, fixedPosMs, branchMs, uiMs, englishMs, mixedMs, itemCount,
+                   current_input.size());
+}
+
+// A commit or selection key may only use the page that belongs to the input it
+// is committing. If the page was never built, or it was built for an older
+// input, rebuild it from the engine before the caller reads page_words. The
+// alternative is what produced the swallowed first character: an empty page
+// turned space into OutofRange and a punctuation key into a Normal reply with
+// no candidate, so TSF replaced the preedit with the punctuation alone.
+bool EnsureCandidatePageForComposition(uint64_t client_id, uint64_t activation_epoch)
+{
+    if (!g_inputSession)
+    {
+        return false;
+    }
+    const std::string raw = g_inputSession->get_pinyin_sequence_with_cases();
+    auto &ui = Global::candidate_ui;
+    FanyImeIpc::CommitPageState state;
+    state.page_has_words = !ui.page_words.empty();
+    state.composition_empty = raw.empty();
+    state.page_matches_composition = state.composition_empty || ui.page_input == raw;
+    if (FanyImeIpc::CommitPageUsable(state))
+    {
+        return true;
+    }
+    if (!FanyImeIpc::ShouldRebuildCommitPage(state))
+    {
+        return false;
+    }
+    CAND_DIAG_LOGF(L"candidate-page-rebuild reason={} input_units={} page_units={} page_input_units={}",
+                   state.page_has_words ? L"stale" : L"missing", raw.size(), ui.page_words.size(),
+                   ui.page_input.size());
+    PrepareCandidateList(client_id, activation_epoch);
+    state.page_has_words = !ui.page_words.empty();
+    state.page_matches_composition = state.composition_empty || ui.page_input == raw;
+    const bool usable = FanyImeIpc::CommitPageUsable(state);
+    if (!usable)
+    {
+        CAND_DIAG_LOGF(L"candidate-page-rebuild-empty input_units={} page_units={}", raw.size(), ui.page_words.size());
+    }
+    return usable;
 }
 
 namespace

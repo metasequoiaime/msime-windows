@@ -9,6 +9,7 @@
 #include "ipc.h"
 #include "ipc/candidate_text_policy.h"
 #include "ipc/candidate_translation_policy.h"
+#include "ipc/candidate_commit_guard_policy.h"
 #include "ipc/input_key_policy.h"
 #include "engine/contracts/date_time_input.h"
 #include "engine/contracts/direct_helpcode.h"
@@ -1389,8 +1390,19 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         if (has_active_composition)
         {
             ScopedKeyStage ensure_punct{client_id, activation_epoch, request_id, L"handle-candidates"};
-            EnsureCandidatePageReady();
+            const bool page_ready = EnsureCandidatePageForComposition(client_id, activation_epoch);
             ensure_punct.Stop();
+            if (FanyImeIpc::ShouldRejectPunctuationCommit(has_active_composition, page_ready))
+            {
+                // TSF would replace the preedit with the punctuation if we sent
+                // Normal with an empty candidate string. Leave the composition
+                // intact and answer like an out-of-range selection instead.
+                CAND_DIAG_LOGF(L"punctuation-page-missing keycode=0x{:X} input_units={} page_units={}", Global::Keycode,
+                               g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases().size() : 0,
+                               Global::candidate_ui.page_words.size());
+                Global::MsgTypeToTsf = Global::DataFromServerMsgType::OutofRange;
+                return;
+            }
             auto &ui = Global::candidate_ui;
             ui.selected_text = FanyImeIpc::HighlightedCandidateText(ui.page_words, ui.selected_index_in_page);
 

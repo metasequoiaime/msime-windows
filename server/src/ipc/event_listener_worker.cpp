@@ -415,6 +415,14 @@ void WorkerThread()
                 break;
             }
             PrepareCandidateList(task.client_id, task.activation_epoch);
+            if (IsUiLessMode())
+            {
+                // The TSF asked for the page that its first key could not
+                // build because the host's UI-less answer only arrived at
+                // BeginUIElement. Publish it through the worker pipe so the
+                // host sees candidates for that first character.
+                PushUiLessCandidatesToOwner();
+            }
             RequestShowCandidateWindow();
             break;
         }

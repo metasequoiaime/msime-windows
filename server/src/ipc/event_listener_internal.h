@@ -186,6 +186,9 @@ void SyncShuangpinPreeditForms();
 
 // event_listener_candidates.cpp
 void EnsureCandidatePageReady();
+// Rebuilds the published page when it does not belong to the live composition.
+// Returns whether page_words can be used by the commit path.
+bool EnsureCandidatePageForComposition(uint64_t client_id, uint64_t activation_epoch);
 std::wstring BuildUiLessCandidatePageW();
 void RefreshCandidatePageUi(bool show_window);
 

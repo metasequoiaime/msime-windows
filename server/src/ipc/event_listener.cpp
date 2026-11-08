@@ -15,6 +15,7 @@
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "ipc/async_request_origin.h"
 #include "ipc/candidate_ui_owner.h"
+#include "ipc/focus_session_policy.h"
 #include "defines/defines.h"
 #include "ipc.h"
 #include "defines/globals.h"
@@ -139,7 +140,8 @@ void ApplyUiLessFromPacket(const FanyImeNamedpipeData &pipe_data)
              pipe_data.event_type == FanyImePipeEventType::MoveCandidateWnd ||
              pipe_data.event_type == FanyImePipeEventType::HideCandidateWnd)
     {
-        g_session_uiless = g_activate_uiless || ((pipe_data.modifiers_down & FanyImePipeFlags::UiLess) != 0);
+        g_session_uiless = FanyImeIpc::ResolveSessionUiLess(
+            g_activate_uiless, (pipe_data.modifiers_down & FanyImePipeFlags::UiLess) != 0, g_session_uiless);
     }
 
     if (!wasUiLess && IsUiLessMode())
@@ -226,6 +228,7 @@ void HideCandidateWindowAndDropItems()
     Global::CandidateString.clear();
     Global::ClearCandidatePageSnapshot();
     Global::candidate_ui.set_items({});
+    Global::candidate_ui.page_input.clear();
     // Clear the shown flag first so async callbacks refuse to resurrect the
     // window, then post the actual hide message.
     ::is_global_wnd_cand_shown = false;
