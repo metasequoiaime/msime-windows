@@ -12,9 +12,9 @@
 // validates the whole archive before it may stop anything, keeps a copy of every
 // file it overwrites in <DataDir>/.backup-before-import.
 //
-// 普通导入按整包覆盖：词条走 SettingsDictionary 的导入请求，不直接写用户词库。
-// 同步恢复走 ImportMerging：配置按键合并、凭据保留本机值、用户词库按日志合并并回放，
-// 归档里带的 msime_user.db 是合并的远端一侧，不是覆盖源。
+// 普通导入按归档整包落位：词条通常走 SettingsDictionary 的导入请求，但归档里若带着
+// msime_user.db（同步包），会落位后回放一次。同步恢复走 ImportMerging：配置按键合并、
+// 凭据保留本机值、用户词库按日志合并并回放，归档里的 msime_user.db 是远端一侧，不是覆盖源。
 namespace SettingsUserDataBackup
 {
 struct Context
@@ -78,6 +78,9 @@ struct MergeImportReport
 {
     bool config_merged = false;
     bool dictionary_merged = false;
+    // 日志合并成功但没回放（msime.db 或 english.db 不在）。此时墓碑与远端权重
+    // 要等下次安装回放才生效，界面该说清楚，不能只报"导入成功"。
+    bool replay_skipped = false;
     int dictionary_taken_from_remote = 0;
     int dictionary_kept_local = 0;
 };

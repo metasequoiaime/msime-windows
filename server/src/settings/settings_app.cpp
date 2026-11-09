@@ -1889,7 +1889,13 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                                 // 合并后的配置已经落盘，设置进程要跟上磁盘。
                                 InitImeConfig();
                                 if (ok)
-                                    import_message = "已从云端恢复并导入。";
+                                {
+                                    // 日志合并了但没回放时要说清楚：墓碑与远端权重要等下次
+                                    // 安装才生效，不能只报"已恢复"。
+                                    import_message = report.replay_skipped
+                                                         ? "已从云端恢复并导入。部分词条改动要等下次安装时才生效。"
+                                                         : "已从云端恢复并导入。";
+                                }
                             }
                             catch (...)
                             {

@@ -1229,14 +1229,21 @@ std::string MergeArchivedConfigImpl(const Context &context, const std::string &l
     return user_data_sync::MergeConfig(local_text, archived_text, template_text);
 }
 
-// 归档里的凭据字面量在本机能不能用：空串、以及解不开的 DPAPI 密文都算不能用。
-// 换机恢复时归档带的是另一台机器的密文，本机 Unprotect 会失败，那种值照抄过来等于没填。
+// 归档里的凭据字面量在本机能不能用：空串、出厂占位符、以及解不开的 DPAPI 密文都算不能用。
+// 换机恢复时归档带的是另一台机器的密文，本机 Unprotect 会失败；从没填过 token 的机器
+// 导出的则是 <YOUR_...> / FAKESECRET_ 这类占位符，照抄过来等于把本机的真 token 换掉。
 bool ArchivedCredentialIsUsable(const std::string &literal)
 {
     if (literal.size() < 2 || literal.front() != '"' || literal.back() != '"')
         return false;
     const std::string value = literal.substr(1, literal.size() - 2);
     if (value.empty())
+        return false;
+    // 与 VoiceInput::IsPlaceholderToken 同一套判据。这里不直接调它：那个函数在
+    // voice-input 目标里，本文件不该为了一个字符串判断多拉一个依赖。
+    if (value.front() == '<' && value.back() == '>')
+        return false;
+    if (value.rfind("FAKESECRET_", 0) == 0)
         return false;
     if (CredentialProtection::IsProtected(value))
         return CredentialProtection::Unprotect(value).has_value();
@@ -1281,7 +1288,9 @@ std::string PreserveLocalCredentials(const std::string &local_text, const std::s
 //
 // 两个主库都必须已经在磁盘上：replay 内部对 english.db 用的是 SQLITE_OPEN_CREATE，
 // 文件不在时会顺手建一个空库并返回成功，英语词条就此变成「装着但没词」。
-bool ReplayUserDictionary(const Context &context, std::string &message)
+// 缺库时把 report.replay_skipped 置真并返回 true：恢复本身是成功的，只是回放留到
+// 下次安装；真正的回放失败才返回 false。
+bool ReplayUserDictionary(const Context &context, MergeImportReport *report, std::string &message)
 {
     const std::filesystem::path main_database = context.data_dir / L"msime.db";
     const std::filesystem::path english_database = context.data_dir / L"english.db";
@@ -1289,7 +1298,8 @@ bool ReplayUserDictionary(const Context &context, std::string &message)
     if (!std::filesystem::is_regular_file(main_database, error) ||
         !std::filesystem::is_regular_file(english_database, error))
     {
-        // 主词库不在时没什么可回放的：日志本身已经合好，下次安装会按正常流程回放。
+        if (report)
+            report->replay_skipped = true;
         message.clear();
         return true;
     }
@@ -1298,7 +1308,7 @@ bool ReplayUserDictionary(const Context &context, std::string &message)
         user_dictionary::replay(user_db, PathToUtf8(main_database), PathToUtf8(english_database));
     if (result.failed || !result.error.empty())
     {
-        message = "词库合并已写入，但回放失败：" + result.error;
+        message = "词库日志已合并，但回放失败：" + result.error;
         return false;
     }
     message.clear();
@@ -1570,17 +1580,21 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
         error.clear();
     }
 
-    // 同步恢复会 replay 改 msime.db 与 english.db，这两个主库不在归档里、也不会被
-    // 落位，但同样需要能回滚。单独补一份进预导入副本，失败时提示里的承诺才成立。
-    if (failures.empty() && merge)
+    // 恢复流程会 replay 改 msime.db 与 english.db；普通导入在归档带用户词库时也 replay。
+    // 这两个主库不在归档里、也不会被落位，但同样需要能回滚，所以单独补一份进预导入副本。
+    // 用 SnapshotSqlite 而不是 CopyFileAtomic：它们是 WAL，Server 又是 ExitProcess 退出，
+    // 直接拷主文件会漏掉 -wal 里已提交的页面。
+    const bool will_replay = has_user_database;
+    if (failures.empty() && will_replay)
     {
         for (const wchar_t *name : {L"msime.db", L"english.db"})
         {
-            const std::filesystem::path source = context.data_dir / name;
+            const std::filesystem::path live_path = context.data_dir / name;
             std::error_code copy_error;
-            if (!std::filesystem::is_regular_file(source, copy_error))
+            if (!std::filesystem::is_regular_file(live_path, copy_error))
                 continue;
-            if (!CopyFileAtomic(source, backup_root / name, message))
+            const char *label = name[0] == L'm' ? "拼音/五笔词库" : "英文词库";
+            if (!SnapshotSqlite(live_path, backup_root / name, label, message))
             {
                 failures.push_back(message);
                 break;
@@ -1644,7 +1658,7 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
                 report->dictionary_merged = true;
             // 日志合并完还要回放，否则删除墓碑与远端权重在下次安装前都不生效。
             std::string replay_message;
-            if (!ReplayUserDictionary(context, replay_message))
+            if (!ReplayUserDictionary(context, report, replay_message))
                 failures.push_back(replay_message);
         }
     }
@@ -1654,7 +1668,7 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
     if (failures.empty() && !merge && FindItem(items, "msime_user.db") != nullptr)
     {
         std::string replay_message;
-        if (!ReplayUserDictionary(context, replay_message))
+        if (!ReplayUserDictionary(context, report, replay_message))
             failures.push_back(replay_message);
     }
 

@@ -3,7 +3,6 @@
 #include "settings/sync_merge.h"
 #include "settings/sync_service.h"
 #include "settings/user_data_backup.h"
-#include "settings/zip_archive.h"
 #include "tests/includes/test_framework.h"
 #include "tests/includes/test_utf8_path.h"
 

@@ -1017,7 +1017,13 @@ TEST_CASE(user_data_backup_merging_keeps_local_dictionary_rows)
         REQUIRE(writer.AddBytes("config.toml", "[appearance]\ntheme_mode = \"light\"\n", message, &config_entry));
         user_data_zip::Entry journal_entry;
         REQUIRE(writer.AddFile("msime_user.db", remote_db, message, &journal_entry));
-        REQUIRE(writer.AddBytes("manifest.json", SerializeManifest({config_entry, journal_entry}), message));
+        // 同步包同时带文本词库。合并模式下这批文本必须被跳过，否则 record_user_insert
+        // 会把刚按 updated_at 判过的新旧关系冲掉。
+        user_data_zip::Entry dictionary_entry;
+        REQUIRE(
+            writer.AddBytes("dictionary/quanpin.txt", "从文本导入\tcong'wen'ben\t99\n", message, &dictionary_entry));
+        REQUIRE(writer.AddBytes("manifest.json", SerializeManifest({config_entry, journal_entry, dictionary_entry}),
+                                message));
         REQUIRE(writer.Finish(message));
     }
 
@@ -1048,6 +1054,8 @@ TEST_CASE(user_data_backup_merging_keeps_local_dictionary_rows)
     REQUIRE(report.dictionary_merged);
     // 合并模式不再走文本词库导入，避免远端权重冲掉刚判过的新旧关系。
     REQUIRE(state->imported_dictionaries.empty());
+    // 预导入副本必须留下合并前的本地词库，失败时才能回滚。
+    REQUIRE(fs::is_regular_file(destination.data_dir / ".backup-before-import" / "msime_user.db"));
 
     sqlite3 *db = nullptr;
     REQUIRE(sqlite3_open(test::Utf8(local_db).c_str(), &db) == SQLITE_OK);
@@ -1063,6 +1071,12 @@ TEST_CASE(user_data_backup_merging_keeps_local_dictionary_rows)
                                &statement, nullptr) == SQLITE_OK);
     REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
     REQUIRE_EQ(std::string(reinterpret_cast<const char *>(sqlite3_column_text(statement, 0))), std::string("delete"));
+    sqlite3_finalize(statement);
+    // 文本词库里的条目不能被导进来。
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE key='cong''wen'ben'", -1,
+                               &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 0);
     sqlite3_finalize(statement);
     // 配置按合并规则取到远端改过的值。
     REQUIRE(ReadFile(destination.data_dir / "config.toml").find("theme_mode = \"light\"") != std::string::npos);
