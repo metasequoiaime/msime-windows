@@ -25,6 +25,7 @@ using detail::HmacSha256Raw;
 using detail::HttpRequest;
 using detail::HttpResponse;
 using detail::IsNotFound;
+using detail::IsRetryableStatus;
 using detail::IsSuccess;
 using detail::IsTransient;
 using detail::Perform;
@@ -121,6 +122,7 @@ struct SignedRequest
 };
 
 // 组装一条已签名的请求。payload_hash 由调用方给：PUT 用文件摘要，其余用空串摘要。
+// 签名本身走 S3Sign——那是被 AWS 官方测试向量验证过的那一份，这里只负责拼 URL 与头。
 SignedRequest BuildSignedRequest(const S3Options &options, const std::string &method, const std::string &key,
                                  const std::vector<std::pair<std::string, std::string>> &query,
                                  const std::string &payload_hash, std::int64_t now)
@@ -146,41 +148,18 @@ SignedRequest BuildSignedRequest(const S3Options &options, const std::string &me
         return result;
     }
 
-    const std::string amz_date = UtcStamp(now);
-    const std::string date = UtcDate(now);
     const std::string canonical_uri = CanonicalUri(options, key);
     const std::string canonical_query = CanonicalQuery(query);
     const std::string authority = RequestHost(options, host, port, scheme);
 
-    std::vector<std::pair<std::string, std::string>> headers = {
+    const std::vector<std::pair<std::string, std::string>> signed_headers = {
         {"host", authority},
         {"x-amz-content-sha256", payload_hash},
-        {"x-amz-date", amz_date},
+        {"x-amz-date", UtcStamp(now)},
     };
-    std::sort(headers.begin(), headers.end());
-
-    std::string canonical_headers;
-    std::string signed_headers;
-    for (const auto &header : headers)
-    {
-        canonical_headers += header.first + ":" + TrimHeaderValue(header.second) + "\n";
-        if (!signed_headers.empty())
-            signed_headers.push_back(';');
-        signed_headers += header.first;
-    }
-
-    const std::string canonical_request = method + "\n" + canonical_uri + "\n" + canonical_query + "\n" +
-                                          canonical_headers + "\n" + signed_headers + "\n" + payload_hash;
-    const std::string scope = date + "/" + options.region + "/s3/aws4_request";
-    const std::string string_to_sign =
-        std::string(kAlgorithm) + "\n" + amz_date + "\n" + scope + "\n" + Sha256Hex(canonical_request);
-    const std::string secret_date = HmacSha256Raw("AWS4" + options.secret_key, date);
-    const std::string secret_region = HmacSha256Raw(secret_date, options.region);
-    const std::string secret_service = HmacSha256Raw(secret_region, "s3");
-    const std::string secret_signing = HmacSha256Raw(secret_service, "aws4_request");
-    unsigned char signature[32]{};
-    if (secret_date.empty() || secret_region.empty() || secret_service.empty() || secret_signing.empty() ||
-        !HmacSha256(secret_signing, string_to_sign, signature))
+    const S3Signature signature =
+        S3Sign(options, method, canonical_uri, canonical_query, signed_headers, payload_hash, now);
+    if (signature.signature.empty())
     {
         result.message = "无法计算请求签名";
         return result;
@@ -195,10 +174,9 @@ SignedRequest BuildSignedRequest(const S3Options &options, const std::string &me
         url += "?" + canonical_query;
 
     result.url = std::move(url);
-    result.headers.push_back("x-amz-date: " + amz_date);
+    result.headers.push_back("x-amz-date: " + signature.amz_date);
     result.headers.push_back("x-amz-content-sha256: " + payload_hash);
-    result.headers.push_back("Authorization: " + std::string(kAlgorithm) + " Credential=" + options.access_key + "/" +
-                             scope + ", SignedHeaders=" + signed_headers + ", Signature=" + HexEncode(signature, 32));
+    result.headers.push_back("Authorization: " + signature.authorization);
     result.ok = true;
     return result;
 }
@@ -369,8 +347,8 @@ class S3Store final : public RemoteStore
                 if (IsSuccess(response.status))
                     return AttemptResult::Ok;
                 attempt_message = DescribeHttpFailure(response);
-                return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                            : AttemptResult::Fatal;
+                return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                        : AttemptResult::Fatal;
             },
             message);
     }
@@ -398,8 +376,8 @@ class S3Store final : public RemoteStore
                 if (IsSuccess(response.status))
                     return AttemptResult::Ok;
                 attempt_message = IsNotFound(response.status) ? "云端没有这个文件" : DescribeHttpFailure(response);
-                return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                            : AttemptResult::Fatal;
+                return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                        : AttemptResult::Fatal;
             },
             message);
     }
@@ -443,8 +421,8 @@ class S3Store final : public RemoteStore
                     return AttemptResult::Ok;
                 }
                 attempt_message = DescribeHttpFailure(response);
-                return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                            : AttemptResult::Fatal;
+                return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                        : AttemptResult::Fatal;
             },
             message);
         return ok && found;
@@ -483,8 +461,8 @@ class S3Store final : public RemoteStore
                     if (!IsSuccess(response.status))
                     {
                         attempt_message = DescribeHttpFailure(response);
-                        return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                                    : AttemptResult::Fatal;
+                        return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                                : AttemptResult::Fatal;
                     }
                     // <Contents> 里各有 Key / Size / ETag / LastModified，按块切再逐块取。
                     for (const std::string &block : Blocks(response.body, "Contents"))
@@ -539,8 +517,8 @@ class S3Store final : public RemoteStore
                 if (IsSuccess(response.status) || IsNotFound(response.status))
                     return AttemptResult::Ok;
                 attempt_message = DescribeHttpFailure(response);
-                return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                            : AttemptResult::Fatal;
+                return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                        : AttemptResult::Fatal;
             },
             message);
     }
@@ -549,6 +527,12 @@ class S3Store final : public RemoteStore
     {
         std::vector<RemoteObject> ignored;
         return List(std::string(), ignored, message);
+    }
+
+    // S3 没有目录：对象 key 里的斜杠只是名字的一部分。
+    bool EnsureDirectory(const std::string &, std::string &) override
+    {
+        return true;
     }
 
   private:

@@ -52,6 +52,9 @@ class RemoteStore
     virtual bool Stat(const std::string &key, RemoteObject &object, std::string &message) = 0;
     virtual bool List(const std::string &prefix, std::vector<RemoteObject> &objects, std::string &message) = 0;
     virtual bool Delete(const std::string &key, std::string &message) = 0;
+    // 确保 key 所在的目录存在。WebDAV 必须显式建集合，否则对不存在集合的 PUT 返回 409；
+    // S3 没有目录概念，实现为空。
+    virtual bool EnsureDirectory(const std::string &key, std::string &message) = 0;
     // 验证地址与凭据能不能用。设置页的「测试连接」调它。
     virtual bool Probe(std::string &message) = 0;
 };

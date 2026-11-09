@@ -18,6 +18,7 @@ using detail::HeaderValue;
 using detail::HttpRequest;
 using detail::HttpResponse;
 using detail::IsNotFound;
+using detail::IsRetryableStatus;
 using detail::IsSuccess;
 using detail::IsTransient;
 using detail::JoinUrl;
@@ -335,8 +336,8 @@ class WebDavStore final : public RemoteStore
                 if (IsSuccess(response.status))
                     return AttemptResult::Ok;
                 attempt_message = DescribeHttpFailure(response);
-                return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                            : AttemptResult::Fatal;
+                return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                        : AttemptResult::Fatal;
             },
             message);
     }
@@ -356,8 +357,8 @@ class WebDavStore final : public RemoteStore
                 if (IsSuccess(response.status))
                     return AttemptResult::Ok;
                 attempt_message = IsNotFound(response.status) ? "云端没有这个文件" : DescribeHttpFailure(response);
-                return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                            : AttemptResult::Fatal;
+                return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                        : AttemptResult::Fatal;
             },
             message);
     }
@@ -392,8 +393,8 @@ class WebDavStore final : public RemoteStore
                     return AttemptResult::Ok;
                 }
                 attempt_message = DescribeHttpFailure(response);
-                return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                            : AttemptResult::Fatal;
+                return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                        : AttemptResult::Fatal;
             },
             message);
         return ok && found;
@@ -424,8 +425,8 @@ class WebDavStore final : public RemoteStore
                 if (!IsSuccess(response.status))
                 {
                     attempt_message = DescribeHttpFailure(response);
-                    return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                                : AttemptResult::Fatal;
+                    return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                            : AttemptResult::Fatal;
                 }
                 body = std::move(response.body);
                 return AttemptResult::Ok;
@@ -513,8 +514,8 @@ class WebDavStore final : public RemoteStore
                 if (IsSuccess(response.status) || IsNotFound(response.status))
                     return AttemptResult::Ok;
                 attempt_message = DescribeHttpFailure(response);
-                return IsTransient(response.code) || response.status >= 500 ? AttemptResult::Retry
-                                                                            : AttemptResult::Fatal;
+                return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                        : AttemptResult::Fatal;
             },
             message);
     }
@@ -545,6 +546,58 @@ class WebDavStore final : public RemoteStore
         }
         message = DescribeHttpFailure(response);
         return false;
+    }
+
+    // WebDAV 必须先建集合，否则对不存在集合的 PUT 返回 409。逐级 MKCOL，
+    // 405 表示集合已经存在（RFC 4918 允许这种响应），按成功处理。
+    bool EnsureDirectory(const std::string &key, std::string &message) override
+    {
+        std::string directory = key;
+        const std::size_t slash = directory.rfind('/');
+        if (slash == std::string::npos)
+            return true;
+        directory = directory.substr(0, slash);
+        if (directory.empty())
+            return true;
+
+        // 逐段创建：devices -> devices/<id>。
+        std::string accumulated;
+        std::size_t position = 0;
+        while (position <= directory.size())
+        {
+            const std::size_t next = directory.find('/', position);
+            const std::string segment =
+                directory.substr(position, next == std::string::npos ? std::string::npos : next - position);
+            if (!segment.empty())
+            {
+                accumulated = accumulated.empty() ? segment : accumulated + "/" + segment;
+                HttpRequest request;
+                request.method = "MKCOL";
+                request.url = JoinUrl(options_.base_url, accumulated);
+                request.headers = BaseHeaders(options_);
+                request.timeout_seconds = 60;
+                const HttpResponse response = Perform(request);
+                // 201 新建、405 已存在；401/403 是真错，其它 4xx 也如实上报。
+                if (!IsSuccess(response.status) && response.status != 405)
+                {
+                    if (response.status == 409)
+                    {
+                        // 上级集合还不存在：继续往下走，下一轮会把缺的那级建出来。
+                        // 这里不能直接失败，否则 devices 建好、devices/<id> 还没建时会中断。
+                        message.clear();
+                    }
+                    else
+                    {
+                        message = "无法创建备份目录：" + DescribeHttpFailure(response);
+                        return false;
+                    }
+                }
+            }
+            if (next == std::string::npos)
+                break;
+            position = next + 1;
+        }
+        return true;
     }
 
   private:

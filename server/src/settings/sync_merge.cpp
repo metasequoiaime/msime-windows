@@ -214,8 +214,8 @@ bool WriteDeviceId(const std::filesystem::path &path, const std::string &device_
         if (!file)
             return false;
     }
-    std::error_code error;
-    std::filesystem::remove(path, error);
+    // 不能先删目标再改名：MoveFileEx 失败时旧文件已经没了，下次启动会生成新设备标识，
+    // 云端就会多出一台"新设备"。MOVEFILE_REPLACE_EXISTING 本身就是原子的替换。
     return MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
 }
 } // namespace

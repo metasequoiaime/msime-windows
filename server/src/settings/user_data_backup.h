@@ -65,4 +65,27 @@ bool Validate(const std::filesystem::path &archive, std::string &message);
 // Archive path rules shared with the tests: exactly the fixed layout, no
 // traversal, no absolute paths, no case collision.
 bool IsAllowedDataPath(const std::string &path);
+
+// 归档导入的合并模式。常规 Import 是「整包覆盖」，用于用户自己选的备份文件；
+// 同步恢复走这里：配置按键合并、凭据保留本地值、用户词库按日志合并。
+//
+// 为什么不能直接覆盖：同步归档里的 config.toml 在上传前被剥离过凭据（远端不该出现
+// DPAPI 密文），整包覆盖会把本机的 token、语音密钥、同步密码全部清空。词库也一样，
+// 覆盖会让删除墓碑失效、把别的设备上删掉的词复活。
+struct MergeImportReport
+{
+    bool config_merged = false;
+    bool dictionary_merged = false;
+    int dictionary_taken_from_remote = 0;
+    int dictionary_kept_local = 0;
+};
+
+bool ImportMerging(const std::filesystem::path &source, const Hooks &hooks, MergeImportReport &report,
+                   std::string &message);
+bool ImportMerging(const Context &context, const std::filesystem::path &source, const Hooks &hooks,
+                   MergeImportReport &report, std::string &message);
+
+// 归档里的 config.toml 与本地 config.toml 按键合并，凭据键保留本地值。暴露给测试。
+std::string MergeArchivedConfig(const std::string &local_text, const std::string &archived_text,
+                                const std::string &template_text);
 } // namespace SettingsUserDataBackup

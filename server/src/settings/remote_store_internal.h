@@ -66,6 +66,8 @@ bool IsSuccess(long status);
 bool IsNotFound(long status);
 // 网络层瞬时错误（连不上、超时、连接被重置）值得重试；4xx 重试没有意义。
 bool IsTransient(CURLcode code);
+// 值得重试的状态码：5xx 与 429（S3 限流）。
+bool IsRetryableStatus(long status);
 // 把失败转成给人看的中文，附带服务端返回的前若干字节（S3 的 XML 错误里有 Code/Message）。
 std::string DescribeHttpFailure(const HttpResponse &response);
 

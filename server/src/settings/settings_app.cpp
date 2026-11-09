@@ -173,7 +173,9 @@ std::unique_ptr<user_data_sync::RemoteStore> MakeSyncStore(const SyncConfig &con
         options.bucket = config.s3_bucket;
         options.access_key = config.s3_access_key;
         options.secret_key = config.s3_secret_key;
-        options.path_style = config.s3_path_style;
+        // AWS 官方域名只接受虚拟主机风格，路径风格会返回错误；自建网关与 R2 走路径风格。
+        // 用户勾了「路径风格」就以勾选为准，否则按域名自动判断。
+        options.path_style = config.s3_path_style && config.s3_endpoint.find(".amazonaws.com") == std::string::npos;
         options.prefix = config.s3_prefix;
         return user_data_sync::MakeS3Store(std::move(options));
     }
@@ -1756,37 +1758,44 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             const std::string device_id =
                 data.contains("deviceId") ? json::value_to<std::string>(data.at("deviceId")) : std::string();
             const auto post_sync = [](const std::string &request_id, const std::string &action, const bool ok,
-                                      const std::string &message, const json::array &devices) {
+                                      const std::string &message, const json::array &devices,
+                                      const bool include_devices, const std::string &local_device_id) {
                 json::value response = {{"type", "userDataSyncResponse"},
                                         {"requestId", request_id},
                                         {"action", action},
                                         {"ok", ok},
                                         {"message", message},
                                         {"protocolVersion", metasequoia::webview::Version}};
-                if (!devices.empty())
+                // 列表类回执必须始终带 devices，哪怕是空数组：页面靠它判断"云端已经清空"
+                // 并重建设备列表。只在非空时下发会让旧行留在界面上。
+                if (include_devices)
                     response.as_object()["devices"] = devices;
+                if (!local_device_id.empty())
+                    response.as_object()["localDeviceId"] = local_device_id;
                 if (metasequoia::webview::Validate(response, "server"))
                     PostToSettingsPage(response);
             };
             if (action != "probe" && action != "listDevices" && action != "upload" && action != "download")
             {
-                post_sync(request_id, action, false, "未知的同步操作。", json::array{});
+                post_sync(request_id, action, false, "未知的同步操作。", json::array{}, false, {});
             }
             else if (g_user_data_sync_busy.exchange(true))
             {
                 // 上传会生成完整归档、下载会覆盖本地数据，两者都不能并行。
-                post_sync(request_id, action, false, "已有同步操作正在进行，请稍后再试。", json::array{});
+                post_sync(request_id, action, false, "已有同步操作正在进行，请稍后再试。", json::array{}, false, {});
             }
             else
             {
                 try
                 {
-                    g_worker->Submit([request_id, action, device_id, post_sync]() -> SerialTaskQueue::Completion {
+                    const bool submitted = g_worker->Submit([request_id, action, device_id,
+                                                             post_sync]() -> SerialTaskQueue::Completion {
                         std::string message;
                         bool ok = false;
                         json::array devices;
                         bool import_after_download = false;
                         std::filesystem::path downloaded;
+                        std::string local_device_id;
                         try
                         {
                             const SyncConfig config = GetConfiguredSync();
@@ -1803,6 +1812,7 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                                 user_data_sync::SyncService service(
                                     std::move(store), std::filesystem::path(CommonUtils::get_ime_data_path_w()),
                                     options);
+                                local_device_id = service.DeviceId();
                                 if (action == "probe")
                                 {
                                     ok = service.Probe(message);
@@ -1859,42 +1869,55 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                             ok = false;
                             message = "同步操作失败，请重试。";
                         }
-                        return [request_id, action, ok, message = std::move(message), devices, import_after_download,
-                                downloaded, post_sync] {
-                            g_user_data_sync_busy.store(false);
-                            // 下载成功只是拿到了归档，真正落位要复用导入流程（它会停 Server、
-                            // 备份被覆盖的文件、再拉起来）。两步分开上报，用户能看清卡在哪一步。
-                            if (import_after_download && ok)
+                        // 恢复的落位必须在 worker 上做：Import 会停 Server 并等待进程退出，
+                        // 对 Server 与 Watchdog 各等最多 15 秒。放到 Completion（UI 线程）会把
+                        // 设置窗口冻住整段时间，和 userDataBackupRequest 的既有做法也不一致。
+                        if (import_after_download && ok)
+                        {
+                            std::string import_message;
+                            try
                             {
-                                std::string import_message;
-                                bool import_ok = false;
-                                try
-                                {
-                                    import_ok = SettingsUserDataBackup::Import(
-                                        downloaded, SettingsUserDataBackup::ProductionHooks(), import_message);
-                                    InitImeConfig();
-                                }
-                                catch (...)
-                                {
-                                    import_ok = false;
-                                    import_message = "导入下载的备份失败，请重试。";
-                                }
-                                std::error_code remove_error;
-                                std::filesystem::remove(downloaded, remove_error);
-                                post_sync(request_id, action, import_ok,
-                                          import_ok ? "已从云端恢复并导入。" : import_message, devices);
-                                if (import_ok)
-                                    PostConfig(true);
-                                return;
+                                SettingsUserDataBackup::MergeImportReport report;
+                                ok = SettingsUserDataBackup::ImportMerging(
+                                    downloaded, SettingsUserDataBackup::ProductionHooks(), report, import_message);
+                                // 合并后的配置已经落盘，设置进程要跟上磁盘。
+                                InitImeConfig();
+                                if (ok)
+                                    import_message = "已从云端恢复并导入。";
                             }
-                            post_sync(request_id, action, ok, message, devices);
+                            catch (...)
+                            {
+                                ok = false;
+                                import_message = "导入下载的备份失败，请重试。";
+                            }
+                            std::error_code remove_error;
+                            std::filesystem::remove(downloaded, remove_error);
+                            message = import_message;
+                            import_after_download = false;
+                        }
+                        return [request_id, action, ok, message = std::move(message), devices, local_device_id,
+                                post_sync] {
+                            g_user_data_sync_busy.store(false);
+                            post_sync(request_id, action, ok, message, devices, action == "listDevices",
+                                      local_device_id);
+                            // 配置被合并过才需要刷新快照；这里无法区分，统一刷一次代价很小。
+                            if (action == "download" && ok)
+                                PostConfig(true);
                         };
                     });
+                    // Submit 在队列已经停止时返回 false。不处理的话 busy 会永久停在 true，
+                    // 之后所有同步请求都回「已有同步操作正在进行」。
+                    if (!submitted)
+                    {
+                        g_user_data_sync_busy.store(false);
+                        post_sync(request_id, action, false, "设置窗口正在关闭，同步已取消。", json::array{}, false,
+                                  {});
+                    }
                 }
                 catch (...)
                 {
                     g_user_data_sync_busy.store(false);
-                    post_sync(request_id, action, false, "同步操作失败，请重试。", json::array{});
+                    post_sync(request_id, action, false, "同步操作失败，请重试。", json::array{}, false, {});
                 }
             }
         }

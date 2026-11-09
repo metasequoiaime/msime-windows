@@ -88,19 +88,69 @@ std::shared_ptr<CssButton> MakeSyncButton(const wchar_t *text, CssButton::Look l
     return std::make_shared<CssButton>(text, style);
 }
 
-// 设备列表每次收到 listDevices 回执就整块重建。StackPanel 的 children_ 是 protected，
-// 这个子类只多一个 ClearRows。
+// 设备列表。不销毁重建：msimeui::Window 的 focusedVisual_ / hoveredVisual_ /
+// capturedVisual_ 是裸指针，销毁行里的按钮会留下悬垂指针。改成复用一组固定的行，
+// 只更新文本与按钮回调，多余的行隐藏。
 class DeviceList : public Column
 {
   public:
+    struct Row
+    {
+        std::shared_ptr<Hideable> holder;
+        std::shared_ptr<Label> title;
+        std::shared_ptr<Label> detail;
+        std::shared_ptr<CssButton> restore;
+    };
+
     DeviceList() : Column(0.0f)
     {
     }
-    void ClearRows()
+
+    // 空列表时的说明行。它只创建一次，之后靠可见性切换，同样不销毁。
+    void EnsureEmptyHint(bool visible)
     {
-        children_.clear();
+        if (!empty_hint_)
+        {
+            empty_hint_ = std::make_shared<Hideable>(
+                SyncDescription(L"云端还没有其他设备的备份。上传一次后，换台电脑就能在这里看到。"), false);
+            Add(empty_hint_);
+        }
+        empty_hint_->SetVisible(visible);
+    }
+
+    // 保证至少有 count 行；不够就补，多了就隐藏。
+    void EnsureRows(std::size_t count)
+    {
+        while (rows_.size() < count && rows_.size() < kMaxRows)
+        {
+            Row row;
+            row.title = MakeLabel(L"", DocStyle(13.0f, DWRITE_FONT_WEIGHT_MEDIUM), TextRole::Primary);
+            row.detail = MakeLabel(L"", DocStyle(12.0f), TextRole::Muted);
+            row.detail->SetMargin({0.0f, 4.0f, 0.0f, 0.0f});
+            auto left = std::make_shared<Column>(0.0f);
+            left->Add(row.title);
+            left->Add(row.detail);
+            row.restore = MakeSyncButton(L"恢复…", CssButton::Look::Secondary);
+            // Hideable 是仓库里唯一控制可见性的容器；SettingRow 本身没有可见性开关。
+            row.holder = std::make_shared<Hideable>(std::make_shared<SettingRow>(left, row.restore), false);
+            Add(row.holder);
+            rows_.push_back(std::move(row));
+        }
+        for (std::size_t index = 0; index < rows_.size(); ++index)
+            rows_[index].holder->SetVisible(index < count);
         InvalidateMeasure();
     }
+
+    Row &At(std::size_t index)
+    {
+        return rows_[index];
+    }
+
+  private:
+    // 设备多到这个数已经不正常，超出的不显示也比让列表无限增长安全。
+    static constexpr std::size_t kMaxRows = 32;
+    std::vector<Row> rows_;
+    std::shared_ptr<Hideable> empty_hint_;
 };
 
 struct SyncState
@@ -174,16 +224,21 @@ void RebuildDeviceList(const std::shared_ptr<SyncState> &state, SettingsModel *m
 {
     if (!state || !state->devices)
         return;
-    state->devices->ClearRows();
-    if (!devices.is_array() || devices.empty())
+    std::vector<const Json *> entries;
+    if (devices.is_array())
     {
-        state->devices->Add(SyncDescription(L"云端还没有其他设备的备份。上传一次后，换台电脑就能在这里看到。"));
-        return;
+        for (const Json &entry : devices)
+        {
+            if (entry.is_object())
+                entries.push_back(&entry);
+        }
     }
-    for (const Json &entry : devices)
+    state->devices->EnsureEmptyHint(entries.empty());
+    state->devices->EnsureRows(entries.size());
+    for (std::size_t index = 0; index < entries.size(); ++index)
     {
-        if (!entry.is_object())
-            continue;
+        const Json &entry = *entries[index];
+        DeviceList::Row &row = state->devices->At(index);
         const std::string deviceId = entry.value("deviceId", std::string());
         const std::wstring hostname = Widen(entry.value("hostname", std::string()));
         const std::int64_t uploaded = entry.value("uploadedUnix", static_cast<std::int64_t>(0));
@@ -192,29 +247,25 @@ void RebuildDeviceList(const std::shared_ptr<SyncState> &state, SettingsModel *m
         const bool local = !state->localDeviceId.empty() && deviceId == state->localDeviceId;
         if (local)
             detail = L"本机 · " + detail;
-        auto restore = MakeSyncButton(L"恢复…", CssButton::Look::Secondary);
+        row.title->SetText(hostname.empty() ? L"未命名设备" : hostname);
+        row.detail->SetText(detail);
         // 本机自己那份没有恢复的意义，直接禁用，避免用户误点后覆盖正在使用的数据。
-        if (local)
-            restore->SetDisabled(true);
-        else
-        {
-            std::weak_ptr<SyncState> weak = state;
-            restore->SetOnClick([model, weak, deviceId]() {
-                auto locked = weak.lock();
-                if (!locked || locked->busy || deviceId.empty())
-                    return;
-                const int answer =
-                    MessageBoxW(GetActiveWindow(),
-                                L"恢复会先停止输入法后台进程，并把将被覆盖的配置、统计、皮肤和模型备份到数据目录的 "
-                                L".backup-before-import。词库只合并条目，不会替换现有数据库。\n\n继续恢复吗？",
-                                L"从云端恢复", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
-                if (answer != IDOK)
-                    return;
-                SetBusy(*locked, true);
-                PostSync(model, NextRequestId("download"), "download", deviceId);
-            });
-        }
-        state->devices->Add(MakeRow(hostname.empty() ? L"未命名设备" : hostname, detail, restore));
+        row.restore->SetDisabled(local);
+        std::weak_ptr<SyncState> weak = state;
+        row.restore->SetOnClick([model, weak, deviceId, local]() {
+            auto locked = weak.lock();
+            if (!locked || locked->busy || local || deviceId.empty())
+                return;
+            const int answer =
+                MessageBoxW(GetActiveWindow(),
+                            L"恢复会先停止输入法后台进程，并把将被覆盖的配置、统计、皮肤和模型备份到数据目录的 "
+                            L".backup-before-import。词库按日志合并，不会替换现有数据库。\n\n继续恢复吗？",
+                            L"从云端恢复", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+            if (answer != IDOK)
+                return;
+            SetBusy(*locked, true);
+            PostSync(model, NextRequestId("download"), "download", deviceId);
+        });
     }
 }
 } // namespace
@@ -278,6 +329,8 @@ VisualPtr BuildSyncPage(PageContext &context)
         s3->Add(FieldWithCaption(L"Access Key", state->s3AccessKey));
         s3->Add(FieldWithCaption(L"Secret Key", state->s3SecretKey));
         s3->Add(FieldWithCaption(L"对象前缀", state->s3Prefix));
+        s3->Add(MakeRow(L"路径风格", L"MinIO 与多数自建网关需要打开；AWS S3 通常关闭，改用虚拟主机风格",
+                        BindToggle(context, "sync.s3_path_style")));
         s3->Add(SyncDescription(
             L"Cloudflare R2 的区域填 auto，Backblaze B2 填它给出的 region，阿里云 OSS 的地址形如"
             L" https://bucket.oss-cn-hangzhou.aliyuncs.com。自建 MinIO 用路径风格，把存储桶填在单独的字段里。"));
@@ -401,11 +454,15 @@ VisualPtr BuildSyncPage(PageContext &context)
                 locked->status->SetText(Widen(text));
                 locked->status->SetRole(ok ? TextRole::Accent : TextRole::Danger);
             }
+            if (message.contains("localDeviceId") && message["localDeviceId"].is_string())
+                locked->localDeviceId = message["localDeviceId"].get<std::string>();
             if (message.contains("devices") && message["devices"].is_array())
                 RebuildDeviceList(locked, model, message["devices"]);
         });
 
         // 配置快照回来时同步字段：页面可能在别处被改过，或者刚打开。
+        // 正在输入的字段不覆盖：快照可能在用户敲密码时到达，SetText 会把他打的字换掉。
+        // 同目录的帮助页对代理地址用的是同一种做法。
         context.OnConfig([weak, model]() {
             auto locked = weak.lock();
             if (!locked)
@@ -415,15 +472,20 @@ VisualPtr BuildSyncPage(PageContext &context)
                 locked->backendValue = "off";
             locked->backend.SetValue(locked->backendValue);
             RefreshBackendVisibility(*locked);
-            locked->webdavUrl->SetText(Widen(model->GetString("sync.webdav_url")));
-            locked->webdavUser->SetText(Widen(model->GetString("sync.webdav_username")));
-            locked->webdavPassword->SetText(Widen(model->GetString("sync.webdav_password")));
-            locked->s3Endpoint->SetText(Widen(model->GetString("sync.s3_endpoint")));
-            locked->s3Region->SetText(Widen(model->GetString("sync.s3_region")));
-            locked->s3Bucket->SetText(Widen(model->GetString("sync.s3_bucket")));
-            locked->s3AccessKey->SetText(Widen(model->GetString("sync.s3_access_key")));
-            locked->s3SecretKey->SetText(Widen(model->GetString("sync.s3_secret_key")));
-            locked->s3Prefix->SetText(Widen(model->GetString("sync.s3_prefix")));
+            const auto sync_field = [model](const std::shared_ptr<InputBox> &input, const char *path) {
+                if (input->IsFocused())
+                    return;
+                input->SetText(Widen(model->GetString(path)));
+            };
+            sync_field(locked->webdavUrl, "sync.webdav_url");
+            sync_field(locked->webdavUser, "sync.webdav_username");
+            sync_field(locked->webdavPassword, "sync.webdav_password");
+            sync_field(locked->s3Endpoint, "sync.s3_endpoint");
+            sync_field(locked->s3Region, "sync.s3_region");
+            sync_field(locked->s3Bucket, "sync.s3_bucket");
+            sync_field(locked->s3AccessKey, "sync.s3_access_key");
+            sync_field(locked->s3SecretKey, "sync.s3_secret_key");
+            sync_field(locked->s3Prefix, "sync.s3_prefix");
         });
     }
 

@@ -129,8 +129,11 @@ bool SplitUrl(const std::string &url, std::string &scheme, std::string &host, st
     if (authority.empty())
         return false;
     const std::size_t colon = authority.rfind(':');
-    // 方括号 IPv6 里也有冒号，只在 ] 之后才把冒号当端口分隔。
-    if (colon != std::string::npos && authority.find(']') < colon)
+    // 方括号 IPv6 里也有冒号，只在 ] 之后（或没有方括号）才把冒号当端口分隔。
+    // authority.find(']') 在没有方括号时是 npos，npos < colon 恒为 false，所以必须先单独判掉。
+    const std::size_t bracket = authority.find(']');
+    const bool has_port = colon != std::string::npos && (bracket == std::string::npos || bracket < colon);
+    if (has_port)
     {
         host = authority.substr(0, colon);
         port = authority.substr(colon + 1);
@@ -283,6 +286,12 @@ bool IsTransient(CURLcode code)
     }
 }
 
+bool IsRetryableStatus(long status)
+{
+    // 5xx 是服务端临时故障；429 是限流，S3 在请求突增时会给它，退避后通常能过。
+    return status >= 500 || status == 429;
+}
+
 bool Retry(const Attempt &attempt, std::string &message)
 {
     constexpr int kAttempts = 3;
@@ -295,7 +304,9 @@ bool Retry(const Attempt &attempt, std::string &message)
         message = attempt_message;
         if (result == AttemptResult::Fatal)
             return false;
-        Sleep(static_cast<DWORD>(200 * (index + 1) * (index + 1)));
+        // 最后一次失败后不要再等：退避只在还有下一次尝试时才有意义。
+        if (index + 1 < kAttempts)
+            Sleep(static_cast<DWORD>(200 * (index + 1) * (index + 1)));
     }
     return false;
 }
@@ -385,7 +396,17 @@ HttpResponse Perform(const HttpRequest &request, const ProgressCallback &progres
     char error_buffer[CURL_ERROR_SIZE] = {};
     HeaderList headers;
     for (const std::string &header : request.headers)
-        headers.list = curl_slist_append(headers.list, header.c_str());
+    {
+        // curl_slist_append 失败会返回 null，直接赋回去就把已有链表丢了。
+        curl_slist *appended = curl_slist_append(headers.list, header.c_str());
+        if (!appended)
+        {
+            response.error = "无法构造请求头";
+            curl_easy_cleanup(curl);
+            return response;
+        }
+        headers.list = appended;
+    }
 
     NetworkProxy::ApplyToCurl(curl);
     curl_easy_setopt(curl, CURLOPT_URL, request.url.c_str());
@@ -468,7 +489,6 @@ HttpResponse Perform(const HttpRequest &request, const ProgressCallback &progres
         curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
         curl_easy_setopt(curl, CURLOPT_HEADERDATA, &download);
     }
-
     response.code = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status);
     if (response.code != CURLE_OK)

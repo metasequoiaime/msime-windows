@@ -136,15 +136,14 @@ std::string MakeRevision()
     return std::to_string(seconds) + "-" + std::to_string(GetCurrentProcessId());
 }
 
-// 远端 key 只允许安全的字符：设备标识是 32 位十六进制，revision 是数字与连字符，
-// 两者都由本模块生成，这里再校验一次是防止读到的远端数据反过来拼出越界路径。
-bool SafeSegment(const std::string &value)
+// revision 只允许数字与连字符（MakeRevision 的形状）。远端 JSON 被篡改成
+// "../../x" 时，UriEncode 会保留斜杠，GET 的 key 就会在远端服务端做路径穿越。
+bool SafeRevision(const std::string &revision)
 {
-    if (value.empty())
+    if (revision.empty())
         return false;
-    return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
-        return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '-';
-    });
+    return std::all_of(revision.begin(), revision.end(),
+                       [](unsigned char ch) { return (ch >= '0' && ch <= '9') || ch == '-'; });
 }
 
 std::filesystem::path TemporaryArchive(const std::filesystem::path &data_dir, const std::string &revision)
@@ -241,12 +240,20 @@ bool SyncService::WriteDeviceInfo(const DeviceInfo &info, std::string &message)
 bool SyncService::ReadDeviceInfo(const std::string &device_id, DeviceInfo &info, std::string &message)
 {
     const std::filesystem::path temporary = data_dir_ / (L".sync-device-info-read-" + Widen(device_id) + L".json");
+    // 失败时也要把这次的临时文件清掉，否则数据目录里会堆一地的半截 JSON。
+    struct Cleanup
+    {
+        std::filesystem::path path;
+        ~Cleanup()
+        {
+            std::error_code error;
+            std::filesystem::remove(path, error);
+        }
+    } cleanup{temporary};
     if (!store_->Get(DeviceInfoKey(device_id), temporary, {}, message))
         return false;
     std::ifstream file(temporary, std::ios::binary);
     const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    std::error_code error;
-    std::filesystem::remove(temporary, error);
     if (text.empty())
     {
         message = "设备信息为空";
@@ -302,20 +309,29 @@ UploadResult SyncService::Upload(const ArchiveBuilder &build_archive, const Prog
         std::filesystem::remove(archive, error);
         return result;
     }
+    // WebDAV 必须先建集合，否则对不存在集合的 PUT 返回 409；S3 是空实现。
+    if (!store_->EnsureDirectory(SnapshotKey(device_id_, revision), result.message))
+    {
+        std::filesystem::remove(archive, error);
+        return result;
+    }
     if (!store_->Put(SnapshotKey(device_id_, revision), archive, progress, result.message))
     {
         std::filesystem::remove(archive, error);
         return result;
     }
-    const std::uint64_t size = std::filesystem::file_size(archive, error);
-    std::filesystem::remove(archive, error);
+    // 大小与清理各用一个 error_code：清理失败不该把设备列表里的大小记成 0。
+    std::error_code size_error;
+    const std::uint64_t size = std::filesystem::file_size(archive, size_error);
+    std::error_code remove_error;
+    std::filesystem::remove(archive, remove_error);
 
     DeviceInfo info;
     info.device_id = device_id_;
     info.hostname = HostName();
     info.revision = revision;
     info.uploaded_unix = static_cast<std::int64_t>(std::time(nullptr));
-    info.size = error ? 0 : size;
+    info.size = size_error ? 0 : size;
     // 设备信息写失败不影响快照本身可用，但要让用户知道列表可能不准。
     std::string info_message;
     if (!WriteDeviceInfo(info, info_message))
@@ -393,7 +409,7 @@ DownloadResult SyncService::Download(const std::string &device_id, const Progres
         result.message = device_id.empty() ? "云端没有其他设备的备份" : "云端没有这台设备的备份";
         return result;
     }
-    if (target->revision.empty())
+    if (target->revision.empty() || !SafeRevision(target->revision))
     {
         result.message = "这台设备没有可下载的快照";
         return result;

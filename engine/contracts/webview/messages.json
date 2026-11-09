@@ -1256,6 +1256,9 @@
             ],
             "additionalProperties": false
           }
+        },
+        "localDeviceId": {
+          "type": "string"
         }
       },
       "required": [

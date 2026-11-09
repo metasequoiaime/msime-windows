@@ -2,6 +2,7 @@
 #include "settings/remote_store_internal.h"
 #include "settings/sync_merge.h"
 #include "settings/sync_service.h"
+#include "settings/user_data_backup.h"
 #include "tests/includes/test_framework.h"
 #include "tests/includes/test_utf8_path.h"
 
@@ -80,6 +81,11 @@ class FakeStore final : public user_data_sync::RemoteStore
         return true;
     }
     bool Probe(std::string &) override
+    {
+        return true;
+    }
+
+    bool EnsureDirectory(const std::string &, std::string &) override
     {
         return true;
     }
@@ -172,9 +178,20 @@ TEST_CASE(split_url_handles_ports_and_ipv6)
     REQUIRE_EQ(host, std::string("127.0.0.1"));
     REQUIRE_EQ(port, std::string("9000"));
 
+    // IPv6 字面量里的冒号不能被当成端口分隔。
     REQUIRE(user_data_sync::detail::SplitUrl("https://[::1]:8443/b", scheme, host, port, path));
     REQUIRE_EQ(host, std::string("[::1]"));
     REQUIRE_EQ(port, std::string("8443"));
+
+    REQUIRE(user_data_sync::detail::SplitUrl("https://[::1]/b", scheme, host, port, path));
+    REQUIRE_EQ(host, std::string("[::1]"));
+    REQUIRE_EQ(port, std::string("443"));
+
+    // 域名里的端口必须从 host 里剥掉，否则 S3 的 canonical host 会错、签名对不上。
+    REQUIRE(user_data_sync::detail::SplitUrl("https://minio.local:9000", scheme, host, port, path));
+    REQUIRE_EQ(host, std::string("minio.local"));
+    REQUIRE_EQ(port, std::string("9000"));
+    REQUIRE_EQ(path, std::string("/"));
 }
 
 TEST_CASE(split_url_rejects_non_http_schemes)
@@ -225,6 +242,46 @@ TEST_CASE(device_id_is_validated_and_stable)
     REQUIRE(!user_data_sync::IsValidDeviceId(""));
     REQUIRE(!user_data_sync::IsValidDeviceId("ABCDEF"));
     REQUIRE(!user_data_sync::IsValidDeviceId(std::string(32, 'g')));
+}
+
+// 从云端恢复不能清空本机凭据。同步归档里的 config.toml 在上传前被剥离过凭据，
+// 整包覆盖会把 token、语音密钥、同步密码全部写成空串。
+TEST_CASE(restore_keeps_local_credentials_and_merges_changed_keys)
+{
+    const std::string local_text = "[ai_assistant]\n"
+                                   "token = \"dpapi:LOCAL\"\n"
+                                   "model = \"deepseek-chat\"\n"
+                                   "\n"
+                                   "[appearance]\n"
+                                   "theme_mode = \"dark\"\n";
+    // 上传时清洗过的归档：凭据为空，另一个键是远端改过的值。
+    const std::string archived_text = "[ai_assistant]\n"
+                                      "token = \"\"\n"
+                                      "model = \"deepseek-reasoner\"\n"
+                                      "\n"
+                                      "[appearance]\n"
+                                      "theme_mode = \"light\"\n";
+    const std::string merged = SettingsUserDataBackup::MergeArchivedConfig(local_text, archived_text, "");
+    REQUIRE(merged.find("dpapi:LOCAL") != std::string::npos);
+    REQUIRE(merged.find("deepseek-reasoner") != std::string::npos);
+    REQUIRE(merged.find("theme_mode = \"light\"") != std::string::npos);
+}
+
+// 远端仍是出厂默认的键不该覆盖本机：对方没动过，拿它盖掉本地没有道理。
+TEST_CASE(restore_does_not_take_remote_defaults_over_local_changes)
+{
+    const std::string template_text = "[appearance]\n"
+                                      "theme_mode = \"system\"\n"
+                                      "page_size = 8\n";
+    const std::string local_text = "[appearance]\n"
+                                   "theme_mode = \"dark\"\n"
+                                   "page_size = 8\n";
+    const std::string archived_text = "[appearance]\n"
+                                      "theme_mode = \"system\"\n"
+                                      "page_size = 9\n";
+    const std::string merged = SettingsUserDataBackup::MergeArchivedConfig(local_text, archived_text, template_text);
+    REQUIRE(merged.find("theme_mode = \"dark\"") != std::string::npos);
+    REQUIRE(merged.find("page_size = 9") != std::string::npos);
 }
 
 TEST_CASE(fake_store_upload_and_download_round_trip)

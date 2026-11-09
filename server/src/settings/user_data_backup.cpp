@@ -1,7 +1,9 @@
 #include "settings/user_data_backup.h"
 
 #include "config/ime_config.h"
+#include "config/ime_config_internal.h"
 #include "settings/dictionary_manager.h"
+#include "settings/sync_merge.h"
 #include "settings/zip_archive.h"
 #include "utils/common_utils.h"
 
@@ -786,7 +788,8 @@ bool ValidateArchive(const std::filesystem::path &archive, std::vector<ManifestI
 
 bool IsDataPath(const std::string &path)
 {
-    return path == "config.toml" || path == "stats.db" || HasPrefix(path, "skins/") || HasPrefix(path, "models/");
+    return path == "config.toml" || path == "stats.db" || path == "msime_user.db" || HasPrefix(path, "skins/") ||
+           HasPrefix(path, "models/");
 }
 
 std::filesystem::path TargetPath(const Context &context, const std::string &path)
@@ -964,7 +967,7 @@ bool IsAllowedDataPath(const std::string &path)
 {
     if (!user_data_zip::IsSafeArchivePath(path))
         return false;
-    if (path == "config.toml" || path == "stats.db")
+    if (path == "config.toml" || path == "stats.db" || path == "msime_user.db")
         return true;
     if (HasPrefix(path, "skins/"))
     {
@@ -1033,7 +1036,8 @@ bool Export(const std::filesystem::path &destination, bool include_models, const
 namespace
 {
 bool ExportImpl(const Context &context, const std::filesystem::path &destination, bool include_models,
-                const Hooks &hooks, const ConfigTransform &transform_config, std::string &message)
+                const Hooks &hooks, const ConfigTransform &transform_config, bool include_user_database,
+                std::string &message)
 {
     message.clear();
     if (destination.empty() || context.data_dir.empty())
@@ -1099,6 +1103,24 @@ bool ExportImpl(const Context &context, const std::filesystem::path &destination
         items.push_back({added.path, added.size, added.crc});
     }
     error.clear();
+
+    // 同步恢复要靠日志里的删除墓碑与 weight_edited，所以同步导出要把整份用户词库一起打包。
+    // 普通备份不带它：那份文件由安装器当作不可替代的用户数据保护，塞进可覆盖的归档里
+    // 反而增加误覆盖面。
+    if (include_user_database)
+    {
+        const std::filesystem::path user_database = context.data_dir / L"msime_user.db";
+        if (std::filesystem::is_regular_file(user_database, error) && !error)
+        {
+            const std::filesystem::path snapshot = staging.path / L"msime_user.db";
+            if (!SnapshotSqlite(user_database, snapshot, message))
+                return false;
+            if (!writer.AddFile("msime_user.db", snapshot, message, &added))
+                return false;
+            items.push_back({added.path, added.size, added.crc});
+        }
+        error.clear();
+    }
 
     if (hooks.export_dictionary)
     {
@@ -1167,15 +1189,14 @@ bool ExportImpl(const Context &context, const std::filesystem::path &destination
 bool Export(const Context &context, const std::filesystem::path &destination, bool include_models, const Hooks &hooks,
             std::string &message)
 {
-    return ExportImpl(context, destination, include_models, hooks, {}, message);
+    return ExportImpl(context, destination, include_models, hooks, {}, false, message);
 }
 
 bool ExportSanitized(const Context &context, const std::filesystem::path &destination, bool include_models,
                      const Hooks &hooks, const ConfigTransform &transform_config, std::string &message)
 {
-    if (!transform_config)
-        return ExportImpl(context, destination, include_models, hooks, {}, message);
-    return ExportImpl(context, destination, include_models, hooks, transform_config, message);
+    // 同步导出：配置清洗 + 带上用户词库，让恢复端能按日志合并。
+    return ExportImpl(context, destination, include_models, hooks, transform_config, true, message);
 }
 
 bool Import(const std::filesystem::path &source, const Hooks &hooks, std::string &message)
@@ -1183,7 +1204,96 @@ bool Import(const std::filesystem::path &source, const Hooks &hooks, std::string
     return Import(DefaultContext(), source, hooks, message);
 }
 
+namespace
+{
+// 从归档里取 config.toml，和本地那份按键合并。凭据键保留本地值：
+// 同步归档在上传前被剥离过凭据，整包覆盖会清空本机的 token 与密码。
+std::string MergeArchivedConfigImpl(const Context &context, const std::string &local_text,
+                                    const std::string &archived_text)
+{
+    // 合并靠 template 判断「远端这一项是不是还是出厂默认」。设置进程的配置目录里就有
+    // 出厂模板，读不到就传空串：MergeConfig 会退化成「远端与本地不同就采纳远端」，
+    // 凭据键仍然被跳过，比整包覆盖安全。
+    std::string template_text;
+    const std::filesystem::path template_path = context.config_dir / L"config.default.toml";
+    std::error_code error;
+    if (std::filesystem::is_regular_file(template_path, error))
+    {
+        std::string ignored;
+        if (!ReadSmallFile(template_path, 16 * 1024 * 1024, template_text, ignored))
+            template_text.clear();
+    }
+    if (!ime_config_detail::TomlTextIsParseable(template_text))
+        template_text.clear();
+    return user_data_sync::MergeConfig(local_text, archived_text, template_text);
+}
+
+// 普通备份导入用：把归档里为空的凭据键替换成本机的非空值，其余键保持归档原样。
+// 这样"整体恢复"的语义不变，同时不会因为归档被清洗过而清空 token。
+std::string PreserveLocalCredentials(const std::string &local_text, const std::string &archived_text)
+{
+    if (local_text.empty() || !ime_config_detail::TomlTextIsParseable(local_text) ||
+        !ime_config_detail::TomlTextIsParseable(archived_text))
+        return archived_text;
+
+    const std::map<std::string, std::string> local_values = ime_config_detail::ParseTomlAssignments(local_text);
+    const std::map<std::string, std::string> archived_values = ime_config_detail::ParseTomlAssignments(archived_text);
+    std::string patched = archived_text;
+    for (const auto &[id, local_value] : local_values)
+    {
+        const std::size_t separator = id.find('\x01');
+        if (separator == std::string::npos)
+            continue;
+        const std::string key = id.substr(separator + 1);
+        if (!ime_config_detail::IsCredentialKey(key))
+            continue;
+        const auto archived = archived_values.find(id);
+        // 归档里已经有值就尊重归档（用户可能就是要恢复旧 token）；
+        // 只有归档是空串时才用本机的补上。
+        if (archived == archived_values.end() || archived->second != "\"\"")
+            continue;
+        if (local_value.empty() || local_value == "\"\"")
+            continue;
+        (void)ime_config_detail::ReplaceTomlValuePreservingFormatting(patched, id.substr(0, separator), key,
+                                                                      local_value);
+    }
+    return patched;
+}
+
+// Import 的实现体。merge 为真时走同步恢复的合并语义：配置按键合并、凭据保留本地值、
+// 用户词库按日志合并而不是覆盖。普通备份文件导入用 merge = false，保持整包覆盖。
+bool ImportImpl(const Context &context, const std::filesystem::path &source, const Hooks &hooks, bool merge,
+                MergeImportReport *report, std::string &message);
+} // namespace
+
+std::string MergeArchivedConfig(const std::string &local_text, const std::string &archived_text,
+                                const std::string &template_text)
+{
+    return user_data_sync::MergeConfig(local_text, archived_text, template_text);
+}
+
+bool ImportMerging(const std::filesystem::path &source, const Hooks &hooks, MergeImportReport &report,
+                   std::string &message)
+{
+    return ImportMerging(DefaultContext(), source, hooks, report, message);
+}
+
+bool ImportMerging(const Context &context, const std::filesystem::path &source, const Hooks &hooks,
+                   MergeImportReport &report, std::string &message)
+{
+    report = {};
+    return ImportImpl(context, source, hooks, true, &report, message);
+}
+
 bool Import(const Context &context, const std::filesystem::path &source, const Hooks &hooks, std::string &message)
+{
+    return ImportImpl(context, source, hooks, false, nullptr, message);
+}
+
+namespace
+{
+bool ImportImpl(const Context &context, const std::filesystem::path &source, const Hooks &hooks, bool merge,
+                MergeImportReport *report, std::string &message)
 {
     message.clear();
     std::vector<ManifestItem> items;
@@ -1233,6 +1343,59 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
             message = "config.toml 不是有效的 TOML 配置，导入已取消。";
             return false;
         }
+        if (merge)
+        {
+            // 同步恢复：和本地配置按键合并，凭据键保留本地值。归档里的 config.toml
+            // 在上传前被剥离过凭据，整包覆盖会清空本机的 token 与同步密码。
+            std::string local_text;
+            const std::filesystem::path live_config = context.config_dir / L"config.toml";
+            std::error_code local_error;
+            if (std::filesystem::is_regular_file(live_config, local_error) && !local_error)
+            {
+                std::string ignored;
+                if (!ReadSmallFile(live_config, 16 * 1024 * 1024, local_text, ignored))
+                    local_text.clear();
+            }
+            const std::string merged = MergeArchivedConfigImpl(context, local_text, text);
+            if (merged.empty())
+            {
+                message = "无法合并配置，恢复已取消。";
+                return false;
+            }
+            {
+                std::ofstream out(staged_config, std::ios::binary | std::ios::trunc);
+                if (!out)
+                {
+                    message = "无法写入合并后的配置。";
+                    return false;
+                }
+                out << merged;
+            }
+            if (report)
+                report->config_merged = true;
+        }
+        else
+        {
+            // 普通备份导入是"整体恢复"，但凭据不能一起恢复：用户如果把同步归档从浏览器
+            // 下载回来手动导入，那份 config.toml 是剥离过凭据的，覆盖会把 token 清空。
+            // 只用本机的非空凭据补上归档里的空值，其余键照旧整体覆盖。
+            std::string local_text;
+            const std::filesystem::path live_config = context.config_dir / L"config.toml";
+            std::error_code local_error;
+            if (std::filesystem::is_regular_file(live_config, local_error) && !local_error)
+            {
+                std::string ignored;
+                if (!ReadSmallFile(live_config, 16 * 1024 * 1024, local_text, ignored))
+                    local_text.clear();
+            }
+            const std::string patched = PreserveLocalCredentials(local_text, text);
+            if (!patched.empty() && patched != text)
+            {
+                std::ofstream out(staged_config, std::ios::binary | std::ios::trunc);
+                if (out)
+                    out << patched;
+            }
+        }
     }
     error.clear();
 
@@ -1247,6 +1410,43 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
         {
             message = "stats.db 不是有效的 SQLite 文件，导入已取消。";
             return false;
+        }
+    }
+    error.clear();
+
+    // 同步恢复：用户词库按日志合并进本地那份，而不是覆盖。归档里的 msime_user.db
+    // 只有在同步导出时才会出现，普通备份不带它。
+    if (merge)
+    {
+        const std::filesystem::path staged_user_db = staging.path / L"msime_user.db";
+        std::error_code user_error;
+        if (std::filesystem::is_regular_file(staged_user_db, user_error) && !user_error)
+        {
+            const std::filesystem::path live_user_db = context.data_dir / L"msime_user.db";
+            if (!std::filesystem::is_regular_file(live_user_db, user_error))
+            {
+                // 本地还没有用户词库：直接落位即可，没有需要合并的。
+                if (!CopyFileAtomic(staged_user_db, live_user_db, message))
+                    return false;
+            }
+            else
+            {
+                user_data_sync::DictionaryMergeReport merge_report;
+                if (!user_data_sync::MergeUserDictionary(live_user_db, staged_user_db, merge_report, message))
+                    return false;
+                if (report)
+                {
+                    report->dictionary_taken_from_remote = merge_report.taken_from_remote;
+                    report->dictionary_kept_local = merge_report.kept_local;
+                }
+            }
+            if (report)
+                report->dictionary_merged = true;
+            // 合并完的归档条目不再参与落位，避免覆盖回退。
+            std::filesystem::remove(staged_user_db, user_error);
+            items.erase(std::remove_if(items.begin(), items.end(),
+                                       [](const ManifestItem &item) { return item.path == "msime_user.db"; }),
+                        items.end());
         }
     }
     error.clear();
@@ -1406,4 +1606,6 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
     message += "。导入前副本保留在 " + PathToUtf8(backup_root) + "。";
     return false;
 }
+} // namespace
+
 } // namespace SettingsUserDataBackup

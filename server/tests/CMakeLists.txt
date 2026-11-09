@@ -253,6 +253,9 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/settings/remote_store_webdav.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/sync_merge.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/sync_service.cpp"
+    # ime_config.cpp 的 LoadImeConfig 引用 g_sync_mutex / g_sync，这两个符号只在
+    # ime_config_sync.cpp 里定义，测试目标链接了 ime_config.cpp 就必须一并带上。
+    "${CMAKE_SOURCE_DIR}/src/config/ime_config_sync.cpp"
 )
 
 add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILES})
