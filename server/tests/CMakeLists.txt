@@ -250,6 +250,9 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/settings/remote_store_common.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/remote_store_s3.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/remote_store_webdav.cpp"
+    # 合并层：词库日志按较新者胜出、配置按键合并、凭据剥离。
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_sync_merge.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/sync_merge.cpp"
 )
 
 add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILES})

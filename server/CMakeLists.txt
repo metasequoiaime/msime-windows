@@ -602,6 +602,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/remote_store_common.cpp"
     "./src/settings/remote_store_webdav.cpp"
     "./src/settings/remote_store_s3.cpp"
+    "./src/settings/sync_merge.h"
+    "./src/settings/sync_merge.cpp"
     "./src/settings/default_input_method.cpp"
     "./src/settings/default_input_method.h"
     "./src/settings/game_compat_name.cpp"
