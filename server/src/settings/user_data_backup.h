@@ -10,9 +10,11 @@
 // Export never stops the input method: every source is a point-in-time snapshot
 // (config file, SQLite online backup, dictionary export requests). Import
 // validates the whole archive before it may stop anything, keeps a copy of every
-// file it overwrites in <DataDir>/.backup-before-import, and never touches the
-// user-dictionary databases directly: dictionary entries travel through the
-// existing SettingsDictionary import requests.
+// file it overwrites in <DataDir>/.backup-before-import.
+//
+// 普通导入按整包覆盖：词条走 SettingsDictionary 的导入请求，不直接写用户词库。
+// 同步恢复走 ImportMerging：配置按键合并、凭据保留本机值、用户词库按日志合并并回放，
+// 归档里带的 msime_user.db 是合并的远端一侧，不是覆盖源。
 namespace SettingsUserDataBackup
 {
 struct Context

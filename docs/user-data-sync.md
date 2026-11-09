@@ -16,7 +16,7 @@
 | 删除墓碑 | 同上，`operation='delete'` | 保留。不保留就会把用户删掉的词从别的设备复活 |
 | 亲手定的权重 | 同上，`weight_edited=1` | 跟着记录一起走，换词库时不被降级成自动调频 |
 | 配置 | `config.toml` | 只采纳远端用户真正改过的键，出厂默认值不覆盖本地 |
-| 凭据 | `config.toml` 的 token / secret | 永不参与同步，上传前剥离 |
+| 凭据 | `config.toml` 的 token / secret | 永不参与同步，上传前剥离；恢复时保留本机值 |
 | 统计 | `stats.db` | 这一版不合并，见下文 |
 | 皮肤 | `skins/` | 随快照整包传输 |
 | 模型 | `models/` | 默认不带，勾选后才进归档 |
@@ -63,7 +63,7 @@
 4. 「立即上传」把当前数据打包传上去。
 5. 换台电脑，同样配好后点「刷新设备」，在列表里点「恢复…」。
 
-恢复会先停 Server 和 Watchdog，把将被覆盖的文件备份到 `.backup-before-import`，落位后再把 Watchdog 拉起来。词库只合并条目，不会替换现有数据库。
+恢复会先停 Server 和 Watchdog，把将被覆盖的文件与会被 replay 改动的 `msime.db`、`english.db` 一起备份到 `.backup-before-import`，落位后再把 Watchdog 拉起来。词库按日志合并并回放，不会整份替换现有数据库。
 
 ## 这一版没做的
 

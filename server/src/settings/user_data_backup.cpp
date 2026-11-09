@@ -513,19 +513,15 @@ bool SnapshotSqlite(const std::filesystem::path &source, const std::filesystem::
     return true;
 }
 
-// stats.db runs in WAL mode and the Server is stopped with ExitProcess, so a
-// stats.db-wal (and possibly a rollback journal) routinely survives the stop.
-// Replacing stats.db while that WAL is still on disk would let SQLite replay the
-// old pages into the imported database. Opening the live database once checkpoints
-// the WAL into the main file and removes the sidecars; the copy taken afterwards is
-// also complete, which the pre-import backup relies on.
-bool CheckpointStatisticsDatabase(const std::filesystem::path &path, std::string &message)
+// stats.db 与 msime_user.db 都是 WAL，而 Server 是用 ExitProcess 退出的，-wal 会留在
+// 磁盘上。放着旧 WAL 去替换主库，SQLite 下次打开会把旧页回放到新库里。这里先把 WAL
+// checkpoint 进主库并清掉 sidecar，随后的副本才是完整的，预导入备份也才有意义。
+bool CheckpointLiveDatabase(const std::filesystem::path &path, const char *label, std::string &message)
 {
     std::error_code error;
     if (!std::filesystem::is_regular_file(path, error))
     {
-        // An orphaned WAL/journal without its database would attach itself to the
-        // imported file, so drop the sidecars before the import creates stats.db anew.
+        // 孤立的 WAL/journal 会挂到即将落位的新文件上，主库不在时先清掉 sidecar。
         for (const wchar_t *suffix : {L"-wal", L"-shm", L"-journal"})
         {
             std::filesystem::path sidecar = path;
@@ -539,10 +535,10 @@ bool CheckpointStatisticsDatabase(const std::filesystem::path &path, std::string
     const std::string path_utf8 = PathToUtf8(path);
     if (sqlite3_open_v2(path_utf8.c_str(), &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
     {
-        const std::string reason = raw ? sqlite3_errmsg(raw) : "无法打开统计数据库";
+        const std::string reason = raw ? sqlite3_errmsg(raw) : std::string("无法打开") + label;
         if (raw)
             sqlite3_close(raw);
-        message = "无法整理现有统计数据库：" + reason;
+        message = std::string("无法整理现有") + label + "：" + reason;
         return false;
     }
     const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database(raw, &sqlite3_close);
@@ -551,7 +547,7 @@ bool CheckpointStatisticsDatabase(const std::filesystem::path &path, std::string
     const int result = sqlite3_exec(raw, "PRAGMA wal_checkpoint(TRUNCATE);", nullptr, nullptr, &error_text);
     if (result != SQLITE_OK)
     {
-        message = std::string("无法整理现有统计数据库：") + (error_text ? error_text : sqlite3_errmsg(raw));
+        message = std::string("无法整理现有") + label + "：" + (error_text ? error_text : sqlite3_errmsg(raw));
     }
     sqlite3_free(error_text);
     return result == SQLITE_OK;
@@ -1282,19 +1278,24 @@ std::string PreserveLocalCredentials(const std::string &local_text, const std::s
 
 // 把用户词库日志回放到 msime.db。合并只改日志，不回放的话删除墓碑与远端权重
 // 在下次安装前都不影响候选。
+//
+// 两个主库都必须已经在磁盘上：replay 内部对 english.db 用的是 SQLITE_OPEN_CREATE，
+// 文件不在时会顺手建一个空库并返回成功，英语词条就此变成「装着但没词」。
 bool ReplayUserDictionary(const Context &context, std::string &message)
 {
-    const std::string user_db = PathToUtf8(context.data_dir / L"msime_user.db");
-    const std::string main_db = PathToUtf8(context.data_dir / L"msime.db");
-    const std::string english_db = PathToUtf8(context.data_dir / L"english.db");
+    const std::filesystem::path main_database = context.data_dir / L"msime.db";
+    const std::filesystem::path english_database = context.data_dir / L"english.db";
     std::error_code error;
-    if (!std::filesystem::is_regular_file(context.data_dir / L"msime.db", error))
+    if (!std::filesystem::is_regular_file(main_database, error) ||
+        !std::filesystem::is_regular_file(english_database, error))
     {
         // 主词库不在时没什么可回放的：日志本身已经合好，下次安装会按正常流程回放。
         message.clear();
         return true;
     }
-    const user_dictionary::ReplayResult result = user_dictionary::replay(user_db, main_db, english_db);
+    const std::string user_db = PathToUtf8(context.data_dir / L"msime_user.db");
+    const user_dictionary::ReplayResult result =
+        user_dictionary::replay(user_db, PathToUtf8(main_database), PathToUtf8(english_database));
     if (result.failed || !result.error.empty())
     {
         message = "词库合并已写入，但回放失败：" + result.error;
@@ -1498,7 +1499,7 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
     // the database while that WAL is still on disk would let SQLite replay the old pages into it.
     if (FindItem(items, "stats.db") != nullptr)
     {
-        if (!CheckpointStatisticsDatabase(context.data_dir / L"stats.db", message))
+        if (!CheckpointLiveDatabase(context.data_dir / L"stats.db", "统计数据库", message))
         {
             if (stop_attempted && hooks.start_server)
             {
@@ -1510,7 +1511,7 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
     }
     if (FindItem(items, "msime_user.db") != nullptr)
     {
-        if (!CheckpointStatisticsDatabase(context.data_dir / L"msime_user.db", message))
+        if (!CheckpointLiveDatabase(context.data_dir / L"msime_user.db", "用户词库", message))
         {
             if (stop_attempted && hooks.start_server)
             {
@@ -1569,11 +1570,34 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
         error.clear();
     }
 
+    // 同步恢复会 replay 改 msime.db 与 english.db，这两个主库不在归档里、也不会被
+    // 落位，但同样需要能回滚。单独补一份进预导入副本，失败时提示里的承诺才成立。
+    if (failures.empty() && merge)
+    {
+        for (const wchar_t *name : {L"msime.db", L"english.db"})
+        {
+            const std::filesystem::path source = context.data_dir / name;
+            std::error_code copy_error;
+            if (!std::filesystem::is_regular_file(source, copy_error))
+                continue;
+            if (!CopyFileAtomic(source, backup_root / name, message))
+            {
+                failures.push_back(message);
+                break;
+            }
+        }
+    }
+
     if (failures.empty())
     {
         for (const ManifestItem &item : items)
         {
             if (!IsDataPath(item.path))
+                continue;
+            // 合并模式要读覆盖前的本地用户词库，这份不能由归档覆盖：一旦覆盖，
+            // 后面的 MergeUserDictionary 就是在拿远端快照跟自己合并，本机独有的
+            // 词条、weight_edited 与删除墓碑会被静默丢掉。
+            if (merge && has_user_database && item.path == "msime_user.db")
                 continue;
             const std::filesystem::path staged = staging.path / Utf8Path(item.path);
             const std::filesystem::path target = TargetPath(context, item.path);
@@ -1623,17 +1647,23 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
             if (!ReplayUserDictionary(context, replay_message))
                 failures.push_back(replay_message);
         }
-        // 归档里那一份已经处理过，不再走整包落位，避免把合并结果覆盖回去。
-        items.erase(std::remove_if(items.begin(), items.end(),
-                                   [](const ManifestItem &item) { return item.path == "msime_user.db"; }),
-                    items.end());
+    }
+
+    // 普通导入（merge = false）如果归档里带着用户词库日志，落位之后同样要回放：
+    // 用户可能把云端同步包从浏览器下载回来手动导入，那份日志不 replay 就不产生效果。
+    if (failures.empty() && !merge && FindItem(items, "msime_user.db") != nullptr)
+    {
+        std::string replay_message;
+        if (!ReplayUserDictionary(context, replay_message))
+            failures.push_back(replay_message);
     }
 
     if (failures.empty())
     {
         // 同步恢复时跳过 dictionary/*.txt：那批文本带着远端设备的权重，导入会用
         // record_user_insert 把刚按 updated_at 判过的新旧关系冲掉。日志已经能完整表达。
-        if (!merge)
+        // 只有当归档确实带着日志时才跳过；没带日志的归档仍然要靠这批文本恢复词条。
+        if (!merge || !has_user_database)
         {
             for (const char *dictionary : kDictionaries)
             {
