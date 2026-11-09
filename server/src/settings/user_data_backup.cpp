@@ -1030,8 +1030,10 @@ bool Export(const std::filesystem::path &destination, bool include_models, const
     return Export(DefaultContext(), destination, include_models, hooks, message);
 }
 
-bool Export(const Context &context, const std::filesystem::path &destination, bool include_models, const Hooks &hooks,
-            std::string &message)
+namespace
+{
+bool ExportImpl(const Context &context, const std::filesystem::path &destination, bool include_models,
+                const Hooks &hooks, const ConfigTransform &transform_config, std::string &message)
 {
     message.clear();
     if (destination.empty() || context.data_dir.empty())
@@ -1068,8 +1070,20 @@ bool Export(const Context &context, const std::filesystem::path &destination, bo
     const std::filesystem::path config = context.config_dir / L"config.toml";
     if (std::filesystem::is_regular_file(config, error) && !error)
     {
-        if (!writer.AddFile("config.toml", config, message, &added))
+        if (transform_config)
+        {
+            // 同步上传时用清洗后的版本：内容先进内存，再作为字节写入归档。
+            std::string text;
+            if (!ReadSmallFile(config, 16 * 1024 * 1024, text, message))
+                return false;
+            const std::string transformed = transform_config(text);
+            if (!writer.AddBytes("config.toml", transformed, message, &added))
+                return false;
+        }
+        else if (!writer.AddFile("config.toml", config, message, &added))
+        {
             return false;
+        }
         items.push_back({added.path, added.size, added.crc});
     }
     error.clear();
@@ -1147,6 +1161,21 @@ bool Export(const Context &context, const std::filesystem::path &destination, bo
     }
     message = "已导出用户数据备份（" + std::to_string(items.size()) + " 个文件）。";
     return true;
+}
+} // namespace
+
+bool Export(const Context &context, const std::filesystem::path &destination, bool include_models, const Hooks &hooks,
+            std::string &message)
+{
+    return ExportImpl(context, destination, include_models, hooks, {}, message);
+}
+
+bool ExportSanitized(const Context &context, const std::filesystem::path &destination, bool include_models,
+                     const Hooks &hooks, const ConfigTransform &transform_config, std::string &message)
+{
+    if (!transform_config)
+        return ExportImpl(context, destination, include_models, hooks, {}, message);
+    return ExportImpl(context, destination, include_models, hooks, transform_config, message);
 }
 
 bool Import(const std::filesystem::path &source, const Hooks &hooks, std::string &message)

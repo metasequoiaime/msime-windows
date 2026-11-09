@@ -49,6 +49,12 @@ bool Export(const std::filesystem::path &destination, bool include_models, const
 bool Export(const Context &context, const std::filesystem::path &destination, bool include_models, const Hooks &hooks,
             std::string &message);
 
+// 同步上传用的导出：与 Export 相同，只是 config.toml 在写进归档之前先过一遍
+// transform_config。远端永远不该出现 DPAPI 密文，凭据在传输层之前就该被剥掉。
+using ConfigTransform = std::function<std::string(const std::string &)>;
+bool ExportSanitized(const Context &context, const std::filesystem::path &destination, bool include_models,
+                     const Hooks &hooks, const ConfigTransform &transform_config, std::string &message);
+
 bool Import(const std::filesystem::path &source, const Hooks &hooks, std::string &message);
 bool Import(const Context &context, const std::filesystem::path &source, const Hooks &hooks, std::string &message);
 

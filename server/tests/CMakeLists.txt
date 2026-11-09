@@ -245,6 +245,14 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_data_backup.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/user_data_backup.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/zip_archive.cpp"
+    # 同步层：SigV4 用 AWS 官方测试向量离线验证，编排层用内存假 store 驱动，
+    # 不碰网络。sync_service 依赖 user_data_backup 的 Validate。
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_data_sync.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/remote_store_common.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/remote_store_s3.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/remote_store_webdav.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/sync_merge.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/sync_service.cpp"
 )
 
 add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILES})
