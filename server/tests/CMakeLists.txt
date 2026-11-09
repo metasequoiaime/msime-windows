@@ -245,6 +245,11 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_data_backup.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/user_data_backup.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/zip_archive.cpp"
+    # 传输层：SigV4 用 AWS 官方测试向量离线验证，URL 与响应头解析用纯函数覆盖。
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_remote_store.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/remote_store_common.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/remote_store_s3.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/remote_store_webdav.cpp"
 )
 
 add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILES})
