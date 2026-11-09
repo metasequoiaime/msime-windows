@@ -1073,7 +1073,7 @@ TEST_CASE(user_data_backup_merging_keeps_local_dictionary_rows)
     REQUIRE_EQ(std::string(reinterpret_cast<const char *>(sqlite3_column_text(statement, 0))), std::string("delete"));
     sqlite3_finalize(statement);
     // 文本词库里的条目不能被导进来。
-    REQUIRE(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE key='cong''wen'ben'", -1,
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE key='cong''wen''ben'", -1,
                                &statement, nullptr) == SQLITE_OK);
     REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
     REQUIRE_EQ(sqlite3_column_int(statement, 0), 0);
