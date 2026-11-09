@@ -311,6 +311,19 @@ bool Retry(const Attempt &attempt, std::string &message)
     return false;
 }
 
+// 取出 URL 的 scheme://authority 部分，用于拼绝对路径做 MKCOL。
+std::string UrlRoot(const std::string &url)
+{
+    const std::size_t scheme_end = url.find("://");
+    if (scheme_end == std::string::npos)
+        return {};
+    const std::size_t slash = url.find('/', scheme_end + 3);
+    return slash == std::string::npos ? url : url.substr(0, slash);
+}
+
+// 从原始响应头里取一个字段（大小写不敏感）。只看**最后一个**响应块：
+// 带认证的请求通常先收到 401 挑战再收到 200，挑战块里的 Content-Length: 0
+// 不是最终响应的事实，扫全部块会把真实值覆盖成 0。
 std::string HeaderValue(const std::string &headers, const std::string &name)
 {
     std::string lower_name = name;
@@ -319,13 +332,39 @@ std::string HeaderValue(const std::string &headers, const std::string &name)
         if (ch >= 'A' && ch <= 'Z')
             ch = static_cast<char>(ch - 'A' + 'a');
     }
-    std::string found;
+
+    // 用空行切分响应块，最后一个非空块才是最终响应。
+    std::vector<std::string> blocks;
+    std::size_t begin = 0;
     std::size_t position = 0;
     while (position < headers.size())
     {
         const std::size_t end = headers.find("\r\n", position);
         const std::string line =
             headers.substr(position, end == std::string::npos ? std::string::npos : end - position);
+        if (line.empty())
+        {
+            if (position > begin)
+                blocks.push_back(headers.substr(begin, position - begin));
+            begin = end == std::string::npos ? headers.size() : end + 2;
+        }
+        if (end == std::string::npos)
+            break;
+        position = end + 2;
+    }
+    if (begin < headers.size())
+        blocks.push_back(headers.substr(begin));
+
+    if (blocks.empty())
+        return {};
+    const std::string &block = blocks.back();
+
+    std::string found;
+    position = 0;
+    while (position < block.size())
+    {
+        const std::size_t end = block.find("\r\n", position);
+        const std::string line = block.substr(position, end == std::string::npos ? std::string::npos : end - position);
         const std::size_t colon = line.find(':');
         if (colon != std::string::npos)
         {

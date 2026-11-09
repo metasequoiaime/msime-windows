@@ -54,6 +54,8 @@ bool SplitUrl(const std::string &url, std::string &scheme, std::string &host, st
 std::string UriEncode(const std::string &value, bool encode_slash);
 // 把 key 拼到 base_url 后面，逐段编码。base 末尾斜杠不重复。
 std::string JoinUrl(const std::string &base_url, const std::string &key);
+// 取出 URL 的 scheme://authority 部分，用于拼绝对路径。
+std::string UrlRoot(const std::string &url);
 // 规范化查询串：按编码后的参数名排序。
 std::string CanonicalQuery(const std::vector<std::pair<std::string, std::string>> &params);
 

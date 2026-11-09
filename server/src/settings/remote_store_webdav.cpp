@@ -26,6 +26,8 @@ using detail::IsTransient;
 using detail::JoinUrl;
 using detail::Perform;
 using detail::Retry;
+using detail::SplitUrl;
+using detail::UrlRoot;
 
 std::string NormalizeBase(std::string base)
 {
@@ -392,6 +394,10 @@ class WebDavStore final : public RemoteStore
                         length.empty() ? 0 : static_cast<std::uint64_t>(std::strtoull(length.c_str(), nullptr, 10));
                     object.etag = HeaderValue(response.headers, "etag");
                     object.modified_unix = ParseServerTime(HeaderValue(response.headers, "last-modified"));
+                    // 不少 WebDAV 实现（坚果云就是）对 HEAD 回 Content-Length: 0，
+                    // 那不是对象大小。HEAD 给不出正数时用 PROPFIND 补一次。
+                    if (object.size == 0)
+                        (void)FillFromPropfind(key, object, attempt_message);
                     return AttemptResult::Ok;
                 }
                 attempt_message = DescribeHttpFailure(response);
@@ -562,44 +568,77 @@ class WebDavStore final : public RemoteStore
 
     // WebDAV 必须先建集合，否则对不存在集合的 PUT 返回 409。逐级 MKCOL，
     // 405 表示集合已经存在（RFC 4918 允许这种响应），按成功处理。
+    //
+    // base_url 自己也可能不存在（用户填了一个还没建的子目录）。这里从 base 的路径
+    // 末段开始逐级建，缺哪级补哪级，而不是假设用户已经建好。
     bool EnsureDirectory(const std::string &key, std::string &message) override
     {
         std::string directory = key;
         const std::size_t slash = directory.rfind('/');
         if (slash == std::string::npos)
-            return true;
-        directory = directory.substr(0, slash);
-        if (directory.empty())
-            return true;
+            directory.clear();
+        else
+            directory = directory.substr(0, slash);
 
-        // 逐段创建：devices -> devices/<id>。
-        std::string accumulated;
+        // 建 base_url 路径的末段（例如 /dav/msime-service-e2e 里的 msime-service-e2e），
+        // 再建 key 里的每一段。base 前面的部分由服务端保证存在：/dav 是坚果云的根集合，
+        // 对根集合发 MKCOL 会返回 403 OperationNotAllowed。
+        std::vector<std::string> segments;
+        std::string base_prefix;
+        {
+            std::string base_path;
+            std::string scheme;
+            std::string host;
+            std::string port;
+            if (SplitUrl(options_.base_url, scheme, host, port, base_path))
+            {
+                while (!base_path.empty() && base_path.front() == '/')
+                    base_path.erase(base_path.begin());
+                while (!base_path.empty() && base_path.back() == '/')
+                    base_path.pop_back();
+                if (!base_path.empty())
+                {
+                    // 只取最后一段：前面的路径属于服务端已有的集合层级。
+                    const std::size_t last = base_path.rfind('/');
+                    base_prefix = last == std::string::npos ? std::string() : base_path.substr(0, last + 1);
+                    segments.push_back(last == std::string::npos ? base_path : base_path.substr(last + 1));
+                }
+            }
+        }
         std::size_t position = 0;
-        std::string first_failure;
-        while (position <= directory.size())
+        while (position < directory.size())
         {
             const std::size_t next = directory.find('/', position);
             const std::string segment =
                 directory.substr(position, next == std::string::npos ? std::string::npos : next - position);
             if (!segment.empty())
-            {
-                accumulated = accumulated.empty() ? segment : accumulated + "/" + segment;
-                HttpRequest request;
-                request.method = "MKCOL";
-                request.url = JoinUrl(options_.base_url, accumulated);
-                request.headers = BaseHeaders(options_);
-                request.timeout_seconds = 60;
-                const HttpResponse response = Perform(request);
-                // 201 新建、405 已存在。409 说明上级集合还没建起来，继续往下走，下一段会把它补上。
-                if (!IsSuccess(response.status) && response.status != 405 && response.status != 409)
-                {
-                    if (first_failure.empty())
-                        first_failure = accumulated + "：" + DescribeHttpFailure(response);
-                }
-            }
+                segments.push_back(segment);
             if (next == std::string::npos)
                 break;
             position = next + 1;
+        }
+
+        std::string accumulated = base_prefix;
+        std::string first_failure;
+        for (const std::string &segment : segments)
+        {
+            accumulated += segment;
+            HttpRequest request;
+            request.method = "MKCOL";
+            request.url = JoinUrl(UrlRoot(options_.base_url), accumulated);
+            request.headers = BaseHeaders(options_);
+            request.timeout_seconds = 60;
+            const HttpResponse response = Perform(request);
+            // 201 新建、405 已存在、409 说明上级还没建（继续往下走，下一段会补上）。
+            // 403 是"不允许在这个位置建集合"：服务端已有的根集合就是这种响应，
+            // 说明这一级本来就在，不是错误。真正缺的下一级会由后面的段建出来。
+            if (!IsSuccess(response.status) && response.status != 405 && response.status != 409 &&
+                response.status != 403)
+            {
+                if (first_failure.empty())
+                    first_failure = accumulated + "：" + DescribeHttpFailure(response);
+            }
+            accumulated += "/";
         }
         if (!first_failure.empty())
         {
@@ -610,6 +649,68 @@ class WebDavStore final : public RemoteStore
     }
 
   private:
+    // HEAD 不可靠时用 PROPFIND Depth: 0 取单个对象的元信息。失败不改变已找到的结论：
+    // Stat 的语义是"存不存在"，大小与时间只是附带信息。
+    bool FillFromPropfind(const std::string &key, RemoteObject &object, std::string &message)
+    {
+        HttpRequest request;
+        request.method = "PROPFIND";
+        request.url = JoinUrl(options_.base_url, key);
+        request.headers = BaseHeaders(options_);
+        request.headers.push_back("Depth: 0");
+        request.headers.push_back("Content-Type: application/xml; charset=utf-8");
+        request.body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                       "<D:propfind xmlns:D=\"DAV:\"><D:prop>"
+                       "<D:resourcetype/><D:getcontentlength/><D:getlastmodified/><D:getetag/>"
+                       "</D:prop></D:propfind>";
+        request.timeout_seconds = 60;
+        const HttpResponse response = Perform(request);
+        if (!IsSuccess(response.status))
+        {
+            message.clear();
+            return false;
+        }
+        XmlNode root;
+        if (!ParseXml(response.body, root))
+        {
+            message.clear();
+            return false;
+        }
+        const XmlNode *multistatus = FindDescendant(root, "multistatus");
+        if (!multistatus)
+        {
+            message.clear();
+            return false;
+        }
+        for (const XmlNode &entry : multistatus->children)
+        {
+            if (entry.name != "response")
+                continue;
+            // PROPFIND 可能给出多个 propstat，取带 200 的那一块。
+            for (const XmlNode &propstat : entry.children)
+            {
+                if (propstat.name != "propstat")
+                    continue;
+                const XmlNode *status = FindChild(propstat, "status");
+                if (status && Trimmed(status->text).find(" 200 ") == std::string::npos)
+                    continue;
+                const XmlNode *prop = FindChild(propstat, "prop");
+                if (!prop)
+                    continue;
+                if (const XmlNode *length = FindChild(*prop, "getcontentlength"))
+                    object.size = static_cast<std::uint64_t>(std::strtoull(Trimmed(length->text).c_str(), nullptr, 10));
+                if (const XmlNode *modified = FindChild(*prop, "getlastmodified"))
+                    object.modified_unix = ParseServerTime(Trimmed(modified->text));
+                if (const XmlNode *etag = FindChild(*prop, "getetag"))
+                    object.etag = Trimmed(etag->text);
+                message.clear();
+                return true;
+            }
+        }
+        message.clear();
+        return false;
+    }
+
     WebDavOptions options_;
 };
 

@@ -245,6 +245,34 @@ TEST_CASE(join_url_does_not_double_slash)
                std::string("https://dav.example.com/msime/devices/a.json"));
 }
 
+TEST_CASE(url_root_keeps_only_scheme_and_authority)
+{
+    REQUIRE_EQ(user_data_sync::detail::UrlRoot("https://dav.example.com/dav/msime"),
+               std::string("https://dav.example.com"));
+    REQUIRE_EQ(user_data_sync::detail::UrlRoot("http://127.0.0.1:9000/a/b"), std::string("http://127.0.0.1:9000"));
+    REQUIRE_EQ(user_data_sync::detail::UrlRoot("https://dav.example.com"), std::string("https://dav.example.com"));
+}
+
+// 带认证的请求会先收到 401 挑战再收到 200。挑战块里的 Content-Length: 0 不是最终响应
+// 的事实，取头必须只看最后一个响应块——真实坚果云上 HEAD 就踩过这个坑。
+TEST_CASE(header_value_ignores_the_auth_challenge_block)
+{
+    const std::string headers = "HTTP/1.1 401 Unauthorized\r\n"
+                                "Content-Length: 0\r\n"
+                                "WWW-Authenticate: Basic realm=\"nutstore\"\r\n"
+                                "\r\n"
+                                "HTTP/1.1 200 OK\r\n"
+                                "Content-Length: 4321\r\n"
+                                "Last-Modified: Mon, 09 Nov 2026 14:58:58 GMT\r\n"
+                                "\r\n";
+    REQUIRE_EQ(user_data_sync::detail::HeaderValue(headers, "content-length"), std::string("4321"));
+    REQUIRE_EQ(user_data_sync::detail::HeaderValue(headers, "last-modified"),
+               std::string("Mon, 09 Nov 2026 14:58:58 GMT"));
+    // 只有挑战块时仍然能取到（用于 401 的错误描述）。
+    const std::string only_challenge = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    REQUIRE_EQ(user_data_sync::detail::HeaderValue(only_challenge, "content-length"), std::string("0"));
+}
+
 TEST_CASE(device_and_snapshot_keys_round_trip)
 {
     const std::string device = "0123456789abcdef0123456789abcdef";
