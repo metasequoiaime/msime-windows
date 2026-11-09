@@ -1584,6 +1584,9 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
     // 这两个主库不在归档里、也不会被落位，但同样需要能回滚，所以单独补一份进预导入副本。
     // 用 SnapshotSqlite 而不是 CopyFileAtomic：它们是 WAL，Server 又是 ExitProcess 退出，
     // 直接拷主文件会漏掉 -wal 里已提交的页面。
+    //
+    // 拿不到这份副本就中止恢复：replay 会直接写这两个主库，没有副本的写入是不可回滚的。
+    // 宁可这次恢复不做，也不留下一个「失败之后只能靠重装」的状态。
     const bool will_replay = has_user_database;
     if (failures.empty() && will_replay)
     {
