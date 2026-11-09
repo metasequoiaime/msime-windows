@@ -289,6 +289,8 @@ extern std::string g_translation_provider;
 extern std::mutex g_network_proxy_mutex;
 extern NetworkProxyConfig g_network_proxy; // guarded by g_network_proxy_mutex
 extern FrequencyAdjustmentConfig g_frequency_adjustment;
+extern std::mutex g_sync_mutex;
+extern SyncConfig g_sync; // guarded by g_sync_mutex
 extern std::filesystem::path g_config_path;
 
 bool IsHelpcodeSchemaAvailable(const std::string &schema);
