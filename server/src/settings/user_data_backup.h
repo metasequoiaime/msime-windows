@@ -10,9 +10,11 @@
 // Export never stops the input method: every source is a point-in-time snapshot
 // (config file, SQLite online backup, dictionary export requests). Import
 // validates the whole archive before it may stop anything, keeps a copy of every
-// file it overwrites in <DataDir>/.backup-before-import, and never touches the
-// user-dictionary databases directly: dictionary entries travel through the
-// existing SettingsDictionary import requests.
+// file it overwrites in <DataDir>/.backup-before-import.
+//
+// 普通导入按归档整包落位：词条通常走 SettingsDictionary 的导入请求，但归档里若带着
+// msime_user.db（同步包），会落位后回放一次。同步恢复走 ImportMerging：配置按键合并、
+// 凭据保留本机值、用户词库按日志合并并回放，归档里的 msime_user.db 是远端一侧，不是覆盖源。
 namespace SettingsUserDataBackup
 {
 struct Context
@@ -49,6 +51,12 @@ bool Export(const std::filesystem::path &destination, bool include_models, const
 bool Export(const Context &context, const std::filesystem::path &destination, bool include_models, const Hooks &hooks,
             std::string &message);
 
+// 同步上传用的导出：与 Export 相同，只是 config.toml 在写进归档之前先过一遍
+// transform_config。远端永远不该出现 DPAPI 密文，凭据在传输层之前就该被剥掉。
+using ConfigTransform = std::function<std::string(const std::string &)>;
+bool ExportSanitized(const Context &context, const std::filesystem::path &destination, bool include_models,
+                     const Hooks &hooks, const ConfigTransform &transform_config, std::string &message);
+
 bool Import(const std::filesystem::path &source, const Hooks &hooks, std::string &message);
 bool Import(const Context &context, const std::filesystem::path &source, const Hooks &hooks, std::string &message);
 
@@ -59,4 +67,30 @@ bool Validate(const std::filesystem::path &archive, std::string &message);
 // Archive path rules shared with the tests: exactly the fixed layout, no
 // traversal, no absolute paths, no case collision.
 bool IsAllowedDataPath(const std::string &path);
+
+// 归档导入的合并模式。常规 Import 是「整包覆盖」，用于用户自己选的备份文件；
+// 同步恢复走这里：配置按键合并、凭据保留本地值、用户词库按日志合并。
+//
+// 为什么不能直接覆盖：同步归档里的 config.toml 在上传前被剥离过凭据（远端不该出现
+// DPAPI 密文），整包覆盖会把本机的 token、语音密钥、同步密码全部清空。词库也一样，
+// 覆盖会让删除墓碑失效、把别的设备上删掉的词复活。
+struct MergeImportReport
+{
+    bool config_merged = false;
+    bool dictionary_merged = false;
+    // 日志合并成功但没回放（msime.db 或 english.db 不在）。此时墓碑与远端权重
+    // 要等下次安装回放才生效，界面该说清楚，不能只报"导入成功"。
+    bool replay_skipped = false;
+    int dictionary_taken_from_remote = 0;
+    int dictionary_kept_local = 0;
+};
+
+bool ImportMerging(const std::filesystem::path &source, const Hooks &hooks, MergeImportReport &report,
+                   std::string &message);
+bool ImportMerging(const Context &context, const std::filesystem::path &source, const Hooks &hooks,
+                   MergeImportReport &report, std::string &message);
+
+// 归档里的 config.toml 与本地 config.toml 按键合并，凭据键保留本地值。暴露给测试。
+std::string MergeArchivedConfig(const std::string &local_text, const std::string &archived_text,
+                                const std::string &template_text);
 } // namespace SettingsUserDataBackup

@@ -1,7 +1,11 @@
 #include "settings/user_data_backup.h"
 
 #include "config/ime_config.h"
+#include "config/credential_protection.h"
+#include "config/ime_config_internal.h"
+#include "engine/user_dictionary/user_dictionary_journal.h"
 #include "settings/dictionary_manager.h"
+#include "settings/sync_merge.h"
 #include "settings/zip_archive.h"
 #include "utils/common_utils.h"
 
@@ -432,7 +436,8 @@ bool ImportDictionaryViaSettings(const std::string &dictionary, const std::strin
     }
 }
 
-bool SnapshotSqlite(const std::filesystem::path &source, const std::filesystem::path &destination, std::string &message)
+bool SnapshotSqlite(const std::filesystem::path &source, const std::filesystem::path &destination,
+                    const char *source_name, std::string &message)
 {
     {
         std::ifstream header(source, std::ios::binary);
@@ -441,7 +446,7 @@ bool SnapshotSqlite(const std::filesystem::path &source, const std::filesystem::
         if (header.gcount() != static_cast<std::streamsize>(magic.size()) ||
             std::memcmp(magic.data(), "SQLite format 3\0", magic.size()) != 0)
         {
-            message = "统计数据库不是有效的 SQLite 文件，未导出备份。";
+            message = std::string(source_name) + "不是有效的 SQLite 文件，未导出备份。";
             return false;
         }
     }
@@ -458,20 +463,21 @@ bool SnapshotSqlite(const std::filesystem::path &source, const std::filesystem::
     if (sqlite3_open_v2(source_path.c_str(), &raw_source, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) !=
         SQLITE_OK)
     {
-        const std::string error = raw_source ? sqlite3_errmsg(raw_source) : "无法打开统计数据库";
+        const std::string error = raw_source ? sqlite3_errmsg(raw_source) : std::string("无法打开") + source_name;
         if (raw_source)
             sqlite3_close(raw_source);
-        message = "打开统计数据库失败：" + error;
+        message = std::string("打开") + source_name + "失败：" + error;
         return false;
     }
     const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database(raw_source, &sqlite3_close);
     if (sqlite3_open_v2(destination_path.c_str(), &raw_destination,
                         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
     {
-        const std::string error = raw_destination ? sqlite3_errmsg(raw_destination) : "无法创建统计快照";
+        const std::string error =
+            raw_destination ? sqlite3_errmsg(raw_destination) : std::string("无法创建") + source_name + "快照";
         if (raw_destination)
             sqlite3_close(raw_destination);
-        message = "创建统计快照失败：" + error;
+        message = std::string("创建") + source_name + "快照失败：" + error;
         return false;
     }
     const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> snapshot(raw_destination, &sqlite3_close);
@@ -480,7 +486,7 @@ bool SnapshotSqlite(const std::filesystem::path &source, const std::filesystem::
     sqlite3_backup *backup = sqlite3_backup_init(raw_destination, "main", raw_source, "main");
     if (!backup)
     {
-        message = std::string("统计快照初始化失败：") + sqlite3_errmsg(raw_destination);
+        message = std::string(source_name) + "快照初始化失败：" + sqlite3_errmsg(raw_destination);
         return false;
     }
     int result = SQLITE_OK;
@@ -500,26 +506,22 @@ bool SnapshotSqlite(const std::filesystem::path &source, const std::filesystem::
     const int finish_result = sqlite3_backup_finish(backup);
     if (result != SQLITE_DONE || finish_result != SQLITE_OK)
     {
-        message = std::string("统计快照失败：") + sqlite3_errmsg(raw_destination);
+        message = std::string(source_name) + "快照失败：" + sqlite3_errmsg(raw_destination);
         std::filesystem::remove(destination, ec);
         return false;
     }
     return true;
 }
 
-// stats.db runs in WAL mode and the Server is stopped with ExitProcess, so a
-// stats.db-wal (and possibly a rollback journal) routinely survives the stop.
-// Replacing stats.db while that WAL is still on disk would let SQLite replay the
-// old pages into the imported database. Opening the live database once checkpoints
-// the WAL into the main file and removes the sidecars; the copy taken afterwards is
-// also complete, which the pre-import backup relies on.
-bool CheckpointStatisticsDatabase(const std::filesystem::path &path, std::string &message)
+// stats.db 与 msime_user.db 都是 WAL，而 Server 是用 ExitProcess 退出的，-wal 会留在
+// 磁盘上。放着旧 WAL 去替换主库，SQLite 下次打开会把旧页回放到新库里。这里先把 WAL
+// checkpoint 进主库并清掉 sidecar，随后的副本才是完整的，预导入备份也才有意义。
+bool CheckpointLiveDatabase(const std::filesystem::path &path, const char *label, std::string &message)
 {
     std::error_code error;
     if (!std::filesystem::is_regular_file(path, error))
     {
-        // An orphaned WAL/journal without its database would attach itself to the
-        // imported file, so drop the sidecars before the import creates stats.db anew.
+        // 孤立的 WAL/journal 会挂到即将落位的新文件上，主库不在时先清掉 sidecar。
         for (const wchar_t *suffix : {L"-wal", L"-shm", L"-journal"})
         {
             std::filesystem::path sidecar = path;
@@ -533,10 +535,10 @@ bool CheckpointStatisticsDatabase(const std::filesystem::path &path, std::string
     const std::string path_utf8 = PathToUtf8(path);
     if (sqlite3_open_v2(path_utf8.c_str(), &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
     {
-        const std::string reason = raw ? sqlite3_errmsg(raw) : "无法打开统计数据库";
+        const std::string reason = raw ? sqlite3_errmsg(raw) : std::string("无法打开") + label;
         if (raw)
             sqlite3_close(raw);
-        message = "无法整理现有统计数据库：" + reason;
+        message = std::string("无法整理现有") + label + "：" + reason;
         return false;
     }
     const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database(raw, &sqlite3_close);
@@ -545,7 +547,7 @@ bool CheckpointStatisticsDatabase(const std::filesystem::path &path, std::string
     const int result = sqlite3_exec(raw, "PRAGMA wal_checkpoint(TRUNCATE);", nullptr, nullptr, &error_text);
     if (result != SQLITE_OK)
     {
-        message = std::string("无法整理现有统计数据库：") + (error_text ? error_text : sqlite3_errmsg(raw));
+        message = std::string("无法整理现有") + label + "：" + (error_text ? error_text : sqlite3_errmsg(raw));
     }
     sqlite3_free(error_text);
     return result == SQLITE_OK;
@@ -786,7 +788,8 @@ bool ValidateArchive(const std::filesystem::path &archive, std::vector<ManifestI
 
 bool IsDataPath(const std::string &path)
 {
-    return path == "config.toml" || path == "stats.db" || HasPrefix(path, "skins/") || HasPrefix(path, "models/");
+    return path == "config.toml" || path == "stats.db" || path == "msime_user.db" || HasPrefix(path, "skins/") ||
+           HasPrefix(path, "models/");
 }
 
 std::filesystem::path TargetPath(const Context &context, const std::string &path)
@@ -964,7 +967,7 @@ bool IsAllowedDataPath(const std::string &path)
 {
     if (!user_data_zip::IsSafeArchivePath(path))
         return false;
-    if (path == "config.toml" || path == "stats.db")
+    if (path == "config.toml" || path == "stats.db" || path == "msime_user.db")
         return true;
     if (HasPrefix(path, "skins/"))
     {
@@ -1030,8 +1033,11 @@ bool Export(const std::filesystem::path &destination, bool include_models, const
     return Export(DefaultContext(), destination, include_models, hooks, message);
 }
 
-bool Export(const Context &context, const std::filesystem::path &destination, bool include_models, const Hooks &hooks,
-            std::string &message)
+namespace
+{
+bool ExportImpl(const Context &context, const std::filesystem::path &destination, bool include_models,
+                const Hooks &hooks, const ConfigTransform &transform_config, bool include_user_database,
+                std::string &message)
 {
     message.clear();
     if (destination.empty() || context.data_dir.empty())
@@ -1042,9 +1048,10 @@ bool Export(const Context &context, const std::filesystem::path &destination, bo
     // Never let a backup replace the live configuration or statistics database; the
     // save dialog starts elsewhere, but the user can navigate anywhere.
     if (SameNormalizedPath(destination, context.data_dir / L"stats.db") ||
+        SameNormalizedPath(destination, context.data_dir / L"msime_user.db") ||
         SameNormalizedPath(destination, context.config_dir / L"config.toml"))
     {
-        message = "不能把备份写到正在使用的配置文件或统计数据库上。";
+        message = "不能把备份写到正在使用的配置文件、统计数据库或用户词库上。";
         return false;
     }
     if (!EnsureDirectory(destination.parent_path(), message))
@@ -1068,8 +1075,20 @@ bool Export(const Context &context, const std::filesystem::path &destination, bo
     const std::filesystem::path config = context.config_dir / L"config.toml";
     if (std::filesystem::is_regular_file(config, error) && !error)
     {
-        if (!writer.AddFile("config.toml", config, message, &added))
+        if (transform_config)
+        {
+            // 同步上传时用清洗后的版本：内容先进内存，再作为字节写入归档。
+            std::string text;
+            if (!ReadSmallFile(config, 16 * 1024 * 1024, text, message))
+                return false;
+            const std::string transformed = transform_config(text);
+            if (!writer.AddBytes("config.toml", transformed, message, &added))
+                return false;
+        }
+        else if (!writer.AddFile("config.toml", config, message, &added))
+        {
             return false;
+        }
         items.push_back({added.path, added.size, added.crc});
     }
     error.clear();
@@ -1078,13 +1097,31 @@ bool Export(const Context &context, const std::filesystem::path &destination, bo
     if (std::filesystem::is_regular_file(stats, error) && !error)
     {
         const std::filesystem::path snapshot = staging.path / L"stats.db";
-        if (!SnapshotSqlite(stats, snapshot, message))
+        if (!SnapshotSqlite(stats, snapshot, "统计数据库", message))
             return false;
         if (!writer.AddFile("stats.db", snapshot, message, &added))
             return false;
         items.push_back({added.path, added.size, added.crc});
     }
     error.clear();
+
+    // 同步恢复要靠日志里的删除墓碑与 weight_edited，所以同步导出要把整份用户词库一起打包。
+    // 普通备份不带它：那份文件由安装器当作不可替代的用户数据保护，塞进可覆盖的归档里
+    // 反而增加误覆盖面。
+    if (include_user_database)
+    {
+        const std::filesystem::path user_database = context.data_dir / L"msime_user.db";
+        if (std::filesystem::is_regular_file(user_database, error) && !error)
+        {
+            const std::filesystem::path snapshot = staging.path / L"msime_user.db";
+            if (!SnapshotSqlite(user_database, snapshot, "用户词库", message))
+                return false;
+            if (!writer.AddFile("msime_user.db", snapshot, message, &added))
+                return false;
+            items.push_back({added.path, added.size, added.crc});
+        }
+        error.clear();
+    }
 
     if (hooks.export_dictionary)
     {
@@ -1148,13 +1185,170 @@ bool Export(const Context &context, const std::filesystem::path &destination, bo
     message = "已导出用户数据备份（" + std::to_string(items.size()) + " 个文件）。";
     return true;
 }
+} // namespace
+
+bool Export(const Context &context, const std::filesystem::path &destination, bool include_models, const Hooks &hooks,
+            std::string &message)
+{
+    return ExportImpl(context, destination, include_models, hooks, {}, false, message);
+}
+
+bool ExportSanitized(const Context &context, const std::filesystem::path &destination, bool include_models,
+                     const Hooks &hooks, const ConfigTransform &transform_config, std::string &message)
+{
+    // 同步导出：配置清洗 + 带上用户词库，让恢复端能按日志合并。
+    return ExportImpl(context, destination, include_models, hooks, transform_config, true, message);
+}
 
 bool Import(const std::filesystem::path &source, const Hooks &hooks, std::string &message)
 {
     return Import(DefaultContext(), source, hooks, message);
 }
 
+namespace
+{
+// 从归档里取 config.toml，和本地那份按键合并。凭据键保留本地值：
+// 同步归档在上传前被剥离过凭据，整包覆盖会清空本机的 token 与密码。
+std::string MergeArchivedConfigImpl(const Context &context, const std::string &local_text,
+                                    const std::string &archived_text)
+{
+    // 合并靠 template 判断「远端这一项是不是还是出厂默认」。设置进程的配置目录里就有
+    // 出厂模板，读不到就传空串：MergeConfig 会退化成「远端与本地不同就采纳远端」，
+    // 凭据键仍然被跳过，比整包覆盖安全。
+    std::string template_text;
+    const std::filesystem::path template_path = context.config_dir / L"config.default.toml";
+    std::error_code error;
+    if (std::filesystem::is_regular_file(template_path, error))
+    {
+        std::string ignored;
+        if (!ReadSmallFile(template_path, 16 * 1024 * 1024, template_text, ignored))
+            template_text.clear();
+    }
+    if (!ime_config_detail::TomlTextIsParseable(template_text))
+        template_text.clear();
+    return user_data_sync::MergeConfig(local_text, archived_text, template_text);
+}
+
+// 归档里的凭据字面量在本机能不能用：空串、出厂占位符、以及解不开的 DPAPI 密文都算不能用。
+// 换机恢复时归档带的是另一台机器的密文，本机 Unprotect 会失败；从没填过 token 的机器
+// 导出的则是 <YOUR_...> / FAKESECRET_ 这类占位符，照抄过来等于把本机的真 token 换掉。
+bool ArchivedCredentialIsUsable(const std::string &literal)
+{
+    if (literal.size() < 2 || literal.front() != '"' || literal.back() != '"')
+        return false;
+    const std::string value = literal.substr(1, literal.size() - 2);
+    if (value.empty())
+        return false;
+    // 与 VoiceInput::IsPlaceholderToken 同一套判据。这里不直接调它：那个函数在
+    // voice-input 目标里，本文件不该为了一个字符串判断多拉一个依赖。
+    if (value.front() == '<' && value.back() == '>')
+        return false;
+    if (value.rfind("FAKESECRET_", 0) == 0)
+        return false;
+    if (CredentialProtection::IsProtected(value))
+        return CredentialProtection::Unprotect(value).has_value();
+    return true;
+}
+
+// 普通备份导入用：把归档里为空或解不开的凭据键替换成本机的值，其余键保持归档原样。
+// 这样"整体恢复"的语义不变，同时不会因为归档被清洗过、或来自另一台机器而清空 token。
+std::string PreserveLocalCredentials(const std::string &local_text, const std::string &archived_text)
+{
+    if (local_text.empty() || !ime_config_detail::TomlTextIsParseable(local_text) ||
+        !ime_config_detail::TomlTextIsParseable(archived_text))
+        return archived_text;
+
+    const std::map<std::string, std::string> local_values = ime_config_detail::ParseTomlAssignments(local_text);
+    const std::map<std::string, std::string> archived_values = ime_config_detail::ParseTomlAssignments(archived_text);
+    std::string patched = archived_text;
+    for (const auto &[id, local_value] : local_values)
+    {
+        const std::size_t separator = id.find('\x01');
+        if (separator == std::string::npos)
+            continue;
+        const std::string key = id.substr(separator + 1);
+        if (!ime_config_detail::IsCredentialKey(key))
+            continue;
+        const auto archived = archived_values.find(id);
+        if (archived == archived_values.end())
+            continue;
+        // 归档里的值能解开、且不是空串，就尊重归档（用户可能就是要恢复旧 token）。
+        if (ArchivedCredentialIsUsable(archived->second))
+            continue;
+        if (local_value.empty() || local_value == "\"\"")
+            continue;
+        (void)ime_config_detail::ReplaceTomlValuePreservingFormatting(patched, id.substr(0, separator), key,
+                                                                      local_value);
+    }
+    return patched;
+}
+
+// 把用户词库日志回放到 msime.db。合并只改日志，不回放的话删除墓碑与远端权重
+// 在下次安装前都不影响候选。
+//
+// 两个主库都必须已经在磁盘上：replay 内部对 english.db 用的是 SQLITE_OPEN_CREATE，
+// 文件不在时会顺手建一个空库并返回成功，英语词条就此变成「装着但没词」。
+// 缺库时把 report.replay_skipped 置真并返回 true：恢复本身是成功的，只是回放留到
+// 下次安装；真正的回放失败才返回 false。
+bool ReplayUserDictionary(const Context &context, MergeImportReport *report, std::string &message)
+{
+    const std::filesystem::path main_database = context.data_dir / L"msime.db";
+    const std::filesystem::path english_database = context.data_dir / L"english.db";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(main_database, error) ||
+        !std::filesystem::is_regular_file(english_database, error))
+    {
+        if (report)
+            report->replay_skipped = true;
+        message.clear();
+        return true;
+    }
+    const std::string user_db = PathToUtf8(context.data_dir / L"msime_user.db");
+    const user_dictionary::ReplayResult result =
+        user_dictionary::replay(user_db, PathToUtf8(main_database), PathToUtf8(english_database));
+    if (result.failed || !result.error.empty())
+    {
+        message = "词库日志已合并，但回放失败：" + result.error;
+        return false;
+    }
+    message.clear();
+    return true;
+}
+
+// Import 的实现体。merge 为真时走同步恢复的合并语义：配置按键合并、凭据保留本地值、
+// 用户词库按日志合并而不是覆盖。普通备份文件导入用 merge = false，保持整包覆盖。
+bool ImportImpl(const Context &context, const std::filesystem::path &source, const Hooks &hooks, bool merge,
+                MergeImportReport *report, std::string &message);
+} // namespace
+
+std::string MergeArchivedConfig(const std::string &local_text, const std::string &archived_text,
+                                const std::string &template_text)
+{
+    return user_data_sync::MergeConfig(local_text, archived_text, template_text);
+}
+
+bool ImportMerging(const std::filesystem::path &source, const Hooks &hooks, MergeImportReport &report,
+                   std::string &message)
+{
+    return ImportMerging(DefaultContext(), source, hooks, report, message);
+}
+
+bool ImportMerging(const Context &context, const std::filesystem::path &source, const Hooks &hooks,
+                   MergeImportReport &report, std::string &message)
+{
+    report = {};
+    return ImportImpl(context, source, hooks, true, &report, message);
+}
+
 bool Import(const Context &context, const std::filesystem::path &source, const Hooks &hooks, std::string &message)
+{
+    return ImportImpl(context, source, hooks, false, nullptr, message);
+}
+
+namespace
+{
+bool ImportImpl(const Context &context, const std::filesystem::path &source, const Hooks &hooks, bool merge,
+                MergeImportReport *report, std::string &message)
 {
     message.clear();
     std::vector<ManifestItem> items;
@@ -1204,6 +1398,58 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
             message = "config.toml 不是有效的 TOML 配置，导入已取消。";
             return false;
         }
+        if (merge)
+        {
+            // 同步恢复：和本地配置按键合并，凭据键保留本地值。归档里的 config.toml
+            // 在上传前被剥离过凭据，整包覆盖会清空本机的 token 与同步密码。
+            std::string local_text;
+            const std::filesystem::path live_config = context.config_dir / L"config.toml";
+            std::error_code local_error;
+            if (std::filesystem::is_regular_file(live_config, local_error) && !local_error)
+            {
+                std::string ignored;
+                if (!ReadSmallFile(live_config, 16 * 1024 * 1024, local_text, ignored))
+                    local_text.clear();
+            }
+            const std::string merged = MergeArchivedConfigImpl(context, local_text, text);
+            // 本地配置缺失或损坏时 MergeConfig 会原样返回它；那种情况直接用归档那份，
+            // 否则新机器（或配置刚被删）永远无法从云端恢复。
+            const std::string result =
+                merged.empty() || !ime_config_detail::TomlTextIsParseable(merged) ? text : merged;
+            {
+                std::ofstream out(staged_config, std::ios::binary | std::ios::trunc);
+                if (!out)
+                {
+                    message = "无法写入合并后的配置。";
+                    return false;
+                }
+                out << result;
+            }
+            if (report)
+                report->config_merged = true;
+        }
+        else
+        {
+            // 普通备份导入是"整体恢复"，但凭据不能一起恢复：用户如果把同步归档从浏览器
+            // 下载回来手动导入，那份 config.toml 是剥离过凭据的，覆盖会把 token 清空。
+            // 只用本机的非空凭据补上归档里的空值，其余键照旧整体覆盖。
+            std::string local_text;
+            const std::filesystem::path live_config = context.config_dir / L"config.toml";
+            std::error_code local_error;
+            if (std::filesystem::is_regular_file(live_config, local_error) && !local_error)
+            {
+                std::string ignored;
+                if (!ReadSmallFile(live_config, 16 * 1024 * 1024, local_text, ignored))
+                    local_text.clear();
+            }
+            const std::string patched = PreserveLocalCredentials(local_text, text);
+            if (!patched.empty() && patched != text)
+            {
+                std::ofstream out(staged_config, std::ios::binary | std::ios::trunc);
+                if (out)
+                    out << patched;
+            }
+        }
     }
     error.clear();
 
@@ -1217,6 +1463,24 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
             std::memcmp(magic.data(), "SQLite format 3\0", magic.size()) != 0)
         {
             message = "stats.db 不是有效的 SQLite 文件，导入已取消。";
+            return false;
+        }
+    }
+    error.clear();
+
+    // 用户词库的合并放到停 Server 之后（见下）。这里只确认归档里那一份是有效的 SQLite，
+    // 免得等到停了 Server 才发现备份坏了。
+    const std::filesystem::path staged_user_db = staging.path / L"msime_user.db";
+    const bool has_user_database = std::filesystem::is_regular_file(staged_user_db, error) && !error;
+    if (has_user_database)
+    {
+        std::ifstream header(staged_user_db, std::ios::binary);
+        std::array<char, 16> magic{};
+        header.read(magic.data(), static_cast<std::streamsize>(magic.size()));
+        if (header.gcount() != static_cast<std::streamsize>(magic.size()) ||
+            std::memcmp(magic.data(), "SQLite format 3\0", magic.size()) != 0)
+        {
+            message = "备份里的 msime_user.db 不是有效的 SQLite 文件，恢复已取消。";
             return false;
         }
     }
@@ -1239,11 +1503,25 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
         }
     }
 
-    // Only touch the live statistics database when the archive replaces it. The
-    // checkpoint must run after the Server stopped and before the pre-import copy.
+    // Only touch the live databases when the archive replaces them. The checkpoint must run
+    // after the Server stopped and before the pre-import copy: stats.db and msime_user.db are
+    // both WAL, and the Server exits with ExitProcess, so their -wal survives the stop. Replacing
+    // the database while that WAL is still on disk would let SQLite replay the old pages into it.
     if (FindItem(items, "stats.db") != nullptr)
     {
-        if (!CheckpointStatisticsDatabase(context.data_dir / L"stats.db", message))
+        if (!CheckpointLiveDatabase(context.data_dir / L"stats.db", "统计数据库", message))
+        {
+            if (stop_attempted && hooks.start_server)
+            {
+                std::string ignored;
+                (void)hooks.start_server(ignored);
+            }
+            return false;
+        }
+    }
+    if (FindItem(items, "msime_user.db") != nullptr)
+    {
+        if (!CheckpointLiveDatabase(context.data_dir / L"msime_user.db", "用户词库", message))
         {
             if (stop_attempted && hooks.start_server)
             {
@@ -1302,11 +1580,41 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
         error.clear();
     }
 
+    // 恢复流程会 replay 改 msime.db 与 english.db；普通导入在归档带用户词库时也 replay。
+    // 这两个主库不在归档里、也不会被落位，但同样需要能回滚，所以单独补一份进预导入副本。
+    // 用 SnapshotSqlite 而不是 CopyFileAtomic：它们是 WAL，Server 又是 ExitProcess 退出，
+    // 直接拷主文件会漏掉 -wal 里已提交的页面。
+    //
+    // 拿不到这份副本就中止恢复：replay 会直接写这两个主库，没有副本的写入是不可回滚的。
+    // 宁可这次恢复不做，也不留下一个「失败之后只能靠重装」的状态。
+    const bool will_replay = has_user_database;
+    if (failures.empty() && will_replay)
+    {
+        for (const wchar_t *name : {L"msime.db", L"english.db"})
+        {
+            const std::filesystem::path live_path = context.data_dir / name;
+            std::error_code copy_error;
+            if (!std::filesystem::is_regular_file(live_path, copy_error))
+                continue;
+            const char *label = name[0] == L'm' ? "拼音/五笔词库" : "英文词库";
+            if (!SnapshotSqlite(live_path, backup_root / name, label, message))
+            {
+                failures.push_back(message);
+                break;
+            }
+        }
+    }
+
     if (failures.empty())
     {
         for (const ManifestItem &item : items)
         {
             if (!IsDataPath(item.path))
+                continue;
+            // 合并模式要读覆盖前的本地用户词库，这份不能由归档覆盖：一旦覆盖，
+            // 后面的 MergeUserDictionary 就是在拿远端快照跟自己合并，本机独有的
+            // 词条、weight_edited 与删除墓碑会被静默丢掉。
+            if (merge && has_user_database && item.path == "msime_user.db")
                 continue;
             const std::filesystem::path staged = staging.path / Utf8Path(item.path);
             const std::filesystem::path target = TargetPath(context, item.path);
@@ -1316,29 +1624,86 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
         }
     }
 
+    // 同步恢复：用户词库按日志合并进本地那份，而不是覆盖。
+    //
+    // 顺序很关键。合并必须发生在「停 Server 之后、备份之后」：
+    // - 之前合并要打开正在被 Server 写入的库，引擎自己的 busy_timeout 只有 200ms，
+    //   合并期间的调频写入会被直接丢弃；
+    // - 备份之后合并，被改动的词库已经进了 .backup-before-import，失败可以回滚。
+    // 合并结果还要回放到 msime.db 才会影响候选，所以这里接着调 replay。
+    if (failures.empty() && merge && has_user_database)
+    {
+        const std::filesystem::path live_user_db = context.data_dir / L"msime_user.db";
+        std::error_code user_error;
+        user_data_sync::DictionaryMergeReport merge_report;
+        bool merged_ok = true;
+        if (!std::filesystem::is_regular_file(live_user_db, user_error))
+        {
+            // 本地还没有用户词库：直接落位即可，没有需要合并的。
+            merged_ok = CopyFileAtomic(staged_user_db, live_user_db, message);
+        }
+        else
+        {
+            merged_ok = user_data_sync::MergeUserDictionary(live_user_db, staged_user_db, merge_report, message);
+            if (report && merged_ok)
+            {
+                report->dictionary_taken_from_remote = merge_report.taken_from_remote;
+                report->dictionary_kept_local = merge_report.kept_local;
+            }
+        }
+        if (!merged_ok)
+        {
+            failures.push_back(message);
+        }
+        else
+        {
+            if (report)
+                report->dictionary_merged = true;
+            // 日志合并完还要回放，否则删除墓碑与远端权重在下次安装前都不生效。
+            std::string replay_message;
+            if (!ReplayUserDictionary(context, report, replay_message))
+                failures.push_back(replay_message);
+        }
+    }
+
+    // 普通导入（merge = false）如果归档里带着用户词库日志，落位之后同样要回放：
+    // 用户可能把云端同步包从浏览器下载回来手动导入，那份日志不 replay 就不产生效果。
+    if (failures.empty() && !merge && FindItem(items, "msime_user.db") != nullptr)
+    {
+        std::string replay_message;
+        if (!ReplayUserDictionary(context, report, replay_message))
+            failures.push_back(replay_message);
+    }
+
     if (failures.empty())
     {
-        for (const char *dictionary : kDictionaries)
+        // 同步恢复时跳过 dictionary/*.txt：那批文本带着远端设备的权重，导入会用
+        // record_user_insert 把刚按 updated_at 判过的新旧关系冲掉。日志已经能完整表达。
+        // 只有当归档确实带着日志时才跳过；没带日志的归档仍然要靠这批文本恢复词条。
+        if (!merge || !has_user_database)
         {
-            const std::string archive_path = std::string("dictionary/") + dictionary + ".txt";
-            if (!FindItem(items, archive_path))
-                continue;
-            const user_data_zip::Entry *entry = reader.Find(archive_path);
-            std::string content;
-            std::string dictionary_message;
-            if (!entry || !ReadArchiveFile(*entry, staging.path, content, dictionary_message))
+            for (const char *dictionary : kDictionaries)
             {
-                failures.push_back(dictionary_message);
-                continue;
+                const std::string archive_path = std::string("dictionary/") + dictionary + ".txt";
+                if (!FindItem(items, archive_path))
+                    continue;
+                const user_data_zip::Entry *entry = reader.Find(archive_path);
+                std::string content;
+                std::string dictionary_message;
+                if (!entry || !ReadArchiveFile(*entry, staging.path, content, dictionary_message))
+                {
+                    failures.push_back(dictionary_message);
+                    continue;
+                }
+                if (!hooks.import_dictionary)
+                {
+                    failures.push_back(std::string("缺少词库导入接口：") + dictionary);
+                    continue;
+                }
+                if (!hooks.import_dictionary(dictionary, content, dictionary_message))
+                    failures.push_back(dictionary_message.empty() ? std::string("词库导入失败：") + dictionary
+                                                                  : dictionary_message);
             }
-            if (!hooks.import_dictionary)
-            {
-                failures.push_back(std::string("缺少词库导入接口：") + dictionary);
-                continue;
-            }
-            if (!hooks.import_dictionary(dictionary, content, dictionary_message))
-                failures.push_back(dictionary_message.empty() ? std::string("词库导入失败：") + dictionary
-                                                              : dictionary_message);
         }
     }
 
@@ -1377,4 +1742,6 @@ bool Import(const Context &context, const std::filesystem::path &source, const H
     message += "。导入前副本保留在 " + PathToUtf8(backup_root) + "。";
     return false;
 }
+} // namespace
+
 } // namespace SettingsUserDataBackup
