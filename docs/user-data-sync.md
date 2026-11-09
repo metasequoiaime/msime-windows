@@ -36,9 +36,9 @@
 
 ## 传输层
 
-`server/src/settings/remote_store.h` 定义 `RemoteStore`：`Put`、`Get`、`Stat`、`List`、`Delete`、`Probe`。两个实现：
+`server/src/settings/remote_store.h` 定义 `RemoteStore`：`Put`、`Get`、`Stat`、`List`、`Delete`、`EnsureDirectory`、`Probe`。两个实现：
 
-- **WebDAV**：`PROPFIND` 列举，`PUT` 上传，`GET` 下载，`HEAD` 取大小，`DELETE` 删除。Basic 认证。
+- **WebDAV**：`PROPFIND` 列举，`PUT` 上传，`GET` 下载，`HEAD` 取大小，`DELETE` 删除，`MKCOL` 逐级建集合（对不存在集合的 PUT 会 409）。Basic 认证。
 - **S3 兼容**：自己实现 SigV4，不引入 aws-sdk-cpp。canonical request 两百行，而 SDK 会带来整套凭证链、CMake 集成和平台依赖。哈希与 HMAC 用 BCrypt，和 `cloud/tencent_tmt.cpp` 一致。支持路径风格与虚拟主机风格，MinIO、R2、B2、OSS 都能用。
 
 两条实现都走 `utils/network_proxy.cpp` 的代理配置，和云输入、模型下载共用同一套开关。TLS 校验始终开启，不提供跳过校验的开关：自签证书的服务端应当把证书导入系统信任库。

@@ -388,14 +388,19 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
 
 std::string MergeConfig(const std::string &local_text, const std::string &remote_text, const std::string &template_text)
 {
-    // 解析不了就原样返回本地内容：合并配置的失败绝不能比不合并更糟。
-    if (!ime_config_detail::TomlTextIsParseable(local_text) || !ime_config_detail::TomlTextIsParseable(remote_text) ||
-        !ime_config_detail::TomlTextIsParseable(template_text))
+    // 本地或远端解析不了就原样返回本地内容：合并配置的失败绝不能比不合并更糟。
+    // 模板可以为空，那表示没有出厂基线，只跳过"远端是不是还是默认值"这一层判断。
+    if (!ime_config_detail::TomlTextIsParseable(local_text) || !ime_config_detail::TomlTextIsParseable(remote_text))
+        return local_text;
+    if (!template_text.empty() && !ime_config_detail::TomlTextIsParseable(template_text))
         return local_text;
 
     const std::map<std::string, std::string> local_values = ime_config_detail::ParseTomlAssignments(local_text);
     const std::map<std::string, std::string> remote_values = ime_config_detail::ParseTomlAssignments(remote_text);
-    const std::map<std::string, std::string> template_values = ime_config_detail::ParseTomlAssignments(template_text);
+    // 空模板时 template_values 为空，下面的模板比较自然全部落空，等于"远端与本地不同就采纳"。
+    const std::map<std::string, std::string> template_values =
+        template_text.empty() ? std::map<std::string, std::string>{}
+                              : ime_config_detail::ParseTomlAssignments(template_text);
 
     std::string merged = local_text;
     for (const auto &[id, remote_value] : remote_values)

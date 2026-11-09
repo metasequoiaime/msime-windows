@@ -3,6 +3,8 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <string>
 #include <vector>
@@ -407,6 +409,7 @@ class WebDavStore final : public RemoteStore
         // 调用方用 prefix 表示"目录"，和 S3 的前缀语义对齐：devices 取设备清单，
         // devices/<id> 取该设备的快照。
         std::string body;
+        bool empty = false;
         const std::string request_body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
                                          "<D:propfind xmlns:D=\"DAV:\"><D:prop>"
                                          "<D:resourcetype/><D:getcontentlength/><D:getlastmodified/><D:getetag/>"
@@ -424,6 +427,13 @@ class WebDavStore final : public RemoteStore
                 const HttpResponse response = Perform(request);
                 if (!IsSuccess(response.status))
                 {
+                    // 目录还不存在时 PROPFIND 会 404。首次使用就是这种状态，按空列表处理，
+                    // 不要把一串 HTML 抛给用户。
+                    if (IsNotFound(response.status))
+                    {
+                        empty = true;
+                        return AttemptResult::Ok;
+                    }
                     attempt_message = DescribeHttpFailure(response);
                     return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
                                                                                             : AttemptResult::Fatal;
@@ -434,6 +444,8 @@ class WebDavStore final : public RemoteStore
             message);
         if (!ok)
             return false;
+        if (empty)
+            return true;
 
         XmlNode root;
         if (!ParseXml(body, root))
@@ -563,6 +575,7 @@ class WebDavStore final : public RemoteStore
         // 逐段创建：devices -> devices/<id>。
         std::string accumulated;
         std::size_t position = 0;
+        std::string first_failure;
         while (position <= directory.size())
         {
             const std::size_t next = directory.find('/', position);
@@ -577,25 +590,21 @@ class WebDavStore final : public RemoteStore
                 request.headers = BaseHeaders(options_);
                 request.timeout_seconds = 60;
                 const HttpResponse response = Perform(request);
-                // 201 新建、405 已存在；401/403 是真错，其它 4xx 也如实上报。
-                if (!IsSuccess(response.status) && response.status != 405)
+                // 201 新建、405 已存在。409 说明上级集合还没建起来，继续往下走，下一段会把它补上。
+                if (!IsSuccess(response.status) && response.status != 405 && response.status != 409)
                 {
-                    if (response.status == 409)
-                    {
-                        // 上级集合还不存在：继续往下走，下一轮会把缺的那级建出来。
-                        // 这里不能直接失败，否则 devices 建好、devices/<id> 还没建时会中断。
-                        message.clear();
-                    }
-                    else
-                    {
-                        message = "无法创建备份目录：" + DescribeHttpFailure(response);
-                        return false;
-                    }
+                    if (first_failure.empty())
+                        first_failure = accumulated + "：" + DescribeHttpFailure(response);
                 }
             }
             if (next == std::string::npos)
                 break;
             position = next + 1;
+        }
+        if (!first_failure.empty())
+        {
+            message = "无法创建备份目录：" + first_failure;
+            return false;
         }
         return true;
     }

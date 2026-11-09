@@ -219,7 +219,7 @@ webdav_password = ""
 s3_endpoint = ""
 s3_region = "us-east-1"
 s3_bucket = ""
-# MinIO 与多数自建网关用路径风格；AWS 默认用虚拟主机风格。
+# 路径风格：MinIO、R2、B2 需要打开；AWS S3 与阿里云 OSS 通常关闭，改用虚拟主机风格。
 s3_path_style = true
 # 对象前缀，可为空。
 s3_prefix = "msime"

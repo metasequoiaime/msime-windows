@@ -377,6 +377,15 @@ TEST_CASE(merge_config_returns_local_when_remote_is_unparseable)
     REQUIRE_EQ(merged, local_text);
 }
 
+// 没有出厂模板时也要能合并：空模板表示"没有基线"，只跳过默认值判断，不能整段放弃。
+TEST_CASE(merge_config_with_empty_template_still_takes_remote_changes)
+{
+    const std::string local_text = "[appearance]\ntheme_mode = \"dark\"\n";
+    const std::string remote_text = "[appearance]\ntheme_mode = \"light\"\n";
+    const std::string merged = user_data_sync::MergeConfig(local_text, remote_text, "");
+    REQUIRE(merged.find("theme_mode = \"light\"") != std::string::npos);
+}
+
 // 用户词库合并的核心语义：较新者胜出、删除墓碑保留、weight_edited 不丢。
 TEST_CASE(merge_user_dictionary_takes_newer_rows_and_keeps_tombstones)
 {

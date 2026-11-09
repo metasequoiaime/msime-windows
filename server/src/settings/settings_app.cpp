@@ -173,9 +173,9 @@ std::unique_ptr<user_data_sync::RemoteStore> MakeSyncStore(const SyncConfig &con
         options.bucket = config.s3_bucket;
         options.access_key = config.s3_access_key;
         options.secret_key = config.s3_secret_key;
-        // AWS 官方域名只接受虚拟主机风格，路径风格会返回错误；自建网关与 R2 走路径风格。
-        // 用户勾了「路径风格」就以勾选为准，否则按域名自动判断。
-        options.path_style = config.s3_path_style && config.s3_endpoint.find(".amazonaws.com") == std::string::npos;
+        // 路径风格完全按用户勾选：AWS 官方域名需要虚拟主机风格（不勾），MinIO / R2 / B2
+        // 需要路径风格（勾）。不做域名猜测，否则勾选框显示的状态会和实际行为相反。
+        options.path_style = config.s3_path_style;
         options.prefix = config.s3_prefix;
         return user_data_sync::MakeS3Store(std::move(options));
     }
@@ -1796,6 +1796,13 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                         bool import_after_download = false;
                         std::filesystem::path downloaded;
                         std::string local_device_id;
+                        // 本机设备标识不依赖 store 是否构造成功：probe / upload 失败时也要能标出
+                        // 本机那一行并禁用它的「恢复…」，否则用户可以对自己的快照点恢复。
+                        {
+                            std::string id_message;
+                            local_device_id = user_data_sync::LoadOrCreateDeviceId(
+                                std::filesystem::path(CommonUtils::get_ime_data_path_w()), id_message);
+                        }
                         try
                         {
                             const SyncConfig config = GetConfiguredSync();
@@ -1812,7 +1819,6 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                                 user_data_sync::SyncService service(
                                     std::move(store), std::filesystem::path(CommonUtils::get_ime_data_path_w()),
                                     options);
-                                local_device_id = service.DeviceId();
                                 if (action == "probe")
                                 {
                                     ok = service.Probe(message);

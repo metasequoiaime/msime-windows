@@ -4,6 +4,8 @@
 #include <bcrypt.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <string>
 #include <vector>

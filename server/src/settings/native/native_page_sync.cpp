@@ -2,8 +2,12 @@
 #include "settings/native/native_page_voice_fields.h"
 #include "settings/native/native_settings_pages.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <ctime>
+#include <iterator>
+#include <vector>
 
 namespace native_settings
 {
@@ -118,7 +122,8 @@ class DeviceList : public Column
         empty_hint_->SetVisible(visible);
     }
 
-    // 保证至少有 count 行；不够就补，多了就隐藏。
+    // 保证至少有 count 行；不够就补，多了就隐藏。count 会被封顶到 kMaxRows，
+    // 调用方遍历时必须以 Rows() 的实际数量为准，不能拿 entries.size() 直接索引。
     void EnsureRows(std::size_t count)
     {
         while (rows_.size() < count && rows_.size() < kMaxRows)
@@ -144,6 +149,11 @@ class DeviceList : public Column
     Row &At(std::size_t index)
     {
         return rows_[index];
+    }
+
+    std::size_t Capacity() const
+    {
+        return rows_.size();
     }
 
   private:
@@ -235,7 +245,9 @@ void RebuildDeviceList(const std::shared_ptr<SyncState> &state, SettingsModel *m
     }
     state->devices->EnsureEmptyHint(entries.empty());
     state->devices->EnsureRows(entries.size());
-    for (std::size_t index = 0; index < entries.size(); ++index)
+    // 行数会被封顶，遍历必须按实际行数走，否则设备多到超过上限时越界写。
+    const std::size_t count = (std::min)(entries.size(), state->devices->Capacity());
+    for (std::size_t index = 0; index < count; ++index)
     {
         const Json &entry = *entries[index];
         DeviceList::Row &row = state->devices->At(index);
@@ -329,7 +341,9 @@ VisualPtr BuildSyncPage(PageContext &context)
         s3->Add(FieldWithCaption(L"Access Key", state->s3AccessKey));
         s3->Add(FieldWithCaption(L"Secret Key", state->s3SecretKey));
         s3->Add(FieldWithCaption(L"对象前缀", state->s3Prefix));
-        s3->Add(MakeRow(L"路径风格", L"MinIO 与多数自建网关需要打开；AWS S3 通常关闭，改用虚拟主机风格",
+        s3->Add(MakeRow(L"路径风格",
+                        L"MinIO、Cloudflare R2、Backblaze B2 需要打开；AWS S3 与阿里云 OSS 通常关闭，"
+                        L"改用虚拟主机风格（bucket.域名）。开错时服务端会返回签名或地址错误。",
                         BindToggle(context, "sync.s3_path_style")));
         s3->Add(SyncDescription(
             L"Cloudflare R2 的区域填 auto，Backblaze B2 填它给出的 region，阿里云 OSS 的地址形如"
