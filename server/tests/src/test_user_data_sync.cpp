@@ -28,20 +28,21 @@ fs::path TempDir(const char *name)
     return root;
 }
 
-// 内存里的假 store，用来测编排层而不碰网络。键值都留在内存。
+// 内存里的假 store，用来测编排层而不碰网络。内容按字节存在内存里，
+// 这样 ListDevices 能读到真实的设备元信息 JSON。
 class FakeStore final : public user_data_sync::RemoteStore
 {
   public:
     bool Put(const std::string &key, const fs::path &file, const user_data_sync::ProgressCallback &,
              std::string &message) override
     {
-        std::error_code error;
-        if (!fs::is_regular_file(file, error))
+        std::ifstream input(file, std::ios::binary);
+        if (!input)
         {
             message = "missing file";
             return false;
         }
-        objects_[key] = fs::file_size(file, error);
+        objects_[key] = std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
         return true;
     }
     bool Get(const std::string &key, const fs::path &file, const user_data_sync::ProgressCallback &,
@@ -54,7 +55,7 @@ class FakeStore final : public user_data_sync::RemoteStore
             return false;
         }
         std::ofstream out(file, std::ios::binary | std::ios::trunc);
-        out << "fake";
+        out.write(found->second.data(), static_cast<std::streamsize>(found->second.size()));
         return true;
     }
     bool Stat(const std::string &key, user_data_sync::RemoteObject &object, std::string &) override
@@ -63,16 +64,16 @@ class FakeStore final : public user_data_sync::RemoteStore
         if (found == objects_.end())
             return false;
         object.key = key;
-        object.size = found->second;
+        object.size = found->second.size();
         return true;
     }
     bool List(const std::string &prefix, std::vector<user_data_sync::RemoteObject> &objects, std::string &) override
     {
         objects.clear();
-        for (const auto &[key, size] : objects_)
+        for (const auto &[key, content] : objects_)
         {
             if (key.rfind(prefix, 0) == 0)
-                objects.push_back({key, size, {}, 0});
+                objects.push_back({key, content.size(), {}, 0});
         }
         return true;
     }
@@ -91,7 +92,7 @@ class FakeStore final : public user_data_sync::RemoteStore
     }
 
   private:
-    std::map<std::string, std::uint64_t> objects_;
+    std::map<std::string, std::string> objects_;
 };
 
 // 造一个最小可用的 msime_user.db（带日志表），供合并与导入测试使用。
