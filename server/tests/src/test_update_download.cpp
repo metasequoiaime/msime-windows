@@ -3,6 +3,7 @@
 
 #include "settings/native/native_settings_update_download.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -50,6 +51,40 @@ TEST_CASE(update_download_builds_github_first_then_the_mirror)
     REQUIRE(ChannelUrls("https://msime.app/download/", "MetasequoiaIME_Setup_v1.0.0.exe").empty());
     // 安装包名不合法时同样不产生通道。
     REQUIRE(ChannelUrls(release, "setup.exe").empty());
+}
+
+TEST_CASE(update_download_parses_content_range_for_resume)
+{
+    using native_settings::update_download::ParseContentRange;
+    std::uint64_t start = 0;
+    std::uint64_t total = 0;
+
+    REQUIRE(ParseContentRange(L"bytes 0-1023/4096", start, total));
+    REQUIRE_EQ(start, std::uint64_t{0});
+    REQUIRE_EQ(total, std::uint64_t{4096});
+
+    // 续传时起点必须正好是本地已有的字节数，调用方会拿它和文件长度比。
+    REQUIRE(ParseContentRange(L"bytes 1024-4095/4096", start, total));
+    REQUIRE_EQ(start, std::uint64_t{1024});
+    REQUIRE_EQ(total, std::uint64_t{4096});
+
+    // 总长未知的写法：`*` 不当成数字，total 保持 0，后面靠摘要兜底。
+    REQUIRE(ParseContentRange(L"bytes 1024-2047/*", start, total));
+    REQUIRE_EQ(start, std::uint64_t{1024});
+    REQUIRE_EQ(total, std::uint64_t{0});
+
+    // 大小写与空白不影响解析。
+    REQUIRE(ParseContentRange(L"Bytes  10-20/30", start, total));
+    REQUIRE_EQ(start, std::uint64_t{10});
+    REQUIRE_EQ(total, std::uint64_t{30});
+
+    // 结构不对、起点比终点大、数字里混进字母，都不能猜着用。
+    REQUIRE(!ParseContentRange(L"", start, total));
+    REQUIRE(!ParseContentRange(L"bytes 10-20", start, total));
+    REQUIRE(!ParseContentRange(L"items 0-1/2", start, total));
+    REQUIRE(!ParseContentRange(L"bytes 20-10/30", start, total));
+    REQUIRE(!ParseContentRange(L"bytes abc-10/30", start, total));
+    REQUIRE(!ParseContentRange(L"bytes 0-10/", start, total));
 }
 
 TEST_CASE(update_download_refuses_to_start_without_a_digest)
@@ -144,6 +179,113 @@ TEST_CASE(update_download_gives_each_job_its_own_part_file)
     REQUIRE(first.rfind("MetasequoiaIME_Setup_v0.11.1.exe.part", 0) == 0);
     // 临时名不能反过来被当成正式安装包名，否则清理时会把它当作目标保留下来。
     REQUIRE(!native_settings::update_download::IsInstallerName(first));
+}
+
+TEST_CASE(update_download_holds_the_verified_installer_open)
+{
+    namespace fs = std::filesystem;
+    using namespace native_settings::update_download;
+    const fs::path directory = test::TempRoot() / L"update-download-lock";
+    std::error_code ec;
+    fs::remove_all(directory, ec);
+    fs::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    const fs::path probe = directory / "MetasequoiaIME_Setup_v0.11.1.exe";
+    {
+        std::ofstream file(probe, std::ios::binary | std::ios::trunc);
+        file << "hello";
+    }
+    const std::string expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"; // "hello"
+
+    HANDLE file = INVALID_HANDLE_VALUE;
+    REQUIRE(OpenVerifiedInstaller(probe, expected, file));
+    REQUIRE(file != INVALID_HANDLE_VALUE);
+    // 校验期间和启动安装程序期间只共享读，别处想写打开必须失败。
+    HANDLE writer = CreateFileW(probe.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(writer == INVALID_HANDLE_VALUE);
+    CloseHandle(file);
+
+    // 放掉句柄之后恢复可写。
+    writer = CreateFileW(probe.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(writer != INVALID_HANDLE_VALUE);
+    CloseHandle(writer);
+
+    fs::remove_all(directory, ec);
+}
+
+TEST_CASE(update_download_open_verified_installer_rejects_a_mismatch)
+{
+    namespace fs = std::filesystem;
+    using namespace native_settings::update_download;
+    const fs::path directory = test::TempRoot() / L"update-download-lock-mismatch";
+    std::error_code ec;
+    fs::remove_all(directory, ec);
+    fs::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    const fs::path probe = directory / "MetasequoiaIME_Setup_v0.11.1.exe";
+    {
+        std::ofstream file(probe, std::ios::binary | std::ios::trunc);
+        file << "hellp";
+    }
+    HANDLE file = INVALID_HANDLE_VALUE;
+    REQUIRE(!OpenVerifiedInstaller(probe, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", file));
+    REQUIRE(file == INVALID_HANDLE_VALUE);
+
+    fs::remove_all(directory, ec);
+}
+
+TEST_CASE(update_download_unsigned_file_is_a_definite_signature_failure)
+{
+    namespace fs = std::filesystem;
+    using namespace native_settings::update_download;
+    const fs::path directory = test::TempRoot() / L"update-download-signature";
+    std::error_code ec;
+    fs::remove_all(directory, ec);
+    fs::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    const fs::path probe = directory / "MetasequoiaIME_Setup_v0.11.1.exe";
+    {
+        std::ofstream file(probe, std::ios::binary | std::ios::trunc);
+        file << "hello";
+    }
+    // 没有签名是这份文件本身的结论，不能被归为「环境暂时验证不了」，否则伪造的
+    // 未签名包会被一直重试。
+    REQUIRE(VerifyAuthenticode(probe) == SignatureCheck::Invalid);
+
+    fs::remove_all(directory, ec);
+}
+
+TEST_CASE(update_download_hold_without_process_releases_the_lock)
+{
+    namespace fs = std::filesystem;
+    using namespace native_settings::update_download;
+    const fs::path directory = test::TempRoot() / L"update-download-hold";
+    std::error_code ec;
+    fs::remove_all(directory, ec);
+    fs::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    const fs::path probe = directory / "MetasequoiaIME_Setup_v0.11.1.exe";
+    {
+        std::ofstream file(probe, std::ios::binary | std::ios::trunc);
+        file << "hello";
+    }
+    const std::string expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"; // "hello"
+    HANDLE file = INVALID_HANDLE_VALUE;
+    REQUIRE(OpenVerifiedInstaller(probe, expected, file));
+    // 没有进程句柄可等时立刻放掉只读句柄，文件恢复可写。
+    HoldInstallerUntilExit(file, nullptr);
+    HANDLE writer = CreateFileW(probe.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(writer != INVALID_HANDLE_VALUE);
+    CloseHandle(writer);
+
+    fs::remove_all(directory, ec);
 }
 
 TEST_CASE(update_download_pruning_leaves_only_the_kept_installer)

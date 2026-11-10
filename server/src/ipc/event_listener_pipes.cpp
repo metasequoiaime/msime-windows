@@ -483,6 +483,9 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             if (activation.changed)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
+                // 有客户端刚激活时补一次更新提示：第一次轮询如果还没有宿主连着，
+                // 不会写下“已经提示过”，这里就是补发点。
+                update_check::NotifyClientActivated();
             }
             continue;
         }
@@ -548,6 +551,9 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             if (activation.changed)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
+                // 有客户端刚激活时补一次更新提示：第一次轮询如果还没有宿主连着，
+                // 不会写下“已经提示过”，这里就是补发点。
+                update_check::NotifyClientActivated();
             }
         }
 
@@ -1036,8 +1042,29 @@ void AuxPipeEventListenerLoopThread()
                     // 有旧 DLL 被占用。安装包本身由 Server 在退出前拉起：路径只认数据目录
                     // 里校验过的那一份，消息里的文件名只用于核对，不直接当成路径信任。
                     const std::wstring installer = message.substr(std::wstring(L"InstallUpdate|").size());
-                    update_check::LaunchPendingInstaller(installer);
-                    RestartServerProcess();
+                    // 摘要核对、UAC 和安装器启动都可能阻塞十几秒。Aux 是单线程串行
+                    // 监听的，放在这里会让语言栏右键、配置变更、Server 重启全部排队。
+                    // 整段丢到后台线程，监听立刻回到 ConnectNamedPipe。
+                    try
+                    {
+                        std::thread([installer] {
+                            std::wstring error;
+                            if (update_check::LaunchPendingInstaller(installer, error))
+                            {
+                                RestartServerProcess();
+                            }
+                            else if (!error.empty())
+                            {
+                                MessageBoxW(nullptr, error.c_str(), L"水杉输入法",
+                                            MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+                            }
+                        }).detach();
+                    }
+                    catch (...)
+                    {
+                        MessageBoxW(nullptr, L"无法启动安装程序，请稍后重试。", L"水杉输入法",
+                                    MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+                    }
                 }
                 else if (message == L"ConfigChanged" || message == L"InputSchemeChanged" ||
                          message == L"CandidateSkinRefresh")
