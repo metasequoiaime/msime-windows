@@ -5,13 +5,15 @@
 //
 // 一次探测：
 //   1. 本机版本必须是正式版（update_channel::SupportsAutoUpdate），否则连清单都不请求；
-//   2. 读配置 appearance.auto_download_update，关着就什么都不做；
-//   3. GET https://msime.app/update.json，版本必须同通道且比当前新；
-//   4. 已有校验通过的包就跳过；否则交给下载器，落进数据目录的 updates/<版本>/；
-//   5. 通过 UpdateInstallerReady 发给当前活动的 TSF 客户端，由它询问用户。
+//   2. 已经装上的版本不再需要安装包：清掉 updates/ 下不比本机新的版本目录和「等待安装」状态；
+//   3. 读配置 appearance.auto_download_update，关着就到此为止；
+//   4. GET https://msime.app/update.json，版本必须同通道且比当前新；
+//   5. 已有校验通过的包就跳过；否则交给下载器，落进数据目录的 updates/<版本>/；
+//   6. 进度写成「等待安装」（updates/progress.txt）。
 //
-// 轮询失败静默收敛到下一次轮询：更新检查出问题是用户处理不了的，弹窗只会打扰。
-// 用户点了「是」之后的启动失败是另一回事，会清掉待安装状态并给出提示。
+// Server 不弹窗、也不拉起安装程序：设置页「关于」读进度文件，显示「立即安装」按钮，
+// 安装由用户在那里触发；「检查更新」发现同一版本已经下好时也直接复用这份安装包。
+// 轮询失败静默收敛到下一次轮询：更新检查出问题是用户处理不了的。
 
 #include <cstdint>
 #include <filesystem>
@@ -29,18 +31,6 @@ std::string CurrentVersion();
 
 // 安装包所在版本目录：数据目录下的 updates/<版本>。版本号不可用时返回空。
 std::filesystem::path InstallerDirectory(const std::string &version);
-
-// 最近一次探测认为「比本机新」的版本号，供设置页判断要不要给提示。
-// 没有可安装的包时返回空串。
-std::string PendingVersion();
-
-// 用户在弹窗里同意安装时调用。路径只从磁盘上校验过的那一份推出来，
-// requested_installer 仅用来核对是不是同一个文件。失败时 error 里是给用户看的原因。
-bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstring &error);
-
-// TSF 客户端激活时调用。没有客户端连着时不会消耗「已经提示过」的标记，
-// 客户端刚连上时用它补一次提示，不必等到下一轮轮询。
-void NotifyClientActivated();
 
 // 起一次探测。可重入：已有一轮在跑时直接返回。
 void CheckOnce();
