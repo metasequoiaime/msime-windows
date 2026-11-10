@@ -106,6 +106,19 @@ Ink FindInk(const Pixels &p, int x0, int y0, int x1, int y1)
             }
     return ink;
 }
+
+// Remove only the known atlas translation, never the measured glyph position. Re-anchoring a
+// comparison on the ink itself would hide the whole-pixel jumps this regression test must catch.
+void RequireStableInkPosition(Ink ink, int atlasOffset, Ink &reference)
+{
+    REQUIRE(ink.found);
+    ink.left -= atlasOffset;
+    ink.top -= atlasOffset;
+    if (!reference.found)
+        reference = ink;
+    REQUIRE(ink.left == reference.left);
+    REQUIRE(ink.top == reference.top);
+}
 } // namespace
 
 // At 125% a CJK glyph is 22.5 px wide, so a candidate that grows by one character moves every later
@@ -142,6 +155,7 @@ TEST_CASE(candidate_text_rasterizes_identically_wherever_it_lands)
     {
         for (int firstLength = 6; firstLength <= 13; ++firstLength)
         {
+            Ink referencePosition;
             for (const int atlasOffset : {0, 31, 62, 93, 117})
             {
                 msimeui::CandidateList list(appearance.itemHeight);
@@ -172,7 +186,7 @@ TEST_CASE(candidate_text_rasterizes_identically_wherever_it_lands)
                 const int x1 = static_cast<int>(std::ceil((probeBounds.x + probeBounds.width) * kScale)) + atlasOffset;
                 const int y1 = static_cast<int>(std::ceil((probeBounds.y + probeBounds.height) * kScale)) + atlasOffset;
                 const Ink ink = FindInk(pixels, x0, y0, x1, y1);
-                REQUIRE(ink.found);
+                RequireStableInkPosition(ink, atlasOffset, referencePosition);
                 Pixels glyph{30, 34, std::vector<uint8_t>(30 * 34 * 4)};
                 for (int y = 0; y < 34; ++y)
                     for (int x = 0; x < 30; ++x)
@@ -181,8 +195,8 @@ TEST_CASE(candidate_text_rasterizes_identically_wherever_it_lands)
                         const size_t i = (static_cast<size_t>(y) * 30 + x) * 4;
                         glyph.bgra[i] = glyph.bgra[i + 1] = glyph.bgra[i + 2] = static_cast<uint8_t>(g);
                     }
-                // The ink box of a CJK glyph also starts on an anti-aliased fringe; comparing whole
-                // crops anchored on it catches both a shift and a different rasterization.
+                // This ink-anchored crop checks rasterization across reflow positions. The separate
+                // position assertion above catches whole-pixel jumps for an unchanged layout.
                 if (!glyphs.empty())
                 {
                     int diff = 0;
@@ -202,4 +216,63 @@ TEST_CASE(candidate_text_rasterizes_identically_wherever_it_lands)
     }
     std::printf("candidate probe worst channel difference %d/255 over %zu renders\n", worst, glyphs.size());
     REQUIRE(worst == 0);
+}
+
+TEST_CASE(candidate_label_and_preedit_keep_their_position_across_atlas_offsets)
+{
+    GridHiddenWindow window;
+    msimeui::DeviceResources resources;
+    REQUIRE(resources.EnsureForComposition(window.hwnd));
+    ID2D1DeviceContext *dc = resources.GetDeviceContext();
+    REQUIRE(dc != nullptr);
+
+    for (const float dpi : {96.0f, 120.0f, 144.0f, 168.0f, 192.0f})
+    {
+        const float scale = dpi / 96.0f;
+        msimeui::TextBlock preedit(L"wwwww", 18.0f, D2D1::ColorF(0xFFFFFF));
+        preedit.SetFontFamily(L"Segoe UI");
+        preedit.SetTextLayoutPadding({0.0f, 1.0f, 0.0f, 1.0f});
+        preedit.Measure({240.0f, 40.0f});
+        preedit.Arrange({8.0f, 8.0f, 240.0f, 40.0f});
+
+        msimeui::CandidateList::Appearance appearance;
+        appearance.fontFamily = L"Segoe UI";
+        appearance.fontSize = 18.0f;
+        appearance.labelFontSize = 18.0f * 0.72f;
+        appearance.itemHeight = 18.0f * 1.35f + 6.0f;
+        appearance.selectable = false;
+        appearance.labelColor = D2D1::ColorF(0xFFFFFF);
+        msimeui::CandidateList list(appearance.itemHeight);
+        list.SetAppearance(appearance);
+        list.SetItems({{L"1", L"candidate", {}, {}, {}}});
+        const auto size = list.Measure({240.0f, 100.0f});
+        list.Arrange({8.0f, 56.0f, size.width, size.height});
+        const auto row = list.GetItemBounds(0);
+
+        Ink referenceLabel;
+        Ink referencePreedit;
+        for (const int atlasOffset : {0, 31, 62, 93, 117})
+        {
+            const float origin = static_cast<float>(atlasOffset) * (96.0f / dpi);
+            const UINT width = static_cast<UINT>(std::ceil(264.0f * scale)) + atlasOffset;
+            const UINT height = static_cast<UINT>(std::ceil(112.0f * scale)) + atlasOffset;
+            const Pixels pixels = RenderTo(dc, width, height, dpi, [&]() {
+                dc->SetTransform(D2D1::Matrix3x2F::Translation(origin, origin));
+                preedit.Render(resources);
+                list.Render(resources);
+            });
+
+            // Both boxes are anchored to arranged bounds, independently of the rendered ink. The
+            // label box stops before the candidate text, so a stable candidate cannot mask a jump in 1.
+            const Ink label = FindInk(pixels, static_cast<int>(std::floor(row.x * scale)) + atlasOffset,
+                                      static_cast<int>(std::floor(row.y * scale)) + atlasOffset,
+                                      static_cast<int>(std::floor((row.x + 22.0f) * scale)) + atlasOffset,
+                                      static_cast<int>(std::ceil((row.y + row.height) * scale)) + atlasOffset);
+            RequireStableInkPosition(label, atlasOffset, referenceLabel);
+            const Ink text = FindInk(
+                pixels, static_cast<int>(8.0f * scale) + atlasOffset, static_cast<int>(8.0f * scale) + atlasOffset,
+                static_cast<int>(248.0f * scale) + atlasOffset, static_cast<int>(48.0f * scale) + atlasOffset);
+            RequireStableInkPosition(text, atlasOffset, referencePreedit);
+        }
+    }
 }
