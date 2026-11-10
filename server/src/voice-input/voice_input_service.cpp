@@ -7,6 +7,7 @@
 #include "voice_input_gesture.h"
 #include "config/ime_config.h"
 #include "doubao_asr_client.h"
+#include "local_asr.h"
 #include "log/candidate_diag_log.h"
 #include "voice_providers.h"
 #include "voice_batch_protocol.h"
@@ -142,6 +143,7 @@ void StopRecording(std::uint64_t voice_session, std::uintptr_t lock_ticket);
 void CancelRecording(std::uintptr_t lock_ticket);
 void CancelRecordingForSession(std::uint64_t session_cookie, std::uintptr_t lock_ticket);
 void DiscardRecording(const VoiceInputConfig &config);
+void ShowVoiceNotice(std::wstring message, unsigned icon);
 
 void MuteSystemAudioIfEnabled(const VoiceInputConfig &config)
 {
@@ -680,6 +682,15 @@ std::string JsonErrorMessage(const std::string &body)
 
 RecognitionResult Recognize(const std::vector<float> &samples, const VoiceInputConfig &config)
 {
+    if (VoiceInput::IsLocalAsrProvider(config.asr_provider))
+    {
+        local_asr::RecognitionResult local = local_asr::Recognize(samples, config.local_asr_model, config.language);
+        // 本地识别不会因为「没说话」报错（那只是空文本），出错都是运行库或模型载不进来，属于配置问题，
+        // 静默吞掉用户就只看到每次都没字，所以照配置类错误的做法提示。
+        if (!local.error.empty())
+            ShowVoiceNotice(string_to_wstring(local.error) + L"。", MB_ICONERROR);
+        return {std::move(local.text), std::move(local.error)};
+    }
     const std::string asr_token = VoiceInput::ResolveAsrToken(config);
     if (asr_token.empty() || config.asr_endpoint.empty())
         return {{}, "ASR Token 或接口地址为空。"};
@@ -1447,8 +1458,18 @@ bool StartRecording()
     if (!config.enabled)
         return false;
     const bool use_doubao = VoiceInput::IsDoubaoAsrProvider(config.asr_provider);
+    const bool use_local = VoiceInput::IsLocalAsrProvider(config.asr_provider);
     const std::string asr_token = VoiceInput::ResolveAsrToken(config);
-    if (asr_token.empty())
+    if (use_local)
+    {
+        // 本地识别不要 Token，但模型与运行库要先下载；缺了就在开麦之前告诉用户，而不是录完才静默失败。
+        if (const std::string error = local_asr::ReadinessError(config.local_asr_model); !error.empty())
+        {
+            ShowVoiceNotice(string_to_wstring(error) + L"。", MB_ICONINFORMATION);
+            return false;
+        }
+    }
+    else if (asr_token.empty())
     {
         ShowVoiceNotice(L"请先在设置的“语音输入”分区填写当前 ASR 提供商的 API Token。", MB_ICONINFORMATION);
         return false;

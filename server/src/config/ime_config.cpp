@@ -921,6 +921,7 @@ bool LoadImeConfig()
         voice.doubao_enable_ddc = tbl["voice_input"]["doubao_enable_ddc"].value_or(false);
         voice.doubao_boosting_table_id = tbl["voice_input"]["doubao_boosting_table_id"].value_or(std::string());
         voice.asr_model = tbl["voice_input"]["asr_model"].value_or(std::string());
+        voice.local_asr_model = tbl["voice_input"]["local_asr_model"].value_or(std::string());
         voice.polish_provider = tbl["voice_input"]["polish_provider"].value_or(std::string("siliconflow"));
         voice.polish_token = tbl["voice_input"]["polish_token"].value_or(std::string());
         for (const auto provider : VoiceInput::PolishProviders())

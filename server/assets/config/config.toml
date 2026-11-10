@@ -496,9 +496,14 @@ hotkey_ctrl_f9 = true
 hotkey_ctrl_win = false
 hotkey_rctrl_ralt = false
 hotkey_hold_space_lock = true
-# ASR 服务: doubao | openai | siliconflow | groq
+# ASR 服务: doubao | openai | siliconflow | groq | local
 # openai / siliconflow / groq 均走 OpenAI 兼容的 /v1/audio/transcriptions。
+# local 在本机离线识别，不联网也不需要 Token；模型不随安装包分发，需在设置页下载。
 asr_provider = "doubao"
+# asr_provider = "local" 时使用的本地模型：
+#   x-asr-zh-en-streaming | x-asr-zh-en-offline | sense-voice-small | fun-asr-nano
+# 留空表示尚未选择。
+local_asr_model = ""
 # 豆包鉴权方式: api_key | legacy
 #   api_key：新版控制台，只需一个 API Key，填入 asr_token 即可，asr_app_key 不使用。
 #   legacy：旧版控制台，App ID + Access Token（Secret Key 不使用），两项都要填。

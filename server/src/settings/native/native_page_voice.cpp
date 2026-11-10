@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <iterator>
 #include <map>
+#include <utility>
 
 // partials/voice.html + modules/voice.ts + modules/credential-test.ts
 namespace native_settings
@@ -201,6 +202,28 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
     std::shared_ptr<Hideable> resourceIdField;
     std::shared_ptr<Hideable> doubaoOptions;
     std::shared_ptr<Field> asrTokenField;
+    std::shared_ptr<Hideable> asrTokenBox;
+    std::shared_ptr<Hideable> asrEndpointBox;
+    std::shared_ptr<Hideable> asrTestBox;
+
+    // 本地模型（离线识别）
+    std::shared_ptr<Hideable> localBlock;
+    std::shared_ptr<Dropdown> localModelDropdown;
+    std::shared_ptr<Label> localModelInfo;
+    std::shared_ptr<Label> localStatus;
+    std::shared_ptr<Button> localDownload;
+    std::shared_ptr<Button> localImport;
+    std::shared_ptr<Hideable> localImportBox;
+    std::shared_ptr<Hideable> localDeleteBox;
+    std::map<std::string, Json> localCatalog;
+    std::vector<std::string> localOrder;
+    std::string localModel;
+    std::string localModelUrl;
+    std::string localRuntimeUrl;
+    std::string localVadUrl;
+    std::shared_ptr<Hideable> localVadLinkBox;
+    bool localPollPending = false;
+
     std::shared_ptr<InputBox> appKey;
     std::shared_ptr<InputBox> asrModel;
     std::shared_ptr<InputBox> asrToken;
@@ -270,12 +293,18 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
     void SyncAsrProviderUi()
     {
         const bool doubao = asrProvider == "doubao";
+        const bool local = asrProvider == "local";
         authModeField->SetVisible(doubao);
         // The new console issues a single API Key, so App ID only applies to the legacy console.
         appKeyField->SetVisible(doubao && authMode == "legacy");
         resourceIdField->SetVisible(doubao);
-        asrModelField->SetVisible(!doubao);
+        asrModelField->SetVisible(!doubao && !local);
         doubaoOptions->SetVisible(doubao);
+        // 本地识别不联网：没有 Token、接口地址，也没有可测试的连接。
+        asrTokenBox->SetVisible(!local);
+        asrEndpointBox->SetVisible(!local);
+        asrTestBox->SetVisible(!local);
+        localBlock->SetVisible(local);
         const auto it = AsrDefaults().find(asrProvider);
         if (it != AsrDefaults().end() && *it->second.model)
             asrModel->SetPlaceholder(Widen(it->second.model));
@@ -284,11 +313,24 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
 
     void SwitchAsrProvider(const std::string &provider)
     {
-        asrTokens[asrProvider] = Value(asrToken);
-        Write("voice_input.asr_token_" + asrProvider, asrTokens[asrProvider]);
+        // 本地模型没有 Token 槽位，切进切出都不读写 asr_token_local。
+        if (asrProvider != "local")
+        {
+            asrTokens[asrProvider] = Value(asrToken);
+            Write("voice_input.asr_token_" + asrProvider, asrTokens[asrProvider]);
+        }
         asrProvider = provider;
-        asrToken->SetText(Widen(asrTokens[provider]));
+        if (provider != "local")
+            asrToken->SetText(Widen(asrTokens[provider]));
         Write("voice_input.asr_provider", provider);
+        // 第一次切到本地时还没选过模型：默认选目录首项，免得 Server 那边因为「未选择」拒绝录音。
+        if (provider == "local" && localModel.empty() && !localOrder.empty())
+        {
+            localModel = localOrder.front();
+            Write("voice_input.local_asr_model", localModel);
+            localModelDropdown->SetValue(localModel);
+            UpdateLocalRow();
+        }
         SyncAsrProviderUi();
         const auto it = AsrDefaults().find(provider);
         if (it == AsrDefaults().end())
@@ -437,6 +479,218 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         polishModel->Open();
     }
 
+    static bool IsLocalBusy(const std::string &state)
+    {
+        return state == "downloading" || state == "extracting" || state == "importing";
+    }
+
+    const Json *LocalStatusOf(const std::string &id) const
+    {
+        const Json *statuses = context.model.Find("voice_input.local_asr_status");
+        if (!statuses || !statuses->is_object() || !statuses->contains(id))
+            return nullptr;
+        return &(*statuses)[id];
+    }
+
+    static std::wstring LocalStatusText(const Json *status)
+    {
+        const std::string state = status && status->is_object() ? status->value("state", std::string()) : "";
+        if (state == "ready")
+            return L"模型已就绪，可以离线识别";
+        if (state == "downloading")
+            return L"下载中 " + std::to_wstring(status->value("progress", 0)) + L"%";
+        if (state == "extracting")
+            return L"校验并解压中…";
+        if (state == "importing")
+            return L"导入并校验中…";
+        if (state == "error")
+        {
+            const std::string error = status->value("error", std::string());
+            return L"失败：" + (error.empty() ? std::wstring(L"未知原因") : Widen(error));
+        }
+        const std::string detail = status && status->is_object() ? status->value("detail", std::string()) : "";
+        return detail.empty() ? L"未下载" : L"未就绪：" + Widen(detail) + L"，点「下载」补齐";
+    }
+
+    // 只按当前快照刷新所选模型那一行；忙碌时每 2 秒要一次新快照。
+    void UpdateLocalRow()
+    {
+        const auto found = localCatalog.find(localModel);
+        if (found == localCatalog.end())
+        {
+            localModelInfo->SetText(L"");
+            localStatus->SetText(L"请选择一个模型");
+            localDownload->SetDisabled(true);
+            localImport->SetDisabled(true);
+            localDeleteBox->SetVisible(false);
+            return;
+        }
+        const Json &entry = found->second;
+        std::wstring info = Widen(entry.value("description", std::string()));
+        static constexpr std::pair<const char *, const wchar_t *> kMeta[] = {
+            {"sizeHint", L"下载 "}, {"memoryHint", L"运行时内存 "}, {"license", L"许可 "}};
+        for (const auto &[key, label] : kMeta)
+        {
+            const std::string part = entry.value(key, std::string());
+            if (!part.empty())
+                info += L"；" + std::wstring(label) + Widen(part);
+        }
+        localModelInfo->SetText(info);
+        localModelUrl = entry.value("url", std::string());
+        localVadLinkBox->SetVisible(entry.value("needsVad", false));
+
+        bool anyBusy = false;
+        if (const Json *statuses = context.model.Find("voice_input.local_asr_status");
+            statuses && statuses->is_object())
+        {
+            for (const auto &item : statuses->items())
+                anyBusy = anyBusy || IsLocalBusy(item.value().value("state", std::string()));
+        }
+        const Json *status = LocalStatusOf(localModel);
+        const std::string state = status && status->is_object() ? status->value("state", std::string()) : "";
+        const bool installed = status && status->is_object() && status->value("modelInstalled", false);
+        localStatus->SetText(LocalStatusText(status));
+        localDownload->SetDisabled(state == "ready" || anyBusy);
+        localImport->SetDisabled(anyBusy);
+        localImportBox->SetVisible(state != "ready");
+        localDeleteBox->SetVisible(installed && !IsLocalBusy(state));
+        if (anyBusy && !localPollPending)
+        {
+            localPollPending = true;
+            std::weak_ptr<VoicePage> weak = weak_from_this();
+            SetTimeout(2000, [weak]() {
+                if (auto page = weak.lock())
+                {
+                    page->localPollPending = false;
+                    page->context.model.Post("localAsrModelStatusRequest");
+                }
+            });
+        }
+    }
+
+    void SyncLocal()
+    {
+        const SettingsModel &model = context.model;
+        if (localOrder.empty())
+        {
+            if (const Json *catalog = model.Find("voice_input.local_asr_catalog"); catalog && catalog->is_array())
+            {
+                std::vector<DropdownOption> options;
+                for (const Json &entry : *catalog)
+                {
+                    if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string())
+                        continue;
+                    const std::string id = entry["id"].get<std::string>();
+                    localCatalog[id] = entry;
+                    localOrder.push_back(id);
+                    options.push_back({Widen(entry.value("title", id)), id, false, {}});
+                }
+                if (!options.empty())
+                    localModelDropdown->SetOptions(std::move(options));
+            }
+        }
+        localRuntimeUrl = model.GetString("voice_input.local_asr_runtime_url");
+        localVadUrl = model.GetString("voice_input.local_asr_vad_url");
+        localModel = model.GetString("voice_input.local_asr_model");
+        if (localCatalog.count(localModel))
+            localModelDropdown->SetValue(localModel);
+        else if (!localOrder.empty())
+            localModelDropdown->SetValue(localOrder.front());
+        // 配置里还没选（或选了目录里没有的 id）时，界面上显示首项，操作也针对它。
+        if (!localCatalog.count(localModel) && !localOrder.empty())
+            localModel = localOrder.front();
+        UpdateLocalRow();
+    }
+
+    // 下载、导入前确保配置里记着这个模型：用户点了哪个就用哪个，不必再去下拉框里确认一次。
+    void PersistLocalModel()
+    {
+        if (context.model.GetString("voice_input.local_asr_model") != localModel)
+            Write("voice_input.local_asr_model", localModel);
+    }
+
+    VisualPtr BuildLocalBlock()
+    {
+        auto column = std::make_shared<Column>(0.0f);
+        column->SetMargin({0.0f, 4.0f, 0.0f, 0.0f});
+        column->Add(MakeDescription(
+            L"在本机离线识别：录音不离开这台电脑，不需要 Token，也不产生费用。模型与 sherpa-onnx 运行库"
+            L"（约 7 MB）都不随安装包分发，点「下载」时缺什么补什么；整句模型还会下载约 0.6 MB 的断句模型 "
+            L"silero_vad。应用内下载较慢时，可以用下面的链接在浏览器里下好，再点「导入」逐个选中；也可以在"
+            L"「帮助」页设置网络代理。模型首次使用要载入几秒，闲置几分钟后自动释放内存。"));
+
+        auto grid = std::make_shared<FormGrid>();
+        localModelDropdown = MakeGridDropdown({});
+        localModelDropdown->SetOnChanged([this](size_t, const DropdownOption &option) {
+            localModel = option.value;
+            Write("voice_input.local_asr_model", option.value);
+            UpdateLocalRow();
+        });
+        grid->Add(std::make_shared<Field>(L"本地模型", localModelDropdown));
+        grid->SetMargin({0.0f, 12.0f, 0.0f, 0.0f});
+        column->Add(grid);
+
+        localModelInfo = MakeDescription(L"");
+        localModelInfo->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
+        column->Add(localModelInfo);
+
+        SettingsModel *model = &context.model;
+        localStatus = std::make_shared<Label>(L"未下载", BodyStyle());
+        localDownload = std::make_shared<Button>(L"下载", ButtonKind::Secondary);
+        localDownload->SetOnClick([this, model]() {
+            PersistLocalModel();
+            model->Post("localAsrModelDownload", Json{{"modelId", localModel}});
+        });
+        localImport = std::make_shared<Button>(L"导入", ButtonKind::Secondary);
+        localImport->SetOnClick([this, model]() {
+            PersistLocalModel();
+            model->Post("localAsrModelImport", Json{{"modelId", localModel}});
+        });
+        localImportBox = std::make_shared<Hideable>(localImport, true);
+        auto remove = std::make_shared<Button>(L"删除", ButtonKind::Secondary);
+        remove->SetOnClick([this, model]() {
+            const std::string id = localModel;
+            const auto found = localCatalog.find(id);
+            const std::wstring title =
+                found != localCatalog.end() ? Widen(found->second.value("title", id)) : Widen(id);
+            context.host.Confirm(L"删除本地语音模型“" + title + L"”？之后需要重新下载。", [model, id](bool confirmed) {
+                if (confirmed)
+                    model->Post("localAsrModelDelete", Json{{"modelId", id}});
+            });
+        });
+        localDeleteBox = std::make_shared<Hideable>(remove, false);
+        auto actions = std::make_shared<Row>(8.0f);
+        actions->Add(localDownload);
+        actions->Add(localImportBox);
+        actions->Add(localDeleteBox);
+        auto statusRow = std::make_shared<Row>(12.0f);
+        statusRow->SetMargin({0.0f, 12.0f, 0.0f, 0.0f});
+        statusRow->Add(localStatus, 1.0f);
+        statusRow->Add(actions);
+        column->Add(statusRow);
+
+        // 浏览器下载的备用通道：三个组件各一个直链。
+        auto link = [model](const wchar_t *text, std::string *url) {
+            auto label = std::make_shared<Label>(text, CaptionStyle(), TextRole::Accent);
+            label->SetOnClick([model, url]() {
+                if (!url->empty())
+                    model->Post("openExternalUrl", *url);
+            });
+            return label;
+        };
+        auto links = std::make_shared<Row>(14.0f);
+        links->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
+        links->Add(std::make_shared<Label>(L"浏览器下载：", CaptionStyle(), TextRole::Muted));
+        links->Add(link(L"模型压缩包", &localModelUrl));
+        links->Add(link(L"运行库压缩包", &localRuntimeUrl));
+        localVadLinkBox = std::make_shared<Hideable>(link(L"silero_vad.onnx", &localVadUrl), true);
+        links->Add(localVadLinkBox);
+        column->Add(links);
+
+        localBlock = std::make_shared<Hideable>(column, false);
+        return localBlock;
+    }
+
     // applyVoiceConfig
     void Sync()
     {
@@ -476,6 +730,7 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         // The endpoint stays free text, so mirror whatever it holds onto the picker.
         if (!Value(asrEndpoint).empty())
             doubaoEndpoint->SetValue(Value(asrEndpoint));
+        SyncLocal();
         SyncAsrProviderUi();
 
         polishProvider = model.GetString("voice_input.polish_provider", "siliconflow");
@@ -597,11 +852,15 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
         {
             auto column = std::make_shared<Column>(0.0f);
             column->Add(Heading(L"ASR API"));
-            column->Add(SectionDescription(L"豆包为流式识别；OpenAI、SiliconFlow、Groq 走 OpenAI 兼容的语音转写接口。"
+            column->Add(SectionDescription(L"豆包为流式识别；OpenAI、SiliconFlow、Groq 走 OpenAI 兼容的语音转写接口；"
+                                           L"本地模型在本机离线识别，需先下载模型。"
                                            L"每个提供商的 Token 分开保存，切换时只换当前使用的那一份。"));
             auto grid = std::make_shared<FormGrid>();
-            asrProviderDropdown = MakeGridDropdown(Options(
-                {{"doubao", L"豆包"}, {"openai", L"OpenAI"}, {"siliconflow", L"SiliconFlow"}, {"groq", L"Groq"}}));
+            asrProviderDropdown = MakeGridDropdown(Options({{"doubao", L"豆包"},
+                                                            {"openai", L"OpenAI"},
+                                                            {"siliconflow", L"SiliconFlow"},
+                                                            {"groq", L"Groq"},
+                                                            {"local", L"本地模型（离线）"}}));
             asrProviderDropdown->SetOnChanged(
                 [this](size_t, const DropdownOption &option) { SwitchAsrProvider(option.value); });
             grid->Add(std::make_shared<Field>(L"服务提供商", asrProviderDropdown));
@@ -642,7 +901,8 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
                 Write("voice_input.asr_token_" + asrProvider, asrTokens[asrProvider]);
             });
             asrTokenField = std::make_shared<Field>(L"Access Token / API Key", asrToken);
-            grid->Add(asrTokenField, true);
+            asrTokenBox = std::make_shared<Hideable>(asrTokenField);
+            grid->Add(asrTokenBox, true);
 
             asrEndpoint = std::make_shared<InputBox>(InputBox::Options{});
             asrEndpoint->SetOnCommit([this](const std::wstring &text) {
@@ -650,7 +910,8 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
                 if (!Value(asrEndpoint).empty())
                     doubaoEndpoint->SetValue(Value(asrEndpoint));
             });
-            grid->Add(std::make_shared<Field>(L"接口地址", asrEndpoint), true);
+            asrEndpointBox = std::make_shared<Hideable>(std::make_shared<Field>(L"接口地址", asrEndpoint));
+            grid->Add(asrEndpointBox, true);
 
             InputBox::Options resourceOptions;
             resourceOptions.placeholder = Widen(kDoubaoDefaultResourceId);
@@ -673,6 +934,7 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
             resourceIdField = std::make_shared<Hideable>(resourceField);
             grid->Add(resourceIdField, true);
             column->Add(grid);
+            column->Add(BuildLocalBlock());
 
             auto button = std::make_shared<PlainButton>(L"测试配置", CredentialButtonStyle());
             auto status = std::make_shared<StatusText>();
@@ -680,7 +942,8 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
             testRow->SetMargin({0.0f, 14.0f, 0.0f, 0.0f});
             testRow->Add(button);
             testRow->Add(status, 1.0f);
-            column->Add(testRow);
+            asrTestBox = std::make_shared<Hideable>(testRow);
+            column->Add(asrTestBox);
             asrTest = std::make_unique<CredentialTest>(
                 context, button, status, []() { return std::string("voice.asr"); },
                 [this]() { return AsrTestConfig(); });

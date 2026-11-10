@@ -760,6 +760,10 @@ class Button : public msimeui::Visual
 
     void SetOnClick(std::function<void()> handler);
     void SetText(std::wstring text);
+    const std::wstring &Text() const
+    {
+        return text_;
+    }
     void SetDisabled(bool disabled);
     bool IsDisabled() const
     {
