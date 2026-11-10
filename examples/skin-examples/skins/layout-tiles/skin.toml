@@ -108,6 +108,27 @@ hover = "rgba(194, 122, 14, 0.08)"
 text = "#2a2418"
 number = "rgba(42, 36, 24, 0.55)"
 
+# 悬浮工具栏跟面板同一套配色：底色取面板底色，边框取琥珀边，拖动条与 accent 一致。
+# 工具栏不分横竖排，按排布覆盖和九宫格平铺都不作用在它身上，这里只是让整套皮肤看起来是一体的。
+[toolbar]
+corner_radius_dip = 5              # 与面板圆角一致（面板图 10 像素圆角，2 倍图）
+
+[toolbar.dark]
+background = "#1c2034"
+border = "rgba(240, 176, 64, 0.60)"
+handle = "#fdba3c"
+divider = "rgba(253, 186, 60, 0.28)"
+icon = "#eef2ff"
+hover = "rgba(253, 186, 60, 0.16)"
+
+[toolbar.light]
+background = "#faf7ee"
+border = "rgba(214, 150, 40, 0.60)"
+handle = "#c27a0e"
+divider = "rgba(194, 122, 14, 0.24)"
+icon = "#2a2418"
+hover = "rgba(194, 122, 14, 0.10)"
+
 [license]
 code = "MIT"
 assets = "MIT"
