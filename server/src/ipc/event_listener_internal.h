@@ -23,6 +23,7 @@
 #include "ipc/event_listener_task_class.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "ipc/event_listener.h"
+#include "ipc/traditional_variant_choice_policy.h"
 #include "engine/contracts/v_mode_input.h"
 #include "window/caret_state_indicator_policy.h"
 
@@ -171,9 +172,14 @@ WordItem WithFirstTraditionalSpelling(WordItem item);
 // 一段简体文字整串的第一写法：ShownCandidateCharacterSet 是繁体（非日语方案）时取排序后的第一种写法，
 // 否则原样返回。不看 U 模式：造词前缀不来自拆字结果。
 std::string FirstSpellingOfText(const std::string &text);
+// 一段简体文字整串按当前地区排序（不计写法记录）的第一种繁体写法，不看字形设置；没有写法时原样返回。
+std::string RegionalFirstSpellingOfText(const std::string &text);
 // 当前造词已选部分（GlobalIme::composition.creating_word）的简体底词、显示文字与第一写法标记。
 // ShownCandidateCharacterSet 与第一段选中时不同，第一写法标记为 false，上屏按显示的文字拼接。
 FanyImeIpc::ChosenText CreatingWordChosenText();
+// 选中 item 这一刻的候选环境，判定要不要读写繁体写法记录（见 FanyImeIpc::RemembersVariantChoices）。
+// item 本身是日语候选时按日语方案算。要在 reset_state 之前取，理由同 IsRadicalCandidateListActive。
+FanyImeIpc::VariantChoiceScope CurrentVariantChoiceScope(const WordItem &item);
 // 每个按键包到达时调用：记下它是否来自密码 / PIN 输入框，并在宿主或焦点会话变化时清空 AI 上下文。
 void NoteAiContextKeySource(uint64_t client_id, uint64_t activation_epoch, bool sensitive_field);
 void AppendAiContext(const std::string &committed_word);
@@ -244,6 +250,26 @@ void EnqueueLearnEnglishSlotTask(const std::string &code, int english_index, std
                                  uint64_t client_id, uint64_t activation_epoch);
 // 日期时间格式的调频：选中了 format_id（WordItem::pinyin）那种格式。
 void EnqueueLearnDateTimeOrderTask(const std::string &format_id, uint64_t client_id, uint64_t activation_epoch);
+// 从用户日志库查繁体写法记录的查询函数。每次调用都在调用线程上查日志库。
+const FanyImeIpc::RememberedSpellingLookup &RememberedSpellingFromUserJournal();
+// 下面四个函数的 scope 都由调用方在 reset_state 之前取（见 CurrentVariantChoiceScope）。
+// 选中 item 之后，按 FanyImeIpc::VariantChoiceForSelection 记下或删掉写法记录。要改时在调用线程上算好改动，
+// 交给后台写线程，不等写完就返回：写完之前查到旧记录。写入失败时重试，都失败时记一条诊断日志。没有改动时不入队。
+// 只在任务线程上调用。
+void EnqueueRememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope,
+                                                       const WordItem &item);
+// 造好的词（键 key、简体词 word）以 committed_text 上屏之后，按 FanyImeIpc::VariantChoiceForComposedWord
+// 记下或删掉写法记录。写入方式与线程要求同上一个函数：写完之前查到旧记录。
+void EnqueueRememberOrForgetComposedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope,
+                                                       const FanyImeIpc::ComposedWordSegments &segments,
+                                                       const std::string &key, const std::string &word,
+                                                       const std::string &committed_text);
+// 置顶或固定 item 之后，按 FanyImeIpc::VariantChoiceForSelection 记下或删掉写法记录。在调用线程上直接写日志库，
+// 返回之后再查记录读到的就是改过的样子。
+void RememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item);
+// 删除候选 item 之后，按 FanyImeIpc::VariantChoiceWordToForgetOnDelete 删掉它的底词在所有键下的写法记录。
+// 在调用线程上直接写日志库，返回之后再查记录读到的就是改过的样子。
+void ForgetTraditionalVariantsOfDeletedCandidate(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item);
 
 // event_listener_keys.cpp
 // 把译文页或日期页换回进入之前的那一屏，进入之后切过字形时按当前字形换写法；都没打开时什么都不做。

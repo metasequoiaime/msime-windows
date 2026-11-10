@@ -326,6 +326,21 @@ class ScopedTempDir
     std::filesystem::path path_;
 };
 
+// 设置页的用户词库导出只读用户词，写法记录不进导出的文本。
+TEST_CASE(DictionaryExportLeavesOutTraditionalVariantChoices)
+{
+    const ScopedTempDir dir(L"msime-variant-choice-settings-export");
+    const ScopedDataDir scoped(dir.path());
+    const std::string user = test::Utf8(dir.path() / L"msime_user.db");
+    REQUIRE(user_dictionary::record_upsert(user, user_dictionary::DictionaryKind::Pinyin, "tai'wan", "台湾", 500));
+    REQUIRE(user_dictionary::remember_traditional_variant(user, "tai'wan", "台湾", "台灣"));
+
+    const auto exported = SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "export"}});
+    user_dictionary::close_default_user_database();
+    REQUIRE(exported.at("ok").as_bool());
+    REQUIRE_EQ(std::string(exported.at("content").as_string()), std::string("台湾\ttai'wan\t500\n"));
+}
+
 // 端到端导入用的数据目录：一个只含 wubi86 表的 msime.db，种子单字码与上面
 // RealWubiCharCodes 一致。
 class ScopedWubiDataDir

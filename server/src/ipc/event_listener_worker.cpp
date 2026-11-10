@@ -4,6 +4,8 @@
 #include <array>
 #include <string>
 #include <chrono>
+#include <functional>
+#include <optional>
 #include <cstdint>
 #include <utility>
 #include "ipc.h"
@@ -24,6 +26,7 @@
 #include "english/english_ime.h"
 #include "config/ime_config.h"
 #include "conversion/chinese_converter.h"
+#include "ipc/traditional_variant_choice_journal.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "window/window_hook.h"
 #include "session/input_cadence.h"
@@ -822,6 +825,7 @@ void WorkerThread()
 
             const bool english_candidate = item.source == CandidateSource::EnglishDictionary;
             const auto ranking_keys = RankingKeysForCandidate(item);
+            const FanyImeIpc::VariantChoiceScope variant_choice_scope = CurrentVariantChoiceScope(item);
             const std::string context_key = english_candidate ? EnglishRankingContextKey() : ranking_keys.first;
             const std::string entry_key = english_candidate ? item.pinyin : ranking_keys.second;
 
@@ -863,7 +867,9 @@ void WorkerThread()
                     // not mistaken for an equally valid quanpin spelling.
                     const std::string delete_pinyin =
                         item.canonical_pinyin.empty() ? item.pinyin : item.canonical_pinyin;
-                    g_inputSession->remove_candidate(delete_pinyin, item.word, item.scheme);
+                    if (g_inputSession->remove_candidate(delete_pinyin, item.word, item.scheme) ==
+                        IInputSession::kRemoveCandidateSucceeded)
+                        ForgetTraditionalVariantsOfDeletedCandidate(variant_choice_scope, item);
                 }
             }
             else if (task.type == TaskType::UiFixCandidatePosition)
@@ -876,6 +882,11 @@ void WorkerThread()
                 (void)user_dictionary::clear_fixed_position(user_dictionary::default_user_db_path(), context_key,
                                                             entry_key, item.word);
             }
+            // 置顶、固定作用在整组写法上；用户点的若不是这组排第一的写法，按它改写法记录：点中的是地区默认
+            // 第一写法时删掉记录，否则记下它（见 RememberOrForgetSelectedTraditionalVariant）。下面紧接着重建列表，
+            // 要读到新记录，所以这里同步写。
+            if (task.type == TaskType::UiPinCandidate || task.type == TaskType::UiFixCandidatePosition)
+                RememberOrForgetSelectedTraditionalVariant(variant_choice_scope, item);
             g_inputSession->reset_cache();
             g_inputSession->recompute_candidates();
             PrepareCandidateList(task.client_id, task.activation_epoch);
@@ -1355,6 +1366,81 @@ void EnqueueLearnDateTimeOrderTask(const std::string &format_id, uint64_t client
         (void)user_dictionary::learn_date_time_selection(user_dictionary::default_user_db_path(), category, default_ids,
                                                          format_id, mode, linear_step, trigger_count);
     });
+}
+
+// 写法记录同样每次现查，写完不用清缓存。
+const FanyImeIpc::RememberedSpellingLookup &RememberedSpellingFromUserJournal()
+{
+    static const FanyImeIpc::RememberedSpellingLookup lookup =
+        FanyImeIpc::JournalRememberedSpellingLookup(user_dictionary::default_user_db_path);
+    return lookup;
+}
+
+namespace
+{
+// 默认写法不读字形设置，在 scope 判定要读写记录之后才算：同一次判定里字形只在 scope 里读一次。
+// 绝大多数选词选的是组首（variant_rank 为 0）或没有写法的候选，先用 item 自己的字段排除，
+// 免得每次选词都白过三遍 OpenCC。
+std::optional<FanyImeIpc::VariantChoiceChange> VariantChoiceChangeForSelected(
+    const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
+{
+    if (!FanyImeIpc::RemembersVariantChoices(scope) || !FanyImeIpc::SelectionCanChangeVariantChoice(item))
+        return std::nullopt;
+    return FanyImeIpc::VariantChoiceForSelection(scope, item, FanyImeIpc::VariantChoiceKeyOf(item),
+                                                 RegionalFirstSpellingOfText(item.word));
+}
+
+// 要不要入队取决于算出来有没有改动，所以 change 在入队之前算好。
+void EnqueueVariantChoiceWrite(FanyImeIpc::VariantChoiceChange change)
+{
+    DictionaryWriter().Post([change = std::move(change)] {
+        const bool written = FanyImeIpc::RetryVariantChoiceWrite([&change] {
+            return FanyImeIpc::WriteVariantChoiceChange(user_dictionary::default_user_db_path(), change);
+        });
+        if (!written)
+            CAND_DIAG_LOGF(L"traditional variant choice write failed attempts={}",
+                           FanyImeIpc::kVariantChoiceWriteAttempts);
+    });
+}
+} // namespace
+
+void EnqueueRememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope,
+                                                       const WordItem &item)
+{
+    if (auto change = VariantChoiceChangeForSelected(scope, item))
+        EnqueueVariantChoiceWrite(std::move(*change));
+}
+
+void EnqueueRememberOrForgetComposedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope,
+                                                       const FanyImeIpc::ComposedWordSegments &segments,
+                                                       const std::string &key, const std::string &word,
+                                                       const std::string &committed_text)
+{
+    if (!FanyImeIpc::RemembersVariantChoices(scope))
+        return;
+    if (auto change = FanyImeIpc::VariantChoiceForComposedWord(scope, segments, key, word, committed_text,
+                                                               RegionalFirstSpellingOfText(word)))
+        EnqueueVariantChoiceWrite(std::move(*change));
+}
+
+// 同步路径不重试：紧接着要重建列表，重试只会把按键线程拖得更久。失败时与异步路径一样留一条诊断，
+// 否则用户看到的只是「点了置顶 / 固定，写法顺序没变」。
+void RememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
+{
+    const auto change = VariantChoiceChangeForSelected(scope, item);
+    if (!change)
+        return;
+    if (!FanyImeIpc::WriteVariantChoiceChange(user_dictionary::default_user_db_path(), *change))
+        CAND_DIAG_LOGF(L"traditional variant choice write failed (pin/fix)");
+}
+
+void ForgetTraditionalVariantsOfDeletedCandidate(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
+{
+    const auto word = FanyImeIpc::VariantChoiceWordToForgetOnDelete(scope, item);
+    if (!word)
+        return;
+    if (!user_dictionary::forget_traditional_variants_of_word(user_dictionary::default_user_db_path(), *word))
+        CAND_DIAG_LOGF(L"traditional variant choice forget failed (delete)");
 }
 
 void EnqueueLearnEnteredEnglishWordTask(const std::string &word)

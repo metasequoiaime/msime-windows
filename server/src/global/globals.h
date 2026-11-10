@@ -62,6 +62,8 @@ struct CreatingWordState
     bool all_first_spellings = true;
     // 第一段选中时的字形（"traditional" 或 "simplified"）；还没选过段时是空串。
     std::string first_segment_character_set;
+    // 已选各段选中时的字形都相同。变成 false 之后不再变回 true。
+    bool all_segments_same_character_set = true;
     // 前缀的输出文字（规则见 FanyImeIpc::ChosenTextForOutput）。工作线程在每段选中后写（ProcessSelectionKey），
     // 撤回快照恢复时随整个结构一起回来。读方：工作线程上的造词中间态管道载荷、三语循环键与 TSF 行内预编辑
     // （GetTsfPreedit），界面线程上的候选窗预编辑（GetPreedit）。界面线程不碰会话与转换器，所以算好存成字段。
@@ -78,6 +80,7 @@ struct CreatingWordState
         output_text.clear();
         all_first_spellings = true;
         first_segment_character_set.clear();
+        all_segments_same_character_set = true;
         prefix_text.clear();
         active = false;
         all_segments_first = true;
