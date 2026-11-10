@@ -148,6 +148,9 @@ std::string HttpGet(const std::string &url)
 // `.about-link-row`: min-height 66px with a hairline under every row but the last.
 class AboutRow : public msimeui::Panel
 {
+    // 内容超出 66px 时上下各留的空白（DIP），和行内文字到分割线的视觉距离相当。
+    static constexpr float kRowPaddingY = 12.0f;
+
   public:
     AboutRow(VisualPtr left, VisualPtr right, bool last) : left_(std::move(left)), right_(std::move(right)), last_(last)
     {
@@ -168,7 +171,10 @@ class AboutRow : public msimeui::Panel
         leftSize_ = left_->MeasureInLayout(
             {std::max(availableSize.width - (right_ ? rightSize_.width + 20.0f : 0.0f), 0.0f), availableSize.height});
         const float border = last_ ? 0.0f : CssBorder();
-        return {availableSize.width, std::max(66.0f, std::max(leftSize_.height, rightSize_.height) + border)};
+        // 单行内容在 66px 里垂直居中；内容一多（状态文字、「立即安装」按钮）就按内容撑高，
+        // 但上下各留 kRowPaddingY，不能贴着上一条分割线或压到下一条上。
+        const float content = std::max(leftSize_.height, rightSize_.height) + kRowPaddingY * 2.0f;
+        return {availableSize.width, std::max(66.0f, content + border)};
     }
 
     void Arrange(const RectF &finalRect) override
@@ -187,7 +193,19 @@ class AboutRow : public msimeui::Panel
     void Render(msimeui::DeviceResources &dr) override
     {
         if (title_)
-            title_->SetColor(hovered_ ? CurrentPalette().accentStrong : CurrentPalette().text);
+        {
+            // 颜色在这里取，换主题时也跟得上；但只在真的变了才设。Label::SetColor 每次都会
+            // InvalidateVisual，在 Render 里无条件调用会让窗口刚画完又被标脏，陷入每秒上千帧
+            // 的重绘循环——WM_PAINT 优先于 WM_TIMER，整个设置窗口的计时器都会因此饿死。
+            const D2D1_COLOR_F color = hovered_ ? CurrentPalette().accentStrong : CurrentPalette().text;
+            if (!titleColorSet_ || color.r != titleColor_.r || color.g != titleColor_.g || color.b != titleColor_.b ||
+                color.a != titleColor_.a)
+            {
+                titleColor_ = color;
+                titleColorSet_ = true;
+                title_->SetColor(color);
+            }
+        }
         left_->Render(dr);
         if (right_)
             right_->Render(dr);
@@ -252,6 +270,9 @@ class AboutRow : public msimeui::Panel
     SizeF rightSize_ = {};
     std::function<void()> onClick_;
     std::shared_ptr<Label> title_;
+    // 上一次给标题设的颜色，见 Render。
+    D2D1_COLOR_F titleColor_ = {};
+    bool titleColorSet_ = false;
     bool hovered_ = false;
     bool pressed_ = false;
 };
@@ -303,6 +324,12 @@ struct AboutBackupState
 struct AboutState
 {
     std::shared_ptr<CssButton> check;
+    // 后台已下载好安装包时出现在「自动下载更新」一行的「立即安装」。只有正式版才有。
+    std::shared_ptr<CssButton> install;
+    // 每秒读一次后台进度。放在这里是为了让它跟页面同生共死：页面根节点（OwnerBox）持有
+    // AboutState，页面销毁时定时器随之析构并 KillTimer。放在局部变量里会在建页结束时就被
+    // 析构，进度只在打开页面那一刻读一次。
+    std::unique_ptr<UiTimer> progressTimer;
     std::shared_ptr<Label> status;
     std::shared_ptr<Hideable> statusBox;
     // Set once the user-data backup section exists. Kept here so the page owns the
@@ -372,9 +399,38 @@ inline void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const
 {
     state->check->SetDisabled(false);
     state->check->SetText(L"检查更新");
+    if (state->install)
+        state->install->SetDisabled(false);
     state->status->SetText(message);
     state->status->SetRole(ok ? TextRole::Accent : TextRole::Danger);
     state->statusBox->SetVisible(true);
+}
+
+// 当前构建的版本号，按 update_channel 的规则解析。和 Server 判断「比本机新」用的是同一套。
+bool CurrentChannelVersion(update_channel::Version &current)
+{
+    return update_channel::Parse(MSIME_PRODUCT_VERSION, current) && current.valid;
+}
+
+// 进度文件里的版本是否真比本机新。装完新版本后 Server 要等下一轮轮询才会把进度收回
+// Idle，这段时间里不能再显示「等待安装」。
+bool IsNewerThanCurrent(const std::string &version)
+{
+    update_channel::Version current;
+    update_channel::Version recorded;
+    return CurrentChannelVersion(current) && update_channel::Parse(version, recorded) && recorded.valid &&
+           recorded.kind == current.kind && update_channel::Compare(recorded, current) > 0;
+}
+
+// 后台进度是不是「正在下载」且还新鲜。Server 每收一块就刷新 updated_at；超过两分钟没动
+// 说明那一轮已经死了（进程被杀、机器睡眠），不能拿它挡住用户手动下载。
+bool BackgroundIsDownloading(const update_channel::DownloadProgress &progress, const std::string &version)
+{
+    if (progress.state != update_channel::DownloadProgress::State::Downloading || progress.version != version)
+        return false;
+    const auto now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    return progress.updated_at <= now && now - progress.updated_at < 120;
 }
 
 // 下载线程上的收尾：先用清单摘要重新核对一遍磁盘上的文件，并在启动前验证签名，
@@ -579,6 +635,8 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
     }
     state->check->SetDisabled(true);
     state->check->SetText(L"正在检查…");
+    if (state->install)
+        state->install->SetDisabled(true);
     state->status->SetText(L"正在检查更新");
     state->status->SetRole(TextRole::Muted);
     state->statusBox->SetVisible(true);
@@ -628,8 +686,30 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                 return;
             }
 
-            state->check->SetText(L"正在下载…");
-            state->status->SetText(L"正在下载 v" + Widen(latest.display) + L"，稍等几分钟");
+            // Server 的后台下载把安装包放在数据目录的 updates/<版本>/ 下，目录名用的是
+            // update_channel 规范化后的版本号。同一版本已经下好就直接复用，不重复下载；
+            // 后台正在下就别再并行下一份，等它下完在「立即安装」那里装。
+            update_channel::Version normalized;
+            std::filesystem::path prepared;
+            if (update_channel::Parse(manifest["version"].get<std::string>(), normalized) && normalized.valid)
+            {
+                if (BackgroundIsDownloading(update_channel::ReadProgress(), normalized.text))
+                {
+                    FinishUpdateDownload(state, true,
+                                         L"发现新版本 v" + Widen(latest.display) +
+                                             L"，后台正在下载，完成后可点击下方「立即安装」");
+                    state->status->SetRole(TextRole::Muted);
+                    return;
+                }
+                const std::filesystem::path directory = update_channel::InstallerDirectory(normalized.text);
+                if (!directory.empty())
+                    prepared = directory / std::filesystem::u8path(name);
+            }
+            std::error_code exists_error;
+            const bool reuse = !prepared.empty() && std::filesystem::is_regular_file(prepared, exists_error);
+            state->check->SetText(reuse ? L"正在核对…" : L"正在下载…");
+            state->status->SetText(reuse ? L"v" + Widen(latest.display) + L" 已在后台下载好，正在核对安装包"
+                                         : L"正在下载 v" + Widen(latest.display) + L"，稍等几分钟");
             state->status->SetRole(TextRole::Muted);
 
             update_download::Request request;
@@ -642,7 +722,11 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
             // 返回一个编码过的结果串（状态\n说明）交给窗口线程。
             RunInBackground(
                 ctx->host.Hwnd(),
-                [request, signed_installer]() {
+                [request, signed_installer, prepared]() {
+                    // 后台下好的那份摘要对得上就直接用；对不上（没下完、被换掉）就照常下载
+                    // 到临时目录，不去动 Server 的文件。
+                    if (!prepared.empty() && update_download::FileMatchesDigest(prepared, request.installer_sha256))
+                        return VerifyAndLaunchInstaller(prepared, request.installer_sha256, signed_installer);
                     const update_download::Result result = update_download::Download(request);
                     if (result.outcome != update_download::Outcome::Ok)
                         return std::string("err\n") +
@@ -722,8 +806,8 @@ VisualPtr BuildAboutPage(PageContext &context)
     {
         auto left = std::make_shared<Column>(0.0f);
         left->Add(MakeLabel(L"自动下载更新", DocStyle(13.0f, DWRITE_FONT_WEIGHT_MEDIUM), TextRole::Primary));
-        auto detail =
-            MakeLabel(L"发现新版本时由输入法后台下载并校验，下载完成后询问是否安装", DocStyle(12.0f), TextRole::Muted);
+        auto detail = MakeLabel(L"发现新版本时由输入法后台下载并校验，下载完成后在这里提示安装，不会弹窗打扰",
+                                DocStyle(12.0f), TextRole::Muted);
         detail->SetMargin({0.0f, 5.0f, 0.0f, 0.0f});
         left->Add(detail);
         // 后台进度：Server 每收到一块数据就更新一次 progress.txt，这里定时读。
@@ -732,15 +816,54 @@ VisualPtr BuildAboutPage(PageContext &context)
         auto progressBox = std::make_shared<Hideable>(progressLabel, false);
         progressBox->SetMargin({0.0f, 3.0f, 0.0f, 0.0f});
         left->Add(progressBox);
+        // 下载好之后的「立即安装」。走和「检查更新」同一条路：重新取清单拿摘要，发现
+        // 数据目录里已有这一版就直接核对、拉起安装程序，不会再下一遍。清单在这期间换成
+        // 了更新的版本时，它会去下那个更新的版本，这正是想要的结果。
+        CssButton::Style installStyle;
+        installStyle.look = CssButton::Look::Accent;
+        // 比「检查更新」小一号：它挂在说明文字下面，是行内的次级动作。
+        installStyle.paddingX = 10.0f;
+        installStyle.paddingY = 3.0f;
+        installStyle.radius = 99.0f;
+        installStyle.fontSize = 11.0f;
+        installStyle.transitionMs = 150.0;
+        installStyle.pressShift = true;
+        installStyle.disabledOpacity = 0.65f;
+        state->install = std::make_shared<CssButton>(L"立即安装", installStyle);
+        {
+            PageContext *ctx = &context;
+            std::weak_ptr<AboutState> weakState = state;
+            state->install->SetOnClick([ctx, weakState]() {
+                const std::shared_ptr<AboutState> locked = weakState.lock();
+                if (locked && !locked->install->IsDisabled())
+                    DownloadUpdate(*ctx, locked);
+            });
+        }
+        auto installBox = std::make_shared<Hideable>(state->install, false);
+        installBox->SetMargin({0.0f, 6.0f, 0.0f, 0.0f});
+        auto installRow = std::make_shared<Row>(0.0f);
+        installRow->Add(installBox);
+        left->Add(installRow);
         // 只持有弱引用：timer 每跑一次就拿一次标签，页面没了就不再碰它，也不会拖住页面。
         std::weak_ptr<Label> weakLabel = progressLabel;
         std::weak_ptr<Hideable> weakBox = progressBox;
-        const auto refresh = [weakLabel, weakBox]() {
+        std::weak_ptr<Hideable> weakInstallBox = installBox;
+        const auto refresh = [model, weakLabel, weakBox, weakInstallBox]() {
             const std::shared_ptr<Label> label = weakLabel.lock();
             const std::shared_ptr<Hideable> box = weakBox.lock();
-            if (!label || !box)
+            const std::shared_ptr<Hideable> install = weakInstallBox.lock();
+            if (!label || !box || !install)
                 return false;
-            const update_channel::DownloadProgress progress = update_channel::ReadProgress();
+            update_channel::DownloadProgress progress = update_channel::ReadProgress();
+            // 进度里的版本已经不比本机新（刚装完，Server 还没轮到收尾），按没有处理。
+            if (progress.state != update_channel::DownloadProgress::State::Idle &&
+                !IsNewerThanCurrent(progress.version))
+                progress.state = update_channel::DownloadProgress::State::Idle;
+            // 自动下载关着时这一行不再提示任何更新状态：进度、失败原因和「立即安装」都收起。
+            // 已经下好的安装包留在数据目录，「检查更新」发现同一版本时仍会直接复用它。
+            if (!model->GetBool("appearance.auto_download_update", false))
+                progress.state = update_channel::DownloadProgress::State::Idle;
+            install->SetVisible(progress.state == update_channel::DownloadProgress::State::Ready);
             std::wstring text;
             TextRole role = TextRole::Muted;
             switch (progress.state)
@@ -759,7 +882,7 @@ VisualPtr BuildAboutPage(PageContext &context)
                 break;
             }
             case update_channel::DownloadProgress::State::Ready:
-                text = L"v" + Widen(progress.version) + L" 已下载并通过校验，等待安装";
+                text = L"新版本 v" + Widen(progress.version) + L" 已下载并通过校验，点击「立即安装」开始更新";
                 role = TextRole::Accent;
                 break;
             case update_channel::DownloadProgress::State::Failed:
@@ -776,16 +899,14 @@ VisualPtr BuildAboutPage(PageContext &context)
             return true;
         };
         refresh();
-        // 每秒读一次进度。tick 里只拿弱引用，页面销毁后下一次触发就自我重置，顺带 KillTimer。
-        auto timer = std::make_shared<std::unique_ptr<UiTimer>>();
-        std::weak_ptr<std::unique_ptr<UiTimer>> weakTimer = timer;
-        *timer = std::make_unique<UiTimer>(context.host.Hwnd(), 1000, [refresh, weakTimer]() {
-            if (refresh())
-                return;
-            if (const auto held = weakTimer.lock())
-                held->reset();
-        });
-        links->Add(std::make_shared<AboutRow>(left, BindToggle(context, "appearance.auto_download_update"), false));
+        // 每秒读一次进度：后台下载的百分比、下载完成后出现「立即安装」都靠它。tick 里只拿
+        // 弱引用，不会反过来拖住页面。
+        state->progressTimer = std::make_unique<UiTimer>(context.host.Hwnd(), 1000, [refresh]() { refresh(); });
+        // 建页时配置快照可能还没到，开关读到的是默认值；快照到了、或用户拨了开关，立刻重算
+        // 一次，不必等下一秒。
+        context.OnConfig([refresh]() { refresh(); });
+        links->Add(std::make_shared<AboutRow>(
+            left, BindToggle(context, "appearance.auto_download_update", [refresh](bool) { refresh(); }), false));
     }
     struct Link
     {

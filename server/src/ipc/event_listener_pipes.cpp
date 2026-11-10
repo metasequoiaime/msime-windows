@@ -15,7 +15,6 @@
 #include "fmt/xchar.h"
 #include "global/globals.h"
 #include "config/ime_config.h"
-#include "settings/update_check.h"
 #include "window/window_hook.h"
 #include "watchdog/watchdog_protocol.h"
 #include "log/candidate_diag_log.h"
@@ -483,9 +482,6 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             if (activation.changed)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
-                // 有客户端刚激活时补一次更新提示：第一次轮询如果还没有宿主连着，
-                // 不会写下“已经提示过”，这里就是补发点。
-                update_check::NotifyClientActivated();
             }
             continue;
         }
@@ -551,9 +547,6 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             if (activation.changed)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
-                // 有客户端刚激活时补一次更新提示：第一次轮询如果还没有宿主连着，
-                // 不会写下“已经提示过”，这里就是补发点。
-                update_check::NotifyClientActivated();
             }
         }
 
@@ -1034,37 +1027,6 @@ void AuxPipeEventListenerLoopThread()
                     // of relaunching, so the settings process can apply files without a
                     // writer on the other end.
                     ExitProcess(WatchdogProtocol::kStopExitCode);
-                }
-                else if (message.rfind(L"InstallUpdate|", 0) == 0)
-                {
-                    // 用户在弹窗里同意安装新版本。安装程序要替换本进程映射着的 TSF DLL，
-                    // 所以先退出让 Watchdog 立刻拉起一份新的 Server，安装程序启动时就不再
-                    // 有旧 DLL 被占用。安装包本身由 Server 在退出前拉起：路径只认数据目录
-                    // 里校验过的那一份，消息里的文件名只用于核对，不直接当成路径信任。
-                    const std::wstring installer = message.substr(std::wstring(L"InstallUpdate|").size());
-                    // 摘要核对、UAC 和安装器启动都可能阻塞十几秒。Aux 是单线程串行
-                    // 监听的，放在这里会让语言栏右键、配置变更、Server 重启全部排队。
-                    // 整段丢到后台线程，监听立刻回到 ConnectNamedPipe。
-                    try
-                    {
-                        std::thread([installer] {
-                            std::wstring error;
-                            if (update_check::LaunchPendingInstaller(installer, error))
-                            {
-                                RestartServerProcess();
-                            }
-                            else if (!error.empty())
-                            {
-                                MessageBoxW(nullptr, error.c_str(), L"水杉输入法",
-                                            MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
-                            }
-                        }).detach();
-                    }
-                    catch (...)
-                    {
-                        MessageBoxW(nullptr, L"无法启动安装程序，请稍后重试。", L"水杉输入法",
-                                    MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
-                    }
                 }
                 else if (message == L"ConfigChanged" || message == L"InputSchemeChanged" ||
                          message == L"CandidateSkinRefresh")

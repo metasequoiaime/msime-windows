@@ -974,13 +974,17 @@ begin
   Result := True;
 end;
 
+{ 只结束这个映像名本身，不带 /T。安装程序可能正是设置窗口「检查更新」拉起的：提权后
+  它的父进程仍是设置进程，而设置进程又挂在 Server、Watchdog 之下。按进程树杀会顺着
+  这条链把正在运行的安装程序自己也一起结束，表现为点「下一步」后向导直接消失。
+  Server 的子进程（面板、设置窗口）由 StopImeProcesses 按映像名逐个结束。}
 procedure StopProcess(const ImageName: String);
 var
   ResultCode: Integer;
 begin
   Exec(
     ExpandConstant('{sys}\taskkill.exe'),
-    '/F /T /IM "' + ImageName + '"',
+    '/F /IM "' + ImageName + '"',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,
@@ -1017,8 +1021,8 @@ begin
   StopProcess('{#MyWatchdogName}');
   StopProcess('{#MyAppExeName}');
   StopSettingsProcess;
-  { 面板通常是 Server 的子进程、随 /T 一起走；Server 若已崩溃它们会变成孤儿，
-    同样占着 server 目录里的 exe，所以显式再收一遍。}
+  { 面板是 Server 的子进程。StopProcess 不再按进程树结束（见上），它们不会随 Server
+    一起走，Server 若已崩溃它们也会变成孤儿，同样占着 server 目录里的 exe，逐个收掉。}
   StopProcess('{#MyEmojiPanelExeName}');
   StopProcess('{#MyKeyboardPanelExeName}');
   StopProcess('{#MyHandwritingPanelExeName}');
