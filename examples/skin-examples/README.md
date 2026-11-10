@@ -38,13 +38,19 @@ examples/skin-examples/
 │  │  └─ assets/
 │  │     ├─ character.png     # 卡片上方的装饰图
 │  │     └─ background.png    # 卡片背景图
-│  └─ sakura-night/           # v2 实机演示「夜樱」：面板后的月亮、APNG 花瓣、GIF 星星
+│  ├─ sakura-night/           # v2 实机演示「夜樱」：面板后的月亮、APNG 花瓣、GIF 星星
+│  │  ├─ skin.toml
+│  │  └─ assets/
+│  │     ├─ panel.png         # 九宫格面板（2 倍图，四角小樱花不随拉伸变形）
+│  │     ├─ moon.png          # 面板下层挂件
+│  │     ├─ petals.apng       # 面板上层的循环 APNG 挂件
+│  │     └─ stars.gif         # 面板上层的循环 GIF 挂件
+│  └─ layout-tiles/           # v2 测试皮肤「排布与平铺」：按排布覆盖、九宫格 round / space
 │     ├─ skin.toml
 │     └─ assets/
-│        ├─ panel.png         # 九宫格面板（2 倍图，四角小樱花不随拉伸变形）
-│        ├─ moon.png          # 面板下层挂件
-│        ├─ petals.apng       # 面板上层的循环 APNG 挂件
-│        └─ stars.gif         # 面板上层的循环 GIF 挂件
+│        ├─ panel*.png        # 竖排用的青色菱形面板（深 / 浅）
+│        ├─ panel-h*.png      # 横排换用的琥珀圆点面板（深 / 浅）
+│        └─ badge-h/v.png     # 只在横排 / 竖排出现的挂件
 ├─ schema/                    # manifest 字段说明
 ├─ tools/                     # 生成样例图片的脚本（需要 Pillow）
 ├─ tests/                     # CI 用的 manifest 与安装脚本测试
@@ -154,6 +160,28 @@ z_index = 2                      # z_index < 1 画在面板之下，其余画在
 ```powershell
 python tools/gen_sakura_night.py skins/sakura-night
 ```
+
+## 测试皮肤：排布与平铺
+
+`layout-tiles` 不是拿来用的皮肤，是给改动渲染或皮肤解析的人实机核对用的。它把「按排布覆盖」和九宫格 `round` / `space` 平铺都用上了，而且画成一眼能数清的样子：面板四边中段每一块都带一个记号，铺了几块就有几个记号；四角的粉色方块永远不该被平铺或拉伸。
+
+| 看哪里 | 横排 | 竖排 |
+|---|---|---|
+| 面板图 | 琥珀边框、圆点记号（`border_image.horizontal` 换了 `source` 与 `light_source`） | 青色边框、菱形记号（共用那张） |
+| 平铺 | 上下边 `space`：圆点按原尺寸排开、间距均匀；左右边拉伸 | 左右边 `round`：菱形整数块、两端正好收口；上下边拉伸 |
+| 挂件 | 左下角三道横杠的标签，竖排里不出现 | 右上角三道竖杠的标签，横排里不出现 |
+| 内边距 / 外留白 | 共用内边距；窗口只在左下留白 | 左侧内边距多 12 DIP，文字右移；窗口只在右上留白 |
+| 版式 | 最小宽 `7em`，预编辑行上移 2 DIP（负外边距） | 最小宽 `10em` |
+
+深浅两套主题各有一张面板图，切换主题时颜色要跟着换。设置页「皮肤」和「外观」两页的预览也要随排布切换挂件与留白。
+
+图片由 `tools/gen_layout_tiles.py` 生成（需要 Pillow）：
+
+```powershell
+python tools/gen_layout_tiles.py skins/layout-tiles
+```
+
+装到本机：把 `skins/layout-tiles/` 整个复制到 `%LOCALAPPDATA%\metasequoiaime\skins\`，在设置的「皮肤」页选「排布与平铺 · v2 测试」。
 
 ## 制作约束
 
