@@ -193,7 +193,19 @@ class AboutRow : public msimeui::Panel
     void Render(msimeui::DeviceResources &dr) override
     {
         if (title_)
-            title_->SetColor(hovered_ ? CurrentPalette().accentStrong : CurrentPalette().text);
+        {
+            // 颜色在这里取，换主题时也跟得上；但只在真的变了才设。Label::SetColor 每次都会
+            // InvalidateVisual，在 Render 里无条件调用会让窗口刚画完又被标脏，陷入每秒上千帧
+            // 的重绘循环——WM_PAINT 优先于 WM_TIMER，整个设置窗口的计时器都会因此饿死。
+            const D2D1_COLOR_F color = hovered_ ? CurrentPalette().accentStrong : CurrentPalette().text;
+            if (!titleColorSet_ || color.r != titleColor_.r || color.g != titleColor_.g || color.b != titleColor_.b ||
+                color.a != titleColor_.a)
+            {
+                titleColor_ = color;
+                titleColorSet_ = true;
+                title_->SetColor(color);
+            }
+        }
         left_->Render(dr);
         if (right_)
             right_->Render(dr);
@@ -258,6 +270,9 @@ class AboutRow : public msimeui::Panel
     SizeF rightSize_ = {};
     std::function<void()> onClick_;
     std::shared_ptr<Label> title_;
+    // 上一次给标题设的颜色，见 Render。
+    D2D1_COLOR_F titleColor_ = {};
+    bool titleColorSet_ = false;
     bool hovered_ = false;
     bool pressed_ = false;
 };
@@ -311,6 +326,10 @@ struct AboutState
     std::shared_ptr<CssButton> check;
     // 后台已下载好安装包时出现在「自动下载更新」一行的「立即安装」。只有正式版才有。
     std::shared_ptr<CssButton> install;
+    // 每秒读一次后台进度。放在这里是为了让它跟页面同生共死：页面根节点（OwnerBox）持有
+    // AboutState，页面销毁时定时器随之析构并 KillTimer。放在局部变量里会在建页结束时就被
+    // 析构，进度只在打开页面那一刻读一次。
+    std::unique_ptr<UiTimer> progressTimer;
     std::shared_ptr<Label> status;
     std::shared_ptr<Hideable> statusBox;
     // Set once the user-data backup section exists. Kept here so the page owns the
@@ -829,7 +848,7 @@ VisualPtr BuildAboutPage(PageContext &context)
         std::weak_ptr<Label> weakLabel = progressLabel;
         std::weak_ptr<Hideable> weakBox = progressBox;
         std::weak_ptr<Hideable> weakInstallBox = installBox;
-        const auto refresh = [weakLabel, weakBox, weakInstallBox]() {
+        const auto refresh = [model, weakLabel, weakBox, weakInstallBox]() {
             const std::shared_ptr<Label> label = weakLabel.lock();
             const std::shared_ptr<Hideable> box = weakBox.lock();
             const std::shared_ptr<Hideable> install = weakInstallBox.lock();
@@ -839,6 +858,10 @@ VisualPtr BuildAboutPage(PageContext &context)
             // 进度里的版本已经不比本机新（刚装完，Server 还没轮到收尾），按没有处理。
             if (progress.state != update_channel::DownloadProgress::State::Idle &&
                 !IsNewerThanCurrent(progress.version))
+                progress.state = update_channel::DownloadProgress::State::Idle;
+            // 自动下载关着时这一行不再提示任何更新状态：进度、失败原因和「立即安装」都收起。
+            // 已经下好的安装包留在数据目录，「检查更新」发现同一版本时仍会直接复用它。
+            if (!model->GetBool("appearance.auto_download_update", false))
                 progress.state = update_channel::DownloadProgress::State::Idle;
             install->SetVisible(progress.state == update_channel::DownloadProgress::State::Ready);
             std::wstring text;
@@ -876,16 +899,14 @@ VisualPtr BuildAboutPage(PageContext &context)
             return true;
         };
         refresh();
-        // 每秒读一次进度。tick 里只拿弱引用，页面销毁后下一次触发就自我重置，顺带 KillTimer。
-        auto timer = std::make_shared<std::unique_ptr<UiTimer>>();
-        std::weak_ptr<std::unique_ptr<UiTimer>> weakTimer = timer;
-        *timer = std::make_unique<UiTimer>(context.host.Hwnd(), 1000, [refresh, weakTimer]() {
-            if (refresh())
-                return;
-            if (const auto held = weakTimer.lock())
-                held->reset();
-        });
-        links->Add(std::make_shared<AboutRow>(left, BindToggle(context, "appearance.auto_download_update"), false));
+        // 每秒读一次进度：后台下载的百分比、下载完成后出现「立即安装」都靠它。tick 里只拿
+        // 弱引用，不会反过来拖住页面。
+        state->progressTimer = std::make_unique<UiTimer>(context.host.Hwnd(), 1000, [refresh]() { refresh(); });
+        // 建页时配置快照可能还没到，开关读到的是默认值；快照到了、或用户拨了开关，立刻重算
+        // 一次，不必等下一秒。
+        context.OnConfig([refresh]() { refresh(); });
+        links->Add(std::make_shared<AboutRow>(
+            left, BindToggle(context, "appearance.auto_download_update", [refresh](bool) { refresh(); }), false));
     }
     struct Link
     {
