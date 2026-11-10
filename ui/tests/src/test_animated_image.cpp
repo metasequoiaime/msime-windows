@@ -850,6 +850,24 @@ TEST_CASE(nine_slice_follows_css_border_image)
     const TempFile markedFile(markedPng, L".png");
     ID2D1Bitmap *markedBitmap = resources.GetImageFrame(markedFile.path);
     REQUIRE(markedBitmap != nullptr);
+    // Same image with the last row of the left/top strips marked: round lands it exactly on the
+    // part's far edge, repeat clips it and leaves the previous row at the edge.
+    std::vector<Rgba> bottomMarked = pixels;
+    for (uint32_t x = 0; x < 3; ++x)
+    {
+        bottomMarked[5 * 9 + x] = kWhite;
+    }
+    for (uint32_t y = 0; y < 3; ++y)
+    {
+        bottomMarked[y * 9 + 5] = kWhite;
+    }
+    std::vector<uint8_t> bottomPng = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    PutChunk(bottomPng, "IHDR", Ihdr(9, 9));
+    PutChunk(bottomPng, "IDAT", RgbaScanlines(9, 9, bottomMarked));
+    PutChunk(bottomPng, "IEND", {});
+    const TempFile bottomFile(bottomPng, L".png");
+    ID2D1Bitmap *bottomMarkedBitmap = resources.GetImageFrame(bottomFile.path);
+    REQUIRE(bottomMarkedBitmap != nullptr);
 
     for (const float dpi : {96.0f, 120.0f, 144.0f, 192.0f})
     {
@@ -947,7 +965,7 @@ TEST_CASE(nine_slice_follows_css_border_image)
         msimeui::NineSlice tiledY;
         tiledY.slice = {3.0f, 3.0f, 3.0f, 3.0f};
         tiledY.width = {8.0f, 8.0f, 8.0f, 8.0f};
-        tiledY.repeatY = true;
+        tiledY.repeatY = msimeui::NineSliceRepeat::Repeat;
         out = render(tiledY, {5.0f, 5.0f, 40.0f, 30.0f});
         REQUIRE(whiteBands(out, true) >= 3);
         // The same strip stretched shows the marker once.
@@ -957,11 +975,37 @@ TEST_CASE(nine_slice_follows_css_border_image)
         msimeui::NineSlice tiledX;
         tiledX.slice = {3.0f, 3.0f, 3.0f, 3.0f};
         tiledX.width = {8.0f, 8.0f, 8.0f, 8.0f};
-        tiledX.repeatX = true;
+        tiledX.repeatX = msimeui::NineSliceRepeat::Repeat;
         out = render(tiledX, {5.0f, 5.0f, 40.0f, 30.0f});
         REQUIRE(whiteBands(out, false) >= 3);
         REQUIRE(whiteBands(render(nineSlice, {5.0f, 5.0f, 40.0f, 30.0f}), false) == 1);
         REQUIRE(Near(at(out, 9.0f, 9.0f), kRed, 2));
+
+        // round 缩放到整数块：7 DIP 装 2 块 3 DIP 的条带，末块的最后一格正好落在 part 底边；
+        // repeat 的末块被裁掉，底边留下的是前一行。
+        bitmap = bottomMarkedBitmap;
+        msimeui::NineSlice rounded;
+        rounded.slice = {3.0f, 3.0f, 3.0f, 3.0f};
+        rounded.width = {8.0f, 8.0f, 8.0f, 8.0f};
+        rounded.repeatY = msimeui::NineSliceRepeat::Round;
+        const auto nearBottomIsWhite = [&](const std::vector<uint8_t> &image) {
+            const Rgba pixel = at(image, 7.0f, 19.5f);
+            return pixel.r > 90 && pixel.g > 200 && pixel.b > 90;
+        };
+        REQUIRE(nearBottomIsWhite(render(rounded, {5.0f, 5.0f, 40.0f, 23.0f})));
+        rounded.repeatY = msimeui::NineSliceRepeat::Repeat;
+        REQUIRE(!nearBottomIsWhite(render(rounded, {5.0f, 5.0f, 40.0f, 23.0f})));
+
+        // space 把 14 DIP 里多出的 2 DIP 均分成 3 道空隙：4 块 3 DIP 的条带。
+        bitmap = markedBitmap;
+        msimeui::NineSlice spaced;
+        spaced.slice = {3.0f, 3.0f, 3.0f, 3.0f};
+        spaced.width = {8.0f, 8.0f, 8.0f, 8.0f};
+        spaced.repeatY = msimeui::NineSliceRepeat::Space;
+        REQUIRE(whiteBands(render(spaced, {5.0f, 5.0f, 40.0f, 30.0f}), true) == 4);
+        // 边长正好是整数块（12 DIP = 4 块、空隙为 0）时也要逐块摆放，不能只画一块再把最后一行拉满。
+        // 非整数 DPI 下像素对齐会让边长差零点几 DIP，这里只要求明显是平铺出来的多块。
+        REQUIRE(whiteBands(render(spaced, {5.0f, 5.0f, 40.0f, 28.0f}), true) >= 3);
         bitmap = resources.GetImageFrame(file.path);
     }
 }

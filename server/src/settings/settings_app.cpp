@@ -324,6 +324,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
                  {"layouts", skin.layouts},
                  {"themes", skin.themes},
                  {"decorationTopDip", skin.decorationTopDip},
+                 {"decorationLayouts", skin.decorationLayouts},
                  {"compatible", CandidateSkinCatalog::Supports(skin, skin_layout, skin_theme)}});
         }
     }
