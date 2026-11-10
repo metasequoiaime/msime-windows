@@ -181,6 +181,44 @@ int main()
                     position(min_list, "敏") < position(min_list, "瞑"),
                 "fuzzy merge ignored weights");
         require(min_list.at(position(min_list, "明")).fuzzy && !min_list.at(0).fuzzy, "fuzzy flag lost");
+        // 回归 #1172：词格先猜出的整句与模糊读音的词库行同词时，留下的必须是词库行。
+        // 留下整句的话，选中时 adjust_candidate_ranking 会把它当非词库来源直接回滚，
+        // 用户怎么选都调不动。整句的 canonical 是猜出来的读音，可能和词库行不同，
+        // 所以两种都验：qingdian 的「亲电」猜成 qin'dian，zhixin 的「执行」猜成 zhi'xin。
+        {
+            WordItem guessed("qing'dian", "亲电", 1234, CandidateSource::Generated, "qin'dian");
+            guessed.sentence_association = true;
+            WordItem real("qing'dian", "亲电", 166, CandidateSource::Database, "qin'dian");
+            real.fuzzy = true;
+            const auto merged =
+                quanpin::merge_fuzzy_candidates(std::vector<WordItem>{guessed}, std::vector<WordItem>{real},
+                                                [](const WordItem &item) { return item.pinyin.size(); });
+            require(merged.size() == 1 && merged.front().source == CandidateSource::Database &&
+                        merged.front().weight == 166 && merged.front().fuzzy,
+                    "guessed sentence shadowed the fuzzy dictionary row");
+        }
+        {
+            WordItem guessed("zhi'xin", "执行", 1, CandidateSource::Fallback, "zhi'xin");
+            guessed.sentence_association = true;
+            WordItem real("zhi'xin", "执行", 549104, CandidateSource::Database, "zhi'xing");
+            real.fuzzy = true;
+            const auto merged =
+                quanpin::merge_fuzzy_candidates(std::vector<WordItem>{guessed}, std::vector<WordItem>{real},
+                                                [](const WordItem &item) { return item.pinyin.size(); });
+            require(merged.size() == 1 && merged.front().weight == 549104,
+                    "guessed sentence with a different canonical shadowed the fuzzy row");
+        }
+        // 精确读音的词库行本来就是可调频的，模糊同词照旧去重，不抢它的位置。
+        {
+            WordItem exact_row("qing'dian", "亲电", 1548, CandidateSource::Database, "qing'dian");
+            WordItem fuzzy_row("qing'dian", "亲电", 166, CandidateSource::Database, "qin'dian");
+            fuzzy_row.fuzzy = true;
+            const auto merged =
+                quanpin::merge_fuzzy_candidates(std::vector<WordItem>{exact_row}, std::vector<WordItem>{fuzzy_row},
+                                                [](const WordItem &item) { return item.pinyin.size(); });
+            require(merged.size() == 1 && merged.front().weight == 1548,
+                    "fuzzy row displaced the exact dictionary row");
+        }
         // 整句：词格收模糊读音的跨度，canonical 记真实读音，pinyin 仍是敲的。
         SentenceAssociationOptions lattice_only;
         lattice_only.word_lattice = true;
