@@ -519,9 +519,8 @@ VisualPtr BuildAppearancePage(PageContext &context)
                 options.helpcode = false;
             // 翻页箭头与卷轴展开按钮由预览按皮肤清单自己决定，与候选窗同一套判定。
             const Json *external = skinpreview::FindExternalSkin(*model, skin);
-            previewBox->SetDecorated(external && external->contains("decorationTopDip") &&
-                                     (*external)["decorationTopDip"].is_number() &&
-                                     (*external)["decorationTopDip"].get<double>() > 0.0);
+            previewBox->SetDecorated(skinpreview::HasDecorationInLayout(external, horizontal));
+
             control->Set(*model, skin, light, font, options);
         });
     }

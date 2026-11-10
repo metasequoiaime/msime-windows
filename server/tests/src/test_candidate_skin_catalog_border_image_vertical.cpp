@@ -354,3 +354,39 @@ TEST_CASE(candidate_skin_catalog_rejects_invalid_vertical_content_insets)
     REQUIRE(LoadFails(L"insets-negative", head + "vertical = { left = -1 }\n"));
     REQUIRE(LoadFails(L"insets-too-big", head + "vertical = { right = 501 }\n"));
 }
+
+TEST_CASE(candidate_skin_catalog_rejects_missing_horizontal_border_image)
+{
+    // horizontal 覆盖和 vertical 一样要检查图片在不在，写错路径时整套皮肤加载失败而不是画成透明。
+    REQUIRE(LoadFails(L"horizontal-missing-source", R"(
+[candidate_window.border_image]
+source = "assets/vertical.png"
+slice_dip = [8]
+
+[candidate_window.border_image.horizontal]
+source = "assets/typo.png"
+)"));
+    REQUIRE(LoadFails(L"horizontal-missing-light", R"(
+[candidate_window.border_image]
+source = "assets/vertical.png"
+slice_dip = [8]
+
+[candidate_window.border_image.horizontal]
+source = "assets/horizontal.png"
+light_source = "assets/typo.png"
+)"));
+    const auto root = WriteSkin(L"horizontal-present", R"(
+[candidate_window.border_image]
+source = "assets/vertical.png"
+slice_dip = [8]
+
+[candidate_window.border_image.horizontal]
+source = "assets/horizontal.png"
+)");
+    std::string error;
+    const auto package = CandidateSkinCatalog::Load(root, "art", &error);
+    REQUIRE(package.has_value());
+    REQUIRE(package->borderImageHorizontal.has_value());
+    REQUIRE_EQ(package->borderImageHorizontal->source, std::string("assets/horizontal.png"));
+    RemoveSkin(root);
+}

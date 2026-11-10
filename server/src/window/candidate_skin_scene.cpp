@@ -843,10 +843,7 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
         if (!package->backgroundImage.empty())
             backgroundPath = packageRoot + Widen(package->backgroundImage);
         // 老式装饰图也支持 layouts：没写的横竖都画，写了的只在对应排布里出现。
-        const bool decorationMatchesLayout =
-            package->decorationLayouts.empty() ||
-            std::find(package->decorationLayouts.begin(), package->decorationLayouts.end(),
-                      horizontalLayout ? "horizontal" : "vertical") != package->decorationLayouts.end();
+        const bool decorationMatchesLayout = CandidateSkinLayers::MatchesLayout(package->decorationLayouts, skinLayout);
         decorationShown = !decorationPath.empty() && decorationTopDip > 0.0f && decorationMatchesLayout;
         cardMinWidthDip = (std::max)(cardMinWidthDip, static_cast<float>(package->minWidthDip));
         cardMinWidthDip = (std::max)(cardMinWidthDip, static_cast<float>(tokens.minWidthDip));
@@ -910,8 +907,7 @@ CandidateSkinScene::Result CandidateSkinScene::Apply(const Settings &settings)
         if (package && package->schemaVersion >= 2)
         {
             // 挂件可以声明 layouts，横竖各用自己那一套；没声明的横竖都画。
-            layers = CandidateSkinLayers::SplitDecorations(
-                CandidateSkinLayers::FilterDecorationsForLayout(package->freeDecorations, horizontalLayout));
+            layers = CandidateSkinLayers::SplitDecorations(package->freeDecorations, skinLayout);
         }
         skinOverlayBack_->SetItems(OverlayItems(layers.below, packageRoot));
         skinOverlayFront_->SetItems(OverlayItems(layers.above, packageRoot));

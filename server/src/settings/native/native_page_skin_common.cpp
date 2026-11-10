@@ -3,6 +3,7 @@
 #include "settings/native/native_page_help_widgets.h"
 #include "skin/candidate_skin_catalog.h"
 #include "utils/common_utils.h"
+#include "window/candidate_skin_layers.h"
 #include "window/candidate_skin_palette.h"
 #include "window/floating_toolbar_skin.h"
 
@@ -87,6 +88,25 @@ const Json *FindExternalSkin(const SettingsModel &model, const std::string &id)
             return &skin;
     }
     return nullptr;
+}
+
+bool HasDecorationInLayout(const Json *external, bool horizontal)
+{
+    if (!external || !external->contains("decorationTopDip") || !(*external)["decorationTopDip"].is_number() ||
+        (*external)["decorationTopDip"].get<double>() <= 0.0)
+        return false;
+    std::vector<std::string> layouts;
+    const auto found = external->find("decorationLayouts");
+    if (found != external->end() && found->is_array())
+    {
+        for (const auto &layout : *found)
+        {
+            if (layout.is_string())
+                layouts.push_back(layout.get<std::string>());
+        }
+    }
+    return CandidateSkinLayers::MatchesLayout(layouts, horizontal ? CandidateSkinLayers::CandidateLayout::Horizontal
+                                                                  : CandidateSkinLayers::CandidateLayout::Vertical);
 }
 
 std::string SkinBase(const SettingsModel &model, const std::string &id)

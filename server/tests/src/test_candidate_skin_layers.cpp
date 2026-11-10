@@ -201,11 +201,18 @@ TEST_CASE(candidate_skin_layers_filter_decorations_by_layout)
     vertical.layouts = {"vertical"};
     const std::vector<CandidateSkinCatalog::FreeDecoration> decorations = {both, horizontal, vertical};
 
-    REQUIRE_EQ(Images(CandidateSkinLayers::FilterDecorationsForLayout(decorations, true)),
+    using Layout = CandidateSkinLayers::CandidateLayout;
+    REQUIRE_EQ(Images(CandidateSkinLayers::FilterDecorationsForLayout(decorations, Layout::Horizontal)),
                std::vector<std::string>({"both", "horizontal"}));
-    REQUIRE_EQ(Images(CandidateSkinLayers::FilterDecorationsForLayout(decorations, false)),
+    REQUIRE_EQ(Images(CandidateSkinLayers::FilterDecorationsForLayout(decorations, Layout::Vertical)),
                std::vector<std::string>({"both", "vertical"}));
     // 没写 layouts 的横竖都画；全都写了不匹配的排布时为空。
-    REQUIRE(CandidateSkinLayers::FilterDecorationsForLayout({both}, false).size() == 1);
-    REQUIRE(CandidateSkinLayers::FilterDecorationsForLayout({vertical}, true).empty());
+    REQUIRE(CandidateSkinLayers::FilterDecorationsForLayout({both}, Layout::Vertical).size() == 1);
+    REQUIRE(CandidateSkinLayers::FilterDecorationsForLayout({vertical}, Layout::Horizontal).empty());
+    // SplitDecorations 给了排布时先筛再分层，与老式装饰图共用同一个 MatchesLayout。
+    const CandidateSkinLayers::Layers layers = CandidateSkinLayers::SplitDecorations(decorations, Layout::Vertical);
+    REQUIRE_EQ(Images(layers.above), std::vector<std::string>({"both", "vertical"}));
+    REQUIRE(CandidateSkinLayers::MatchesLayout({}, Layout::Horizontal));
+    REQUIRE(CandidateSkinLayers::MatchesLayout({"horizontal", "vertical"}, Layout::Vertical));
+    REQUIRE(!CandidateSkinLayers::MatchesLayout({"horizontal"}, Layout::Vertical));
 }

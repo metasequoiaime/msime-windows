@@ -1003,6 +1003,9 @@ TEST_CASE(nine_slice_follows_css_border_image)
         spaced.width = {8.0f, 8.0f, 8.0f, 8.0f};
         spaced.repeatY = msimeui::NineSliceRepeat::Space;
         REQUIRE(whiteBands(render(spaced, {5.0f, 5.0f, 40.0f, 30.0f}), true) == 4);
+        // 边长正好是整数块（12 DIP = 4 块、空隙为 0）时也要逐块摆放，不能只画一块再把最后一行拉满。
+        // 非整数 DPI 下像素对齐会让边长差零点几 DIP，这里只要求明显是平铺出来的多块。
+        REQUIRE(whiteBands(render(spaced, {5.0f, 5.0f, 40.0f, 28.0f}), true) >= 3);
         bitmap = resources.GetImageFrame(file.path);
     }
 }

@@ -2,6 +2,8 @@
 
 #include "skin/candidate_skin_catalog.h"
 
+#include <optional>
+#include <string>
 #include <vector>
 
 // v2（canvas）皮肤在候选窗里的几何：九宫格切片与边宽、内容内边距、挂件分层。只做数值换算，
@@ -64,10 +66,15 @@ struct Layers
     std::vector<CandidateSkinCatalog::FreeDecoration> above;
 };
 
+// 挂件 / 装饰图的 layouts：空表示横竖都显示，否则只在列出的排布里显示。
+bool MatchesLayout(const std::vector<std::string> &layouts, CandidateLayout layout);
+
 // 按 z_index 升序稳定排序（同层保持声明顺序），再以 kDecorationFrontZIndex 为界分成两层。
-Layers SplitDecorations(const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations);
+// 给了 layout 时先去掉不在这种排布里显示的挂件。
+Layers SplitDecorations(const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations,
+                        std::optional<CandidateLayout> layout = std::nullopt);
 
 // 挂件声明了 layouts 时只保留当前排布能用的那些；没声明的横竖都保留。保持声明顺序。
 std::vector<CandidateSkinCatalog::FreeDecoration> FilterDecorationsForLayout(
-    const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations, bool horizontal);
+    const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations, CandidateLayout layout);
 } // namespace CandidateSkinLayers

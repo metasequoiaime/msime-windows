@@ -103,9 +103,18 @@ Edges ResolveContentPadding(const CandidateSkinCatalog::Package &package, double
             border.left + basePadding};
 }
 
-Layers SplitDecorations(const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations)
+bool MatchesLayout(const std::vector<std::string> &layouts, CandidateLayout layout)
 {
-    std::vector<CandidateSkinCatalog::FreeDecoration> sorted = decorations;
+    const char *wanted = layout == CandidateLayout::Horizontal ? "horizontal" : "vertical";
+    return layouts.empty() || std::find(layouts.begin(), layouts.end(), wanted) != layouts.end();
+}
+
+Layers SplitDecorations(const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations,
+                        std::optional<CandidateLayout> layout)
+{
+    // 按排布筛选和排序前的拷贝合成一步，不另建一份筛选结果。
+    std::vector<CandidateSkinCatalog::FreeDecoration> sorted =
+        layout ? FilterDecorationsForLayout(decorations, *layout) : decorations;
     std::stable_sort(sorted.begin(), sorted.end(),
                      [](const CandidateSkinCatalog::FreeDecoration &a, const CandidateSkinCatalog::FreeDecoration &b) {
                          return a.zIndex < b.zIndex;
@@ -120,15 +129,13 @@ Layers SplitDecorations(const std::vector<CandidateSkinCatalog::FreeDecoration> 
 }
 
 std::vector<CandidateSkinCatalog::FreeDecoration> FilterDecorationsForLayout(
-    const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations, bool horizontal)
+    const std::vector<CandidateSkinCatalog::FreeDecoration> &decorations, CandidateLayout layout)
 {
-    const std::string wanted = horizontal ? "horizontal" : "vertical";
     std::vector<CandidateSkinCatalog::FreeDecoration> filtered;
     filtered.reserve(decorations.size());
     for (const auto &decoration : decorations)
     {
-        if (decoration.layouts.empty() ||
-            std::find(decoration.layouts.begin(), decoration.layouts.end(), wanted) != decoration.layouts.end())
+        if (MatchesLayout(decoration.layouts, layout))
         {
             filtered.push_back(decoration);
         }

@@ -234,3 +234,27 @@ TEST_CASE(candidate_skin_catalog_rejects_invalid_vertical_outer_insets)
     REQUIRE(LoadFails(L"outer-negative", head + "vertical = { left = -1 }\n"));
     REQUIRE(LoadFails(L"outer-too-big", head + "vertical = { top = 501 }\n"));
 }
+
+TEST_CASE(candidate_skin_catalog_reads_shared_min_width_em)
+{
+    // 共用表和 horizontal / vertical 子表的 min_width_dip 写法一致，都接受 "Nem"。
+    const auto root = WriteSkin(L"shared-min-width-em", "min_width_dip = \"10em\"\n");
+    std::string error;
+    const auto package = CandidateSkinCatalog::Load(root, "art", &error);
+    REQUIRE(error.empty());
+    REQUIRE(package.has_value());
+    REQUIRE(package->geometry.minWidthDip.has_value());
+    REQUIRE(package->geometry.minWidthDip->em);
+    REQUIRE_EQ(package->geometry.minWidthDip->value, 10.0);
+    REQUIRE_EQ(package->minWidthDip, 0.0);
+    RemoveSkin(root);
+
+    const auto numeric = WriteSkin(L"shared-min-width-number", "min_width_dip = 240\n");
+    const auto numericPackage = CandidateSkinCatalog::Load(numeric, "art", &error);
+    REQUIRE(numericPackage.has_value());
+    REQUIRE_EQ(numericPackage->minWidthDip, 240.0);
+    RemoveSkin(numeric);
+
+    REQUIRE(LoadFails(L"shared-min-width-bad", "min_width_dip = \"wide\"\n"));
+    REQUIRE(LoadFails(L"shared-min-width-negative", "min_width_dip = -1\n"));
+}

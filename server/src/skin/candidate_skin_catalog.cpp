@@ -232,6 +232,45 @@ bool ReadInsetSide(const toml::table &table, const char *key, double maximum, do
     return true;
 }
 
+// 按排布覆盖四边：从 base 出发，只改子表里写了的边。上下边的上限是 verticalMaximum，左右边是 horizontalMaximum。
+bool ReadInsetsOverride(const toml::table &table, const InsetsDip &base, double verticalMaximum,
+                        double horizontalMaximum, InsetsDip &out)
+{
+    out = base;
+    return ReadInsetSide(table, "top", verticalMaximum, out.top) &&
+           ReadInsetSide(table, "right", horizontalMaximum, out.right) &&
+           ReadInsetSide(table, "bottom", verticalMaximum, out.bottom) &&
+           ReadInsetSide(table, "left", horizontalMaximum, out.left);
+}
+
+// [<where>.horizontal] / [<where>.vertical] 两张按排布覆盖的子表共用的外壳：子表不存在就跳过，
+// 存在就必须是表，然后交给 read(子表, 是否横排, 子表全名) 解析；read 返回 false 时自己写好 error。
+// 两张子表地位相同、互不继承，都只覆盖与共用那份不同的键。
+template <typename Read>
+bool ReadLayoutOverrides(const toml::table &parent, const std::string &where, std::string *error, Read &&read)
+{
+    for (const char *key : {"horizontal", "vertical"})
+    {
+        const toml::node *node = parent.get(key);
+        if (!node)
+        {
+            continue;
+        }
+        const std::string name = where + "." + key;
+        const auto *table = node->as_table();
+        if (!table)
+        {
+            SetError(error, name + " 必须是表");
+            return false;
+        }
+        if (!read(*table, std::string_view(key) == "horizontal", name))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ReadEnum(const toml::table &table, const char *key, const std::vector<std::string> &allowed, std::string &out)
 {
     if (!table.contains(key))
@@ -347,8 +386,10 @@ bool ReadOptionalBounded(const toml::table &table, const char *key, double maxim
     return true;
 }
 
-// v2 的四边数值（切片、边宽）：1、2 或 4 个 0–500 的数，按 CSS 简写展开。键不存在时什么也不做。
-bool ReadBoxValues(const toml::table &table, const char *key, std::vector<double> &out)
+// v2 的四边数值：1、2 或 4 个 minimum–500 的数，按 CSS 简写展开。键不存在时什么也不做。
+// 切片、边宽用默认的 0 下限；预编辑行外边距可以是负的（minimum = -500）：负的上外边距把
+// 预编辑行往上挪，配合正的下外边距可以让后面的候选列表留在原处。
+bool ReadBoxValues(const toml::table &table, const char *key, std::vector<double> &out, double minimum = 0.0)
 {
     const toml::node *node = table.get(key);
     if (!node)
@@ -363,33 +404,7 @@ bool ReadBoxValues(const toml::table &table, const char *key, std::vector<double
     for (const auto &item : *array)
     {
         const auto number = item.value<double>();
-        if (!number || !std::isfinite(*number) || *number < 0.0 || *number > 500.0)
-        {
-            return false;
-        }
-        out.push_back(*number);
-    }
-    return true;
-}
-
-// 可正可负的四边数值（预编辑行外边距）：1、2 或 4 个 -500–500 的数，按 CSS 简写展开。
-// 负的上外边距把预编辑行往上挪，配合正的下外边距可以让后面的候选列表留在原处。
-bool ReadSignedBoxValues(const toml::table &table, const char *key, std::vector<double> &out)
-{
-    const toml::node *node = table.get(key);
-    if (!node)
-    {
-        return true;
-    }
-    const auto *array = node->as_array();
-    if (!array || (array->size() != 1 && array->size() != 2 && array->size() != 4))
-    {
-        return false;
-    }
-    for (const auto &item : *array)
-    {
-        const auto number = item.value<double>();
-        if (!number || !std::isfinite(*number) || *number < -500.0 || *number > 500.0)
+        if (!number || !std::isfinite(*number) || *number < minimum || *number > 500.0)
         {
             return false;
         }
@@ -985,7 +1000,7 @@ bool ReadGeometry(const toml::table &table, CandidateGeometry &out)
         return false;
     }
     std::vector<double> margin;
-    if (!ReadSignedBoxValues(table, "preedit_margin_dip", margin))
+    if (!ReadBoxValues(table, "preedit_margin_dip", margin, -500.0))
     {
         return false;
     }
@@ -1429,11 +1444,17 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                 package.notices.push_back(ignored + " 只在 base = \"canvas\" 时生效，已忽略");
             }
         }
-        package.minWidthDip = BoundedNumber(*window, "min_width_dip", 1000.0);
-        if (package.minWidthDip < 0.0)
+        // 与 horizontal / vertical 子表同一个读法（数值或 "Nem"）。数值写法记进老字段；
+        // "Nem" 写法由后面 ReadLook 读进 geometry.minWidthDip，按字号换算后生效。
+        std::optional<Length> minWidth;
+        if (!ReadLength(*window, "min_width_dip", 1000.0, 10.0, minWidth))
         {
             SetError(error, "candidate_window.min_width_dip 超出范围");
             return std::nullopt;
+        }
+        if (minWidth && !minWidth->em)
+        {
+            package.minWidthDip = minWidth->value;
         }
         // 装饰图是可选的：没有这张表就没有装饰；有这张表时图片和两个尺寸都必须给出。
         if (const toml::node *decorationNode = window->get("decoration"))
@@ -1525,38 +1546,25 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                 {
                     return std::nullopt;
                 }
-                // 横排 / 竖排覆盖：都只写与共用那份不同的键，其余继承。两张子表地位相同，
-                // 互不继承；解析顺序不影响结果。
-                const auto readOverride = [&](const char *key, std::optional<BorderImage> &target,
-                                              const std::string &where) {
-                    const toml::node *node = borderImageTable->get(key);
-                    if (!node)
-                    {
+                // 横排 / 竖排覆盖：都只写与共用那份不同的键，其余继承。
+                const bool overridesValid = ReadLayoutOverrides(
+                    *borderImageTable, "candidate_window.border_image", error,
+                    [&](const toml::table &table, bool horizontal, const std::string &where) {
+                        BorderImage image;
+                        if (!ReadBorderImage(table, &bi, image, error, where.c_str()))
+                        {
+                            return false;
+                        }
+                        // 浅色图跟着 source 走：覆盖表换了 source 又没写 light_source 时，
+                        // 共用那张浅色图是按另一张图的几何画的，不能沿用。
+                        if (!table.contains("light_source") && table.contains("source") && image.source != bi.source)
+                        {
+                            image.lightSource.clear();
+                        }
+                        (horizontal ? package.borderImageHorizontal : package.borderImageVertical) = image;
                         return true;
-                    }
-                    const auto *table = node->as_table();
-                    if (!table)
-                    {
-                        SetError(error, where + " 必须是表");
-                        return false;
-                    }
-                    BorderImage image;
-                    if (!ReadBorderImage(*table, &bi, image, error, where.c_str()))
-                    {
-                        return false;
-                    }
-                    // 浅色图跟着 source 走：覆盖表换了 source 又没写 light_source 时，
-                    // 共用那张浅色图是按另一张图的几何画的，不能沿用。
-                    if (!table->contains("light_source") && table->contains("source") && image.source != bi.source)
-                    {
-                        image.lightSource.clear();
-                    }
-                    target = image;
-                    return true;
-                };
-                if (!readOverride("horizontal", package.borderImageHorizontal,
-                                  "candidate_window.border_image.horizontal") ||
-                    !readOverride("vertical", package.borderImageVertical, "candidate_window.border_image.vertical"))
+                    });
+                if (!overridesValid)
                 {
                     return std::nullopt;
                 }
@@ -1595,46 +1603,28 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                     clampToBorder = *clamp;
                 }
                 package.contentInsetsClampToBorder = clampToBorder;
-                // 横排 / 竖排覆盖：只写要改的边，其余沿用上面那份；两张子表地位相同，互不继承。
-                const auto readOverride = [&](const char *key, std::optional<InsetsDip> &target,
-                                              std::optional<bool> &clampTarget, const std::string &where) {
-                    const toml::node *node = insetsTable->get(key);
-                    if (!node)
-                    {
+                // 横排 / 竖排覆盖：只写要改的边，其余沿用上面那份。
+                const bool overridesValid = ReadLayoutOverrides(
+                    *insetsTable, "candidate_window.content_insets_dip", error,
+                    [&](const toml::table &table, bool horizontal, const std::string &where) {
+                        InsetsDip override;
+                        if (!ReadInsetsOverride(table, insets, 200.0, 500.0, override))
+                        {
+                            SetError(error, where + " 数值超出范围");
+                            return false;
+                        }
+                        std::optional<bool> clampOverride;
+                        if (!ReadOptionalBool(table, "clamp_to_border", clampOverride))
+                        {
+                            SetError(error, where + ".clamp_to_border 必须是 true 或 false");
+                            return false;
+                        }
+                        (horizontal ? package.contentInsetsDipHorizontal : package.contentInsetsDipVertical) = override;
+                        (horizontal ? package.contentInsetsClampToBorderHorizontal
+                                    : package.contentInsetsClampToBorderVertical) = clampOverride;
                         return true;
-                    }
-                    const auto *table = node->as_table();
-                    if (!table)
-                    {
-                        SetError(error, where + " 必须是表");
-                        return false;
-                    }
-                    InsetsDip override = insets;
-                    const bool valid = ReadInsetSide(*table, "top", 200.0, override.top) &&
-                                       ReadInsetSide(*table, "right", 500.0, override.right) &&
-                                       ReadInsetSide(*table, "bottom", 200.0, override.bottom) &&
-                                       ReadInsetSide(*table, "left", 500.0, override.left);
-                    if (!valid)
-                    {
-                        SetError(error, where + " 数值超出范围");
-                        return false;
-                    }
-                    std::optional<bool> clampOverride;
-                    if (!ReadOptionalBool(*table, "clamp_to_border", clampOverride))
-                    {
-                        SetError(error, where + ".clamp_to_border 必须是 true 或 false");
-                        return false;
-                    }
-                    target = override;
-                    clampTarget = clampOverride;
-                    return true;
-                };
-                if (!readOverride("horizontal", package.contentInsetsDipHorizontal,
-                                  package.contentInsetsClampToBorderHorizontal,
-                                  "candidate_window.content_insets_dip.horizontal") ||
-                    !readOverride("vertical", package.contentInsetsDipVertical,
-                                  package.contentInsetsClampToBorderVertical,
-                                  "candidate_window.content_insets_dip.vertical"))
+                    });
+                if (!overridesValid)
                 {
                     return std::nullopt;
                 }
@@ -1666,36 +1656,19 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
                 }
                 package.outerInsetsDip = outer;
                 // 横排 / 竖排覆盖：只写要改的边，其余沿用上面那份；写 0 可以取消共用那侧的预留。
-                const auto readOverride = [&](const char *key, std::optional<InsetsDip> &target,
-                                              const std::string &where) {
-                    const toml::node *node = outerTable->get(key);
-                    if (!node)
-                    {
+                const bool overridesValid = ReadLayoutOverrides(
+                    *outerTable, "candidate_window.outer_insets_dip", error,
+                    [&](const toml::table &table, bool horizontal, const std::string &where) {
+                        InsetsDip override;
+                        if (!ReadInsetsOverride(table, outer, 500.0, 500.0, override))
+                        {
+                            SetError(error, where + " 数值超出范围");
+                            return false;
+                        }
+                        (horizontal ? package.outerInsetsDipHorizontal : package.outerInsetsDipVertical) = override;
                         return true;
-                    }
-                    const auto *table = node->as_table();
-                    if (!table)
-                    {
-                        SetError(error, where + " 必须是表");
-                        return false;
-                    }
-                    InsetsDip override = outer;
-                    const bool valid = ReadInsetSide(*table, "top", 500.0, override.top) &&
-                                       ReadInsetSide(*table, "right", 500.0, override.right) &&
-                                       ReadInsetSide(*table, "bottom", 500.0, override.bottom) &&
-                                       ReadInsetSide(*table, "left", 500.0, override.left);
-                    if (!valid)
-                    {
-                        SetError(error, where + " 数值超出范围");
-                        return false;
-                    }
-                    target = override;
-                    return true;
-                };
-                if (!readOverride("horizontal", package.outerInsetsDipHorizontal,
-                                  "candidate_window.outer_insets_dip.horizontal") ||
-                    !readOverride("vertical", package.outerInsetsDipVertical,
-                                  "candidate_window.outer_insets_dip.vertical"))
+                    });
+                if (!overridesValid)
                 {
                     return std::nullopt;
                 }
@@ -1796,32 +1769,32 @@ std::optional<Package> Load(const std::filesystem::path &skinsRoot, const std::s
             SetError(error, "找不到 candidate_window.background.image 文件");
             return std::nullopt;
         }
-        if (package.borderImage && !package.borderImage->source.empty() &&
-            !std::filesystem::is_regular_file(directory / std::filesystem::u8path(package.borderImage->source), ec))
+        // 共用那份和横排 / 竖排覆盖用同一套检查，覆盖表换了图也要确认文件在。
+        const std::pair<const std::optional<BorderImage> *, const char *> borderImages[] = {
+            {&package.borderImage, "candidate_window.border_image"},
+            {&package.borderImageHorizontal, "candidate_window.border_image.horizontal"},
+            {&package.borderImageVertical, "candidate_window.border_image.vertical"},
+        };
+        for (const auto &[image, where] : borderImages)
         {
-            SetError(error, "找不到 candidate_window.border_image.source 文件");
-            return std::nullopt;
-        }
-        if (package.borderImage && !package.borderImage->lightSource.empty() &&
-            !std::filesystem::is_regular_file(directory / std::filesystem::u8path(package.borderImage->lightSource),
-                                              ec))
-        {
-            SetError(error, "找不到 candidate_window.border_image.light_source 文件");
-            return std::nullopt;
-        }
-        if (package.borderImageVertical &&
-            !std::filesystem::is_regular_file(directory / std::filesystem::u8path(package.borderImageVertical->source),
-                                              ec))
-        {
-            SetError(error, "找不到 candidate_window.border_image.vertical.source 文件");
-            return std::nullopt;
-        }
-        if (package.borderImageVertical && !package.borderImageVertical->lightSource.empty() &&
-            !std::filesystem::is_regular_file(
-                directory / std::filesystem::u8path(package.borderImageVertical->lightSource), ec))
-        {
-            SetError(error, "找不到 candidate_window.border_image.vertical.light_source 文件");
-            return std::nullopt;
+            if (!*image)
+            {
+                continue;
+            }
+            const auto missing = [&](const std::string &path) {
+                return !path.empty() &&
+                       !std::filesystem::is_regular_file(directory / std::filesystem::u8path(path), ec);
+            };
+            if (missing((*image)->source))
+            {
+                SetError(error, std::string("找不到 ") + where + ".source 文件");
+                return std::nullopt;
+            }
+            if (missing((*image)->lightSource))
+            {
+                SetError(error, std::string("找不到 ") + where + ".light_source 文件");
+                return std::nullopt;
+            }
         }
         for (const auto &dec : package.freeDecorations)
         {
