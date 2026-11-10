@@ -17,6 +17,8 @@ enum class PopupPlacement
 {
     BelowLeading,
     AboveLeading,
+    // 贴锚点右缘、顶边与锚点顶边对齐（x = anchor.x + anchor.width + offsetX）。
+    RightLeading,
 };
 
 class Image : public Visual
@@ -609,6 +611,9 @@ class CandidateList : public Visual
     struct Item
     {
         std::wstring label;
+        // Short faint prefix drawn between the label and the text (e.g. a
+        // category tag). Empty leaves the row exactly as before.
+        std::wstring tag;
         std::wstring text;
         std::wstring annotation;
         std::wstring translation;
@@ -630,6 +635,7 @@ class CandidateList : public Visual
         float itemGap = 2.0f;
         float fontSize = 16.0f;
         float labelFontSize = 12.8f;
+        float tagFontSize = 11.0f;
         float annotationFontSize = 16.0f;
         float cornerRadius = 4.0f;
         // Radius for item corners that sit on the list's own corners, so a
@@ -651,6 +657,24 @@ class CandidateList : public Visual
         // most this many. An item wider than one column takes as many columns
         // as it needs. Ignored when the available width is unbounded.
         int gridColumns = 0;
+        // Vertical only: > 0 flows the items down a column until the next one
+        // would pass the column height budget, then starts a new column to the
+        // right (column-major). Each column is as wide as its widest item, so
+        // columns have different widths. The number of columns is capped by
+        // this value and by the column width budget; when even that cap cannot
+        // keep the list inside the height budget the last column overflows and
+        // is clipped. 0 keeps the single-column vertical layout.
+        int verticalColumns = 0;
+        // Column-major budgets. When > 0 they override the available size passed
+        // to Measure, so the layout is identical no matter what viewport the
+        // popup measures the list against (a popup re-measures its child at the
+        // host viewport, which is larger than the on-screen space the panel is
+        // actually allowed to use). 0 falls back to the available size.
+        float columnBudgetHeight = 0.0f;
+        float columnBudgetWidth = 0.0f;
+        // Gap between columns in the column-major vertical layout. < 0 reuses
+        // itemGap.
+        float columnGap = -1.0f;
         // false: no item is ever drawn as selected (no fill, bar or selected
         // colors), so every item, the first included, shows hover and press.
         bool selectable = true;
@@ -666,6 +690,7 @@ class CandidateList : public Visual
         float contentPadBottom = 0.0f;
         float textPadLeft = 0.0f;
         float labelGap = 1.5f;
+        float tagGap = 3.0f;
         float selectedBarWidth = 3.0f;
         float selectedBarHeight = 12.8f;
         bool showSelectedBar = true;
@@ -682,8 +707,13 @@ class CandidateList : public Visual
         // where both inherit the color of `.first .text`.
         D2D1_COLOR_F rowTextSelected = D2D1::ColorF(0, 0.0f);
         D2D1_COLOR_F rowLabelSelected = D2D1::ColorF(0, 0.0f);
+        // Tag color for the selected (and pressed) row. Alpha 0 keeps tagColor,
+        // so a faint category tag stays faint on the selected row by default.
+        D2D1_COLOR_F rowTagSelected = D2D1::ColorF(0, 0.0f);
         D2D1_COLOR_F selectedBarColor = D2D1::ColorF(0x6B69D6);
         D2D1_COLOR_F labelColor = D2D1::ColorF(0xE9E8E8, 0.616f);
+        // Faint prefix tag drawn between the label and the text.
+        D2D1_COLOR_F tagColor = D2D1::ColorF(0xE9E8E8, 0.40f);
         D2D1_COLOR_F textColor = D2D1::ColorF(0xE9E8E8);
         D2D1_COLOR_F annotationColor = D2D1::ColorF(0xE9E8E8);
         // Alpha 0 derives the translation color from the annotation color
@@ -700,6 +730,9 @@ class CandidateList : public Visual
         D2D1_COLOR_F translationDelimiterColor = D2D1::ColorF(0, 0.0f);
         D2D1_COLOR_F rowTranslationSecondarySelected = D2D1::ColorF(0, 0.0f);
         D2D1_COLOR_F rowTranslationDelimiterSelected = D2D1::ColorF(0, 0.0f);
+        // Translation font size as a fraction of fontSize. 0.78 matches the CSS
+        // .cand-translation scale; hosts like the expansion panel raise it a bit.
+        float translationFontSizeScale = 0.78f;
     };
 
     using SelectionChangedHandler = std::function<void(size_t selectedIndex)>;
@@ -720,6 +753,12 @@ class CandidateList : public Visual
     void SetOnItemActivated(ItemActivatedHandler handler);
     void SetOnContextMenu(ContextMenuHandler handler);
     void SetAppearance(Appearance appearance);
+    // 当前外观（只读）。宿主用它把主列表的字体与字号带到附属列表（如候选译文面板），
+    // 再按面板自己的需要覆盖个别字段。
+    const Appearance &GetAppearance() const
+    {
+        return appearance_;
+    }
     void SetOrientation(Orientation orientation);
     void SetHoverEnabled(bool enabled);
 
@@ -743,6 +782,7 @@ class CandidateList : public Visual
     {
         RectF bounds;
         RectF label;
+        RectF tag;
         RectF text;
         RectF annotation;
         RectF translation;
@@ -775,6 +815,10 @@ class CandidateList : public Visual
     std::unordered_map<std::wstring, Microsoft::WRL::ComPtr<IDWriteTextLayout>> textLayoutCache_;
     std::wstring textLayoutFamily_;
     float layoutWidth_ = 0.0f;
+    // True while the last Measure produced a column-major vertical layout;
+    // ItemRect then keeps each item at its own column width instead of
+    // stretching it across the list.
+    bool columnMajor_ = false;
     Appearance appearance_{};
     Orientation orientation_ = Orientation::Vertical;
     bool focused_ = false;

@@ -417,6 +417,20 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
         return TRUE;
     }
 
+    // 候选翻译展开键（裸 Backquote）：在辅助码判定之后、标点提交之前，保证辅助码优先。
+    // 只在候选窗激活、有输入、非日语模式且翻译开关开着时吃键。
+    if (candidateMode != CANDIDATE_NONE && _keystrokeBuffer.GetLength() > 0 &&
+        !IsJapaneseKeyMode(_keystrokeBuffer.Get(), _keystrokeBuffer.GetLength()) &&
+        FanyUtils::IsCandidateExpansionBareKey(uCode, pwch ? *pwch : 0))
+    {
+        if (pKeyState)
+        {
+            pKeyState->Category = CATEGORY_CANDIDATE;
+            pKeyState->Function = FUNCTION_SERVER_CANDIDATE_KEY;
+        }
+        return TRUE;
+    }
+
     if (IsCommitWithHighlightedCandidatePunctuationInCandidateMode(
             uCode, pwch ? *pwch : 0, candidateMode, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength()))
     {

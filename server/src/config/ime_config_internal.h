@@ -36,6 +36,16 @@ constexpr int kEnglishMixedInputMinCharsDefault = 2;
 constexpr int kEnglishMixedInputFirstPageCountMin = 1;
 constexpr int kEnglishMixedInputFirstPageCountMax = 3;
 constexpr int kEnglishMixedInputFirstPageCountDefault = 1;
+// 候选展开面板里每个类别（翻译 / 表情 / 颜文字 / 符号）各自最多列出的条数。范围对所有类别一致，
+// 用户可在设置页逐项调整，出厂默认 5；0 表示不限制条数。
+constexpr int kCandidateExpansionPanelMaxCountMin = 0;
+constexpr int kCandidateExpansionPanelMaxCountMax = 9;
+constexpr int kCandidateExpansionPanelMaxCountDefault = 5;
+// 候选展开面板位置：摆在候选窗的下方（当前方案，左缘与高亮候选对齐）还是右方
+// （贴候选窗右缘、顶边跟随高亮候选）。宽度恒自适应。
+constexpr const char *kCandidateExpansionPanelPlacementDown = "down";
+constexpr const char *kCandidateExpansionPanelPlacementRight = "right";
+constexpr const char *kCandidateExpansionPanelPlacementDefault = kCandidateExpansionPanelPlacementDown;
 
 // Config key ↔ engine rule bit. The key mirrors the enumerator name lowercased, so the
 // only mapping to review is this table; the bit position lives in the enum itself.
@@ -128,6 +138,9 @@ extern bool g_switch_language_ctrl_enabled;
 extern bool g_switch_language_ctrl_alt_space_enabled;
 extern bool g_character_set_shortcut_enabled;
 extern bool g_commit_pinyin_shift_enter_enabled;
+extern std::string g_candidate_expansion_key;
+extern std::string g_candidate_expansion_move_prev_key;
+extern std::string g_candidate_expansion_move_next_key;
 extern InputStateShortcutValues g_input_state_shortcuts;
 extern int g_candidate_page_size;
 extern std::string g_candidate_font;
@@ -191,6 +204,16 @@ extern int g_floating_toolbar_auto_hide_delay;
 extern bool g_floating_toolbar_shadow;
 extern bool g_english_candidates_enabled;
 extern bool g_candidate_translations_enabled;
+extern bool g_candidate_expansion_panel_enabled;
+extern bool g_candidate_expansion_panel_translation;
+extern bool g_candidate_expansion_panel_emoji;
+extern bool g_candidate_expansion_panel_kaomoji;
+extern bool g_candidate_expansion_panel_symbols;
+extern int g_candidate_expansion_panel_translation_max_count;
+extern int g_candidate_expansion_panel_emoji_max_count;
+extern int g_candidate_expansion_panel_kaomoji_max_count;
+extern int g_candidate_expansion_panel_symbols_max_count;
+extern std::string g_candidate_expansion_panel_placement;
 extern std::atomic_bool g_candidate_translation_show_pos;
 extern std::atomic_bool g_candidate_translation_single_sense;
 extern int g_english_mixed_input_min_chars;

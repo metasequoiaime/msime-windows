@@ -107,4 +107,75 @@ LocalQueryResult query_mixed_symbols(const std::string &code, const std::filesys
                                  "ORDER BY sort_order LIMIT ?3";
     return run_query(code, database_path, kSql, limit);
 }
+
+LocalQueryResult query_symbols_by_keyword(const std::string &keyword, int limit)
+{
+    return query_symbols_by_keyword(keyword, data_file_path(metasequoia::assets::other_dictionary), limit);
+}
+
+LocalQueryResult query_symbols_by_keyword(const std::string &keyword, const std::filesystem::path &database_path,
+                                          int limit)
+{
+    if (keyword.empty() || limit <= 0)
+    {
+        return {};
+    }
+    if (database_path.empty())
+    {
+        return query_failure("Symbol database is unavailable.");
+    }
+    const std::shared_ptr<sqlite3> database = open_local_database(database_path);
+    if (!database)
+    {
+        return query_failure("Symbol database is unavailable.");
+    }
+
+    // 与 query_kaomoji_by_keyword 同构：symbol_catalog.keywords 以空格分隔（建库脚本保证），做子串匹配——
+    // 只要某个关键词含有查询词就命中。整词命中排在子串命中之前，避免精确行被 LIMIT 截掉；整词判据仍是
+    // 两侧补空格。转义 LIKE 通配符，中文词不含这些字符，但英文词映射接入后调用侧可能传入含通配符的串。
+    std::string escaped;
+    escaped.reserve(keyword.size() + 8);
+    for (const char ch : keyword)
+    {
+        if (ch == '%' || ch == '_' || ch == '\\')
+        {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+
+    // ?1 是转义后的查询词，在 SQL 里拼成两种 pattern：子串匹配用于 WHERE，整词匹配用于 ORDER BY 的
+    // NOT LIKE——整词行取 0 排前、子串行取 1 排后，各自再按目录顺序（sort_order）。symbol_catalog 主键是
+    // (symbol, category)，同一符号可能挂在多个类别下，按符号去重，只保留排位最好的那行。
+    constexpr const char *kKeywordSql = "SELECT symbol FROM symbol_catalog WHERE keywords LIKE '%'||?1||'%' "
+                                        "ESCAPE '\\' ORDER BY (' '||keywords||' ') NOT LIKE '% '||?1||' %' "
+                                        "ESCAPE '\\', sort_order LIMIT ?2";
+    sqlite3_stmt *raw_statement = nullptr;
+    if (sqlite3_prepare_v2(database.get(), kKeywordSql, -1, &raw_statement, nullptr) != SQLITE_OK)
+    {
+        return query_failure("Symbol database could not be queried.");
+    }
+    const std::unique_ptr<sqlite3_stmt, StatementCloser> statement(raw_statement);
+    LocalQueryResult result;
+    std::unordered_set<std::string> seen;
+    sqlite3_bind_text(statement.get(), 1, escaped.data(), static_cast<int>(escaped.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_int(statement.get(), 2, limit);
+    while (sqlite3_step(statement.get()) == SQLITE_ROW)
+    {
+        const unsigned char *text = sqlite3_column_text(statement.get(), 0);
+        if (text == nullptr)
+        {
+            continue;
+        }
+        // 顺序即目录顺序（sort_order），整词命中已排在前面。weight 不被面板读取，面板按返回顺序平铺
+        // 编号，这里留 0。
+        const std::string symbol(reinterpret_cast<const char *>(text));
+        if (!seen.insert(symbol).second)
+        {
+            continue;
+        }
+        result.candidates.emplace_back(keyword, symbol, 0, CandidateSource::Symbol);
+    }
+    return result;
+}
 } // namespace metasequoia::local_modes

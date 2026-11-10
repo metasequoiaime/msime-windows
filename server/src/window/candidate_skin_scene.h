@@ -174,6 +174,8 @@ class CandidateSkinScene
         bool fitContent = false;
         int expandRows = CandidateSkinCatalog::kDefaultExpandRows;
         float expandRowStepDip = 30.0f;
+        // 卡片外缘到内容的内边距（与 card_->SetPadding 同值），供翻译面板复用，保证两框高亮间距一致。
+        msimeui::Thickness cardContentPadding{5.0f, 5.0f, 5.0f, 5.0f};
     };
 
     // 当前页的一个候选：词本身与后面的标注（如整句模型名）。

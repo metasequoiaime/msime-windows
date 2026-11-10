@@ -59,6 +59,10 @@ class CandidatePresenter
     void CloseFixSubmenu();
     void ExpandHostForMenu(POINT clientPoint);
     void RestoreHostAfterMenu();
+    // 候选翻译竖排面板：把面板 Popup 挂到高亮候选下方，并在 PlaceAndShow 之前把宿主窗口
+    // 撑到装得下它（同一帧画出来，不先画一帧没有面板的）。need* 返回所需布局尺寸。
+    void CloseTranslationPanel();
+    bool PrepareExpansionPanel(float &needWidthDip, float &needHeightDip, POINT caret, float scale);
     // 动图的帧时钟：Present 之后按场景给出的下一次换帧时刻排一个一次性定时器，到点再 Present。
     // 只在候选窗显示时排；隐藏、换皮肤、窗口销毁时停。
     void ScheduleAnimationFrame();

@@ -318,14 +318,22 @@ void Popup::LayoutOverlay(const SizeF &viewportSize)
     const float width = matchAnchorWidth_ ? std::max(measured.width, anchorRect_.width) : measured.width;
     const float height = measured.height;
 
-    float x = anchorRect_.x + offsetX_;
+    float x = placement_ == PopupPlacement::RightLeading ? (anchorRect_.x + anchorRect_.width + offsetX_)
+                                                         : (anchorRect_.x + offsetX_);
     if (constrainToViewport_ && x + width > viewportSize.width - 8.0f)
     {
         x = std::max(viewportSize.width - width - 8.0f, 8.0f);
     }
 
-    float y = placement_ == PopupPlacement::AboveLeading ? (anchorRect_.y - height - offsetY_)
-                                                         : (anchorRect_.y + anchorRect_.height + offsetY_);
+    float y = anchorRect_.y + anchorRect_.height + offsetY_;
+    if (placement_ == PopupPlacement::AboveLeading)
+    {
+        y = anchorRect_.y - height - offsetY_;
+    }
+    else if (placement_ == PopupPlacement::RightLeading)
+    {
+        y = anchorRect_.y + offsetY_;
+    }
     if (constrainToViewport_ && placement_ == PopupPlacement::AboveLeading && y < 8.0f)
     {
         y = anchorRect_.y + anchorRect_.height + offsetY_;

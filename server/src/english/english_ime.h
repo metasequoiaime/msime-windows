@@ -44,4 +44,8 @@ bool IsCurrent(const std::string &input, uint64_t generation, bool dedicated_mod
 void RequestTranslations(std::vector<TranslationQuery> queries, bool use_local_dictionary = true);
 void ClearTranslations();
 bool IsTranslationCurrent(uint64_t generation);
+// 一次性同步译文探测：只给候选展开键的开面板路径用——面板要在打开前就知道高亮词有没有译文，
+// 异步管线那一刻还没跑完。读路径与 WorkerLoop 一致（同一个 english.db、同一对 gloss 查询），
+// 但不排队、不回调、不推进 generation。每键路径不要用，那是 RequestTranslations 的活。
+std::string LookupTranslationSync(const TranslationQuery &query);
 } // namespace EnglishIme

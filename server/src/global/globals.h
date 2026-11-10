@@ -349,6 +349,20 @@ struct CandidateUiState
     bool is_num_out_of_range = false;
     // 用户开始选词后保持候选顺序，直到输入变化后重新建立候选列表。
     bool selection_started = false;
+    // 候选展开面板（展开键）：横向候选列表原样不动，面板挂在高亮候选下方，按启用类别平铺它的
+    // 展开条目（已实现：翻译、表情、颜文字）。面板不存自己的条目副本：条目在发布快照时由提供方
+    // 管线从 page_glosses[高亮位] 派生，面板跟随高亮。signature 记最近一次派生用的锚点词，
+    // 高亮换到别的词时把面板内选中位归零。
+    bool expansion_panel_active = false;
+    int expansion_panel_selected = 0;
+    std::wstring expansion_panel_signature;
+    // 表情/颜文字/符号按锚点词缓存这一份：others.db 在进程内是静态的，同一个词的查询结果不会变，所以
+    // 面板内上下移动高亮（锚点词不变）时复用缓存，避免每按一次方向键都重扫 emoji/kaomoji/symbol 三张表。
+    // 只缓存 DB 查询结果；译文 gloss 仍每次从 page_glosses 现读，保证跟随高亮。锚点词一变即失效。
+    std::string expansion_panel_query_anchor;
+    std::vector<std::string> expansion_panel_cached_emoji;
+    std::vector<std::string> expansion_panel_cached_kaomoji;
+    std::vector<std::string> expansion_panel_cached_symbols;
 
     void set_items(std::vector<CandidateWordItem> new_items)
     {
@@ -464,6 +478,17 @@ struct CandidateUiState
 };
 inline CandidateUiState candidate_ui;
 
+// 展开面板的一条目：display 是面板显示文字，tag 是类别淡色前缀（译/表情/颜），commit 是上屏
+// 文本。presenter 只用 display+tag 渲染；上屏走服务端按键路径，按 index 重新跑提供方管线取 commit。
+// category_id 只用来让 presenter 区分翻译条目（走与主列表一致的译文着色路径），不参与签名与上屏。
+struct CandidateExpansionPanelItem
+{
+    std::wstring display;
+    std::wstring tag;
+    std::wstring commit;
+    std::wstring category_id;
+};
+
 // candidate_ui belongs to the IPC worker thread, which rebuilds and destroys its vectors while the UI thread paints;
 // the handoff is an asynchronous PostMessage, so nothing serialises the two. The worker therefore copies each finished
 // page into one of these immutable snapshots and publishes it atomically, and every UI-thread reader (candidate
@@ -487,6 +512,12 @@ struct CandidatePageSnapshot
     // 第一个的绝对下标是 expanded_start。点选时连同文字一起交回工作线程核对。
     std::vector<std::wstring> expanded_words;
     int expanded_start = 0;
+    // 候选展开面板（展开键）：items 是高亮候选（anchor 是它的页内下标）按启用类别平铺后的全部
+    // 条目，selected 是面板内的高亮项。presenter 据此把面板挂在 anchor 那条候选的正下方。
+    bool expansion_panel_active = false;
+    int expansion_panel_anchor = 0;
+    std::vector<CandidateExpansionPanelItem> expansion_panel_items;
+    int expansion_panel_selected = 0;
     // Generation stamped by the worker at publish time. The UI thread echoes this exact value back
     // after painting, which is what lets a selection distinguish "what the user sees" from "what
     // the worker has just rebuilt".

@@ -229,18 +229,18 @@ TEST_CASE(horizontal_candidate_translation_uses_a_second_line)
 {
     CandidateList list(28.0f);
     list.SetOrientation(CandidateList::Orientation::Horizontal);
-    list.SetItems({{L"1", L"candidate", L"", L""}});
+    list.SetItems({{L"1", L"", L"candidate", L"", L""}});
     const SizeF plain = list.MeasureInLayout({1000.0f, 1000.0f});
 
-    list.SetItems({{L"1", L"candidate", L"", L"word"}});
+    list.SetItems({{L"1", L"", L"candidate", L"", L"word"}});
     const SizeF translated = list.MeasureInLayout({1000.0f, 1000.0f});
     REQUIRE_NEAR(translated.width, plain.width);
     REQUIRE_NEAR(translated.height, plain.height + 16.0f * 0.78f * 1.25f);
 
-    list.SetItems({{L"1", L"candidate", L"", L"a translation wider than the candidate"}});
+    list.SetItems({{L"1", L"", L"candidate", L"", L"a translation wider than the candidate"}});
     REQUIRE(list.MeasureInLayout({1000.0f, 1000.0f}).width > translated.width);
 
-    list.SetItems({{L"1", L"candidate", L"", L""}});
+    list.SetItems({{L"1", L"", L"candidate", L"", L""}});
     REQUIRE_NEAR(list.MeasureInLayout({1000.0f, 1000.0f}).height, plain.height);
 }
 
@@ -253,7 +253,7 @@ TEST_CASE(horizontal_candidate_translation_keeps_the_row_bottom_padding_below_it
     appearance.contentPadBottom = 5.0f;
     list.SetAppearance(appearance);
     list.SetOrientation(CandidateList::Orientation::Horizontal);
-    list.SetItems({{L"1", L"candidate", L"", L"word"}});
+    list.SetItems({{L"1", L"", L"candidate", L"", L"word"}});
     const float translationH = appearance.fontSize * 0.78f * 1.25f;
     REQUIRE_NEAR(list.MeasureInLayout({1000.0f, 1000.0f}).height, 38.0f + translationH);
     list.ArrangeInLayout({0.0f, 0.0f, 1000.0f, 38.0f + translationH});
@@ -432,6 +432,46 @@ TEST_CASE(grid_candidates_share_equal_columns_and_wide_items_span_several)
     REQUIRE_NEAR(list.GetItemBounds(1).x, 68.0f);
 }
 
+TEST_CASE(column_major_vertical_flows_into_columns_sized_by_their_widest_item)
+{
+    CandidateList list(28.0f);
+    CandidateList::Appearance appearance;
+    appearance.itemHeight = 28.0f;
+    appearance.itemGap = 4.0f;
+    appearance.verticalColumns = 6;
+    appearance.columnGap = 10.0f;
+    // 列高预算正好放两行（2 * 28 + 4 = 60），第三行放不下就另起一列向右排。
+    appearance.columnBudgetHeight = 60.0f;
+    appearance.columnBudgetWidth = 1000.0f;
+    list.SetAppearance(appearance);
+    list.SetOrientation(CandidateList::Orientation::Vertical);
+    // 用 label（仅按 EstimateTextWidth 估算，不做真实排版）制造宽度差异，text 留空避免真实
+    // 字体换行影响行高；列高预算 60 恰好容纳两行（28+4+28），故 4 项排成两列。
+    list.SetItems({{L"aaaaaa", L"", L"", L""}, {L"1", L"", L"", L""}, {L"1", L"", L"", L""}, {L"1", L"", L"", L""}});
+    const SizeF size = list.MeasureInLayout({1000.0f, 1000.0f});
+    list.ArrangeInLayout({0.0f, 0.0f, size.width, size.height});
+
+    // 两列：前两行在左列，后两行在右列；列内向下排，列与列之间向右排。
+    const RectF c0r0 = list.GetItemBounds(0);
+    const RectF c0r1 = list.GetItemBounds(1);
+    const RectF c1r0 = list.GetItemBounds(2);
+    const RectF c1r1 = list.GetItemBounds(3);
+    REQUIRE_NEAR(c0r0.x, c0r1.x);
+    REQUIRE(c0r1.y > c0r0.y);
+    REQUIRE(c1r0.x > c0r0.x);
+    REQUIRE_NEAR(c1r0.x, c1r1.x);
+    REQUIRE(c1r1.y > c1r0.y);
+
+    // 每列宽度由该列最宽词条决定：窄词条被拉到与同列最宽项等高宽（整列高亮）。
+    REQUIRE_NEAR(c0r0.width, c0r1.width);
+    REQUIRE_NEAR(c1r0.width, c1r1.width);
+    REQUIRE(c0r0.width > c1r0.width);
+
+    // 总宽 = 左列宽 + 列间距 + 右列宽；总高 = 两行。
+    REQUIRE_NEAR(size.width, c0r0.width + 10.0f + c1r0.width);
+    REQUIRE_NEAR(size.height, 60.0f);
+}
+
 TEST_CASE(fit_content_candidates_measure_without_minimum_width_or_slack)
 {
     CandidateList list(28.0f);
@@ -460,7 +500,7 @@ TEST_CASE(vertical_candidate_translation_stays_on_the_same_line)
 {
     CandidateList list(28.0f);
     list.SetOrientation(CandidateList::Orientation::Horizontal);
-    list.SetItems({{L"1", L"candidate", L"", L"word"}});
+    list.SetItems({{L"1", L"", L"candidate", L"", L"word"}});
     const SizeF horizontal = list.MeasureInLayout({1000.0f, 1000.0f});
 
     list.SetOrientation(CandidateList::Orientation::Vertical);
@@ -560,4 +600,27 @@ TEST_CASE(candidate_arrangement_reflows_when_the_final_slot_is_narrower)
     REQUIRE(list.OnMouseDown({20, 44}, MK_LBUTTON));
     REQUIRE(list.OnMouseUp({20, 44}, 0));
     REQUIRE(activated == 1);
+}
+
+TEST_CASE(popup_right_leading_anchors_beyond_the_anchor_right_edge_top_aligned)
+{
+    auto child = MakeFixed(60.0f, 40.0f);
+    Popup popup(child);
+    popup.SetPadding({0.0f, 0.0f, 0.0f, 0.0f});
+    popup.SetMatchAnchorWidth(false);
+    popup.SetPlacement(PopupPlacement::RightLeading);
+    popup.SetOffset(6.0f, 0.0f);
+    popup.SetAnchorRect({100.0f, 50.0f, 200.0f, 30.0f});
+    popup.SetConstrainToViewport(true);
+    popup.LayoutOverlay({800.0f, 600.0f});
+    REQUIRE_NEAR(popup.GetBounds().x, 306.0f);
+    REQUIRE_NEAR(popup.GetBounds().y, 50.0f);
+    REQUIRE_NEAR(popup.GetBounds().width, 60.0f);
+    REQUIRE_NEAR(popup.GetBounds().height, 40.0f);
+
+    // 锚点靠近视口下缘时顶边被夹回可见区域，仍贴在锚点右缘。
+    popup.SetAnchorRect({100.0f, 560.0f, 200.0f, 30.0f});
+    popup.LayoutOverlay({800.0f, 600.0f});
+    REQUIRE_NEAR(popup.GetBounds().x, 306.0f);
+    REQUIRE_NEAR(popup.GetBounds().y, 600.0f - 40.0f - 8.0f);
 }
