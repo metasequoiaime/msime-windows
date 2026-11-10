@@ -212,6 +212,7 @@ bool ensure_schema(sqlite3 *db)
         "CREATE TABLE IF NOT EXISTS date_time_format_order("
         "category TEXT NOT NULL,format TEXT NOT NULL,position INTEGER NOT NULL CHECK(position>=0),"
         "PRIMARY KEY(category,format));"
+        // 繁体写法记录。updated_at 只写不读：没有按时间淘汰或排序的逻辑依赖它，留作排障时看记录是何时改的。
         "CREATE TABLE IF NOT EXISTS traditional_variant_choices("
         "key TEXT NOT NULL,base_word TEXT NOT NULL,spelling TEXT NOT NULL,"
         "updated_at INTEGER NOT NULL DEFAULT(unixepoch()),"

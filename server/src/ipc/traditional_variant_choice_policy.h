@@ -96,18 +96,29 @@ inline std::string VariantChoiceKeyOf(const WordItem &item)
 }
 
 /**
+ * 选中、置顶或固定 item 有没有可能改写法记录，只看 item 自己的字段，不查转换器：
+ * 不是日语候选、有底词、有显示的写法，且不是这组当前排第一的写法（variant_rank > 0）。
+ * 为假时 VariantChoiceForSelection 一定返回空，调用方据此先跳过地区默认写法的计算（要过三遍 OpenCC）。
+ */
+inline bool SelectionCanChangeVariantChoice(const WordItem &item)
+{
+    return item.scheme != SchemeType::JapaneseRomaji && item.variant_rank > 0 && !item.output_text.empty() &&
+           !item.word.empty();
+}
+
+/**
  * 选中、置顶或固定展开后的一项（item）之后要对写法记录做的改动，不用改时返回空。
  * key 是这一项的全拼键，推不出来时传空；default_first_spelling 是这个底词按地区排序（不计记录）的第一写法。
  * 只有这一项不是这组当前排第一的写法（variant_rank > 0）时才改：它就是地区默认第一写法时删掉记录，
  * 否则记下它的写法。
+ * 所以选回默认只在记录仍然生效（把别的写法顶到了第一位）时才删得掉。记录已经失效时（写法不再属于这个词、
+ * 也拼不出来，或在列表里归给了别的底词），组首本来就是地区默认写法，选它不删记录；这条记录不改变显示。
  */
 inline std::optional<VariantChoiceChange> VariantChoiceForSelection(const VariantChoiceScope &scope,
                                                                     const WordItem &item, const std::string &key,
                                                                     const std::string &default_first_spelling)
 {
-    if (!RemembersVariantChoices(scope) || item.scheme == SchemeType::JapaneseRomaji)
-        return std::nullopt;
-    if (item.variant_rank <= 0 || item.output_text.empty() || key.empty() || item.word.empty())
+    if (!RemembersVariantChoices(scope) || !SelectionCanChangeVariantChoice(item) || key.empty())
         return std::nullopt;
     if (item.output_text == default_first_spelling)
         return VariantChoiceChange{VariantChoiceAction::Forget, key, item.word, {}};

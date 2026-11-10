@@ -109,6 +109,24 @@ TEST_CASE(variant_choice_selection_ignores_a_missing_key_word_or_spelling)
     REQUIRE(!VariantChoiceForSelection(kTraditional, Variant("台湾", "", 1), "tai'wan", "臺灣").has_value());
 }
 
+// 调用方靠 SelectionCanChangeVariantChoice 先跳过地区默认写法的计算，所以它为假的项，
+// 不论地区默认写法是什么，VariantChoiceForSelection 都必须不改记录；为真的只有组内排在后面的拼音项。
+TEST_CASE(variant_choice_selection_precheck_rules_out_every_item_the_policy_ignores)
+{
+    WordItem japanese = Variant("台湾", "台灣", 1);
+    japanese.scheme = SchemeType::JapaneseRomaji;
+    const std::vector<WordItem> ruled_out{Variant("台湾", "台灣", 0), Variant("台湾", "臺灣", 0), japanese,
+                                          Variant("", "台灣", 1), Variant("台湾", "", 1)};
+    for (const auto &item : ruled_out)
+    {
+        REQUIRE(!FanyImeIpc::SelectionCanChangeVariantChoice(item));
+        for (const std::string default_spelling : {"臺灣", "台灣", ""})
+            REQUIRE(!VariantChoiceForSelection(kTraditional, item, "tai'wan", default_spelling).has_value());
+    }
+    REQUIRE(FanyImeIpc::SelectionCanChangeVariantChoice(Variant("台湾", "台灣", 1)));
+    REQUIRE(FanyImeIpc::SelectionCanChangeVariantChoice(Variant("台湾", "臺灣", 2)));
+}
+
 // ---- 改动的字段齐不齐 ----
 
 TEST_CASE(variant_choice_change_is_complete_only_with_every_field_it_needs)

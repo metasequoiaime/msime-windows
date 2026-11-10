@@ -867,8 +867,8 @@ void WorkerThread()
                     // not mistaken for an equally valid quanpin spelling.
                     const std::string delete_pinyin =
                         item.canonical_pinyin.empty() ? item.pinyin : item.canonical_pinyin;
-                    constexpr int kCandidateRemoved = 0;
-                    if (g_inputSession->remove_candidate(delete_pinyin, item.word, item.scheme) == kCandidateRemoved)
+                    if (g_inputSession->remove_candidate(delete_pinyin, item.word, item.scheme) ==
+                        IInputSession::kRemoveCandidateSucceeded)
                         ForgetTraditionalVariantsOfDeletedCandidate(variant_choice_scope, item);
                 }
             }
@@ -1379,10 +1379,12 @@ const FanyImeIpc::RememberedSpellingLookup &RememberedSpellingFromUserJournal()
 namespace
 {
 // 默认写法不读字形设置，在 scope 判定要读写记录之后才算：同一次判定里字形只在 scope 里读一次。
+// 绝大多数选词选的是组首（variant_rank 为 0）或没有写法的候选，先用 item 自己的字段排除，
+// 免得每次选词都白过三遍 OpenCC。
 std::optional<FanyImeIpc::VariantChoiceChange> VariantChoiceChangeForSelected(
     const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
 {
-    if (!FanyImeIpc::RemembersVariantChoices(scope))
+    if (!FanyImeIpc::RemembersVariantChoices(scope) || !FanyImeIpc::SelectionCanChangeVariantChoice(item))
         return std::nullopt;
     return FanyImeIpc::VariantChoiceForSelection(scope, item, FanyImeIpc::VariantChoiceKeyOf(item),
                                                  RegionalFirstSpellingOfText(item.word));
@@ -1421,10 +1423,15 @@ void EnqueueRememberOrForgetComposedTraditionalVariant(const FanyImeIpc::Variant
         EnqueueVariantChoiceWrite(std::move(*change));
 }
 
+// 同步路径不重试：紧接着要重建列表，重试只会把按键线程拖得更久。失败时与异步路径一样留一条诊断，
+// 否则用户看到的只是「点了置顶 / 固定，写法顺序没变」。
 void RememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
 {
-    if (const auto change = VariantChoiceChangeForSelected(scope, item))
-        (void)FanyImeIpc::WriteVariantChoiceChange(user_dictionary::default_user_db_path(), *change);
+    const auto change = VariantChoiceChangeForSelected(scope, item);
+    if (!change)
+        return;
+    if (!FanyImeIpc::WriteVariantChoiceChange(user_dictionary::default_user_db_path(), *change))
+        CAND_DIAG_LOGF(L"traditional variant choice write failed (pin/fix)");
 }
 
 void ForgetTraditionalVariantsOfDeletedCandidate(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
@@ -1432,7 +1439,8 @@ void ForgetTraditionalVariantsOfDeletedCandidate(const FanyImeIpc::VariantChoice
     const auto word = FanyImeIpc::VariantChoiceWordToForgetOnDelete(scope, item);
     if (!word)
         return;
-    (void)user_dictionary::forget_traditional_variants_of_word(user_dictionary::default_user_db_path(), *word);
+    if (!user_dictionary::forget_traditional_variants_of_word(user_dictionary::default_user_db_path(), *word))
+        CAND_DIAG_LOGF(L"traditional variant choice forget failed (delete)");
 }
 
 void EnqueueLearnEnteredEnglishWordTask(const std::string &word)
