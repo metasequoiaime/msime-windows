@@ -22,8 +22,10 @@ using namespace controls_detail;
 
 namespace
 {
-constexpr D2D1_DRAW_TEXT_OPTIONS kColorClipTextOptions =
-    static_cast<D2D1_DRAW_TEXT_OPTIONS>(D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+// NO_SNAP: SnapTextOriginToPixelGrid already put the baseline on a whole pixel. D2D's own snap would add
+// a sub-pixel offset that depends on the composition atlas translation.
+constexpr D2D1_DRAW_TEXT_OPTIONS kColorClipTextOptions = static_cast<D2D1_DRAW_TEXT_OPTIONS>(
+    D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_NO_SNAP);
 
 constexpr float kCandidateItemGap = 1.0f;
 
@@ -670,23 +672,27 @@ void CandidateList::Render(DeviceResources &deviceResources)
         }
         if (labelLayout && labelBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(labelRect.x, labelRect.y), labelLayout.Get(), labelBrush,
-                                   kColorClipTextOptions);
+            target->DrawTextLayout(
+                SnapTextOriginToPixelGrid(target, labelLayout.Get(), D2D1::Point2F(labelRect.x, labelRect.y)),
+                labelLayout.Get(), labelBrush, kColorClipTextOptions);
         }
         if (textLayout && textBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(textRect.x, textRect.y), textLayout.Get(), textBrush,
-                                   kColorClipTextOptions);
+            target->DrawTextLayout(
+                SnapTextOriginToPixelGrid(target, textLayout.Get(), D2D1::Point2F(textRect.x, textRect.y)),
+                textLayout.Get(), textBrush, kColorClipTextOptions);
         }
         if (annotationLayout && annotationBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(annotationRect.x, annotationRect.y), annotationLayout.Get(),
-                                   annotationBrush, kColorClipTextOptions);
+            target->DrawTextLayout(SnapTextOriginToPixelGrid(target, annotationLayout.Get(),
+                                                             D2D1::Point2F(annotationRect.x, annotationRect.y)),
+                                   annotationLayout.Get(), annotationBrush, kColorClipTextOptions);
         }
         if (translationLayout && translationBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(translationRect.x, translationRect.y), translationLayout.Get(),
-                                   translationBrush, kColorClipTextOptions);
+            target->DrawTextLayout(SnapTextOriginToPixelGrid(target, translationLayout.Get(),
+                                                             D2D1::Point2F(translationRect.x, translationRect.y)),
+                                   translationLayout.Get(), translationBrush, kColorClipTextOptions);
         }
     }
 }

@@ -6,6 +6,8 @@
 #include "msimeui/Theme.h"
 #include "msimeui/Window.h"
 
+#include "ControlsInternal.h"
+
 #include <algorithm>
 #include <cmath>
 #include <d2d1_1.h>
@@ -3016,8 +3018,11 @@ void TextBlock::Render(DeviceResources &deviceResources)
         return;
     }
 
-    const float originX = bounds_.x + textLayoutPadding_.left;
-    const float originY = bounds_.y + textLayoutPadding_.top;
+    const D2D1_POINT_2F origin = controls_detail::SnapTextOriginToPixelGrid(
+        target, cachedTextLayout_.Get(),
+        D2D1::Point2F(bounds_.x + textLayoutPadding_.left, bounds_.y + textLayoutPadding_.top));
+    const float originX = origin.x;
+    const float originY = origin.y;
     if (showCaret_)
     {
         FLOAT caretX = 0.0f;
@@ -3066,9 +3071,10 @@ void TextBlock::Render(DeviceResources &deviceResources)
         }
     }
 
-    target->DrawTextLayout(
-        D2D1::Point2F(originX, originY), cachedTextLayout_.Get(), brush,
-        static_cast<D2D1_DRAW_TEXT_OPTIONS>(D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT));
+    target->DrawTextLayout(D2D1::Point2F(originX, originY), cachedTextLayout_.Get(), brush,
+                           static_cast<D2D1_DRAW_TEXT_OPTIONS>(D2D1_DRAW_TEXT_OPTIONS_CLIP |
+                                                               D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT |
+                                                               D2D1_DRAW_TEXT_OPTIONS_NO_SNAP));
 }
 
 Spacer::Spacer(float height) : height_(height)
