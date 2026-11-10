@@ -148,6 +148,9 @@ std::string HttpGet(const std::string &url)
 // `.about-link-row`: min-height 66px with a hairline under every row but the last.
 class AboutRow : public msimeui::Panel
 {
+    // 内容超出 66px 时上下各留的空白（DIP），和行内文字到分割线的视觉距离相当。
+    static constexpr float kRowPaddingY = 12.0f;
+
   public:
     AboutRow(VisualPtr left, VisualPtr right, bool last) : left_(std::move(left)), right_(std::move(right)), last_(last)
     {
@@ -168,7 +171,10 @@ class AboutRow : public msimeui::Panel
         leftSize_ = left_->MeasureInLayout(
             {std::max(availableSize.width - (right_ ? rightSize_.width + 20.0f : 0.0f), 0.0f), availableSize.height});
         const float border = last_ ? 0.0f : CssBorder();
-        return {availableSize.width, std::max(66.0f, std::max(leftSize_.height, rightSize_.height) + border)};
+        // 单行内容在 66px 里垂直居中；内容一多（状态文字、「立即安装」按钮）就按内容撑高，
+        // 但上下各留 kRowPaddingY，不能贴着上一条分割线或压到下一条上。
+        const float content = std::max(leftSize_.height, rightSize_.height) + kRowPaddingY * 2.0f;
+        return {availableSize.width, std::max(66.0f, content + border)};
     }
 
     void Arrange(const RectF &finalRect) override
@@ -796,10 +802,11 @@ VisualPtr BuildAboutPage(PageContext &context)
         // 了更新的版本时，它会去下那个更新的版本，这正是想要的结果。
         CssButton::Style installStyle;
         installStyle.look = CssButton::Look::Accent;
-        installStyle.paddingX = 13.0f;
-        installStyle.paddingY = 6.0f;
+        // 比「检查更新」小一号：它挂在说明文字下面，是行内的次级动作。
+        installStyle.paddingX = 10.0f;
+        installStyle.paddingY = 3.0f;
         installStyle.radius = 99.0f;
-        installStyle.fontSize = 12.0f;
+        installStyle.fontSize = 11.0f;
         installStyle.transitionMs = 150.0;
         installStyle.pressShift = true;
         installStyle.disabledOpacity = 0.65f;
@@ -814,7 +821,7 @@ VisualPtr BuildAboutPage(PageContext &context)
             });
         }
         auto installBox = std::make_shared<Hideable>(state->install, false);
-        installBox->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
+        installBox->SetMargin({0.0f, 6.0f, 0.0f, 0.0f});
         auto installRow = std::make_shared<Row>(0.0f);
         installRow->Add(installBox);
         left->Add(installRow);
