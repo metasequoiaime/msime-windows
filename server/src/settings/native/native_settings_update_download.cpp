@@ -16,6 +16,7 @@
 #include <fstream>
 #include <limits>
 #include <regex>
+#include <thread>
 #include <vector>
 
 namespace native_settings::update_download
@@ -265,6 +266,8 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
         attempt.outcome = Outcome::Ok;
         attempt.bytes = resume_from;
         attempt.total = 0;
+        // 字节全来自以前的连接，摘要不符时还值得从零再下一次。
+        attempt.resumed = resume_from > 0;
         attempt.seconds = ElapsedSeconds(started);
         close_all();
         return attempt;
@@ -315,6 +318,7 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
         // `Content-Range: bytes a-b/*` 表示总长未知。这时 Content-Length 只是剩余
         // 字节数，不能拿它加前缀当整包长度，否则会把一个正常的前缀判成超长。
         total_unknown = total == 0;
+        attempt.resumed = resume_from > 0;
     }
     else
     {
@@ -366,6 +370,8 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
     const bool tail_only = total != 0 && resume_from < total && total - resume_from < kProbeMinBytes;
     bool probing = !tail_only;
     bool ok = true;
+    // 失败时临时文件里的内容是否已经不可信（超长、写盘失败）。网络类失败保留前缀续传。
+    bool discard_part = false;
 
     for (;;)
     {
@@ -410,6 +416,7 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
         {
             attempt.message = "安装包超过允许的大小";
             ok = false;
+            discard_part = true;
             break;
         }
         file.write(buffer.data(), static_cast<std::streamsize>(read));
@@ -417,6 +424,7 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
         {
             attempt.message = "写入下载文件失败";
             ok = false;
+            discard_part = true;
             break;
         }
         received += read;
@@ -453,7 +461,7 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
     {
         // 网络断了但字节是真的，留在原地给下一次续传；文件超过上限或写盘失败时
         // 内容已经不可信，删掉重来。
-        if (attempt.message == "安装包超过允许的大小" || attempt.message == "写入下载文件失败")
+        if (discard_part)
             std::filesystem::remove(target, ec);
         return attempt;
     }
@@ -614,7 +622,35 @@ bool FileMatchesDigest(const std::filesystem::path &path, const std::string &exp
     return ok;
 }
 
-bool VerifyAuthenticode(const std::filesystem::path &path)
+void HoldInstallerUntilExit(HANDLE file, HANDLE process)
+{
+    const auto close_both = [](HANDLE file_handle, HANDLE process_handle) {
+        if (process_handle != nullptr)
+            CloseHandle(process_handle);
+        if (file_handle != INVALID_HANDLE_VALUE && file_handle != nullptr)
+            CloseHandle(file_handle);
+    };
+    if (process == nullptr)
+    {
+        close_both(file, process);
+        return;
+    }
+    try
+    {
+        // WaitForInputIdle 对 Inno 的引导程序（没有消息队列）会立刻返回，句柄放得
+        // 太早；setup.tmp 在整个向导期间都会回读 setup.exe，所以等引导进程退出。
+        std::thread([file, process, close_both] {
+            WaitForSingleObject(process, INFINITE);
+            close_both(file, process);
+        }).detach();
+    }
+    catch (...)
+    {
+        close_both(file, process);
+    }
+}
+
+SignatureCheck VerifyAuthenticode(const std::filesystem::path &path)
 {
     WINTRUST_FILE_INFO file_info{};
     file_info.cbStruct = sizeof(file_info);
@@ -622,19 +658,34 @@ bool VerifyAuthenticode(const std::filesystem::path &path)
     WINTRUST_DATA data{};
     data.cbStruct = sizeof(data);
     data.dwUIChoice = WTD_UI_NONE;
-    // 离线也能用：不查吊销，只验证签名和本机信任链。
+    // 不查吊销：离线机器上吊销服务器不可达会让整次校验失败。
     data.fdwRevocationChecks = WTD_REVOKE_NONE;
     data.dwUnionChoice = WTD_CHOICE_FILE;
     data.pFile = &file_info;
-    // 不查吊销，也不让信任链构建去联网取证书。离线机器上不能因为一次更新检查
-    // 卡在网络超时上；本机没有的中间证书会直接判失败，宁可让用户重新下载。
-    data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
+    // 允许信任链构建按需联网取根证书和中间证书。Windows 的根证书是按需下载的，
+    // 新装或少用的系统本地根存储里可能还没有签名 CA 的根；只用缓存会把签名正确的
+    // 安装包判成不可信。
+    data.dwProvFlags = WTD_REVOCATION_CHECK_NONE;
     data.dwStateAction = WTD_STATEACTION_VERIFY;
     GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
     const LONG status = WinVerifyTrust(nullptr, &action, &data);
     data.dwStateAction = WTD_STATEACTION_CLOSE;
     WinVerifyTrust(nullptr, &action, &data);
-    return status == ERROR_SUCCESS;
+    if (status == ERROR_SUCCESS)
+        return SignatureCheck::Valid;
+    // 这几种是文件本身的问题：没有签名、签名与内容不符、签名格式坏了、证书被明确
+    // 标为不可信。其余（信任链建不起来、根证书缺失、联网失败等）归到环境问题。
+    switch (status)
+    {
+    case TRUST_E_NOSIGNATURE:
+    case TRUST_E_SUBJECT_FORM_UNKNOWN:
+    case TRUST_E_BAD_DIGEST:
+    case TRUST_E_EXPLICIT_DISTRUST:
+    case CERT_E_REVOKED:
+        return SignatureCheck::Invalid;
+    default:
+        return SignatureCheck::Unverifiable;
+    }
 }
 
 Result Download(const Request &request)
@@ -758,10 +809,18 @@ Result Download(const Request &request)
                         result.message = "无法保存安装包";
                         return result;
                     }
-                    // 摘要不对：可能是续传的前缀来自一条坏连接，也可能是上游内容变了。
-                    // 丢掉临时文件，下一次从零重下；最后一次尝试仍是这个结论才判校验失败。
+                    // 摘要不对。字节里有续传拼出来的前缀时，可能是某条坏连接留下的，
+                    // 丢掉临时文件从零再来一次；这一次本来就是从零下的整包，说明清单
+                    // 或上游内容不对，再下多少遍都一样，直接判校验失败。
                     std::filesystem::remove(part_path, ec);
+                    result.attempts.back().outcome = Outcome::Checksum;
                     result.attempts.back().message = "SHA256 与清单不符";
+                    if (!attempt.resumed)
+                    {
+                        result.outcome = Outcome::Checksum;
+                        result.message = "安装包校验失败";
+                        return result;
+                    }
                     continue;
                 }
                 if (attempt.outcome == Outcome::NotFound)
@@ -777,7 +836,7 @@ Result Download(const Request &request)
     std::filesystem::remove(part_path, ec);
     // 只按最后一次尝试的结局下结论。之前出现过一次摘要不符、后面只是断网时，
     // 不能把网络问题报成「安装包校验失败」这种安全结论。
-    const bool last_checksum = !result.attempts.empty() && result.attempts.back().message == "SHA256 与清单不符";
+    const bool last_checksum = !result.attempts.empty() && result.attempts.back().outcome == Outcome::Checksum;
     const bool all_not_found = !result.attempts.empty() &&
                                std::all_of(result.attempts.begin(), result.attempts.end(),
                                            [](const Attempt &attempt) { return attempt.outcome == Outcome::NotFound; });
@@ -788,7 +847,7 @@ Result Download(const Request &request)
     {
         // 摘要不符已经是结论，不再拿它当「通道失败」的原因；否则最终文案会变成
         // 网络失败却挂着一句 SHA256 不符。
-        if (attempt.message == "SHA256 与清单不符")
+        if (attempt.outcome == Outcome::Checksum)
             continue;
         if (best_attempt == nullptr || attempt.bytes > best_attempt->bytes)
             best_attempt = &attempt;

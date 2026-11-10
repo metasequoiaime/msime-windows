@@ -52,6 +52,18 @@ struct Attempt
     std::uint64_t total = 0; // 服务端声明的整包长度，0 表示没声明
     std::uint64_t seconds = 0;
     std::string url;
+    // 这次尝试是不是接在本地已有前缀后面续传的（服务器回了 206 且起点对上）。
+    // 摘要不符时据此区分：续传拼出来的可以从零再来一次，从零下的整包不符就是结论。
+    bool resumed = false;
+};
+
+// 安装包签名核对的结论。只有 Invalid 是关于这份文件本身的结论；Unverifiable 是
+// 本机环境（根证书缺失、信任链联网失败等）造成的，不能据此把这个版本拉黑。
+enum class SignatureCheck
+{
+    Valid,
+    Invalid,
+    Unverifiable,
 };
 
 struct Result
@@ -122,14 +134,19 @@ void PruneOldInstallers(const std::filesystem::path &directory, const std::strin
 // 这段时间里文件可能被同机的其他进程换掉，所以启动前再算一次。
 bool FileMatchesDigest(const std::filesystem::path &path, const std::string &expected_hex);
 
-// 打开一个只允许读共享的句柄，并在句柄上核对 SHA-256。成功后句柄交给调用方，
-// 调用方在拉起安装程序期间不要关闭它：其他进程拿不到写权限，改不了也删不掉。
-// 打开或校验失败时 file 保持 INVALID_HANDLE_VALUE。
+// 打开一个只允许读共享的句柄，并在句柄上核对 SHA-256。成功后句柄交给调用方：
+// 持有期间其他进程拿不到写权限，改不了也删不掉。Inno Setup 的 setup.tmp 会在
+// 向导运行期间反复回读 setup.exe，所以要一直拿到安装程序进程退出，见
+// HoldInstallerUntilExit。打开或校验失败时 file 保持 INVALID_HANDLE_VALUE。
 bool OpenVerifiedInstaller(const std::filesystem::path &path, const std::string &expected_hex, HANDLE &file);
 
-// 核对安装包的 Authenticode 签名和信任链。清单写明 signed=true 时在启动前调用，
-// 防止同机进程在摘要校验之后换成一个同样合法的安装包。
-bool VerifyAuthenticode(const std::filesystem::path &path);
+// 接管只读句柄与安装程序进程句柄，在后台等进程退出后一起关闭。process 为空时
+// 立即关闭 file。两个句柄的所有权都转给这个函数。
+void HoldInstallerUntilExit(HANDLE file, HANDLE process);
+
+// 核对安装包的 Authenticode 签名和信任链。清单写明 signed=true 时在启动前调用。
+// 摘要已经钉住了字节，这一步额外保证发布出去的包确实带有效签名、没被剥掉。
+SignatureCheck VerifyAuthenticode(const std::filesystem::path &path);
 
 // 本次进程独占的安装包文件名：MetasequoiaIME_Setup_v0.11.1.exe.<pid>-<计数>.part。
 // 每个下载任务用自己的临时名，两个实例各写各的文件，互不覆盖；谁先完成谁把它改名成

@@ -238,6 +238,56 @@ TEST_CASE(update_download_open_verified_installer_rejects_a_mismatch)
     fs::remove_all(directory, ec);
 }
 
+TEST_CASE(update_download_unsigned_file_is_a_definite_signature_failure)
+{
+    namespace fs = std::filesystem;
+    using namespace native_settings::update_download;
+    const fs::path directory = test::TempRoot() / L"update-download-signature";
+    std::error_code ec;
+    fs::remove_all(directory, ec);
+    fs::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    const fs::path probe = directory / "MetasequoiaIME_Setup_v0.11.1.exe";
+    {
+        std::ofstream file(probe, std::ios::binary | std::ios::trunc);
+        file << "hello";
+    }
+    // 没有签名是这份文件本身的结论，不能被归为「环境暂时验证不了」，否则伪造的
+    // 未签名包会被一直重试。
+    REQUIRE(VerifyAuthenticode(probe) == SignatureCheck::Invalid);
+
+    fs::remove_all(directory, ec);
+}
+
+TEST_CASE(update_download_hold_without_process_releases_the_lock)
+{
+    namespace fs = std::filesystem;
+    using namespace native_settings::update_download;
+    const fs::path directory = test::TempRoot() / L"update-download-hold";
+    std::error_code ec;
+    fs::remove_all(directory, ec);
+    fs::create_directories(directory, ec);
+    REQUIRE(!ec);
+
+    const fs::path probe = directory / "MetasequoiaIME_Setup_v0.11.1.exe";
+    {
+        std::ofstream file(probe, std::ios::binary | std::ios::trunc);
+        file << "hello";
+    }
+    const std::string expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"; // "hello"
+    HANDLE file = INVALID_HANDLE_VALUE;
+    REQUIRE(OpenVerifiedInstaller(probe, expected, file));
+    // 没有进程句柄可等时立刻放掉只读句柄，文件恢复可写。
+    HoldInstallerUntilExit(file, nullptr);
+    HANDLE writer = CreateFileW(probe.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(writer != INVALID_HANDLE_VALUE);
+    CloseHandle(writer);
+
+    fs::remove_all(directory, ec);
+}
+
 TEST_CASE(update_download_pruning_leaves_only_the_kept_installer)
 {
     namespace fs = std::filesystem;

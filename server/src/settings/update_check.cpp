@@ -19,8 +19,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <mutex>
+#include <string>
 #include <thread>
 
 namespace update_check
@@ -78,8 +80,22 @@ void ClearPendingSlotsIfVersion(const std::string &version)
     PendingSignedSlot() = false;
 }
 
-// 已经提示过的版本，落在 updates/notified.txt。只在进程内记的话，Server 一重启
-// 就会对同一个已经下载好的版本再问一遍；安装器运行期间重启还会再弹一次。
+void ClearAllPendingSlots()
+{
+    std::lock_guard lock(Mutex());
+    PendingVersionSlot().clear();
+    PendingSha256Slot().clear();
+    PendingInstallerSlot().clear();
+    PendingSignedSlot() = false;
+}
+
+// 同一个版本提示过之后，隔多久可以再问一次。用户点了「否」、在 UAC 里取消、
+// 或者关掉了 Inno 向导，Server 都无从知道；没有冷却期的话这一版就再也不会提示。
+constexpr std::int64_t kRepromptSeconds = 24 * 60 * 60;
+
+// 已经提示过的版本与提示时刻，落在 updates/notified.txt（「版本\t秒级时间戳」）。
+// 只在进程内记的话，Server 一重启就会对同一个已经下载好的版本再问一遍；安装器
+// 运行期间重启还会再弹一次。
 std::filesystem::path NotifiedPath()
 {
     const std::wstring data = CommonUtils::get_ime_data_path_w();
@@ -130,14 +146,50 @@ void WriteStateLine(const std::filesystem::path &path, const std::string &line)
         std::filesystem::remove(temporary, ec);
 }
 
+std::int64_t NowSeconds()
+{
+    return static_cast<std::int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
 std::string ReadNotifiedVersion()
 {
-    return ReadStateLine(NotifiedPath());
+    const std::string line = ReadStateLine(NotifiedPath());
+    const size_t tab = line.find('\t');
+    return tab == std::string::npos ? line : line.substr(0, tab);
+}
+
+// 提示时刻。旧格式（只有版本号）或解析不出来时返回 0，按「早已过了冷却期」处理。
+std::int64_t ReadNotifiedAt()
+{
+    const std::string line = ReadStateLine(NotifiedPath());
+    const size_t tab = line.find('\t');
+    if (tab == std::string::npos)
+        return 0;
+    try
+    {
+        return std::stoll(line.substr(tab + 1));
+    }
+    catch (...)
+    {
+        return 0;
+    }
 }
 
 void WriteNotifiedVersion(const std::string &version)
 {
-    WriteStateLine(NotifiedPath(), version);
+    WriteStateLine(NotifiedPath(), version + "\t" + std::to_string(NowSeconds()));
+}
+
+// 这个版本是否还在冷却期内（提示过且未满 kRepromptSeconds）。时钟被往回拨时
+// 也按过期处理，免得一次改时间让提示停掉很久。
+bool RecentlyNotified(const std::string &version)
+{
+    if (ReadNotifiedVersion() != version)
+        return false;
+    const std::int64_t at = ReadNotifiedAt();
+    const std::int64_t now = NowSeconds();
+    return at > 0 && now >= at && now - at < kRepromptSeconds;
 }
 
 void ClearNotifiedVersion()
@@ -331,7 +383,10 @@ void BroadcastPendingIfAny()
     }
     if (version.empty() || installer.empty())
         return;
-    if (ReadNotifiedVersion() == version)
+    // 用户在上一次轮询之后关掉了自动下载：已经下好的包也不再主动提示。
+    if (!GetConfiguredAutoDownloadUpdate())
+        return;
+    if (RecentlyNotified(version))
         return;
     const PipeClientActivation active = GetActivePipeClient();
     if (active.client_id == 0)
@@ -468,18 +523,19 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
         // 弹窗是旧的，或者上一轮已经装完了；静默收敛，不打扰用户。
         return false;
     }
-    // 只认自己写下的那一份：名字合法、和待安装版本一致。
+    // 只认自己写下的那一份：名字合法、和待安装版本一致。对不上通常是旧弹窗：提示
+    // 发出之后轮询又换上了更新的版本。这时静默放弃，别动新版本的待安装状态，
+    // 新版本会按自己的节奏再提示。
     if (!native_settings::update_download::IsInstallerName(Narrow(requested_installer)) ||
         Narrow(requested_installer) != installer)
     {
-        error = L"安装包与当前待安装版本不一致，请重新检查。";
-        ClearPendingSlotsIfVersion(version);
-        ClearNotifiedVersionIfVersion(version);
+        DIAG_LOGF(L"[update] stale install request file={} pending={}", requested_installer, Widen(installer));
         return false;
     }
     const std::filesystem::path path = InstallerDirectory(version) / std::filesystem::path(installer);
-    // 打开一个只共享读的句柄并核对摘要。句柄会一直拿到安装程序启动之后再关，
-    // 这段时间里其他进程拿不到写权限，改不了也删不掉。
+    // 打开一个只共享读的句柄并核对摘要。拉起安装程序之后 Server 会立刻退出重启，
+    // 句柄随进程一起释放；这里能保证的是「核对」到「ShellExecuteEx 交出文件」之间
+    // 别人改不了也删不掉，向导运行期间的完整性由安装包自身的签名兜底。
     HANDLE file = INVALID_HANDLE_VALUE;
     if (!native_settings::update_download::OpenVerifiedInstaller(path, digest, file))
     {
@@ -492,18 +548,34 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
         error = L"安装包已损坏，请重新检查更新。";
         return false;
     }
-    if (signed_installer && !native_settings::update_download::VerifyAuthenticode(path))
+    using native_settings::update_download::SignatureCheck;
+    const SignatureCheck signature =
+        signed_installer ? native_settings::update_download::VerifyAuthenticode(path) : SignatureCheck::Valid;
+    if (signature == SignatureCheck::Invalid)
     {
         CloseHandle(file);
         DIAG_LOGF(L"[update] installer signature invalid version={} file={}", Widen(version), requested_installer);
         ClearPendingSlotsIfVersion(version);
-        // 文件留着，不反复重下 64 MB；failed.txt 让下一轮轮询跳过这一版。notified
-        // 也清掉：同一版本重新上传了不同的包时，摘要变了要能重新提示一次。
+        // 文件本身没签名或签名与内容不符：再下一遍也一样。文件留着，不反复重下；
+        // failed.txt 让下一轮轮询跳过这一版。notified 也清掉：同一版本重新上传了
+        // 不同的包时，摘要变了要能重新提示一次。
         ClearNotifiedVersionIfVersion(version);
         WriteFailedVersion(version, digest);
         WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0,
                            "安装包签名校验失败，请从发布页手动下载");
         error = L"安装包签名校验失败。请从发布页手动下载安装包。";
+        return false;
+    }
+    if (signature == SignatureCheck::Unverifiable)
+    {
+        CloseHandle(file);
+        DIAG_LOGF(L"[update] installer signature unverifiable version={} file={}", Widen(version), requested_installer);
+        // 本机暂时建不起信任链（根证书缺失、联网失败等），不是这份文件的问题，
+        // 不写 failed.txt。清掉待安装状态与提示记录，下一轮轮询核对摘要后会再问一次，
+        // 不需要重新下载。
+        ClearPendingSlotsIfVersion(version);
+        ClearNotifiedVersionIfVersion(version);
+        error = L"暂时无法验证安装包签名（可能是网络或系统证书问题），稍后会再次提示。";
         return false;
     }
     // 安装器会替换本进程和几个面板 exe，先让它们退出，避免 Inno 逼用户重启。
@@ -526,30 +598,32 @@ bool LaunchPendingInstaller(const std::wstring &requested_installer, std::wstrin
     info.lpDirectory = working_directory.c_str();
     info.nShow = SW_SHOWNORMAL;
     const bool launched = ShellExecuteExW(&info) != FALSE;
+    const DWORD launch_error = launched ? ERROR_SUCCESS : GetLastError();
     if (launched)
     {
-        // 等安装器起来并打开安装包，再放开只读句柄。最多等 5 秒，失败也不影响启动。
-        if (info.hProcess != nullptr)
-        {
-            WaitForInputIdle(info.hProcess, 5000);
-            CloseHandle(info.hProcess);
-        }
         // 成功拉起后清掉待安装状态，但保留 notified：安装器运行期间 Server 重启时
-        // 不会再对同一个版本问一次。
+        // 不会再对同一个版本问一次；用户关掉了向导的话，冷却期过后会再提示。
         ClearPendingSlotsIfVersion(version);
         DIAG_LOGF(L"[update] launch installer version={} launched=true", Widen(version));
+        // 句柄交给后台等安装程序退出再关。调用方随后会重启 Server，进程退出时一并释放。
+        native_settings::update_download::HoldInstallerUntilExit(file, info.hProcess);
+        return true;
     }
-    else
-    {
-        g_launching = false;
-        ClearPendingSlotsIfVersion(version);
-        ClearNotifiedVersionIfVersion(version);
-        WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0, "无法启动安装程序");
-        error = L"安装包已下载并通过校验，但无法启动安装程序。请稍后重试。";
-        DIAG_LOGF(L"[update] launch installer version={} launched=false", Widen(version));
-    }
+    g_launching = false;
     CloseHandle(file);
-    return launched;
+    if (launch_error == ERROR_CANCELLED)
+    {
+        // 用户在 UAC 里点了「否」，这是用户的选择，不是错误：不弹红框、不写失败
+        // 进度，待安装状态原样保留，冷却期过后再问。
+        DIAG_LOGF(L"[update] launch installer version={} cancelled by user", Widen(version));
+        return false;
+    }
+    ClearPendingSlotsIfVersion(version);
+    ClearNotifiedVersionIfVersion(version);
+    WriteProgressState(update_channel::DownloadProgress::State::Failed, version, 0, 0, "无法启动安装程序");
+    error = L"安装包已下载并通过校验，但无法启动安装程序。请稍后重试。";
+    DIAG_LOGF(L"[update] launch installer version={} launched=false error={}", Widen(version), launch_error);
+    return false;
 }
 
 void CheckOnce()
@@ -581,12 +655,16 @@ void CheckOnce()
         !update_channel::SupportsAutoUpdate(current) || current.kind != update_channel::Kind::Release)
     {
         DIAG_LOGF(L"[update] poll skipped current={} reason=channel", Widen(CurrentVersion()));
+        // 这两种跳过不是「一次探测失败」，而是明确不再自动更新：之前留下的待安装包
+        // 也一起作废，别让客户端激活时又把它提示出来。
+        ClearAllPendingSlots();
         done({}, {}, {}, false);
         return;
     }
     if (!GetConfiguredAutoDownloadUpdate())
     {
         DIAG_LOGF(L"[update] poll skipped current={} reason=auto_download_off", Widen(CurrentVersion()));
+        ClearAllPendingSlots();
         done({}, {}, {}, false);
         return;
     }

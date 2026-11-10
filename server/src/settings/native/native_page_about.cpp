@@ -377,32 +377,35 @@ inline void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const
     state->statusBox->SetVisible(true);
 }
 
-// 下载结束后恢复按钮并给出结果。成功时先用清单摘要重新核对一遍磁盘上的文件，
-// 并在启动前验证签名；句柄保持只共享读，安装程序起来之前别人改不了也删不掉。
-// 接下来是 UAC 和 Inno Setup 自己的界面，每一步仍由用户确认。
-void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::string &installer_path,
-                          const std::string &expected_digest, const std::string &message, const bool require_signature)
+// 下载线程上的收尾：先用清单摘要重新核对一遍磁盘上的文件，并在启动前验证签名，
+// 再拉起安装程序。整段都在后台线程上跑：100 MB 的摘要加一遍 WinVerifyTrust（杀毒
+// 软件还会跟着扫）放在窗口线程上会让设置窗口卡住好几秒。只读句柄一直拿到安装程序
+// 退出，向导回读 setup.exe 期间别人改不了也删不掉。接下来是 UAC 和 Inno Setup 自己
+// 的界面，每一步仍由用户确认。
+//
+// 返回「状态\n说明」：状态是 ok / err / cancel，交给窗口线程显示。
+std::string VerifyAndLaunchInstaller(const std::filesystem::path &path, const std::string &expected_digest,
+                                     const bool require_signature)
 {
-    if (installer_path.empty())
-    {
-        FinishUpdateDownload(state, false, Widen(message.empty() ? "下载失败" : message));
-        return;
-    }
-    const std::filesystem::path path = std::filesystem::u8path(installer_path);
     HANDLE file = INVALID_HANDLE_VALUE;
     if (!update_download::OpenVerifiedInstaller(path, expected_digest, file))
-    {
-        FinishUpdateDownload(state, false, L"安装包在打开前核对失败，请重试");
-        return;
-    }
-    if (require_signature && !update_download::VerifyAuthenticode(path))
+        return "err\n安装包在打开前核对失败，请重试";
+    const update_download::SignatureCheck signature =
+        require_signature ? update_download::VerifyAuthenticode(path) : update_download::SignatureCheck::Valid;
+    if (signature == update_download::SignatureCheck::Invalid)
     {
         CloseHandle(file);
         std::error_code ec;
         std::filesystem::remove(path, ec);
-        FinishUpdateDownload(state, false, L"安装包签名校验失败，请从发布页手动下载");
-        return;
+        return "err\n安装包签名校验失败，请从发布页手动下载";
     }
+    if (signature == update_download::SignatureCheck::Unverifiable)
+    {
+        // 本机暂时建不起信任链，不是文件的问题；文件留着，下次点「检查更新」直接复用。
+        CloseHandle(file);
+        return "err\n暂时无法验证安装包签名（可能是网络或系统证书问题），请稍后重试";
+    }
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     SHELLEXECUTEINFOW info{};
     info.cbSize = sizeof(info);
     info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
@@ -412,37 +415,19 @@ void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::s
     info.lpDirectory = working_directory.c_str();
     info.nShow = SW_SHOWNORMAL;
     const bool opened = ShellExecuteExW(&info) != FALSE;
+    const DWORD launch_error = opened ? ERROR_SUCCESS : GetLastError();
+    if (SUCCEEDED(com))
+        CoUninitialize();
     if (!opened)
     {
         CloseHandle(file);
-        FinishUpdateDownload(state, false, L"安装包已下载，但无法自动打开，请重试");
-        return;
+        // 用户在 UAC 里点了「否」：是用户的选择，不当成错误。
+        if (launch_error == ERROR_CANCELLED)
+            return "cancel\n已取消安装，需要时可再次点击「检查更新」";
+        return "err\n安装包已下载，但无法自动打开，请重试";
     }
-    FinishUpdateDownload(state, true, L"安装包已下载并通过校验，已打开安装程序");
-    // 等安装器起来并打开安装包之后再放掉只读句柄。等待放到后台线程，设置窗口
-    // 不因为一次 UAC 或安装器初始化卡住。
-    const HANDLE process = info.hProcess;
-    try
-    {
-        std::thread([file, process] {
-            if (process != nullptr)
-            {
-                WaitForInputIdle(process, 5000);
-                CloseHandle(process);
-            }
-            else
-            {
-                Sleep(1000);
-            }
-            CloseHandle(file);
-        }).detach();
-    }
-    catch (...)
-    {
-        if (process != nullptr)
-            CloseHandle(process);
-        CloseHandle(file);
-    }
+    update_download::HoldInstallerUntilExit(file, info.hProcess);
+    return "ok\n安装包已下载并通过校验，已打开安装程序";
 }
 
 void ShowUpdateDialog(PageContext &context, const Version &latest, const std::string &releaseUrl,
@@ -653,42 +638,32 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
             request.installer_name = name;
             request.installer_sha256 = digest;
             request.directory = update_download::DefaultDirectory();
-            // 下载本身在后台线程上跑，进度只能靠结束后一次性回报，所以把整个下载
-            // 放进 RunInBackground 的 work 里；返回一个编码过的结果串交给窗口线程。
+            // 下载、核对与拉起安装程序都在后台线程上跑，进度只能靠结束后一次性回报；
+            // 返回一个编码过的结果串（状态\n说明）交给窗口线程。
             RunInBackground(
                 ctx->host.Hwnd(),
-                [request]() {
+                [request, signed_installer]() {
                     const update_download::Result result = update_download::Download(request);
-                    if (result.outcome == update_download::Outcome::Ok)
-                    {
-                        update_download::PruneOldInstallers(request.directory, request.installer_name);
-                        // 四段结果：状态、路径、摘要、说明，用换行分隔。
-                        return std::string("ok\n") + result.path.u8string() + "\n" + request.installer_sha256 + "\n";
-                    }
-                    return std::string("err\n\n\n") + result.message;
+                    if (result.outcome != update_download::Outcome::Ok)
+                        return std::string("err\n") +
+                               (result.message.empty() ? std::string("下载失败") : result.message);
+                    update_download::PruneOldInstallers(request.directory, request.installer_name);
+                    return VerifyAndLaunchInstaller(result.path, request.installer_sha256, signed_installer);
                 },
-                [weak, signed_installer](const std::string &encoded) {
+                [weak](const std::string &encoded) {
                     const std::shared_ptr<AboutState> locked = weak.lock();
                     if (!locked)
                         return;
-                    // 四段：状态、路径、摘要、说明。状态不是 ok 时按失败收尾。
-                    const auto next = [&encoded](size_t &start) {
-                        const size_t end = encoded.find('\n', start);
-                        const std::string field =
-                            encoded.substr(start, end == std::string::npos ? std::string::npos : end - start);
-                        start = end == std::string::npos ? encoded.size() : end + 1;
-                        return field;
-                    };
-                    size_t cursor = 0;
-                    const std::string status = next(cursor);
-                    const std::string path = next(cursor);
-                    const std::string digest = next(cursor);
-                    const std::string note = cursor < encoded.size() ? encoded.substr(cursor) : std::string();
-                    if (status == "ok")
-                        FinishUpdateDownload(locked, path, digest, note, signed_installer);
-                    else
-                        FinishUpdateDownload(locked, std::string(), std::string(),
-                                             note.empty() ? std::string("下载失败") : note, false);
+                    const size_t split = encoded.find('\n');
+                    const std::string status = encoded.substr(0, split);
+                    const std::string note = split == std::string::npos ? std::string() : encoded.substr(split + 1);
+                    if (status == "cancel")
+                    {
+                        FinishUpdateDownload(locked, true, Widen(note));
+                        locked->status->SetRole(TextRole::Muted);
+                        return;
+                    }
+                    FinishUpdateDownload(locked, status == "ok", Widen(note.empty() ? std::string("下载失败") : note));
                 });
         });
 }
