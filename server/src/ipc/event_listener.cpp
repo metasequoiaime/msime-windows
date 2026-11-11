@@ -227,6 +227,8 @@ void HideCandidateWindowAndDropItems()
     Global::CandidateString.clear();
     Global::ClearCandidatePageSnapshot();
     Global::candidate_ui.set_items({});
+    Global::candidate_ui.page_input.clear();
+    Global::candidate_ui.page_prefix_end = 0;
     // Clear the shown flag first so async callbacks refuse to resurrect the
     // window, then post the actual hide message.
     ::is_global_wnd_cand_shown = false;
@@ -860,7 +862,20 @@ void RegisterStatusSnapshotWindow(HWND toolbar_window)
 
 bool SendCurrentDataToClient(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
 {
-    const UINT msg_type = Global::MsgTypeToTsf;
+    UINT msg_type = Global::MsgTypeToTsf;
+    if (msg_type == Global::DataFromServerMsgType::Normal && Global::candidate_ui.selected_text.empty() &&
+        g_inputSession && !g_inputSession->get_pinyin_sequence_with_cases().empty())
+    {
+        // A Normal reply with no text commits nothing but still clears the
+        // Server composition, while TSF treats it as an empty commit. Every
+        // caller that commits text must name it; turn the anomaly into the
+        // no-op reply the TSF already understands.
+        CAND_DIAG_LOGF(L"normal-empty-candidate-guard request={} input_units={}", request_id,
+                       g_inputSession->get_pinyin_sequence_with_cases().size());
+        Global::candidate_ui.selected_text = L"OutofRange";
+        Global::MsgTypeToTsf = Global::DataFromServerMsgType::OutofRange;
+        msg_type = Global::MsgTypeToTsf;
+    }
     FANY_IPC_LOGF(L"[msime]: [ipc] send-current-data: msg_type={}, text={}", msg_type,
                   ::Global::candidate_ui.selected_text);
     const ULONGLONG send_started_at_ms = GetTickCount64();

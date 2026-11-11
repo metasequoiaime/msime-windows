@@ -289,6 +289,9 @@ void PushUiLessCandidatesToOwner();
 
 // 拆分前 event_listener.cpp 里的前置声明，定义分布在各个 event_listener*.cpp。
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch);
+// Rebuilds the published page when it does not belong to the live composition.
+// Returns whether page_words can be used by the commit path.
+bool EnsureCandidatePageForComposition(uint64_t client_id, uint64_t activation_epoch);
 // 当前候选列表记下的字形与配置不同（组字途中切换了简繁）时，记下当前字形。这张列表组页时按字形展开过写法的，
 // 在它上面按当前字形换写法：候选的先后顺序不变；写法全归列表里别的底词的候选（「余」「馀」同在列表时的「馀」）
 // 切到繁体时不出现，切回简体也找不回来，要到下一次组页；高亮移到原来那个底词的写法组组首，新列表里没有它时

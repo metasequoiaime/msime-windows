@@ -50,6 +50,11 @@ target_include_directories(test_punctuation_commit_text PRIVATE ../src)
 target_compile_features(test_punctuation_commit_text PRIVATE cxx_std_17)
 add_test(NAME punctuation_commit_text COMMAND test_punctuation_commit_text)
 
+add_executable(test_candidate_ui_less_policy candidate_ui_less_policy.cpp)
+target_include_directories(test_candidate_ui_less_policy PRIVATE ../src)
+target_compile_features(test_candidate_ui_less_policy PRIVATE cxx_std_17)
+add_test(NAME candidate_ui_less_policy COMMAND test_candidate_ui_less_policy)
+
 add_executable(test_multiline_commit multiline_commit.cpp)
 target_include_directories(test_multiline_commit PRIVATE ../src)
 target_compile_features(test_multiline_commit PRIVATE cxx_std_17)

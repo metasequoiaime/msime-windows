@@ -1578,7 +1578,19 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
             }
             else
             {
-                const std::wstring candidate(receivedData->candidate_string);
+                std::wstring candidate(receivedData->candidate_string);
+                if (candidate.empty() && _IsComposing() && pCompositionProcessorEngine &&
+                    pCompositionProcessorEngine->GetVirtualKeyLength() > 0)
+                {
+                    // The Server cleared its composition but named no candidate.
+                    // Commit the local preedit with the punctuation so both
+                    // sides end with the same content; leaving the punctuation
+                    // alone would delete the typed characters.
+                    DebugTsfIssue47(L"punctuation-empty-candidate-guard", requestId, code, wch, CATEGORY_COMPOSING,
+                                    FUNCTION_PUNCTUATION, 1, TRUE, pCompositionProcessorEngine->GetVirtualKeyLength(),
+                                    S_FALSE);
+                    candidate = pCompositionProcessorEngine->GetKeystrokeBuffer().ToWString();
+                }
                 const WCHAR preceding =
                     candidate.empty() ? _GetPrecedingCharForSmartPunctuation(ec, pContext) : candidate.back();
                 if (code == VK_DECIMAL || code == VK_DIVIDE || wch == L'-' || wch == L'+')
