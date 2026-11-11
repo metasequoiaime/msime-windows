@@ -71,6 +71,7 @@ constexpr auto kIdleRelease = std::chrono::minutes(3);
     X(SherpaOnnxDestroyVoiceActivityDetector)                                                                          \
     X(SherpaOnnxVoiceActivityDetectorAcceptWaveform)                                                                   \
     X(SherpaOnnxVoiceActivityDetectorEmpty)                                                                            \
+    X(SherpaOnnxVoiceActivityDetectorDetected)                                                                         \
     X(SherpaOnnxVoiceActivityDetectorPop)                                                                              \
     X(SherpaOnnxVoiceActivityDetectorFront)                                                                            \
     X(SherpaOnnxDestroySpeechSegment)                                                                                  \
@@ -516,13 +517,18 @@ class OnlineDecoder
 
     void Accept(const float *samples, std::size_t count)
     {
-        // C API 的采样数是 int32，长录音分片送入。
-        constexpr std::size_t kSlice = kSampleRate * 10;
-        for (std::size_t offset = 0; offset < count; offset += kSlice)
+        // 按音频里的绝对位置每 0.1 秒解码一次、判一次句末：判句末的时机决定了在哪里断句，断句又影响
+        // 拼出来的文字。按固定位置判，结果就与音频怎么分块送进来无关，录完一次送入与边录边送完全一致。
+        constexpr std::size_t kStep = kSampleRate / 10;
+        for (std::size_t offset = 0; offset < count;)
         {
-            const auto slice = static_cast<int32_t>((std::min)(kSlice, count - offset));
-            api_.SherpaOnnxOnlineStreamAcceptWaveform(stream_, kSampleRate, samples + offset, slice);
-            Decode();
+            const std::size_t piece = (std::min)(count - offset, kStep - accepted_ % kStep);
+            api_.SherpaOnnxOnlineStreamAcceptWaveform(stream_, kSampleRate, samples + offset,
+                                                      static_cast<int32_t>(piece));
+            offset += piece;
+            accepted_ += piece;
+            if (accepted_ % kStep == 0)
+                Decode();
         }
     }
 
@@ -567,6 +573,7 @@ class OnlineDecoder
     const SherpaApi &api_;
     const SherpaOnnxOnlineRecognizer *recognizer_;
     const SherpaOnnxOnlineStream *stream_;
+    std::size_t accepted_ = 0;
     std::vector<std::string> segments_;
     std::string current_;
 };
@@ -596,72 +603,173 @@ std::string DecodeOfflineSegment(const LoadedRecognizer &recognizer, const float
     return text;
 }
 
+// 整句模型的断句识别：VAD 切出一句就解码一句。录完一次送入（批量）与边录边送（伪流式）走同一份代码；
+// 批量时整段录音在第一次断句之前就已到齐，结果与只做批量时完全一样。
+class OfflineSegmenter
+{
+  public:
+    explicit OfflineSegmenter(const LoadedRecognizer &recognizer) : recognizer_(recognizer), api_(*recognizer.api)
+    {
+        SherpaOnnxVadModelConfig vad{};
+        vad.silero_vad.model = recognizer.vad_model.c_str();
+        vad.silero_vad.threshold = 0.5f;
+        vad.silero_vad.min_silence_duration = 0.5f;
+        vad.silero_vad.min_speech_duration = 0.25f;
+        vad.silero_vad.window_size = kVadWindow;
+        // Fun-ASR-Nano 的音频与文本共用 512 token 的上下文，超过约 25 秒就什么都不出。
+        vad.silero_vad.max_speech_duration = recognizer.model->kind == ModelKind::OfflineFunAsrNano ? 20.0f : 28.0f;
+        vad.sample_rate = kSampleRate;
+        vad.num_threads = 1;
+        vad.provider = "cpu";
+        detector_ = api_.SherpaOnnxCreateVoiceActivityDetector(&vad, 60.0f);
+    }
+    ~OfflineSegmenter()
+    {
+        if (detector_)
+            api_.SherpaOnnxDestroyVoiceActivityDetector(detector_);
+    }
+    OfflineSegmenter(const OfflineSegmenter &) = delete;
+    OfflineSegmenter &operator=(const OfflineSegmenter &) = delete;
+
+    bool Valid() const
+    {
+        return detector_ != nullptr;
+    }
+
+    // 收一批音频，送进 VAD，已经断完的句子立刻解码定稿。不足一窗的尾巴留到下一批或 Finish。
+    void Accept(const float *samples, std::size_t count)
+    {
+        audio_.insert(audio_.end(), samples, samples + count);
+        // 检测器按每次调用整体判断，所以一窗一窗地送，长缓冲一次送入会把所有停顿并成一段。
+        while (audio_.size() - fed_ >= static_cast<std::size_t>(kVadWindow))
+            Feed(kVadWindow);
+    }
+
+    // 正在说的这一句的草稿：从这句的起音附近解码到当前为止。离上次草稿不足半秒的新音频就沿用上次的结果，
+    // 免得每来一小块都整句重算。不在说话时为空。
+    std::string Draft()
+    {
+        if (speech_from_ < 0)
+        {
+            draft_.clear();
+            return draft_;
+        }
+        const auto end = static_cast<long long>(audio_.size());
+        // 刚开口时音频太短，整句模型会猜出不相干的字；攒到 0.6 秒再出第一版草稿。
+        if (end - speech_from_ < kSampleRate * 6 / 10)
+            return draft_;
+        if (draft_end_ >= speech_from_ && end - draft_end_ < kSampleRate / 2)
+            return draft_;
+        draft_end_ = end;
+        draft_ =
+            DecodeOfflineSegment(recognizer_, audio_.data() + speech_from_, static_cast<int32_t>(end - speech_from_));
+        // 整句模型每次解码都按一整句收尾，草稿末尾的句号、逗号会随着往下说跳来跳去；句子还没说完，先不显示。
+        for (const std::string_view mark : {"。", "，", ".", ","})
+        {
+            if (draft_.size() >= mark.size() && draft_.compare(draft_.size() - mark.size(), mark.size(), mark) == 0)
+            {
+                draft_.resize(draft_.size() - mark.size());
+                break;
+            }
+        }
+        return draft_;
+    }
+
+    // 已定稿的句子加上草稿。
+    std::string Text(const std::string &draft) const
+    {
+        std::vector<std::string> all = segments_;
+        if (!draft.empty())
+            all.push_back(draft);
+        return JoinSegments(all);
+    }
+
+    std::string Finish()
+    {
+        if (audio_.size() > fed_)
+            Feed(static_cast<int32_t>(audio_.size() - fed_));
+        api_.SherpaOnnxVoiceActivityDetectorFlush(detector_);
+        Drain();
+        return JoinSegments(segments_);
+    }
+
+  private:
+    void Feed(int32_t window)
+    {
+        api_.SherpaOnnxVoiceActivityDetectorAcceptWaveform(detector_, audio_.data() + fed_, window);
+        fed_ += static_cast<std::size_t>(window);
+        Drain();
+        // 句子的起点在 VAD 断句之前拿不到：在它刚判定开始说话时记下位置，往前留一秒给起音和判定延迟。
+        if (api_.SherpaOnnxVoiceActivityDetectorDetected(detector_))
+        {
+            if (speech_from_ < 0)
+                speech_from_ = (std::max)(decoded_end_, static_cast<long long>(fed_) - kSampleRate);
+        }
+        else
+        {
+            speech_from_ = -1;
+        }
+    }
+
+    void Drain()
+    {
+        while (!api_.SherpaOnnxVoiceActivityDetectorEmpty(detector_))
+        {
+            const SherpaOnnxSpeechSegment *segment = api_.SherpaOnnxVoiceActivityDetectorFront(detector_);
+            if (segment && segment->n > 0)
+            {
+                // sherpa 的段首只比概率越过阈值的那一窗早约 26 ms，电平低时句首的字落在段外。录音都在手里，
+                // 往前补回起音再解码，但不越过上一段的段尾，免得两段重复同一段音频里的字。
+                const long long start = segment->start;
+                const long long begin = VadSegmentStart(audio_.data(), audio_.size(), start, decoded_end_);
+                decoded_end_ = start + segment->n;
+                std::string text;
+                if (begin >= start)
+                {
+                    text = DecodeOfflineSegment(recognizer_, segment->samples, segment->n);
+                }
+                else
+                {
+                    padded_.assign(audio_.begin() + static_cast<std::ptrdiff_t>(begin),
+                                   audio_.begin() + static_cast<std::ptrdiff_t>(start));
+                    padded_.insert(padded_.end(), segment->samples, segment->samples + segment->n);
+                    text = DecodeOfflineSegment(recognizer_, padded_.data(), static_cast<int32_t>(padded_.size()));
+                }
+                if (!text.empty())
+                    segments_.push_back(std::move(text));
+                // 这句定稿了，草稿作废；下一句的起点由 Feed 重新记。
+                speech_from_ = -1;
+                draft_.clear();
+            }
+            if (segment)
+                api_.SherpaOnnxDestroySpeechSegment(segment);
+            api_.SherpaOnnxVoiceActivityDetectorPop(detector_);
+        }
+    }
+
+    const LoadedRecognizer &recognizer_;
+    const SherpaApi &api_;
+    const SherpaOnnxVoiceActivityDetector *detector_ = nullptr;
+    std::vector<float> audio_;
+    std::size_t fed_ = 0;
+    std::vector<std::string> segments_;
+    long long decoded_end_ = 0;
+    long long speech_from_ = -1;
+    long long draft_end_ = -1;
+    std::string draft_;
+    std::vector<float> padded_;
+};
+
 std::string RecognizeOffline(const LoadedRecognizer &recognizer, const std::vector<float> &samples, std::string &error)
 {
-    const SherpaApi &api = *recognizer.api;
-    SherpaOnnxVadModelConfig vad{};
-    vad.silero_vad.model = recognizer.vad_model.c_str();
-    vad.silero_vad.threshold = 0.5f;
-    vad.silero_vad.min_silence_duration = 0.5f;
-    vad.silero_vad.min_speech_duration = 0.25f;
-    vad.silero_vad.window_size = kVadWindow;
-    // Fun-ASR-Nano 的音频与文本共用 512 token 的上下文，超过约 25 秒就什么都不出。
-    vad.silero_vad.max_speech_duration = recognizer.model->kind == ModelKind::OfflineFunAsrNano ? 20.0f : 28.0f;
-    vad.sample_rate = kSampleRate;
-    vad.num_threads = 1;
-    vad.provider = "cpu";
-    const SherpaOnnxVoiceActivityDetector *detector = api.SherpaOnnxCreateVoiceActivityDetector(&vad, 60.0f);
-    if (!detector)
+    OfflineSegmenter segmenter(recognizer);
+    if (!segmenter.Valid())
     {
         error = "本地语音的断句模型载入失败，请在设置里删除模型后重新下载";
         return {};
     }
-    std::vector<std::string> segments;
-    long long decoded_end = 0;
-    std::vector<float> padded;
-    const auto drain = [&] {
-        while (!api.SherpaOnnxVoiceActivityDetectorEmpty(detector))
-        {
-            const SherpaOnnxSpeechSegment *segment = api.SherpaOnnxVoiceActivityDetectorFront(detector);
-            if (segment && segment->n > 0)
-            {
-                // sherpa 的段首只比概率越过阈值的那一窗早约 26 ms，电平低时句首的字落在段外。整段录音都在手里，
-                // 往前补回起音再解码，但不越过上一段的段尾，免得两段重复同一段音频里的字。
-                const long long start = segment->start;
-                const long long begin = VadSegmentStart(samples.data(), samples.size(), start, decoded_end);
-                decoded_end = start + segment->n;
-                std::string text;
-                if (begin >= start)
-                {
-                    text = DecodeOfflineSegment(recognizer, segment->samples, segment->n);
-                }
-                else
-                {
-                    padded.assign(samples.begin() + static_cast<std::ptrdiff_t>(begin),
-                                  samples.begin() + static_cast<std::ptrdiff_t>(start));
-                    padded.insert(padded.end(), segment->samples, segment->samples + segment->n);
-                    text = DecodeOfflineSegment(recognizer, padded.data(), static_cast<int32_t>(padded.size()));
-                }
-                if (!text.empty())
-                    segments.push_back(std::move(text));
-            }
-            if (segment)
-                api.SherpaOnnxDestroySpeechSegment(segment);
-            api.SherpaOnnxVoiceActivityDetectorPop(detector);
-        }
-    };
-    // 检测器按每次调用整体判断，所以一窗一窗地送，长缓冲一次送入会把所有停顿并成一段。
-    const auto total = static_cast<int32_t>((std::min<std::size_t>)(samples.size(), INT32_MAX));
-    for (int32_t at = 0; at < total; at += kVadWindow)
-    {
-        const int32_t window = (std::min)(kVadWindow, total - at);
-        api.SherpaOnnxVoiceActivityDetectorAcceptWaveform(detector, samples.data() + at, window);
-        drain();
-    }
-    api.SherpaOnnxVoiceActivityDetectorFlush(detector);
-    drain();
-    api.SherpaOnnxDestroyVoiceActivityDetector(detector);
-    return JoinSegments(segments);
+    segmenter.Accept(samples.data(), samples.size());
+    return segmenter.Finish();
 }
 
 } // namespace
@@ -712,11 +820,12 @@ RecognitionResult Recognize(const std::vector<float> &samples, const std::string
 bool SupportsStreaming(const std::string &model_id)
 {
     const ModelEntry *model = FindModel(model_id);
-    return model && model->kind == ModelKind::OnlineTransducer;
+    return model && (model->kind == ModelKind::OnlineTransducer || model->kind == ModelKind::OfflineSenseVoice ||
+                     model->kind == ModelKind::OfflineTransducer);
 }
 
-StreamingSession::StreamingSession(std::string model_id, PartialCallback on_partial)
-    : model_id_(std::move(model_id)), on_partial_(std::move(on_partial))
+StreamingSession::StreamingSession(std::string model_id, std::string language, PartialCallback on_partial)
+    : model_id_(std::move(model_id)), language_(std::move(language)), on_partial_(std::move(on_partial))
 {
 }
 
@@ -781,6 +890,35 @@ void StreamingSession::Stop(bool cancel)
         worker_.join();
 }
 
+bool StreamingSession::Take(std::vector<float> &chunk, bool &finishing)
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_.wait(lock, [this] { return !pending_.empty() || finishing_; });
+    if (canceled_)
+        return false;
+    chunk.clear();
+    chunk.swap(pending_);
+    // finishing_ 之后不再收音频（PushFloatSamples 拒收），这批就是最后一批。
+    finishing = finishing_;
+    return true;
+}
+
+bool StreamingSession::HasPending() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !pending_.empty() || finishing_;
+}
+
+void StreamingSession::Publish(const std::string &text, std::string &shown)
+{
+    const std::string tidy = TidyTranscript(text);
+    if (tidy != shown && !tidy.empty() && on_partial_)
+    {
+        shown = tidy;
+        on_partial_(tidy);
+    }
+}
+
 void StreamingSession::Run()
 {
     const auto fail = [this](std::string error) {
@@ -792,10 +930,11 @@ void StreamingSession::Run()
     if (!api)
         return fail(error);
     StartReaper();
+    const ModelEntry &model = *FindModel(model_id_);
     std::shared_ptr<LoadedRecognizer> recognizer;
     try
     {
-        recognizer = Acquire(*api, *FindModel(model_id_), {}, error);
+        recognizer = Acquire(*api, model, language_, error);
     }
     catch (const std::exception &)
     {
@@ -804,41 +943,49 @@ void StreamingSession::Run()
     if (!recognizer)
         return fail(error.empty() ? "本地语音识别失败" : error);
 
-    OnlineDecoder decoder(*recognizer);
-    if (!decoder.Valid())
-        return fail("本地语音识别失败");
     std::string shown;
     std::vector<float> chunk;
-    for (;;)
+    bool finishing = false;
+    if (model.kind == ModelKind::OnlineTransducer)
     {
-        bool finishing = false;
+        OnlineDecoder decoder(*recognizer);
+        if (!decoder.Valid())
+            return fail("本地语音识别失败");
+        while (Take(chunk, finishing))
         {
-            std::unique_lock<std::mutex> lock(mutex_);
-            cv_.wait(lock, [this] { return !pending_.empty() || finishing_; });
-            if (canceled_)
-                break;
-            chunk.swap(pending_);
-            pending_.clear();
-            finishing = finishing_;
-        }
-        if (!chunk.empty())
-        {
-            decoder.Accept(chunk.data(), chunk.size());
-            chunk.clear();
-            const std::string text = TidyTranscript(decoder.Text());
-            if (text != shown && !text.empty() && on_partial_)
+            if (!chunk.empty())
             {
-                shown = text;
-                on_partial_(text);
+                decoder.Accept(chunk.data(), chunk.size());
+                Publish(decoder.Text(), shown);
+            }
+            if (finishing)
+            {
+                std::string text = TidyTranscript(decoder.Finish());
+                std::lock_guard<std::mutex> lock(mutex_);
+                result_ = std::move(text);
+                break;
             }
         }
-        if (finishing)
+    }
+    else
+    {
+        OfflineSegmenter segmenter(*recognizer);
+        if (!segmenter.Valid())
+            return fail("本地语音的断句模型载入失败，请在设置里删除模型后重新下载");
+        while (Take(chunk, finishing))
         {
-            // finishing_ 之后不再收音频（PushFloatSamples 拒收），刚才那批就是最后一批。
-            std::string text = TidyTranscript(decoder.Finish());
-            std::lock_guard<std::mutex> lock(mutex_);
-            result_ = std::move(text);
-            break;
+            if (!chunk.empty())
+                segmenter.Accept(chunk.data(), chunk.size());
+            if (finishing)
+            {
+                std::string text = TidyTranscript(segmenter.Finish());
+                std::lock_guard<std::mutex> lock(mutex_);
+                result_ = std::move(text);
+                break;
+            }
+            // 草稿要整句重算，比定稿贵；后面还有音频排着时先去切句定稿，追上了再算草稿。
+            if (!HasPending())
+                Publish(segmenter.Text(segmenter.Draft()), shown);
         }
     }
     recognizer->Touch();

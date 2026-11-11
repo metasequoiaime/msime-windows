@@ -33,18 +33,20 @@ struct RecognitionResult
 // 不载入任何东西，只看磁盘：所选模型及其依赖是否都已下载。返回空串表示就绪。
 std::string ReadinessError(const std::string &model_id);
 
-// 所选模型能否边录边识别（只有流式模型可以）。只看目录，不载入。
+// 所选模型能否边录边出字。流式模型逐字出；SenseVoice 与中英整句是伪流式：VAD 断出一句就识别定稿一句，
+// 正在说的这句每半秒重算一次草稿。Fun-ASR-Nano 解码太慢，反复重算会拖住整机，仍录完再识别。只看目录，不载入。
 bool SupportsStreaming(const std::string &model_id);
 
-// 流式模型的一次听写。Start 立即返回：运行库与模型在工作线程上载入，载入期间送来的音频先排队，
-// 载入后补上，所以冷启动只会让第一段文字晚一点出来，不会丢音频。识别中的文字（已整理过）每变一次
-// 就在工作线程上回调一次。
+// 边录边出字的一次听写（SupportsStreaming 的模型）。Start 立即返回：运行库与模型在工作线程上载入，
+// 载入期间送来的音频先排队，载入后补上，所以冷启动只会让第一段文字晚一点出来，不会丢音频。
+// 识别中的文字（已整理过）每变一次就在工作线程上回调一次。
 class StreamingSession : public StreamingAsr
 {
   public:
     using PartialCallback = std::function<void(const std::string &)>;
 
-    StreamingSession(std::string model_id, PartialCallback on_partial);
+    // language 取 voice_input.language，只有 SenseVoice 用得上。
+    StreamingSession(std::string model_id, std::string language, PartialCallback on_partial);
     ~StreamingSession() override;
 
     StreamingSession(const StreamingSession &) = delete;
@@ -58,9 +60,14 @@ class StreamingSession : public StreamingAsr
 
   private:
     void Run();
+    // 取走排队的音频；返回 false 表示已取消。finishing 为真表示这是最后一批。
+    bool Take(std::vector<float> &chunk, bool &finishing);
+    bool HasPending() const;
+    void Publish(const std::string &text, std::string &shown);
     void Stop(bool cancel);
 
     std::string model_id_;
+    std::string language_;
     PartialCallback on_partial_;
     mutable std::mutex mutex_;
     std::condition_variable cv_;

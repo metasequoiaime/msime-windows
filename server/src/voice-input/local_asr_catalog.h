@@ -144,7 +144,7 @@ inline const std::vector<ModelEntry> &Catalog()
         {
             "x-asr-zh-en-offline",
             "中英整句（X-ASR）",
-            "每说完一段整段识别，比中英流式更准，自带标点，中英夹杂",
+            "逐句识别：说完一句出一句，正在说的这句先显示草稿；比中英流式更准，自带标点，中英夹杂",
             ModelKind::OfflineTransducer,
             "transducer",
             {"sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03.tar.bz2", L"github.com",
@@ -165,7 +165,7 @@ inline const std::vector<ModelEntry> &Catalog()
         {
             "sense-voice-small",
             "快速整句（SenseVoice）",
-            "说完后整句识别，速度最快，支持中、英、日、韩、粤语",
+            "逐句识别：说完一句出一句，正在说的这句先显示草稿；速度最快，支持中、英、日、韩、粤语",
             ModelKind::OfflineSenseVoice,
             "",
             {"sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2", L"github.com",
@@ -185,7 +185,7 @@ inline const std::vector<ModelEntry> &Catalog()
         {
             "fun-asr-nano",
             "高精度（Fun-ASR-Nano）",
-            "大模型解码，专有名词与中英夹杂最准，速度较慢，建议 16 GB 内存以上的电脑使用",
+            "大模型解码，专有名词与中英夹杂最准，速度较慢，说完后才整段出字，建议 16 GB 内存以上的电脑使用",
             ModelKind::OfflineFunAsrNano,
             "",
             {"sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2", L"github.com",

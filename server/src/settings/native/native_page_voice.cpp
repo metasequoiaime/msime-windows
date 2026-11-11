@@ -1146,7 +1146,8 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
             column->Add(
                 BasicRow(RowText(L"流式 inline 预编辑"), BindToggle(context, "voice_input.stream_inline_preedit")));
             column->Add(SectionDescription(
-                L"豆包或本地中英流式模型识别时，已识别文字直接显示在输入框中，松开录音键后上屏。仅 TSF 上屏时生效。"));
+                L"豆包或本地模型（Fun-ASR-Nano 除外）识别时，已识别文字直接显示在输入框中，松开录音键后上屏。仅 TSF "
+                L"上屏时生效。"));
             page.AddSection(column);
         }
 

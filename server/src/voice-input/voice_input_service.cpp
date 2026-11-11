@@ -1547,7 +1547,8 @@ bool StartRecording()
                 config.asr_resource_id, config.doubao_enable_itn, config.doubao_enable_punc, config.doubao_enable_ddc,
                 config.doubao_boosting_table_id, std::move(on_partial));
         else
-            g_stream_asr = std::make_unique<local_asr::StreamingSession>(config.local_asr_model, std::move(on_partial));
+            g_stream_asr = std::make_unique<local_asr::StreamingSession>(config.local_asr_model, config.language,
+                                                                         std::move(on_partial));
         if (!g_stream_asr->Start())
         {
             AbortPendingStart("asr start failed");

@@ -569,8 +569,8 @@ end_sound = true
 # 录音时暂时静音其他应用的播放声音，结束后自动恢复
 mute_system_audio = true
 polish_text = true
-# 流式识别（豆包，或本地的中英流式模型）时，将已识别文本显示在输入框 inline preedit 中，松开录音键后上屏。
-# 仅在流式识别且 commit_mode = "tsf" 时生效。
+# 边说边出字的识别（豆包，或 Fun-ASR-Nano 以外的本地模型）时，将已识别文本显示在输入框 inline preedit 中，松开录音键后上屏。
+# 仅在上述识别且 commit_mode = "tsf" 时生效。
 stream_inline_preedit = true
 # 上屏方式: tsf | sendinput | ctrl_v
 commit_mode = "tsf"

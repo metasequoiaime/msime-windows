@@ -9,6 +9,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -127,8 +128,9 @@ void TestReadiness()
 void TestStreamingSession()
 {
     CHECK(local_asr::SupportsStreaming("x-asr-zh-en-streaming"));
-    CHECK(!local_asr::SupportsStreaming("x-asr-zh-en-offline"));
-    CHECK(!local_asr::SupportsStreaming("sense-voice-small"));
+    // 整句模型里快的两个做伪流式（逐句定稿 + 草稿），Fun-ASR-Nano 太慢不做。
+    CHECK(local_asr::SupportsStreaming("x-asr-zh-en-offline"));
+    CHECK(local_asr::SupportsStreaming("sense-voice-small"));
     CHECK(!local_asr::SupportsStreaming("fun-asr-nano"));
     CHECK(!local_asr::SupportsStreaming(""));
 
@@ -136,12 +138,12 @@ void TestStreamingSession()
     GetTempPathW(MAX_PATH, temp);
     DataDir data(std::filesystem::path(temp) / L"msime-local-asr-stream-test");
     {
-        local_asr::StreamingSession session("x-asr-zh-en-streaming", {});
+        local_asr::StreamingSession session("x-asr-zh-en-streaming", "zh-cn", {});
         CHECK(!session.Start());
         CHECK(!session.LastError().empty());
     }
     {
-        local_asr::StreamingSession session("sense-voice-small", {});
+        local_asr::StreamingSession session("sense-voice-small", "zh-cn", {});
         CHECK(!session.Start());
     }
 
@@ -149,7 +151,7 @@ void TestStreamingSession()
     Touch(local_asr::RuntimeDirectory());
     std::ofstream(local_asr::RuntimeDirectory() / "onnxruntime_providers_shared.dll") << "not a dll";
     bool partial = false;
-    local_asr::StreamingSession session("x-asr-zh-en-streaming", [&](const std::string &) { partial = true; });
+    local_asr::StreamingSession session("x-asr-zh-en-streaming", "zh-cn", [&](const std::string &) { partial = true; });
     CHECK(session.Start());
     const std::vector<float> audio(1600, 0.1f);
     for (int i = 0; i < 5; ++i)
@@ -215,6 +217,40 @@ std::vector<float> ReadWav16(const std::filesystem::path &path)
     return {};
 }
 
+// 按 Unicode 字符算的 1 - 编辑距离 / 较长一方的长度。
+double Similarity(const std::string &a, const std::string &b)
+{
+    const auto split = [](const std::string &text) {
+        std::vector<std::string> characters;
+        for (std::size_t i = 0; i < text.size();)
+        {
+            const auto lead = static_cast<unsigned char>(text[i]);
+            const std::size_t width = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : 4;
+            characters.push_back(text.substr(i, width));
+            i += width;
+        }
+        return characters;
+    };
+    const std::vector<std::string> x = split(a), y = split(b);
+    if (x.empty() && y.empty())
+        return 1.0;
+    std::vector<std::size_t> row(y.size() + 1);
+    for (std::size_t j = 0; j <= y.size(); ++j)
+        row[j] = j;
+    for (std::size_t i = 1; i <= x.size(); ++i)
+    {
+        std::size_t diagonal = row[0];
+        row[0] = i;
+        for (std::size_t j = 1; j <= y.size(); ++j)
+        {
+            const std::size_t above = row[j];
+            row[j] = (std::min)({row[j] + 1, row[j - 1] + 1, diagonal + (x[i - 1] == y[j - 1] ? 0 : 1)});
+            diagonal = above;
+        }
+    }
+    return 1.0 - static_cast<double>(row[y.size()]) / static_cast<double>((std::max)(x.size(), y.size()));
+}
+
 int TestRealModel()
 {
     // 宽字符读取：路径可能含中文，窄 getenv 会按 ANSI 代码页丢字。
@@ -244,10 +280,10 @@ int TestRealModel()
 
     if (local_asr::SupportsStreaming(model))
     {
-        // 按录音的节奏 100 ms 一块送：识别中的文字要陆续出来，最终结果与整段识别一致。
+        // 按录音的节奏 100 ms 一块送：识别中的文字要陆续出来，最终结果与整段识别一致（伪流式见下）。
         std::vector<std::string> partials;
         std::mutex partials_mutex;
-        local_asr::StreamingSession session(model, [&](const std::string &text) {
+        local_asr::StreamingSession session(model, "zh-cn", [&](const std::string &text) {
             std::lock_guard<std::mutex> lock(partials_mutex);
             partials.push_back(text);
         });
@@ -270,7 +306,17 @@ int TestRealModel()
             std::cout << "  partial: " << text << "\n";
         CHECK(session.LastError().empty());
         CHECK(partials.size() >= 2);
-        CHECK(streamed == first.text);
+        if (local_asr::FindModel(model)->kind == local_asr::ModelKind::OnlineTransducer)
+        {
+            CHECK(streamed == first.text);
+        }
+        else
+        {
+            // 伪流式边录边断句，句首补偿只能参考到当时为止的录音，个别字可能与整段识别不同；整体应当一致。
+            const double similarity = Similarity(streamed, first.text);
+            std::cout << "streamed vs whole-clip similarity " << similarity << "\n";
+            CHECK(similarity >= 0.9);
+        }
     }
     return 1;
 }
