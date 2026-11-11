@@ -50,6 +50,8 @@ void SetSelectedTranslationColors(CandSkinTokens &tokens, UINT rgb, float alpha,
 CandSkinTokens LegacyTokens(const std::string &baseSkin, bool candLight, bool horizontalLayout, float fontSize)
 {
     CandSkinTokens tokens;
+    // 选中条宽度跟字号走：所有内置清单都写 "0.17em"，18 号字时正好是原来的 3。
+    tokens.selectedBarWidth = std::round(fontSize * 0.17f);
     if (candLight)
     {
         tokens.number = D2D1::ColorF(26.0f / 255.0f, 26.0f / 255.0f, 26.0f / 255.0f, 0.55f);
@@ -239,7 +241,6 @@ CandSkinTokens LegacyTokens(const std::string &baseSkin, bool candLight, bool ho
         }
         tokens.labelScale = 1.0f;
         tokens.labelGap = std::round(fontSize * 0.2f);
-        tokens.selectedBarWidth = 3.0f;
         tokens.selectedBarHeightEm = 0.9f;
         tokens.selectedBarInside = true;
         tokens.trianglePager = true;
