@@ -3551,7 +3551,9 @@ int run_test()
                                                                     "ririri\t晶\t106\n"
                                                                     "ririri\t曑\t1\n"
                                                                     "heng\t一\t18584\n"
-                                                                    "hengheng\t丁\t900\n");
+                                                                    "hengheng\t丁\t900\n"
+                                                                    "koukoukou\t品\t500\n"
+                                                                    "dingkou\t叮\t2\n");
     set_data_directory(radical_directory);
 
     metasequoia::InputSession radical_session(SchemeType::Quanpin);
@@ -3634,6 +3636,22 @@ int run_test()
     require(switch_clears_radical.handle_character('U', true).handled &&
                 switch_clears_radical.local_input_mode() == metasequoia::LocalInputMode::Radical,
             "Shuangpin could not enter radical mode.");
+    // 双拼下按会话的双拼方案解部件码：小鹤 口 = kz。
+    type(switch_clears_radical, "kzkzkz");
+    require(switch_clears_radical.preedit() == "Ukzkzkz" && !switch_clears_radical.candidates().empty() &&
+                switch_clears_radical.candidates().front().word == "品",
+            "Shuangpin radical mode did not decode the components with the session's profile.");
+    // 微软双拼的 ; 是 ing 韵母：开头的 U 不算键，d 后面的 ; 收进拆字码，k 后面（偶数键）的不收。
+    metasequoia::InputSession microsoft_radical(SchemeType::Shuangpin, GetMicrosoftShuangpinProfile());
+    require(microsoft_radical.handle_character('U', true).handled && microsoft_radical.handle_character('d').handled &&
+                microsoft_radical.handle_character(';').handled && microsoft_radical.preedit() == "Ud;",
+            "Microsoft shuangpin radical mode rejected the ; final after an initial.");
+    type(microsoft_radical, "kb");
+    require(microsoft_radical.preedit() == "Ud;kb" && !microsoft_radical.candidates().empty() &&
+                microsoft_radical.candidates().front().word == "叮",
+            "Microsoft shuangpin radical mode did not decode d;kb as dingkou.");
+    microsoft_radical.handle_character(';');
+    require(microsoft_radical.preedit() == "Ud;kb", "Microsoft shuangpin radical mode took ; after a full syllable.");
     switch_clears_radical.switch_scheme(SchemeType::Quanpin);
     require(!switch_clears_radical.has_composition() &&
                 switch_clears_radical.local_input_mode() == metasequoia::LocalInputMode::None,

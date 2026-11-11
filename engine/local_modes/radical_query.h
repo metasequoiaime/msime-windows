@@ -1,6 +1,8 @@
 #pragma once
 
+#include "../core/scheme_type.h"
 #include "../core/word_item.h"
+#include "../shuangpin/shuangpin_profile.h"
 
 #include <filesystem>
 #include <string>
@@ -14,6 +16,12 @@ namespace metasequoia::local_modes
 // 字母或表缺失都返回空集合。拆字表是会话级资源，调用方按自己的 RuntimePaths 解析路径。
 std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code,
                                     int limit = 50);
+// 按输入方案查：全拼同上。双拼下 code 是部件的双拼码连写（小鹤 口 = kz，微软双拼的 ; 韵母也算），
+// 每两键解成一个部件音节——拆字码只由完整音节组成，双拼没有切分歧义；末尾落单的一键是下一个
+// 部件的开头，按它的声母（小鹤 v → zh）或零声母引导键（微软 o → a/e/o 开头）查前缀。双拼码的
+// 命中排在前面，原串再按全拼查一遍排在后面，在双拼下打全拼仍然查得到。
+std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code,
+                                    SchemeType scheme, const ShuangpinProfile &profile, int limit = 50);
 // 把拆字表读进进程内缓存。首次查询要解析十几万行，放在按键路径之外先调一次可以避开那一下。
 void preload_radical_table(const std::filesystem::path &decomposition_path);
 } // namespace metasequoia::local_modes

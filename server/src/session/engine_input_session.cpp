@@ -419,9 +419,11 @@ IInputSession::CreatingWordProgress EngineInputSession::update_creating_word_pro
     return session_.update_creating_word_progress(current_pinyin, current_word, selected_word, selection_transition);
 }
 
-std::vector<IInputSession::WordItem> EngineInputSession::query_radical(const std::string &code) const
+std::vector<IInputSession::WordItem> EngineInputSession::query_radical(const std::string &code, SchemeType scheme,
+                                                                       const ShuangpinProfile &profile) const
 {
-    return metasequoia::local_modes::query_radical(paths_.resource(metasequoia::assets::radical_decomposition), code);
+    return metasequoia::local_modes::query_radical(paths_.resource(metasequoia::assets::radical_decomposition), code,
+                                                   scheme, profile);
 }
 
 std::string EngineInputSession::get_helpcode_annotation(const std::string &word, bool uppercase_all) const

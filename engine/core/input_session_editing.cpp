@@ -205,6 +205,17 @@ KeyResult InputSession::edit_at_caret(Command command)
     return {true, std::nullopt, std::nullopt};
 }
 
+// U 模式下 ; 能否作为部件双拼码里的 ing 韵母：只对用 ; 当韵母的双拼方案成立，位置规则与普通双拼输入、
+// TSF 和 Server 是同一条（开头的 U 不算键，见 FanyImeMidSentenceHelpcode::AcceptsSemicolonFinalAt）。
+bool InputSession::accepts_radical_semicolon_at(const std::string &text, std::size_t caret) const
+{
+    if (scheme() != SchemeType::Shuangpin || !ShuangpinProfileUsesSemicolonFinal(shuangpin_profile_))
+        return false;
+    return direct_helpcode_enabled_ ? FanyImeDirectHelpcode::AcceptsSemicolonFinalAt(text.data(), text.size(), caret)
+                                    : FanyImeMidSentenceHelpcode::AcceptsSemicolonFinalAt(
+                                          text.data(), text.size(), caret, engine_.helpcode_uppercase_triggers());
+}
+
 KeyResult InputSession::insert_at_caret(char character)
 {
     auto text = editing_text();
@@ -217,6 +228,8 @@ KeyResult InputSession::insert_at_caret(char character)
         switch (local_input_mode_)
         {
         case LocalInputMode::Radical:
+            accepted = lower || (character == ';' && accepts_radical_semicolon_at(text, caret));
+            break;
         case LocalInputMode::QuickPhrase:
             accepted = lower;
             break;

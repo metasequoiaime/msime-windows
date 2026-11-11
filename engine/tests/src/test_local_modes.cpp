@@ -9,6 +9,7 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -538,6 +539,9 @@ int run_test()
                   "majiong\t駉\t5\r\n"
                   "majiongkou\t駉\t5\r\n"
                   "matongkou\t駉\t4\r\n"
+                  "zhegou\t了\t3\r\n"
+                  "dingkou\t叮\t2\r\n"
+                  "ershi\t廿\t1\r\n"
                   "# 末尾注释\r\n"
                   "heng\t少一列\r\n"
                   "heng\t字频非整数\txx\r\n";
@@ -577,6 +581,51 @@ int run_test()
             metasequoia::local_modes::query_radical(decomposition, "heng", 0).empty() &&
             metasequoia::local_modes::query_radical(quick_phrase_directory / "private-missing.txt", "heng", 50).empty(),
         "Radical lookup accepted an empty, non-lowercase or unmatched code, a zero limit, or a missing table.");
+
+    // 双拼下拆字码是部件的双拼码：小鹤 口 = kz，每两键一个部件音节。
+    const auto &xiaohe = GetXiaoheShuangpinProfile();
+    const auto &microsoft = GetMicrosoftShuangpinProfile();
+    const auto radical_query = [&](const std::string &code, SchemeType scheme, const ShuangpinProfile &profile) {
+        return metasequoia::local_modes::query_radical(decomposition, code, scheme, profile, 50);
+    };
+    const auto words_of = [](const std::vector<WordItem> &items) {
+        std::vector<std::string> words;
+        for (const auto &item : items)
+            words.push_back(item.word);
+        return words;
+    };
+    const auto contains = [&](const std::vector<WordItem> &items, const std::string &word) {
+        const auto words = words_of(items);
+        return std::find(words.begin(), words.end(), word) != words.end();
+    };
+    require(words_of(radical_query("kz", SchemeType::Shuangpin, xiaohe)) ==
+                    std::vector<std::string>{"口", "品", "吅"} &&
+                words_of(radical_query("kzkzkz", SchemeType::Shuangpin, xiaohe)) == std::vector<std::string>{"品"},
+            "Shuangpin radical lookup did not decode each key pair as one component syllable.");
+    // 双拼码与全拼相同时不重复出字；末尾落单的一键按声母查前缀，小鹤 v 是 zh。
+    require(words_of(radical_query("ririri", SchemeType::Shuangpin, xiaohe)) ==
+                    std::vector<std::string>{"晶", "晿", "𣊭"} &&
+                words_of(radical_query("rir", SchemeType::Shuangpin, xiaohe)) ==
+                    std::vector<std::string>{"晶", "晿", "𣊭"} &&
+                words_of(radical_query("v", SchemeType::Shuangpin, xiaohe)) == std::vector<std::string>{"了"} &&
+                words_of(radical_query("veg", SchemeType::Shuangpin, xiaohe)) == std::vector<std::string>{"了"},
+            "Shuangpin radical lookup duplicated a character or mis-decoded a trailing initial key.");
+    // 在双拼下照旧打全拼也查得到，排在双拼码的命中之后。
+    require(radical_query("kou", SchemeType::Shuangpin, xiaohe).front().word == "口" &&
+                words_of(radical_query("ma", SchemeType::Shuangpin, xiaohe)) == std::vector<std::string>{"马", "駉"},
+            "Shuangpin radical lookup lost the full-pinyin spelling.");
+    // 微软双拼：; 是 ing 韵母（d; = ding），o 是零声母引导键，落单时 a/e/o 开头的部件都算。
+    const auto microsoft_zero_initial = radical_query("o", SchemeType::Shuangpin, microsoft);
+    require(words_of(radical_query("d;kb", SchemeType::Shuangpin, microsoft)) == std::vector<std::string>{"叮"} &&
+                words_of(radical_query("d;", SchemeType::Shuangpin, microsoft)) == std::vector<std::string>{"叮"} &&
+                contains(microsoft_zero_initial, "廿") && contains(microsoft_zero_initial, "乙"),
+            "Microsoft shuangpin radical lookup ignored the ; final or the zero-initial key.");
+    // ; 只在用它当韵母的方案里是编码键；全拼方案不解双拼；解不出音节的一对不硬凑成声母。
+    require(radical_query("d;", SchemeType::Shuangpin, xiaohe).empty() &&
+                radical_query(";", SchemeType::Shuangpin, microsoft).empty() &&
+                radical_query("kz", SchemeType::Quanpin, xiaohe).empty() &&
+                radical_query("kzfs", SchemeType::Shuangpin, xiaohe).empty(),
+            "Shuangpin radical lookup accepted a key outside the profile or forced an undecodable pair.");
 
     std::filesystem::remove_all(quick_phrase_directory);
     return 0;

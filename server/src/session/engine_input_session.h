@@ -38,7 +38,8 @@ class EngineInputSession : public IInputSession
     bool expand_initial_candidates() override;
     std::string get_helpcode_annotation(const std::string &word, bool uppercase_all) const override;
     std::optional<WordItem> find_candidate(const std::string &key, const std::string &value) override;
-    std::vector<WordItem> query_radical(const std::string &code) const override;
+    std::vector<WordItem> query_radical(const std::string &code, SchemeType scheme,
+                                        const ShuangpinProfile &profile) const override;
 
     const std::string &get_pinyin_sequence() const override;
     const std::string &get_pinyin_sequence_with_cases() const override;

@@ -971,10 +971,13 @@ KeyResult InputSession::handle_local_character(char character)
         local_preedit_.push_back(character);
         return {true, std::nullopt, update_local_candidates()};
     }
-    // 快捷短语码与 U 模式的部件拼音连写都只收小写 a-z：其它键吞掉、预编辑不变。
+    // 快捷短语码与 U 模式的部件拼音连写都只收小写 a-z：其它键吞掉、预编辑不变。双拼下 U 模式打的是
+    // 部件的双拼码，用 ; 当 ing 韵母的方案还收 ;。
     if (local_input_mode_ == LocalInputMode::QuickPhrase || local_input_mode_ == LocalInputMode::Radical)
     {
-        if (character < 'a' || character > 'z')
+        const bool radical_semicolon = local_input_mode_ == LocalInputMode::Radical && character == ';' &&
+                                       accepts_radical_semicolon_at(local_preedit_, local_preedit_.size());
+        if ((character < 'a' || character > 'z') && !radical_semicolon)
         {
             return {true, std::nullopt, std::nullopt};
         }
