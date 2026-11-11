@@ -253,6 +253,38 @@ TEST_CASE(voice_page_local_model_status_drives_actions)
     REQUIRE(deletes[0]["data"]["modelId"] == "sense-voice-small");
 }
 
+// 宿主对内容不变的快照不再推送：下载进度停在同一个百分比时，轮询收不到回包，必须自己续上，
+// 否则界面会一直停在「下载中 0%」，下完了也不变。
+TEST_CASE(voice_page_local_poll_survives_unchanged_snapshots)
+{
+    auto &scene = VoicePageScene::Create();
+    scene.Snapshot("local", "x-asr-zh-en-streaming", Json{{"x-asr-zh-en-streaming", Status("downloading", false, 0)}});
+    scene.sent.clear();
+    const auto pump = [](ULONGLONG ms) {
+        const ULONGLONG deadline = GetTickCount64() + ms;
+        MSG message{};
+        while (GetTickCount64() < deadline)
+        {
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            Sleep(20);
+        }
+    };
+    // 不再喂任何快照，只泵消息：两秒一轮，5 秒内至少该有两次状态请求。
+    pump(5000);
+    REQUIRE(scene.Sent("localAsrModelStatusRequest").size() >= 2);
+
+    // 回到就绪后停止轮询：已排上的那一轮最多再发一次，之后安静。
+    scene.Snapshot("local", "x-asr-zh-en-streaming", Json{{"x-asr-zh-en-streaming", Status("ready", true, 100)}});
+    pump(2500);
+    scene.sent.clear();
+    pump(4500);
+    REQUIRE(scene.Sent("localAsrModelStatusRequest").empty());
+}
+
 TEST_CASE(voice_page_switching_to_local_keeps_token_slots_untouched)
 {
     auto &scene = VoicePageScene::Create();

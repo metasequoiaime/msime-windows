@@ -563,6 +563,10 @@ struct VoicePage : std::enable_shared_from_this<VoicePage>
                 {
                     page->localPollPending = false;
                     page->context.model.Post("localAsrModelStatusRequest");
+                    // 宿主只在快照有变化时才推送：进度没动的那几轮收不到快照，不能指望回包来续约，
+                    // 否则轮询在第一次「进度不变」时就断了，界面会一直停在下载中。按手上的快照自己续，
+                    // 回到空闲（就绪、出错）的那份快照必然与忙碌态不同，一定会推来，届时这里不再续。
+                    page->UpdateLocalRow();
                 }
             });
         }
