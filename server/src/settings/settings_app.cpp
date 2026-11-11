@@ -7,7 +7,9 @@
 #include "settings/api_credential_test.h"
 #include "settings/collocation_model.h"
 #include "settings/lattice_model.h"
+#include "settings/local_asr_download.h"
 #include "settings/neural_model.h"
+#include "voice-input/local_asr_catalog.h"
 #include "settings/default_input_method.h"
 #include "settings/game_compat_name.h"
 #include "settings/input_method_install.h"
@@ -568,6 +570,35 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"doubao_enable_ddc", voice.doubao_enable_ddc},
             {"doubao_boosting_table_id", voice.doubao_boosting_table_id},
             {"asr_model", voice.asr_model},
+            {"local_asr_model", voice.local_asr_model},
+            {"local_asr_status", [] {
+                 nlohmann::json statuses = nlohmann::json::object();
+                 for (const auto &[model_id, status] : local_asr_download::GetStatuses())
+                     statuses[model_id] = nlohmann::json{{"state", status.state},
+                                                         {"progress", status.progress},
+                                                         {"error", status.error},
+                                                         {"detail", status.detail},
+                                                         {"modelInstalled", status.model_installed}};
+                 return statuses;
+             }()},
+            {"local_asr_catalog", [] {
+                 // 页面不自持目录副本：id、下载地址与校验和留在宿主，只下发展示字段。
+                 nlohmann::json catalog = nlohmann::json::array();
+                 for (const auto &entry : local_asr::Catalog())
+                 {
+                     catalog.push_back(nlohmann::json{{"id", entry.id},
+                                                      {"title", entry.title},
+                                                      {"description", entry.description},
+                                                      {"sizeHint", entry.size_hint},
+                                                      {"memoryHint", entry.memory_hint},
+                                                      {"license", entry.license},
+                                                      {"url", local_asr::SourceUrl(entry.archive)},
+                                                      {"needsVad", local_asr::NeedsVad(entry)}});
+                 }
+                 return catalog;
+             }()},
+            {"local_asr_runtime_url", local_asr::SourceUrl(local_asr::RuntimeArchive())},
+            {"local_asr_vad_url", local_asr::SourceUrl(local_asr::VadModel())},
             {"polish_provider", voice.polish_provider},
             {"polish_token", voice.polish_token},
             {"polish_tokens", voice.polish_tokens},
@@ -1407,6 +1438,29 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             PostConfig(false);
         }
         else if (type == "collocationModelStatusRequest")
+        {
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelDownload")
+        {
+            // 本地语音模型：缺什么补什么（运行库、VAD、模型），进度随快照回放，页面在忙碌态轮询。
+            local_asr_download::StartDownload(json::value_to<std::string>(value.at("data").at("modelId")));
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelImport")
+        {
+            const std::string model_id = json::value_to<std::string>(value.at("data").at("modelId"));
+            const std::filesystem::path source = local_asr_download::PromptForFile(hwnd);
+            if (!source.empty())
+                local_asr_download::Import(model_id, source);
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelDelete")
+        {
+            local_asr_download::Delete(json::value_to<std::string>(value.at("data").at("modelId")));
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelStatusRequest")
         {
             PostConfig(false);
         }

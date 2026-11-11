@@ -56,7 +56,8 @@ struct Capture
         return false;
     }
 } g_capture;
-struct DoubaoAsrClient
+// 录音期间边收边识别的会话（豆包或本地流式）的替身。
+struct StreamingAsr
 {
     std::string Finish()
     {
@@ -138,7 +139,7 @@ VoiceInput::Target g_inline_owner, g_target;
 std::uint64_t g_inline_owner_session = 0;
 std::wstring g_last_inline_preedit, g_inserted;
 std::vector<float> g_samples;
-std::unique_ptr<DoubaoAsrClient> g_doubao_asr;
+std::unique_ptr<StreamingAsr> g_stream_asr;
 std::vector<std::future<void>> g_network_tasks;
 std::function<void()> g_during_capture, g_during_recognition;
 bool g_fast_valid = true, g_route_valid = true;
@@ -146,6 +147,10 @@ int g_pipe_attempts = 0, g_pipe_fail_at = 0, g_cancels = 0, g_send_input = 0;
 std::atomic<int> g_recognitions{0};
 namespace VoiceInput
 {
+bool IsLocalAsrProvider(const std::string &provider)
+{
+    return provider == "local";
+}
 bool IsTargetCurrentFast(const Target &target)
 {
     return g_fast_valid && SameTarget(target, g_target);
@@ -197,7 +202,8 @@ VoiceInputConfig GetConfiguredVoiceInput()
 void RestoreSystemAudioIfMuted()
 {
 }
-void ShowVoiceNotice(const wchar_t *)
+constexpr unsigned MB_ICONERROR = 0x10;
+void ShowVoiceNotice(std::wstring, unsigned = 0)
 {
 }
 void Sleep(unsigned)

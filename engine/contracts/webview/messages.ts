@@ -12,6 +12,10 @@ export type ClientMessage =
   | { "type": "collocationModelDelete"; "protocolVersion"?: 1; "data": { "modelId": string } }
   | { "type": "collocationModelImport"; "protocolVersion"?: 1; "data": { "modelId": string } }
   | { "type": "collocationModelStatusRequest"; "protocolVersion"?: 1 }
+  | { "type": "localAsrModelDownload"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelDelete"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelImport"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDownload"; "protocolVersion"?: 1 }
   | { "type": "neuralModelImport"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDelete"; "protocolVersion"?: 1 }
@@ -95,6 +99,10 @@ export type SettingsMessage =
   | { "type": "collocationModelDelete"; "protocolVersion"?: 1; "data": { "modelId": string } }
   | { "type": "collocationModelImport"; "protocolVersion"?: 1; "data": { "modelId": string } }
   | { "type": "collocationModelStatusRequest"; "protocolVersion"?: 1 }
+  | { "type": "localAsrModelDownload"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelDelete"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelImport"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDownload"; "protocolVersion"?: 1 }
   | { "type": "neuralModelImport"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDelete"; "protocolVersion"?: 1 }

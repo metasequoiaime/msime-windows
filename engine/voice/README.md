@@ -7,7 +7,7 @@ VoiceInput is part of the engine. A host links this C++17 library without linkin
 | `MetasequoiaIme::Voice` | Mono PCM/WAV, RMS voice segmentation, configurable HTTP transcription and optional text cleanup | libcurl, nlohmann-json |
 | `MetasequoiaIme::VoiceCapture` | Per-instance microphone capture, converted to mono 16 kHz float PCM | vendored miniaudio |
 
-Local Whisper recognition (`MetasequoiaIme::VoiceWhisper`) was removed when the engine was vendored into this repository; this product transcribes through a cloud provider. See [UPSTREAM.md](../UPSTREAM.md).
+Local Whisper recognition (`MetasequoiaIme::VoiceWhisper`) was removed when the engine was vendored into this repository. See [UPSTREAM.md](../UPSTREAM.md). On-device recognition is offered again by the host instead (`server/src/voice-input/local_asr.*`, sherpa-onnx loaded at run time, runtime and models downloaded on request); this library only carries the sherpa-onnx C API header it compiles against, in `third_party/sherpa-onnx/`.
 
 UI, microphone permissions, hotkeys, token storage and committing text belong to the host. The library returns UTF-8 text and does not simulate keys. Root engine builds have `METASEQUOIA_IME_BUILD_VOICE=OFF` by default. For a root vcpkg build with voice enabled, add `VCPKG_MANIFEST_FEATURES=voice`. Voice can also be built independently, so a host that only needs speech does not acquire Boost, SQLite or dictionary dependencies.
 

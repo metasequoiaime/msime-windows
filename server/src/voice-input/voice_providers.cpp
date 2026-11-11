@@ -64,6 +64,11 @@ bool IsDoubaoAsrProvider(std::string_view provider)
     return Lower(provider) == "doubao";
 }
 
+bool IsLocalAsrProvider(std::string_view provider)
+{
+    return Lower(provider) == "local";
+}
+
 std::string NormalizeProviderId(std::string_view provider)
 {
     return Lower(provider);

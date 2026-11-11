@@ -378,6 +378,7 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
                                           "[helpcode]\nshuangpin_helpcode = true\nquanpin_helpcode = true\n"
                                           "[utility]\nemoji_mode = true # Shift+E\nkaomoji_mode = true\n"
                                           "[voice_input]\nvoice_input = true\ndoubao_enable_ddc = true\n"
+                                          "asr_provider = \"doubao\"\n"
                                           "[ai_assistant]\nenabled = true\n"
                                           "[tencent_tmt]\nenabled = true\n"
                                           "[niutrans]\nenabled = false\n";
@@ -397,6 +398,8 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(upgraded["utility"]["kaomoji_mode"].value_or(false));
     REQUIRE(upgraded["voice_input"]["voice_input"].value_or(false));
     REQUIRE(upgraded["voice_input"]["doubao_enable_ddc"].value_or(false));
+    // 新装默认本地离线识别；老用户的豆包（多半填好了 Token）不能被换掉。
+    REQUIRE_EQ(upgraded["voice_input"]["asr_provider"].value_or(std::string()), std::string("doubao"));
     REQUIRE(upgraded["ai_assistant"]["enabled"].value_or(false));
     REQUIRE(upgraded["tencent_tmt"]["enabled"].value_or(false));
     REQUIRE(!upgraded["niutrans"]["enabled"].value_or(true));
@@ -406,6 +409,8 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE_EQ(fresh["appearance"]["candidate_window_layout"].value_or(std::string()), std::string("horizontal"));
     REQUIRE(!fresh["helpcode"]["shuangpin_helpcode"].value_or(true));
     REQUIRE(!fresh["association"]["sentence_wordlattice"].value_or(true));
+    REQUIRE_EQ(fresh["voice_input"]["asr_provider"].value_or(std::string()), std::string("local"));
+    REQUIRE_EQ(fresh["voice_input"]["local_asr_model"].value_or(std::string()), std::string("x-asr-zh-en-streaming"));
 }
 
 TEST_CASE(config_merge_drops_keys_and_sections_absent_from_template)
