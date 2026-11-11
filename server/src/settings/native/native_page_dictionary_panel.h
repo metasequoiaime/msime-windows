@@ -62,6 +62,7 @@ class DictInput : public msimeui::Container
     std::shared_ptr<msimeui::TextBox> box_;
     int appliedState_ = -1;
     float height_ = 42.0f;
+    bool multiline_ = false;
 };
 
 // `display: grid; gap: 7px; margin-top: 14px` label above an input in `.dict-dialog`.
