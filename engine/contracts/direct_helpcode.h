@@ -60,10 +60,11 @@ template <typename Char> constexpr bool AcceptsSlashAt(const Char *text, std::si
            (IsAsciiLetter(text[caret - 3]) || text[caret - 3] == Char(';')) && IsAsciiLetter(text[caret - 4]);
 }
 
-// 光标停在 text[caret] 时 ; 能否作为 ing 韵母（只对用 ; 当韵母的双拼方案有意义）。
+// 光标停在 text[caret] 时 ; 能否作为 ing 韵母（只对用 ; 当韵母的双拼方案有意义）。U 模式开头的 U
+// 是唤醒键，紧跟它的 ; 前面没有声母，不收。
 template <typename Char> constexpr bool AcceptsSemicolonFinalAt(const Char *text, std::size_t size, std::size_t caret)
 {
-    return caret >= 1 && caret <= size && IsAsciiLetter(text[caret - 1]);
+    return caret >= 1 && caret <= size && IsAsciiLetter(text[caret - 1]) && !(caret == 1 && text[0] == Char('U'));
 }
 
 // 直接辅助码下用引导键进入末尾辅助码（helpcode.shuangpin_direct_helpcode_end_trigger）：引导键是末尾辅助码

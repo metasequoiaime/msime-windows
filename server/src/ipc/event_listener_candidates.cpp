@@ -790,8 +790,9 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     }
     else if (IsRadicalInput(current_input))
     {
-        // 串里混进了 a-z 以外的字符（撇号、大写字母等）时查不到任何字，候选为空。
-        items = g_inputSession->query_radical(current_input.substr(1));
+        // 串里混进了 a-z 以外的字符（撇号、大写字母等；双拼的 ; 韵母除外）时查不到任何字，候选为空。
+        items = g_inputSession->query_radical(current_input.substr(1), g_inputSession->current_scheme_type(),
+                                              ConfiguredShuangpinProfile());
     }
     else if (IsQuickPhraseInput(current_input))
     {

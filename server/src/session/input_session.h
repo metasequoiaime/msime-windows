@@ -43,9 +43,10 @@ class IInputSession
     {
         return std::nullopt;
     }
-    // U 模式拆字反查：code 是唤醒键 U 之后的部件拼音连写，拆字表按本会话捕获的资源布局
-    // 解析，语义见 engine local_modes::query_radical。默认没有候选。
-    virtual std::vector<WordItem> query_radical(const std::string &) const
+    // U 模式拆字反查：code 是唤醒键 U 之后的部件拼音连写（双拼下是部件的双拼码），拆字表按本会话
+    // 捕获的资源布局解析，语义见 engine local_modes::query_radical。双拼方案由调用方按配置传入，
+    // 和 emoji、超级简拼一样不靠默认的小鹤。默认没有候选。
+    virtual std::vector<WordItem> query_radical(const std::string &, SchemeType, const ShuangpinProfile &) const
     {
         return {};
     }
