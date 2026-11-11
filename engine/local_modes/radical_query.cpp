@@ -1,7 +1,7 @@
 #include "radical_query.h"
 
 #include "../core/data_path.h"
-#include "../shuangpin/shuangpin_utils.h"
+#include "../shuangpin/shuangpin_query.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -184,70 +184,6 @@ Matches collect_matches(const Table &table, std::string_view code)
     return matches;
 }
 
-// 把双拼的部件码解成全拼前缀。拆字码只由完整的部件音节连成，双拼每两键一个音节，所以从头两两
-// 解即可，不用 pinyin_segmentation 的「两键不成音节就退一键」——那条退路在这里只会把一对打错的
-// 键解成一个声母，查出毫不相干的字。末尾落单的一键是下一个部件的开头：按声母键解（小鹤 v → zh），
-// 它若还是零声母音节的引导键（微软 o、国标 a），再补上那些音节可能的首字母。任何一对解不出音节、
-// 或落单的是 ; 时返回空。
-std::vector<std::string> shuangpin_radical_codes(const std::string &code, const ShuangpinProfile &profile)
-{
-    std::string body;
-    std::size_t index = 0;
-    for (; index + 2 <= code.size(); index += 2)
-    {
-        const std::string syllable = ShuangpinUtil::cvt_single_sp_to_pinyin(code.substr(index, 2), profile);
-        if (syllable.empty())
-        {
-            return {};
-        }
-        body += syllable;
-    }
-    if (index == code.size())
-    {
-        return {body};
-    }
-
-    const char key = code[index];
-    if (key < 'a' || key > 'z')
-    {
-        return {};
-    }
-    std::vector<std::string> codes;
-    const auto add = [&](const std::string &head) {
-        std::string candidate = body + head;
-        if (std::find(codes.begin(), codes.end(), candidate) == codes.end())
-        {
-            codes.push_back(std::move(candidate));
-        }
-    };
-    std::string initial(1, key);
-    for (const auto &[source, mapped] : profile.initials)
-    {
-        if (mapped == initial)
-        {
-            initial = source;
-            break;
-        }
-    }
-    add(initial);
-    // zero_initials 是无序表，首字母排好序再查，候选顺序才不随表的内部顺序变。
-    std::string zero_initial_heads;
-    for (const auto &[source, mapped] : profile.zero_initials)
-    {
-        if (!source.empty() && !mapped.empty() && mapped.front() == key &&
-            zero_initial_heads.find(source.front()) == std::string::npos)
-        {
-            zero_initial_heads.push_back(source.front());
-        }
-    }
-    std::sort(zero_initial_heads.begin(), zero_initial_heads.end());
-    for (const char head : zero_initial_heads)
-    {
-        add(std::string(1, head));
-    }
-    return codes;
-}
-
 std::vector<WordItem> query_codes(const std::filesystem::path &decomposition_path,
                                   const std::vector<std::string> &codes, int limit)
 {
@@ -330,7 +266,7 @@ std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_p
     {
         return {};
     }
-    std::vector<std::string> codes = shuangpin_radical_codes(code, profile);
+    std::vector<std::string> codes = shuangpin::decode_syllable_pairs(code, profile);
     if (is_lower_ascii_code(code) && std::find(codes.begin(), codes.end(), code) == codes.end())
     {
         codes.push_back(code);

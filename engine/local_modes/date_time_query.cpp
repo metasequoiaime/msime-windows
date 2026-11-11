@@ -1,6 +1,7 @@
 #include "date_time_query.h"
 
 #include "../contracts/date_time_input.h"
+#include "../shuangpin/shuangpin_query.h"
 
 #include <algorithm>
 #include <array>
@@ -501,6 +502,18 @@ LocalDateTime current_local_date_time()
 bool is_date_time_keyword(const std::string &keyword)
 {
     return is_date_keyword(keyword) || is_time_keyword(keyword) || is_week_keyword(keyword);
+}
+
+std::string date_time_query_input(const std::string &input, SchemeType scheme, const ShuangpinProfile &profile)
+{
+    if (scheme != SchemeType::Shuangpin || is_date_time_keyword(input))
+        return input;
+    for (const std::string &quanpin : shuangpin::decode_syllable_pairs(input, profile))
+    {
+        if (is_date_time_keyword(quanpin))
+            return quanpin;
+    }
+    return input;
 }
 
 bool is_date_time_query(const std::string &input, const LocalDateTime *now)

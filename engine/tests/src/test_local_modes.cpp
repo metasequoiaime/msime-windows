@@ -378,6 +378,11 @@ int run_test()
         database.execute("INSERT INTO symbol_code VALUES('alpha','α',100,1)");
         database.execute("INSERT INTO symbol_code VALUES('yi','一',20,0)");
         database.execute("INSERT INTO symbol_code VALUES('yi','①',21,0)");
+        // 双拼读法：小鹤 sj 原样是分组码，读成全拼又是 san；ui 是 shi，微软 l; 是 ling。
+        database.execute("INSERT INTO symbol_code VALUES('sj','㍘',30,0)");
+        database.execute("INSERT INTO symbol_code VALUES('san','三',31,0)");
+        database.execute("INSERT INTO symbol_code VALUES('shi','十',32,0)");
+        database.execute("INSERT INTO symbol_code VALUES('ling','〇',33,0)");
     }
 
     const auto emoji = metasequoia::local_modes::query_emoji("XIAOLIAN", SchemeType::Quanpin, others_database, 10);
@@ -496,6 +501,47 @@ int run_test()
                 metasequoia::local_modes::query_mixed_symbols("alpha", others_database, 3).candidates.front().word ==
                     "α",
             "Mixed symbol lookup did not respect the mixable flag and exact matching.");
+    // S 模式按方案查：双拼下原始编码在前，按双拼读成的全拼在后。
+    const auto &xiaohe_profile = GetXiaoheShuangpinProfile();
+    const auto &microsoft_profile = GetMicrosoftShuangpinProfile();
+    const auto symbol_words = [&](const std::string &code, SchemeType scheme, const ShuangpinProfile &profile) {
+        std::vector<std::string> words;
+        for (const auto &item :
+             metasequoia::local_modes::query_symbols(code, scheme, profile, others_database, 200).candidates)
+            words.push_back(item.word);
+        return words;
+    };
+    using Words = std::vector<std::string>;
+    require(symbol_words("sj", SchemeType::Shuangpin, xiaohe_profile) == Words{"㍘", "三"} &&
+                symbol_words("sj", SchemeType::Quanpin, xiaohe_profile) == Words{"㍘"} &&
+                symbol_words("ui", SchemeType::Shuangpin, xiaohe_profile) == Words{"十"} &&
+                symbol_words("ui", SchemeType::Quanpin, xiaohe_profile).empty(),
+            "Shuangpin symbol lookup did not add the full-pinyin reading after the raw group code.");
+    // 末尾落单的声母键按全拼声母查前缀（小鹤 u 是 sh）；分组码与 typst 名在双拼下照旧，大小写不分。
+    require(symbol_words("u", SchemeType::Shuangpin, xiaohe_profile) == Words{"十"} &&
+                symbol_words("XL", SchemeType::Shuangpin, xiaohe_profile) == Words{"α", "β", "𝛂", "Α"} &&
+                symbol_words("alpha", SchemeType::Shuangpin, xiaohe_profile).front() == "α",
+            "Shuangpin symbol lookup broke a trailing initial, a group code or a symbol name.");
+    // ; 只在用它当 ing 韵母的方案里是编码键。
+    require(symbol_words("l;", SchemeType::Shuangpin, microsoft_profile) == Words{"〇"} &&
+                symbol_words("l;", SchemeType::Shuangpin, xiaohe_profile).empty() &&
+                symbol_words("l;", SchemeType::Quanpin, microsoft_profile).empty(),
+            "Shuangpin symbol lookup mishandled the ; final.");
+
+    // T 模式按方案归一唤醒词：双拼的整拼读成全拼，短码、英文、指定日期时间与全拼原样。
+    using metasequoia::local_modes::date_time_query_input;
+    require(date_time_query_input("uijm", SchemeType::Shuangpin, xiaohe_profile) == "shijian" &&
+                date_time_query_input("xkqi", SchemeType::Shuangpin, xiaohe_profile) == "xingqi" &&
+                date_time_query_input("x;qi", SchemeType::Shuangpin, microsoft_profile) == "xingqi" &&
+                date_time_query_input("riqi", SchemeType::Shuangpin, xiaohe_profile) == "riqi",
+            "Date/time keyword normalization did not decode a shuangpin full spelling.");
+    require(date_time_query_input("sj", SchemeType::Shuangpin, xiaohe_profile) == "sj" &&
+                date_time_query_input("week", SchemeType::Shuangpin, xiaohe_profile) == "week" &&
+                date_time_query_input("20241225", SchemeType::Shuangpin, xiaohe_profile) == "20241225" &&
+                date_time_query_input("uij", SchemeType::Shuangpin, xiaohe_profile) == "uij" &&
+                date_time_query_input("uijm", SchemeType::Quanpin, xiaohe_profile) == "uijm" &&
+                date_time_query_input("uijm", SchemeType::Wubi, xiaohe_profile) == "uijm",
+            "Date/time keyword normalization rewrote an input it should have left alone.");
     // 旧词库没有 symbol_code 表：返回空列表和不带输入的诊断，不能崩。
     const std::filesystem::path others_without_symbols = quick_phrase_directory / "private-others-old.db";
     {

@@ -3685,6 +3685,21 @@ int run_test()
                 date_time_session.local_input_mode() == metasequoia::LocalInputMode::None,
             "Cancel did not leave date/time mode.");
 
+    // 双拼下唤醒词的整拼按方案读：微软双拼 xingqi 打成 x;qi，; 跟在开头的 T 之后的声母后面才收。
+    metasequoia::InputSession shuangpin_date_time(SchemeType::Shuangpin, GetMicrosoftShuangpinProfile());
+    shuangpin_date_time.set_local_date_time_provider(
+        [] { return metasequoia::local_modes::LocalDateTime{2026, 8, 9, 0, 14, 30, 0}; });
+    require(shuangpin_date_time.handle_character('T', true).handled &&
+                shuangpin_date_time.handle_character('x').handled &&
+                shuangpin_date_time.handle_character(';').handled && shuangpin_date_time.preedit() == "Tx;",
+            "Microsoft shuangpin date/time mode rejected the ; final.");
+    type(shuangpin_date_time, "qi");
+    require(shuangpin_date_time.preedit() == "Tx;qi" && !shuangpin_date_time.candidates().empty() &&
+                shuangpin_date_time.candidates().front().word == "星期日",
+            "Microsoft shuangpin date/time mode did not read x;qi as xingqi.");
+    shuangpin_date_time.handle_character(';');
+    require(shuangpin_date_time.preedit() == "Tx;qi", "Date/time mode took ; after a complete syllable.");
+
     require(date_time_session.handle_character('T', true).handled &&
                 date_time_session.handle_command(metasequoia::Command::Backspace).handled &&
                 date_time_session.local_input_mode() == metasequoia::LocalInputMode::None,

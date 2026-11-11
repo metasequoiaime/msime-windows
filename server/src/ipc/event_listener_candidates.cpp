@@ -191,11 +191,18 @@ bool IsRadicalInput(const std::string &raw)
     return IsRadicalCompositionActive(raw) && raw.size() > 1;
 }
 
+// Shift+T 后面那一串按当前方案归一：双拼的整拼唤醒词（小鹤 uijm）换成全拼 shijian，其余原样。
+std::string DateTimeQueryInput(const std::string &raw)
+{
+    return metasequoia::local_modes::date_time_query_input(raw.substr(1), g_inputSession->current_scheme_type(),
+                                                           ConfiguredShuangpinProfile());
+}
+
 bool IsDateTimeInput(const std::string &raw)
 {
     if (!IsDateTimeCompositionActive(raw) || raw.size() <= 1)
         return false;
-    return metasequoia::local_modes::is_date_time_query(raw.substr(1));
+    return metasequoia::local_modes::is_date_time_query(DateTimeQueryInput(raw));
 }
 
 bool IsEmojiInput(const std::string &raw)
@@ -800,7 +807,7 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     }
     else if (IsDateTimeInput(current_input))
     {
-        items = OrderedDateTimeCandidates(current_input.substr(1));
+        items = OrderedDateTimeCandidates(DateTimeQueryInput(current_input));
     }
     else if (IsEmojiInput(current_input))
     {
@@ -817,7 +824,10 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     else if (IsSymbolInput(current_input))
     {
         // 一个分组可以有上百个符号（jt 箭头 148 个），整组都放进列表，靠翻页看全。
-        items = metasequoia::local_modes::query_symbols(current_input.substr(1)).candidates;
+        // 双拼下分组码原样查在前，按双拼读成的全拼（小鹤 sj → san 的 三③）排在后面。
+        items = metasequoia::local_modes::query_symbols(current_input.substr(1), g_inputSession->current_scheme_type(),
+                                                        ConfiguredShuangpinProfile())
+                    .candidates;
     }
     else if (IsJianpinInput(current_input))
     {
