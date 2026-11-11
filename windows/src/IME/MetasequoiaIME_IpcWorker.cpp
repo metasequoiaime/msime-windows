@@ -16,7 +16,9 @@
 #include <shellapi.h>
 #include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <string>
+#include <string_view>
 #include <vector>
 #include "FanyLog.h"
 #include "Ipc.h"
@@ -461,6 +463,14 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
         {
             validFrame = FanyImeEnumerationComma::IsValidPayload(buf.data[0]) && buf.data[1] == L'\0';
         }
+        FanyImeCustomPunctuation::Table customPunctuation;
+        if (validFrame && buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CustomPunctuationChanged)
+        {
+            const wchar_t *end = std::find(std::begin(buf.data), std::end(buf.data), L'\0');
+            validFrame = end != std::end(buf.data) &&
+                         FanyImeCustomPunctuation::ParsePayload(
+                             std::wstring_view(buf.data, static_cast<size_t>(end - buf.data)), customPunctuation);
+        }
         if (validFrame && (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateVoiceComposition ||
                            buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitVoiceComposition))
         {
@@ -542,6 +552,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::MidSentenceHelpcodeUppercaseChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::EndHelpcodeTriggersChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::EnumerationCommaKeysChanged ||
+                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CustomPunctuationChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::HorizontalArrowSelectionChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::DirectHelpcodeEndTriggerChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InputModeChanged ||
@@ -719,6 +730,10 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
         {
             Global::EnumerationCommaKeys.store(FanyImeEnumerationComma::KeysFromPayload(buf.data[0]),
                                                std::memory_order_relaxed);
+        }
+        else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CustomPunctuationChanged)
+        {
+            Global::CustomPunctuationTable().Replace(std::move(customPunctuation));
         }
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::VModeChanged)
         {

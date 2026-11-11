@@ -66,27 +66,6 @@ bool IsSystemCtrlSpaceToggleHeld()
            (GetAsyncKeyState(VK_MENU) & 0x8000) == 0;
 }
 
-// \ and / produce 、 as configured (engine/contracts/enumeration_comma.h). Returns false for
-// any other key, which then goes through the punctuation tables.
-bool ResolveEnumerationCommaKey(WCHAR wch, _Out_ bool *isEnumerationComma)
-{
-    unsigned bit = 0;
-    if (wch == L'\\')
-    {
-        bit = FanyImeEnumerationComma::kBackslash;
-    }
-    else if (wch == L'/')
-    {
-        bit = FanyImeEnumerationComma::kSlash;
-    }
-    else
-    {
-        *isEnumerationComma = false;
-        return false;
-    }
-    *isEnumerationComma = (Global::EnumerationCommaKeys.load(std::memory_order_relaxed) & bit) != 0;
-    return true;
-}
 } // namespace
 
 //+---------------------------------------------------------------------------
@@ -97,159 +76,31 @@ bool ResolveEnumerationCommaKey(WCHAR wch, _Out_ bool *isEnumerationComma)
 
 BOOL CCompositionProcessorEngine::IsPunctuation(WCHAR wch)
 {
-    bool isEnumerationComma = false;
-    if (ResolveEnumerationCommaKey(wch, &isEnumerationComma))
-    {
-        return isEnumerationComma ? TRUE : FALSE;
-    }
+    return PunctuationKeyMap::IsDefaultKey(wch, Global::EnumerationCommaKeys.load(std::memory_order_relaxed)) ? TRUE
+                                                                                                              : FALSE;
+}
 
-    for (int i = 0; i < ARRAYSIZE(Global::PunctuationTable); i++)
-    {
-        if (Global::PunctuationTable[i]._Code == wch)
-        {
-            return TRUE;
-        }
-    }
-
-    for (UINT j = 0; j < _PunctuationPair.Count(); j++)
-    {
-        CPunctuationPair *pPuncPair = _PunctuationPair.GetAt(j);
-
-        if (pPuncPair->_punctuation._Code == wch)
-        {
-            return TRUE;
-        }
-    }
-
-    for (UINT k = 0; k < _PunctuationNestPair.Count(); k++)
-    {
-        CPunctuationNestPair *pPuncNestPair = _PunctuationNestPair.GetAt(k);
-
-        if (pPuncNestPair->_punctuation_begin._Code == wch)
-        {
-            return TRUE;
-        }
-        if (pPuncNestPair->_punctuation_end._Code == wch)
-        {
-            return TRUE;
-        }
-    }
-    return FALSE;
+PunctuationKeyDecision CCompositionProcessorEngine::DecidePunctuationKey(PunctuationKeyInput input)
+{
+    input.enumerationCommaKeys = Global::EnumerationCommaKeys.load(std::memory_order_relaxed);
+    return ::DecidePunctuationKey(input, Global::CustomPunctuationTable().Snapshot());
 }
 
 //+---------------------------------------------------------------------------
 //
-// GetPunctuationPair
+// GetPunctuation
 //
 //----------------------------------------------------------------------------
 
-const WCHAR *CCompositionProcessorEngine::GetPunctuation(WCHAR wch)
+std::wstring CCompositionProcessorEngine::GetPunctuation(WCHAR wch, const CustomPunctuationPick &custom)
 {
-    bool isEnumerationComma = false;
-    if (ResolveEnumerationCommaKey(wch, &isEnumerationComma))
-    {
-        return isEnumerationComma ? L"、" : nullptr;
-    }
-
-    for (int i = 0; i < ARRAYSIZE(Global::PunctuationTable); i++)
-    {
-        if (Global::PunctuationTable[i]._Code == wch)
-        {
-            return Global::PunctuationTable[i]._Punctuation;
-        }
-    }
-
-    for (UINT j = 0; j < _PunctuationPair.Count(); j++)
-    {
-        CPunctuationPair *pPuncPair = _PunctuationPair.GetAt(j);
-
-        if (pPuncPair->_punctuation._Code == wch)
-        {
-            if (!pPuncPair->_isPairToggle)
-            {
-                pPuncPair->_isPairToggle = TRUE;
-                return pPuncPair->_punctuation._Punctuation;
-            }
-            else
-            {
-                pPuncPair->_isPairToggle = FALSE;
-                return pPuncPair->_pairPunctuation;
-            }
-        }
-    }
-
-    for (UINT k = 0; k < _PunctuationNestPair.Count(); k++)
-    {
-        CPunctuationNestPair *pPuncNestPair = _PunctuationNestPair.GetAt(k);
-
-        if (pPuncNestPair->_punctuation_begin._Code == wch)
-        {
-            if (pPuncNestPair->_nestCount++ == 0)
-            {
-                return pPuncNestPair->_punctuation_begin._Punctuation;
-            }
-            else
-            {
-                return pPuncNestPair->_pairPunctuation_begin;
-            }
-        }
-        if (pPuncNestPair->_punctuation_end._Code == wch)
-        {
-            // An unmatched closing mark must leave the depth at zero. Decrementing past it would make
-            // the next opening mark produce the inner 〈 instead of 《, and the count would never
-            // recover without an equal number of extra openings.
-            if (pPuncNestPair->_nestCount == 0)
-            {
-                return pPuncNestPair->_punctuation_end._Punctuation;
-            }
-            if (--pPuncNestPair->_nestCount == 0)
-            {
-                return pPuncNestPair->_punctuation_end._Punctuation;
-            }
-            return pPuncNestPair->_pairPunctuation_end;
-        }
-    }
-    return 0;
+    return _punctuationKeyMap.Resolve(wch, Global::EnumerationCommaKeys.load(std::memory_order_relaxed), custom);
 }
 
-void CCompositionProcessorEngine::BalanceNestPairAfterAutoClose(WCHAR openingCode)
+void CCompositionProcessorEngine::BalanceNestPairAfterAutoClose(WCHAR openingCode, const CustomPunctuationPick &custom)
 {
-    for (UINT k = 0; k < _PunctuationNestPair.Count(); k++)
-    {
-        CPunctuationNestPair *pPuncNestPair = _PunctuationNestPair.GetAt(k);
-
-        if (pPuncNestPair->_punctuation_begin._Code == openingCode)
-        {
-            if (pPuncNestPair->_nestCount > 0)
-            {
-                --pPuncNestPair->_nestCount;
-            }
-            return;
-        }
-    }
+    _punctuationKeyMap.BalanceNestPairAfterAutoClose(openingCode, custom);
 }
-
-namespace
-{
-// Chinese -> ASCII mapping for the reversible smart punctuation conversion.
-// Every symbol converts only when it reaches the document on its own. The
-// paired marks are listed so a lone " or 【 / 《 / （ -- what auto-complete off
-// produces -- converts like any other mark; the auto-completed pair form is
-// deliberately left out of the feature and never arms a conversion (see
-// _NoteCommittedChinesePunctuation), because rewriting one half of 〘|〙
-// would orphan the other.
-struct SmartPunctuationMapping
-{
-    WCHAR chinese;
-    WCHAR ascii;
-};
-
-constexpr SmartPunctuationMapping kSmartPunctuationMap[] = {
-    {L'。', L'.'}, {L'，', L','}, {L'！', L'!'}, {L'？', L'?'}, {L'；', L';'}, {L'：', L':'},
-    {L'、', L'/'}, {L'“', L'"'},  {L'”', L'"'},  {L'‘', L'\''}, {L'’', L'\''}, {L'【', L'['},
-    {L'】', L']'}, {L'《', L'<'}, {L'》', L'>'}, {L'（', L'('}, {L'）', L')'},
-};
-} // namespace
 
 BOOL CCompositionProcessorEngine::IsSmartAsciiPunctuationKey(WCHAR wch)
 {
@@ -259,36 +110,16 @@ BOOL CCompositionProcessorEngine::IsSmartAsciiPunctuationKey(WCHAR wch)
 
 bool CCompositionProcessorEngine::IsSmartPunctuationChinese(WCHAR ch)
 {
-    for (const SmartPunctuationMapping &mapping : kSmartPunctuationMap)
-    {
-        if (mapping.chinese == ch)
-        {
-            return true;
-        }
-    }
-    return false;
+    return ::IsSmartPunctuationChinese(ch);
 }
 
 WCHAR CCompositionProcessorEngine::GetSmartPunctuationAscii(WCHAR chinese)
 {
-    // 顿号跟随中文标点下出顿号的键位设定（EnumerationCommaKeysChanged）：
-    // 只勾 \ 转 \，勾了 / 转 /；两个都勾时保留历史行为转 /。
-    if (chinese == L'、')
-    {
-        const unsigned keys = Global::EnumerationCommaKeys.load(std::memory_order_relaxed);
-        return (keys & FanyImeEnumerationComma::kSlash) != 0 ? L'/' : L'\\';
-    }
-    for (const SmartPunctuationMapping &mapping : kSmartPunctuationMap)
-    {
-        if (mapping.chinese == chinese)
-        {
-            return mapping.ascii;
-        }
-    }
-    return 0;
+    return SmartPunctuationAsciiFor(chinese, Global::EnumerationCommaKeys.load(std::memory_order_relaxed));
 }
 
-std::wstring CCompositionProcessorEngine::ResolvePunctuation(WCHAR wch, WCHAR precedingChar)
+std::wstring CCompositionProcessorEngine::ResolvePunctuation(WCHAR wch, WCHAR precedingChar,
+                                                             const CustomPunctuationPick &custom)
 {
     // Direct ASCII output is opt-in (smart_punctuation_direct_digit and
     // smart_punctuation_direct_letter, both default off): the default path
@@ -305,8 +136,7 @@ std::wstring CCompositionProcessorEngine::ResolvePunctuation(WCHAR wch, WCHAR pr
         }
     }
 
-    const WCHAR *punctuation = GetPunctuation(wch);
-    return punctuation ? std::wstring(punctuation) : std::wstring();
+    return GetPunctuation(wch, custom);
 }
 
 //+---------------------------------------------------------------------------
@@ -536,39 +366,6 @@ BOOL CCompositionProcessorEngine::GetDoubleSingleByteMode(_In_ ITfThreadMgr *pTh
                                              Global::MetasequoiaIMEGuidCompartmentDoubleSingleByte);
     CompartmentDoubleSingleByte._GetCompartmentBOOL(isOpen);
     return isOpen;
-}
-
-//+---------------------------------------------------------------------------
-//
-// SetupPunctuationPair
-//
-//----------------------------------------------------------------------------
-
-void CCompositionProcessorEngine::SetupPunctuationPair()
-{
-    // Punctuation pair
-    const int pair_count = 2;
-    // Left quotation mark and right quotation mark “”
-    CPunctuationPair punc_quotation_mark(L'"', L"“", L"”");
-    // Left single quotation mark and right single quotation mark ‘’
-    CPunctuationPair punc_apostrophe(L'\'', L"‘", L"’");
-
-    CPunctuationPair puncPairs[pair_count] = {
-        punc_quotation_mark,
-        punc_apostrophe,
-    };
-
-    for (int i = 0; i < pair_count; ++i)
-    {
-        CPunctuationPair *pPuncPair = _PunctuationPair.Append();
-        *pPuncPair = puncPairs[i];
-    }
-
-    // Punctuation nest pair
-    CPunctuationNestPair punc_angle_bracket(L'<', L"《", L"〈", L'>', L"》", L"〉");
-
-    CPunctuationNestPair *pPuncNestPair = _PunctuationNestPair.Append();
-    *pPuncNestPair = punc_angle_bracket;
 }
 
 void CCompositionProcessorEngine::InitializeMetasequoiaIMECompartment(_In_ ITfThreadMgr *pThreadMgr,

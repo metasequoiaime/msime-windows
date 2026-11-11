@@ -13,55 +13,14 @@
 #include "Ipc.h"
 #include "CommitCandidateAndContinuePayload.h"
 #include "PunctuationCommitText.h"
+#include "PairedPunctuationPolicy.h"
+#include "PunctuationKeyClaim.h"
 #include "FanyDefines.h"
 #include "../../../engine/contracts/preedit_caret_map.h"
 
 namespace
 {
 thread_local std::wstring g_toggleImeFallbackBuffer;
-
-// The closing half the pressed key would step over, or 0 when the key cannot
-// close a tracked pair. Quotes are keyed symmetrically: '"' resolves to either
-// half depending on the legacy left/right toggle, so the resolved character
-// says nothing about intent and the key itself has to answer.
-bool IsPairedPunctuationClosing(WCHAR ch)
-{
-    // Only a Chinese closing half can close a tracked pair. ASCII halves
-    // (direct-mode ',' '.' ':' or the numpad dot) and unrelated Chinese marks
-    // ('。' ':' ';' ...) must return 0: _TryStepOverPairedPunctuation clears
-    // the whole stack on mismatch, so feeding it anything but a real closing
-    // half silently degrades the step-over convenience for the pair the user
-    // is still inside.
-    switch (ch)
-    {
-    case L'”':
-    case L'’':
-    case L'】':
-    case L'》':
-    case L'〉':
-    case L'）':
-        return true;
-    default:
-        return false;
-    }
-}
-
-WCHAR GetPairedPunctuationStepOverCandidate(WCHAR wch, const std::wstring &resolved)
-{
-    if (resolved.size() != 1)
-    {
-        return 0;
-    }
-    if (wch == L'"')
-    {
-        return L'”';
-    }
-    if (wch == L'\'')
-    {
-        return L'’';
-    }
-    return IsPairedPunctuationClosing(resolved[0]) ? resolved[0] : 0;
-}
 
 } // namespace
 
@@ -1507,7 +1466,8 @@ HRESULT CMetasequoiaIME::_HandleCompositionArrowKeySegment(TfEditCookie ec, _In_
 //----------------------------------------------------------------------------
 
 HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITfContext *pContext, UINT code, WCHAR wch,
-                                                       uint64_t requestId, const std::wstring &prefetchedText)
+                                                       uint64_t requestId, const std::wstring &prefetchedText,
+                                                       const CustomPunctuationPick &custom)
 {
     HRESULT hr = S_OK;
 
@@ -1516,6 +1476,11 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
     //
     CCompositionProcessorEngine *pCompositionProcessorEngine = nullptr;
     pCompositionProcessorEngine = _pCompositionProcessorEngine;
+
+    // custom is what the key's classification read from the custom punctuation table. A key it took over
+    // produces what the user chose: the main-keyboard - + ASCII fallback after a candidate, the default
+    // quote-key rules and the space conversion below do not apply to it. Numpad keys are never taken over.
+    const bool keyIsCustom = custom.active;
 
     std::wstring pendingPunctuationCommitText = prefetchedText;
     const bool hasPendingPunctuationCommitText = !pendingPunctuationCommitText.empty();
@@ -1581,7 +1546,7 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
                 const std::wstring candidate(receivedData->candidate_string);
                 const WCHAR preceding =
                     candidate.empty() ? _GetPrecedingCharForSmartPunctuation(ec, pContext) : candidate.back();
-                if (code == VK_DECIMAL || code == VK_DIVIDE || wch == L'-' || wch == L'+')
+                if (AppendsAsciiAfterCandidate(code, wch, custom))
                 {
                     punctuationStr = candidate + (code == VK_DECIMAL ? L'.' : wch);
                 }
@@ -1589,7 +1554,7 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
                 {
                     // A key that is not Chinese punctuation (e.g. '/' or '\' not configured for 、)
                     // still commits itself after the candidate.
-                    const std::wstring resolved = _ResolveSmartPunctuation(wch, preceding);
+                    const std::wstring resolved = _ResolveSmartPunctuation(wch, preceding, custom);
                     punctuationStr = candidate + (resolved.empty() ? std::wstring(1, wch) : resolved);
                 }
             }
@@ -1601,47 +1566,36 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
         // Pure punctuation (no candidate prefix): choose ASCII vs Chinese from
         // the character immediately before the caret / composition.
         const WCHAR preceding = _GetPrecedingCharForSmartPunctuation(ec, pContext);
-        punctuationStr = _ResolveSmartPunctuation(wch, preceding);
+        punctuationStr = _ResolveSmartPunctuation(wch, preceding, custom);
     }
 
-    // 宿主级排除优先于开关：被排除的宿主里既不补全右半边，也不做跨越式闭合，
-    // 标点回落到原有的左右轮换行为。
-    const bool pairedPunctuationEnabled = Global::PairedPunctuationEnabled.load(std::memory_order_relaxed) &&
-                                          !Global::IsPairedPunctuationExcludedProcess(Global::current_process_name);
+    // 被排除的宿主里既不补全右半边，也不做跨越式闭合，标点回落到原有的左右轮换行为。
+    // 自定义标点接管的键不看成对补全开关。
+    const bool pairedPunctuationEnabled = PairedPunctuationActiveFor(
+        Global::PairedPunctuationEnabled.load(std::memory_order_relaxed),
+        Global::IsPairedPunctuationExcludedProcess(Global::current_process_name), keyIsCustom);
     if (pairedPunctuationEnabled && !_IsComposing() && _candidateMode == CANDIDATE_NONE)
     {
         // A pair whose closing half is still waiting on the right of the caret
         // is closed by stepping over it. Without this the closing key inserts a
         // second one （内容）） and, because of the pinning below, the right
         // quote could never be typed at all.
-        const WCHAR stepOver = GetPairedPunctuationStepOverCandidate(wch, punctuationStr);
+        WCHAR stepOver = PairedStepOverCandidate(wch, keyIsCustom, punctuationStr);
+        if (stepOver == 0 && !_pairedPunctuationStack.empty())
+        {
+            const PairedPunctuationEntry &top = _pairedPunctuationStack.back();
+            stepOver = PairedStepOverOwnClosing(wch, keyIsCustom, punctuationStr, top.openedByKey, top.closing);
+        }
         if (_TryStepOverPairedPunctuation(ec, pContext, stepOver))
         {
             return S_OK;
         }
     }
 
-    if (pairedPunctuationEnabled && !punctuationStr.empty())
-    {
-        // Quotes share one physical key for both sides. In paired mode every
-        // press starts a fresh pair instead of following the legacy left/right
-        // toggle maintained by GetPunctuation().
-        if (wch == L'"' && punctuationStr.back() == L'”')
-        {
-            punctuationStr.back() = L'“';
-        }
-        else if (wch == L'\'' && punctuationStr.back() == L'’')
-        {
-            punctuationStr.back() = L'‘';
-        }
-    }
-
-    const WCHAR pairedOpening = punctuationStr.empty() ? 0 : punctuationStr.back();
-    const WCHAR pairedClosing = pairedPunctuationEnabled ? _GetPairedPunctuationClosingFor(pairedOpening) : 0;
-    if (pairedClosing != 0)
-    {
-        punctuationStr.push_back(pairedClosing);
-    }
+    PairedCommit paired = ComposePairedCommit(pairedPunctuationEnabled, wch, keyIsCustom, std::move(punctuationStr));
+    punctuationStr = std::move(paired.text);
+    const WCHAR pairedClosing = paired.closing;
+    const WCHAR pairedOpening = pairedClosing != 0 ? punctuationStr[punctuationStr.size() - 2] : 0;
 
     // Fingerprint for the reversible space conversion: the character that will
     // sit immediately before the committed punctuation. A commit text that
@@ -1650,8 +1604,7 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
     // skipped because _ResolveSmartPunctuation already recorded their state.
     // An auto-completed pair answers nothing: it never arms a conversion.
     WCHAR beforeChar = 0;
-    if (pairedClosing == 0 && !punctuationStr.empty() &&
-        CCompositionProcessorEngine::IsSmartPunctuationChinese(punctuationStr.back()))
+    if (SmartConversionTail(punctuationStr, pairedClosing != 0, keyIsCustom) != 0)
     {
         const size_t punctuationIndex = punctuationStr.size() - 1;
         beforeChar =
@@ -1706,9 +1659,9 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
         // nest-pair depth that resolving the opening advanced would never be
         // paid back (the '>' is consumed by step-over). Balance it now, or the
         // next 《》 degrades into 〈〉.
-        pCompositionProcessorEngine->BalanceNestPairAfterAutoClose(wch);
+        pCompositionProcessorEngine->BalanceNestPairAfterAutoClose(wch, custom);
         _InvalidateSmartPunctuationShadow();
-        _PushPairedPunctuation(pairedOpening, pairedClosing);
+        _PushPairedPunctuation(pairedOpening, pairedClosing, wch);
         _QueuePairedPunctuationCaretMove(-1);
     }
 
@@ -1716,7 +1669,7 @@ HRESULT CMetasequoiaIME::_HandleCompositionPunctuation(TfEditCookie ec, _In_ ITf
     // Chinese punctuation, and the key that produced a direct ASCII output may
     // revert it. An auto-completed pair does not arm it -- only a symbol that
     // reached the document on its own converts.
-    _NoteCommittedChinesePunctuation(punctuationStr, pairedClosing != 0, beforeChar);
+    _NoteCommittedChinesePunctuation(punctuationStr, pairedClosing != 0, keyIsCustom, beforeChar);
 
     return S_OK;
 }

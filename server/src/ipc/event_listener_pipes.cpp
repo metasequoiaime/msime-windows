@@ -849,6 +849,9 @@ void RegisteredPipeMonitorThread(HANDLE clientPipe, UINT pipeRole, uint64_t hand
                 hello.client_id, Global::DataFromServerMsgTypeToTsfWorkerThread::EnumerationCommaKeysChanged,
                 FormatEnumerationCommaWorkerPayload());
             SendToTsfWorkerThreadClientViaNamedpipe(
+                hello.client_id, Global::DataFromServerMsgTypeToTsfWorkerThread::CustomPunctuationChanged,
+                FormatCustomPunctuationWorkerPayload());
+            SendToTsfWorkerThreadClientViaNamedpipe(
                 hello.client_id, Global::DataFromServerMsgTypeToTsfWorkerThread::HorizontalArrowSelectionChanged,
                 FormatHorizontalArrowSelectionWorkerPayload());
             SendToTsfWorkerThreadClientViaNamedpipe(

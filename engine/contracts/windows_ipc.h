@@ -498,7 +498,12 @@ constexpr std::uint32_t UpdateInstallerReady = 40;
 // Backspace over the end block it opened (IsEndTriggerBackspaceAt), as Server-authoritative keys and rebuilds its
 // buffer from the Server's CompositionRestored reply. Older DLLs ignore the opcode and keep the keys as punctuation.
 constexpr std::uint32_t DirectHelpcodeEndTriggerChanged = 41;
-constexpr std::uint32_t MaxKnown = DirectHelpcodeEndTriggerChanged;
+// The custom punctuation in effect under Chinese punctuation: empty when the setting is off or has no rows. Payload
+// FanyImeCustomPunctuation::FormatPayload, each row "<trigger character><symbol>\t". The DLL replaces its whole table
+// with a frame that FanyImeCustomPunctuation::ParsePayload accepts and keeps the previous table otherwise. Older DLLs
+// ignore the opcode and keep the default punctuation.
+constexpr std::uint32_t CustomPunctuationChanged = 42;
+constexpr std::uint32_t MaxKnown = CustomPunctuationChanged;
 // Source compatibility for the Server's historical spellings.
 constexpr std::uint32_t SwitchToEn = SwitchToEnglish;
 constexpr std::uint32_t SwitchToCn = SwitchToChinese;

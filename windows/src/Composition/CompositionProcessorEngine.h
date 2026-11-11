@@ -6,6 +6,9 @@
 #include "MetasequoiaIMEBaseStructure.h"
 #include "Compartment.h"
 #include "define.h"
+#include "PunctuationKeyMap.h"
+#include "PunctuationKeyClaim.h"
+#include <string>
 #include <vector>
 
 class CCompositionProcessorEngine
@@ -136,13 +139,18 @@ class CCompositionProcessorEngine
     void SetDoubleSingleByteMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId, BOOL bOpen);
     BOOL GetDoubleSingleByteMode(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId);
 
-    // Punctuation
+    // Punctuation. IsPunctuation answers for the default punctuation (with the enumeration comma setting).
+    // DecidePunctuationKey answers for one key under the current enumeration comma setting (it replaces
+    // input.enumerationCommaKeys) and the custom punctuation table the Server last sent: whether the punctuation
+    // branch claims the key, and the custom pick the key carries to its output. GetPunctuation returns the text
+    // the key produces under Chinese punctuation, the pick's symbol when it is active, or an empty string.
     BOOL IsPunctuation(WCHAR wch);
-    const WCHAR *GetPunctuation(WCHAR wch);
+    PunctuationKeyDecision DecidePunctuationKey(PunctuationKeyInput input);
+    std::wstring GetPunctuation(WCHAR wch, const CustomPunctuationPick &custom);
     // Smart punctuation (rime digit_separators-style): after ASCII letters/digits,
     // keep ',' '.' ':' as ASCII instead of mapping to Chinese punctuation.
     static BOOL IsSmartAsciiPunctuationKey(WCHAR wch);
-    std::wstring ResolvePunctuation(WCHAR wch, WCHAR precedingChar);
+    std::wstring ResolvePunctuation(WCHAR wch, WCHAR precedingChar, const CustomPunctuationPick &custom);
     // Reversible smart punctuation mapping (Chinese form -> ASCII form). Each
     // symbol on its own maps; an auto-completed pair never arms the conversion.
     static bool IsSmartPunctuationChinese(WCHAR ch);
@@ -152,7 +160,7 @@ class CCompositionProcessorEngine
     // the depth. Undo the opening's increment here to keep the completed pair
     // net-zero; otherwise every auto-closed 《》 leaves the depth at 1 and the
     // next opening resolves to the inner 〈.
-    void BalanceNestPairAfterAutoClose(WCHAR openingCode);
+    void BalanceNestPairAfterAutoClose(WCHAR openingCode, const CustomPunctuationPick &custom);
 
     BOOL IsDoubleSingleByte(WCHAR wch);
     BOOL IsWildcard()
@@ -222,7 +230,6 @@ class CCompositionProcessorEngine
     void SetupConfiguration();
     void SetupLanguageBar(_In_ ITfThreadMgr *pThreadMgr, TfClientId tfClientId, BOOL isSecureMode);
     void SetKeystrokeTable(_Inout_ CMetasequoiaImeArray<_KEYSTROKE> *pKeystroke);
-    void SetupPunctuationPair();
     void CreateLanguageBarButton(DWORD dwEnable, GUID guidLangBar, _In_z_ LPCWSTR pwszDescriptionValue,
                                  _In_z_ LPCWSTR pwszTooltipValue, DWORD dwOnIconIndex, DWORD dwOffIconIndex,
                                  _Outptr_result_maybenull_ CLangBarItemButton **ppLangBarItemButton, BOOL isSecureMode);
@@ -303,9 +310,8 @@ class CCompositionProcessorEngine
     XPreservedKey _PreservedKey_DoubleSingleByte;
     XPreservedKey _PreservedKey_Punctuation;
 
-    // Punctuation data
-    CMetasequoiaImeArray<CPunctuationPair> _PunctuationPair;
-    CMetasequoiaImeArray<CPunctuationNestPair> _PunctuationNestPair;
+    // Quote alternation and angle nesting state of the default punctuation
+    PunctuationKeyMap _punctuationKeyMap;
 
     // Language bar data
     CLangBarItemButton *_pLanguageBar_IMEMode;
