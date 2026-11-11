@@ -431,6 +431,8 @@ set(SRC_FILES
     "./src/voice-input/voice_result_card.cpp"
     "./src/voice-input/voice_result_card.h"
     "./src/voice-input/voice_result_card_model.h"
+    "./src/voice-input/voice_notice_window.cpp"
+    "./src/voice-input/voice_notice_window.h"
     "./src/voice-input/voice_overlay_layout.h"
     "./src/voice-input/voice_commit_policy.h"
     "./src/main.cpp"

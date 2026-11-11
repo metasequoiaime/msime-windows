@@ -3196,6 +3196,11 @@ void SettingsWindow::ShowPage(const std::string &pageId)
     impl_->ShowPage(pageId);
 }
 
+void SettingsWindow::ShowToast(const std::wstring &message, bool success)
+{
+    impl_->ShowToast(message, success);
+}
+
 void SettingsWindow::ResetTransientState()
 {
     impl_->ResetTransientState();

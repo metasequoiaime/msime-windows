@@ -18,6 +18,7 @@
 #include "cue_player.h"
 #include "voice_target.h"
 #include "voice_result_card.h"
+#include "voice_notice_window.h"
 #include "voice_commit_policy.h"
 #include "voice_control_policy.h"
 #include "voice_input_delivery.h"
@@ -144,7 +145,7 @@ void StopRecording(std::uint64_t voice_session, std::uintptr_t lock_ticket);
 void CancelRecording(std::uintptr_t lock_ticket);
 void CancelRecordingForSession(std::uint64_t session_cookie, std::uintptr_t lock_ticket);
 void DiscardRecording(const VoiceInputConfig &config);
-void ShowVoiceNotice(std::wstring message, unsigned icon);
+void ShowVoiceNotice(std::wstring message, VoiceNoticeKind kind = VoiceNoticeKind::Error);
 
 void MuteSystemAudioIfEnabled(const VoiceInputConfig &config)
 {
@@ -689,7 +690,7 @@ RecognitionResult Recognize(const std::vector<float> &samples, const VoiceInputC
         // 本地识别不会因为「没说话」报错（那只是空文本），出错都是运行库或模型载不进来，属于配置问题，
         // 静默吞掉用户就只看到每次都没字，所以照配置类错误的做法提示。
         if (!local.error.empty())
-            ShowVoiceNotice(string_to_wstring(local.error) + L"。", MB_ICONERROR);
+            ShowVoiceNotice(string_to_wstring(local.error) + L"。");
         return {std::move(local.text), std::move(local.error)};
     }
     const std::string asr_token = VoiceInput::ResolveAsrToken(config);
@@ -1440,13 +1441,11 @@ void AbortPendingStart(const char *reason)
 }
 
 // 配置类错误仍要告知用户，但绝不能在控制线程上模态等待——弹窗挂着的期间，
-// 下一次语音的指令队列整个被卡住（提示条卡死的元凶之一）。挪到独立线程展示，
-// 队列照常运转；连点几次也只是多几个各自可关闭的窗口。
-void ShowVoiceNotice(std::wstring message, unsigned icon = MB_ICONERROR)
+// 下一次语音的指令队列整个被卡住（提示条卡死的元凶之一）。提示框在自己的线程上显示，
+// 队列照常运转；连点几次也只留最新的一个。
+void ShowVoiceNotice(std::wstring message, VoiceNoticeKind kind)
 {
-    std::thread([message = std::move(message), icon] {
-        MessageBoxW(nullptr, message.c_str(), L"水杉 IME", MB_OK | icon);
-    }).detach();
+    ShowVoiceNoticeWindow(kind, std::move(message));
 }
 
 bool StartRecording()
@@ -1473,13 +1472,14 @@ bool StartRecording()
         // 本地识别不要 Token，但模型与运行库要先下载；缺了就在开麦之前告诉用户，而不是录完才静默失败。
         if (const std::string error = local_asr::ReadinessError(config.local_asr_model); !error.empty())
         {
-            ShowVoiceNotice(string_to_wstring(error) + L"。", MB_ICONINFORMATION);
+            ShowVoiceNotice(string_to_wstring(error) + L"。", VoiceNoticeKind::SettingsNeeded);
             return false;
         }
     }
     else if (asr_token.empty())
     {
-        ShowVoiceNotice(L"请先在设置的“语音输入”分区填写当前 ASR 提供商的 API Token。", MB_ICONINFORMATION);
+        ShowVoiceNotice(L"请先在设置的“语音输入”分区填写当前 ASR 提供商的 API Token。",
+                        VoiceNoticeKind::SettingsNeeded);
         return false;
     }
     {
@@ -1687,7 +1687,7 @@ void StopRecording(std::uint64_t voice_session, std::uintptr_t lock_ticket)
                 recognition.error = client->LastError();
                 // 同整句的本地识别：出错只会是运行库或模型载不进来，静默吞掉用户就只看到每次都没字。
                 if (!recognition.error.empty() && VoiceInput::IsLocalAsrProvider(config.asr_provider))
-                    ShowVoiceNotice(string_to_wstring(recognition.error) + L"。", MB_ICONERROR);
+                    ShowVoiceNotice(string_to_wstring(recognition.error) + L"。");
             }
             else
                 recognition = Recognize(samples, config);
