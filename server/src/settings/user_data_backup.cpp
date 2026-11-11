@@ -1315,8 +1315,9 @@ bool ReplayUserDictionary(const Context &context, MergeImportReport *report, std
     return true;
 }
 
-// Import 的实现体。merge 为真时走同步恢复的合并语义：配置按键合并、凭据保留本地值、
-// 用户词库按日志合并而不是覆盖。普通备份文件导入用 merge = false，保持整包覆盖。
+// Import 的实现体。merge 为真时走同步恢复的合并语义：配置按键合并、凭据保留本地值。
+// 普通备份文件导入用 merge = false，配置与统计整包覆盖。
+// 用户词库不受 merge 影响：只要归档带 msime_user.db，两种模式都按日志合并。
 bool ImportImpl(const Context &context, const std::filesystem::path &source, const Hooks &hooks, bool merge,
                 MergeImportReport *report, std::string &message);
 } // namespace
@@ -1472,6 +1473,11 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
     // 免得等到停了 Server 才发现备份坏了。
     const std::filesystem::path staged_user_db = staging.path / L"msime_user.db";
     const bool has_user_database = std::filesystem::is_regular_file(staged_user_db, error) && !error;
+    // 归档里带 msime_user.db 时，无论普通导入还是同步恢复，这一份都只能合并、不能覆盖。
+    // 它是操作日志：整份覆盖会把本机独有的词条从日志里抹掉。那些词条此时还在 msime.db，
+    // 但下次安装重建词库并回放时就静默消失了，而 .backup-before-import 只留到下一次导入。
+    // 用户把同步包从浏览器下载回来手动导入，走的正是普通导入这条路径。
+    const bool merge_user_dictionary = has_user_database;
     if (has_user_database)
     {
         std::ifstream header(staged_user_db, std::ios::binary);
@@ -1611,10 +1617,10 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
         {
             if (!IsDataPath(item.path))
                 continue;
-            // 合并模式要读覆盖前的本地用户词库，这份不能由归档覆盖：一旦覆盖，
-            // 后面的 MergeUserDictionary 就是在拿远端快照跟自己合并，本机独有的
-            // 词条、weight_edited 与删除墓碑会被静默丢掉。
-            if (merge && has_user_database && item.path == "msime_user.db")
+            // 归档带用户词库日志时不能由它覆盖本地那份：一旦覆盖，后面的
+            // MergeUserDictionary 就是在拿远端快照跟自己合并，本机独有的词条、
+            // weight_edited 与删除墓碑会被静默丢掉。普通导入与同步恢复都一样。
+            if (merge_user_dictionary && item.path == "msime_user.db")
                 continue;
             const std::filesystem::path staged = staging.path / Utf8Path(item.path);
             const std::filesystem::path target = TargetPath(context, item.path);
@@ -1624,14 +1630,17 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
         }
     }
 
-    // 同步恢复：用户词库按日志合并进本地那份，而不是覆盖。
+    // 归档带用户词库时按日志合并进本地那份，而不是覆盖。普通导入也走这里：
+    // 同步包被手动导入时，用户同样不该丢掉本机独有的词条。
     //
     // 顺序很关键。合并必须发生在「停 Server 之后、备份之后」：
     // - 之前合并要打开正在被 Server 写入的库，引擎自己的 busy_timeout 只有 200ms，
     //   合并期间的调频写入会被直接丢弃；
-    // - 备份之后合并，被改动的词库已经进了 .backup-before-import，失败可以回滚。
+    // - 备份之后合并，被改动的词库已经进了 .backup-before-import，失败时可以拿
+    //   那份副本手动恢复。
     // 合并结果还要回放到 msime.db 才会影响候选，所以这里接着调 replay。
-    if (failures.empty() && merge && has_user_database)
+    bool replay_skipped = false;
+    if (failures.empty() && merge_user_dictionary)
     {
         const std::filesystem::path live_user_db = context.data_dir / L"msime_user.db";
         std::error_code user_error;
@@ -1660,27 +1669,24 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
             if (report)
                 report->dictionary_merged = true;
             // 日志合并完还要回放，否则删除墓碑与远端权重在下次安装前都不生效。
+            // 普通导入没有 report 参数，用一个本地对象接 replay_skipped，好在
+            // 成功文案里把「要等下次安装」说清楚。
+            MergeImportReport local_report;
+            MergeImportReport *replay_report = report ? report : &local_report;
             std::string replay_message;
-            if (!ReplayUserDictionary(context, report, replay_message))
+            if (!ReplayUserDictionary(context, replay_report, replay_message))
                 failures.push_back(replay_message);
+            else
+                replay_skipped = replay_report->replay_skipped;
         }
-    }
-
-    // 普通导入（merge = false）如果归档里带着用户词库日志，落位之后同样要回放：
-    // 用户可能把云端同步包从浏览器下载回来手动导入，那份日志不 replay 就不产生效果。
-    if (failures.empty() && !merge && FindItem(items, "msime_user.db") != nullptr)
-    {
-        std::string replay_message;
-        if (!ReplayUserDictionary(context, report, replay_message))
-            failures.push_back(replay_message);
     }
 
     if (failures.empty())
     {
-        // 同步恢复时跳过 dictionary/*.txt：那批文本带着远端设备的权重，导入会用
+        // 归档带日志时跳过 dictionary/*.txt：那批文本带着远端设备的权重，导入会用
         // record_user_insert 把刚按 updated_at 判过的新旧关系冲掉。日志已经能完整表达。
         // 只有当归档确实带着日志时才跳过；没带日志的归档仍然要靠这批文本恢复词条。
-        if (!merge || !has_user_database)
+        if (!merge_user_dictionary)
         {
             for (const char *dictionary : kDictionaries)
             {
@@ -1727,6 +1733,8 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
     if (start_ok && failures.empty())
     {
         message = "用户数据已导入。";
+        if (replay_skipped)
+            message += "部分词条改动要等下次安装时才生效。";
         return true;
     }
 
