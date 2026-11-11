@@ -244,8 +244,10 @@ void DictInput::SetOnSubmit(std::function<void()> handler)
 void DictInput::SetMultiline(bool multiline)
 {
     box_->SetMultiline(multiline);
+    multiline_ = multiline;
     height_ = multiline ? 96.0f : 42.0f;
     box_->SetPreferredHeight(height_);
+    appliedState_ = -1;
     InvalidateMeasure();
 }
 
@@ -259,9 +261,11 @@ void DictInput::ApplyAppearance(bool focused)
     msimeui::TextBox::Appearance appearance;
     appearance.cornerRadius = 8.0f;
     appearance.borderWidth = CssBorder();
-    // padding: 0 13px inside the 1px border
-    appearance.paddingX = 13.0f + CssBorder();
-    appearance.paddingY = 0.0f;
+    // Single line: padding 0 13px inside the 1px border, the line centered vertically.
+    // Multi-line: padding 10px 11px, so the first line sits where the single-line boxes'
+    // text does (about 10px under the border) instead of against the top border.
+    appearance.paddingX = (multiline_ ? 11.0f : 13.0f) + CssBorder();
+    appearance.paddingY = multiline_ ? 10.0f + CssBorder() : 0.0f;
     appearance.fill = focused ? p.controlBg : p.surfaceSunken;
     appearance.border = p.controlBorder;
     appearance.focusBorder = p.accent;
