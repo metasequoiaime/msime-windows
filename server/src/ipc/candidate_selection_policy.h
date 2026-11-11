@@ -150,6 +150,26 @@ inline bool IsExactEnglishMatch(const WordItem &item, const EnglishPlacement &pl
     return item.source == CandidateSource::EnglishDictionary && item.pinyin == placement.input;
 }
 
+// 当前列表里有没有与整串输入完全相同的英文词。英文是异步插进来的，首次组页时 input 为空；
+// 只要有一个（包括用户固定了位置的），就算这次输入有有效英文。
+inline bool HasExactEnglishCandidate(const std::vector<WordItem> &items, const EnglishPlacement &english_placement)
+{
+    return !english_placement.input.empty() && std::any_of(items.begin(), items.end(), [&](const WordItem &item) {
+        return IsExactEnglishMatch(item, english_placement);
+    });
+}
+
+// 整句是猜出来的，词库里没有它那一行；输入整串正好是一个英文词时，留着它只会排在英文前后诱使误选。
+// 只认 sentence_association，不按来源一刀切（Generated 还用于简拼展开、纠错等非整句候选）；用户显式
+// 固定了位置的候选不动。
+inline void HideGuessedSentences(std::vector<WordItem> &items)
+{
+    items.erase(
+        std::remove_if(items.begin(), items.end(),
+                       [](const WordItem &item) { return item.sentence_association && item.fixed_position == 0; }),
+        items.end());
+}
+
 // 占着英文槽位的那个候选在列表里的下标；没有未固定位置的英文时为空。
 // NormalizeMixedCandidateOrder 不让固定了位置的英文占槽位，并把占槽位的英文放在其余未固定的英文前面，
 // 所以列表里第一个未固定的英文就是它。
@@ -185,6 +205,11 @@ inline std::optional<size_t> SlottedEnglishIndex(const std::vector<WordItem> &it
 inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t local_prefix_slots = 1,
                                          const EnglishPlacement &english_placement = {})
 {
+    // 精确英文命中时先去掉整句猜测：英文、普通词的位置都不动，只少了猜出来的那几条。
+    // 英文到达前 input 为空，这里不动列表；英文回来后再归一化时生效，重复归一化不会多删。
+    if (HasExactEnglishCandidate(items, english_placement))
+        HideGuessedSentences(items);
+
     // 字母词与首个符号先取出，固定位置的候选留在原下标，等于在不含它们的列表上放固定位置；列表已归一化过时，
     // 这还原出上次放它们之前的列表，再归一化结果不变。
     bool first_symbol_taken = false;

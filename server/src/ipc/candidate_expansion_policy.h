@@ -37,6 +37,11 @@ inline bool IsUiOnlyCandidateSource(CandidateSource source)
 inline bool SetExpandedCandidatesKeepingPagePosition(Global::CandidateUiState &ui, std::vector<WordItem> expanded,
                                                      const EnglishPlacement &english_placement = {})
 {
+    // 精确英文命中时整句猜测已从列表里隐藏；选词中只追加不重排的分支不会走归一化，扩展重查出来的整句
+    // 在这里一并挡掉，否则翻到后面又会看到它们。英文（异步候选）只在 ui.items 里，判据从那里取。
+    if (HasExactEnglishCandidate(ui.items, english_placement))
+        HideGuessedSentences(expanded);
+
     if (ui.selection_started)
     {
         // 翻页扩展只追加尚未显示的候选。引擎可能已经有新的重排结果，不能挪动用户正在选的项。
