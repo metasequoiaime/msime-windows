@@ -202,8 +202,12 @@ VoiceInputConfig GetConfiguredVoiceInput()
 void RestoreSystemAudioIfMuted()
 {
 }
-constexpr unsigned MB_ICONERROR = 0x10;
-void ShowVoiceNotice(std::wstring, unsigned = 0)
+enum class VoiceNoticeKind
+{
+    Error,
+    SettingsNeeded,
+};
+void ShowVoiceNotice(std::wstring, VoiceNoticeKind = VoiceNoticeKind::Error)
 {
 }
 void Sleep(unsigned)

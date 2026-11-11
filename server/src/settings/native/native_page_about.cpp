@@ -1022,22 +1022,24 @@ VisualPtr BuildAboutPage(PageContext &context)
                                                       {"path", destination.u8string()},
                                                       {"includeModels", include_models->IsChecked()}});
         });
-        import_button->SetOnClick([model, owner, weak_backup]() {
+        import_button->SetOnClick([model, owner, weak_backup, host = &context.host]() {
             const std::shared_ptr<AboutBackupState> current = weak_backup.lock();
             if (!current || current->busy)
                 return;
             const std::filesystem::path source = PickBackupSource(owner);
             if (source.empty())
                 return;
-            const int answer =
-                MessageBoxW(owner,
-                            L"导入会先停止输入法后台进程，并把将被覆盖的配置、统计、皮肤和模型备份到数据目录的 "
-                            L".backup-before-import。词库只合并条目，不会替换现有数据库。\n\n继续导入吗？",
-                            L"导入用户数据", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
-            if (answer != IDOK)
-                return;
-            SetBackupBusy(current, true);
-            model->Post("userDataBackupRequest", Json{{"action", "import"}, {"path", source.u8string()}});
+            host->Confirm(
+                L"导入会先停止输入法后台进程，并把将被覆盖的配置、统计、皮肤和模型备份到数据目录的 "
+                L".backup-before-import。词库只合并条目，不会替换现有数据库。",
+                [model, weak_backup, source](bool confirmed) {
+                    const std::shared_ptr<AboutBackupState> current = weak_backup.lock();
+                    if (!confirmed || !current || current->busy)
+                        return;
+                    SetBackupBusy(current, true);
+                    model->Post("userDataBackupRequest", Json{{"action", "import"}, {"path", source.u8string()}});
+                },
+                L"导入用户数据", L"继续导入", L"取消");
         });
         context.OnMessage("userDataBackupDone", [weak_backup, host = &context.host](const Json &message) {
             const std::shared_ptr<AboutBackupState> current = weak_backup.lock();
