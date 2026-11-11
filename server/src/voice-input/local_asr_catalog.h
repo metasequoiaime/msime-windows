@@ -122,7 +122,7 @@ inline const std::vector<ModelEntry> &Catalog()
         {
             "x-asr-zh-en-streaming",
             "中英流式（X-ASR）",
-            "自带标点，中英夹杂识别好；识别速度快，内存占用最小",
+            "边说边出字，自带标点，中英夹杂识别好；内存占用最小",
             ModelKind::OnlineTransducer,
             "zipformer2",
             {"sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",

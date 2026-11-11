@@ -1,7 +1,8 @@
 #pragma once
 
 // 本地（离线）语音识别：经 sherpa-onnx 的 C API 在本机识别，不联网。实现移植自 ../msime 的
-// shared/voice/LocalAsr.cpp，只保留 Server 批量识别要用的部分（没有热词、没有逐字回显）。
+// shared/voice/LocalAsr.cpp（没有热词）。流式模型录音时边收边解码，识别中的文字经 StreamingSession
+// 的回调实时送出；整句模型录完才整段识别。
 //
 // 运行库不链接：第一次识别时从 <DataDir>/models/voice-asr/runtime/ 用 LoadLibraryEx 载入，载入前
 // 按 local_asr_catalog.h 钉死的大小与 SHA256 逐个校验，校验期间以拒绝写入/删除的共享方式占住文件，
@@ -10,8 +11,14 @@
 //
 // 模型载入后留给下一次听写复用，闲置几分钟后由后台线程释放；同一时刻只驻留一个模型。
 
+#include "streaming_asr.h"
+
+#include <condition_variable>
 #include <cstddef>
+#include <functional>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace local_asr
@@ -25,6 +32,45 @@ struct RecognitionResult
 
 // 不载入任何东西，只看磁盘：所选模型及其依赖是否都已下载。返回空串表示就绪。
 std::string ReadinessError(const std::string &model_id);
+
+// 所选模型能否边录边识别（只有流式模型可以）。只看目录，不载入。
+bool SupportsStreaming(const std::string &model_id);
+
+// 流式模型的一次听写。Start 立即返回：运行库与模型在工作线程上载入，载入期间送来的音频先排队，
+// 载入后补上，所以冷启动只会让第一段文字晚一点出来，不会丢音频。识别中的文字（已整理过）每变一次
+// 就在工作线程上回调一次。
+class StreamingSession : public StreamingAsr
+{
+  public:
+    using PartialCallback = std::function<void(const std::string &)>;
+
+    StreamingSession(std::string model_id, PartialCallback on_partial);
+    ~StreamingSession() override;
+
+    StreamingSession(const StreamingSession &) = delete;
+    StreamingSession &operator=(const StreamingSession &) = delete;
+
+    bool Start() override;
+    void PushFloatSamples(const float *samples, std::size_t count) override;
+    std::string Finish() override;
+    std::string LastError() const override;
+    void Cancel() override;
+
+  private:
+    void Run();
+    void Stop(bool cancel);
+
+    std::string model_id_;
+    PartialCallback on_partial_;
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::vector<float> pending_;
+    bool finishing_ = false;
+    bool canceled_ = false;
+    std::thread worker_;
+    std::string result_;
+    std::string error_;
+};
 
 // 识别一整段录音：单声道 16 kHz float PCM。language 取 voice_input.language（zh-cn | en | auto）。
 // 阻塞，须在工作线程调用。

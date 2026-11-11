@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -122,6 +123,45 @@ void TestReadiness()
     CHECK(!result.error.empty());
 }
 
+// 流式会话：只有流式模型能开；没下载就不开；运行库载不进来时 Finish 报错而不是挂住或崩溃。
+void TestStreamingSession()
+{
+    CHECK(local_asr::SupportsStreaming("x-asr-zh-en-streaming"));
+    CHECK(!local_asr::SupportsStreaming("x-asr-zh-en-offline"));
+    CHECK(!local_asr::SupportsStreaming("sense-voice-small"));
+    CHECK(!local_asr::SupportsStreaming("fun-asr-nano"));
+    CHECK(!local_asr::SupportsStreaming(""));
+
+    wchar_t temp[MAX_PATH] = {};
+    GetTempPathW(MAX_PATH, temp);
+    DataDir data(std::filesystem::path(temp) / L"msime-local-asr-stream-test");
+    {
+        local_asr::StreamingSession session("x-asr-zh-en-streaming", {});
+        CHECK(!session.Start());
+        CHECK(!session.LastError().empty());
+    }
+    {
+        local_asr::StreamingSession session("sense-voice-small", {});
+        CHECK(!session.Start());
+    }
+
+    Touch(local_asr::ModelDirectory(*local_asr::FindModel("x-asr-zh-en-streaming")));
+    Touch(local_asr::RuntimeDirectory());
+    std::ofstream(local_asr::RuntimeDirectory() / "onnxruntime_providers_shared.dll") << "not a dll";
+    bool partial = false;
+    local_asr::StreamingSession session("x-asr-zh-en-streaming", [&](const std::string &) { partial = true; });
+    CHECK(session.Start());
+    const std::vector<float> audio(1600, 0.1f);
+    for (int i = 0; i < 5; ++i)
+        session.PushFloatSamples(audio.data(), audio.size());
+    CHECK(session.Finish().empty());
+    CHECK(!session.LastError().empty());
+    CHECK(!partial);
+    // 取消已经结束的会话、再次 Finish 都不出事。
+    session.Cancel();
+    CHECK(session.Finish().empty());
+}
+
 void TestTidy()
 {
     CHECK(local_asr::TidyTranscript("今天 是 星期三.") == "今天是星期三。");
@@ -201,6 +241,37 @@ int TestRealModel()
         local_asr::Recognize(std::vector<float>(16000 * 2, 0.0f), model, "zh-cn");
     CHECK(silence.error.empty());
     CHECK(silence.text.empty());
+
+    if (local_asr::SupportsStreaming(model))
+    {
+        // 按录音的节奏 100 ms 一块送：识别中的文字要陆续出来，最终结果与整段识别一致。
+        std::vector<std::string> partials;
+        std::mutex partials_mutex;
+        local_asr::StreamingSession session(model, [&](const std::string &text) {
+            std::lock_guard<std::mutex> lock(partials_mutex);
+            partials.push_back(text);
+        });
+        CHECK(session.Start());
+        const auto stream_started = GetTickCount64();
+        constexpr std::size_t kChunk = 1600;
+        for (std::size_t at = 0; at < samples.size(); at += kChunk)
+        {
+            session.PushFloatSamples(samples.data() + at, (std::min)(kChunk, samples.size() - at));
+            Sleep(100);
+        }
+        const auto released = GetTickCount64();
+        const std::string streamed = session.Finish();
+        const auto done = GetTickCount64();
+        std::lock_guard<std::mutex> lock(partials_mutex);
+        std::cout << "streaming: " << partials.size() << " partial updates, final=\"" << streamed
+                  << "\", finish after release " << done - released << " ms (recording " << released - stream_started
+                  << " ms)\n";
+        for (const std::string &text : partials)
+            std::cout << "  partial: " << text << "\n";
+        CHECK(session.LastError().empty());
+        CHECK(partials.size() >= 2);
+        CHECK(streamed == first.text);
+    }
     return 1;
 }
 } // namespace
@@ -212,6 +283,7 @@ int main()
     {
         TestCatalog();
         TestReadiness();
+        TestStreamingSession();
         TestTidy();
         TestVadSegmentStart();
         if (TestRealModel())

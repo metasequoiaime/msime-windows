@@ -885,7 +885,7 @@ bool LoadImeConfig()
         voice.hotkey_ctrl_win = tbl["voice_input"]["hotkey_ctrl_win"].value_or(false);
         voice.hotkey_rctrl_ralt = tbl["voice_input"]["hotkey_rctrl_ralt"].value_or(false);
         voice.hotkey_hold_space_lock = tbl["voice_input"]["hotkey_hold_space_lock"].value_or(true);
-        voice.asr_provider = tbl["voice_input"]["asr_provider"].value_or(std::string("doubao"));
+        voice.asr_provider = tbl["voice_input"]["asr_provider"].value_or(std::string("local"));
         voice.asr_app_key = tbl["voice_input"]["asr_app_key"].value_or(std::string());
         voice.doubao_auth_mode = VoiceInput::NormalizeDoubaoAuthMode(
             tbl["voice_input"]["doubao_auth_mode"].value_or(std::string()), voice.asr_app_key);
@@ -921,7 +921,7 @@ bool LoadImeConfig()
         voice.doubao_enable_ddc = tbl["voice_input"]["doubao_enable_ddc"].value_or(false);
         voice.doubao_boosting_table_id = tbl["voice_input"]["doubao_boosting_table_id"].value_or(std::string());
         voice.asr_model = tbl["voice_input"]["asr_model"].value_or(std::string());
-        voice.local_asr_model = tbl["voice_input"]["local_asr_model"].value_or(std::string());
+        voice.local_asr_model = tbl["voice_input"]["local_asr_model"].value_or(std::string("x-asr-zh-en-streaming"));
         voice.polish_provider = tbl["voice_input"]["polish_provider"].value_or(std::string("siliconflow"));
         voice.polish_token = tbl["voice_input"]["polish_token"].value_or(std::string());
         for (const auto provider : VoiceInput::PolishProviders())

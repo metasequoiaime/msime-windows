@@ -1,5 +1,7 @@
 #pragma once
 
+#include "streaming_asr.h"
+
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +14,7 @@
 
 // Streams 16 kHz mono PCM to Doubao ASR while the microphone is recording.
 // Finish() sends the protocol's negative final sequence and returns the final transcript.
-class DoubaoAsrClient
+class DoubaoAsrClient : public StreamingAsr
 {
   public:
     using TranscriptCallback = std::function<void(const std::string &)>;
@@ -22,16 +24,16 @@ class DoubaoAsrClient
     DoubaoAsrClient(std::string endpoint, bool legacy_auth, std::string app_key, std::string access_key,
                     std::string resource_id, bool enable_itn, bool enable_punc, bool enable_ddc,
                     std::string boosting_table_id, TranscriptCallback transcript_callback = {});
-    ~DoubaoAsrClient();
+    ~DoubaoAsrClient() override;
 
     DoubaoAsrClient(const DoubaoAsrClient &) = delete;
     DoubaoAsrClient &operator=(const DoubaoAsrClient &) = delete;
 
-    bool Start();
-    void PushFloatSamples(const float *samples, std::size_t count);
-    std::string Finish();
-    std::string LastError() const;
-    void Cancel();
+    bool Start() override;
+    void PushFloatSamples(const float *samples, std::size_t count) override;
+    std::string Finish() override;
+    std::string LastError() const override;
+    void Cancel() override;
 
     static std::string TestCredentials(const std::string &endpoint, bool legacy_auth, const std::string &app_key,
                                        const std::string &access_key, const std::string &resource_id);

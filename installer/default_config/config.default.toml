@@ -486,7 +486,7 @@ skin_name = "default"
 # 语音输入
 #
 [voice_input]
-# 语音输入（默认关闭：未填 Token 时按快捷键只会弹出提示，右 Alt 还会占用 AltGr）
+# 语音输入（默认关闭：未下载本地模型或未填 Token 时按快捷键只会弹出提示，右 Alt 还会占用 AltGr）
 voice_input = false
 # 全局语音快捷键（可分别启用或关闭）
 hotkey_ralt = true
@@ -497,11 +497,12 @@ hotkey_hold_space_lock = true
 # ASR 服务: doubao | openai | siliconflow | groq | local
 # openai / siliconflow / groq 均走 OpenAI 兼容的 /v1/audio/transcriptions。
 # local 在本机离线识别，不联网也不需要 Token；模型不随安装包分发，需在设置页下载。
-asr_provider = "doubao"
+# 新装默认 local；升级用户保留原来的服务商。
+asr_provider = "local"
 # asr_provider = "local" 时使用的本地模型：
 #   x-asr-zh-en-streaming | x-asr-zh-en-offline | sense-voice-small | fun-asr-nano
-# 留空表示尚未选择。
-local_asr_model = ""
+# 默认中英流式：边说边出字，内存占用最小。留空表示尚未选择。
+local_asr_model = "x-asr-zh-en-streaming"
 # 豆包鉴权方式: api_key | legacy
 #   api_key：新版控制台，只需一个 API Key，填入 asr_token 即可，asr_app_key 不使用。
 #   legacy：旧版控制台，App ID + Access Token（Secret Key 不使用），两项都要填。
@@ -568,8 +569,8 @@ end_sound = true
 # 录音时暂时静音其他应用的播放声音，结束后自动恢复
 mute_system_audio = true
 polish_text = true
-# 豆包流式识别时，将已识别文本显示在输入框 inline preedit 中，松开录音键后上屏。
-# 仅在豆包流式识别且 commit_mode = "tsf" 时生效。
+# 流式识别（豆包，或本地的中英流式模型）时，将已识别文本显示在输入框 inline preedit 中，松开录音键后上屏。
+# 仅在流式识别且 commit_mode = "tsf" 时生效。
 stream_inline_preedit = true
 # 上屏方式: tsf | sendinput | ctrl_v
 commit_mode = "tsf"

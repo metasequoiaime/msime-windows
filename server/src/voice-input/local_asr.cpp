@@ -493,44 +493,91 @@ std::string ResultText(const SherpaApi &api, const SherpaOnnxOnlineRecognizer *r
     return text;
 }
 
+// 一路流式解码：音频可以一次送完（批量），也可以录音时分批送（流式），两者结果一致。
+class OnlineDecoder
+{
+  public:
+    explicit OnlineDecoder(const LoadedRecognizer &recognizer)
+        : api_(*recognizer.api), recognizer_(recognizer.online), stream_(api_.SherpaOnnxCreateOnlineStream(recognizer_))
+    {
+    }
+    ~OnlineDecoder()
+    {
+        if (stream_)
+            api_.SherpaOnnxDestroyOnlineStream(stream_);
+    }
+    OnlineDecoder(const OnlineDecoder &) = delete;
+    OnlineDecoder &operator=(const OnlineDecoder &) = delete;
+
+    bool Valid() const
+    {
+        return stream_ != nullptr;
+    }
+
+    void Accept(const float *samples, std::size_t count)
+    {
+        // C API 的采样数是 int32，长录音分片送入。
+        constexpr std::size_t kSlice = kSampleRate * 10;
+        for (std::size_t offset = 0; offset < count; offset += kSlice)
+        {
+            const auto slice = static_cast<int32_t>((std::min)(kSlice, count - offset));
+            api_.SherpaOnnxOnlineStreamAcceptWaveform(stream_, kSampleRate, samples + offset, slice);
+            Decode();
+        }
+    }
+
+    // 到目前为止识别出的全部文字（已断句的段加上正在识别的这一段）。
+    std::string Text() const
+    {
+        std::vector<std::string> all = segments_;
+        if (!current_.empty())
+            all.push_back(current_);
+        return JoinSegments(all);
+    }
+
+    std::string Finish()
+    {
+        // 尾部补 1.2 秒静音，让最后一块音频越过 encoder 的前瞻再结束输入；松手即停的按住说话没有句末停顿，
+        // 补短了会丢最后一两个字。
+        const std::vector<float> tail(kSampleRate * 12 / 10, 0.0f);
+        api_.SherpaOnnxOnlineStreamAcceptWaveform(stream_, kSampleRate, tail.data(), static_cast<int32_t>(tail.size()));
+        api_.SherpaOnnxOnlineStreamInputFinished(stream_);
+        Decode();
+        if (!current_.empty())
+            segments_.push_back(std::move(current_));
+        current_.clear();
+        return JoinSegments(segments_);
+    }
+
+  private:
+    void Decode()
+    {
+        while (api_.SherpaOnnxIsOnlineStreamReady(recognizer_, stream_))
+            api_.SherpaOnnxDecodeOnlineStream(recognizer_, stream_);
+        current_ = ResultText(api_, recognizer_, stream_);
+        if (api_.SherpaOnnxOnlineStreamIsEndpoint(recognizer_, stream_))
+        {
+            if (!current_.empty())
+                segments_.push_back(current_);
+            current_.clear();
+            api_.SherpaOnnxOnlineStreamReset(recognizer_, stream_);
+        }
+    }
+
+    const SherpaApi &api_;
+    const SherpaOnnxOnlineRecognizer *recognizer_;
+    const SherpaOnnxOnlineStream *stream_;
+    std::vector<std::string> segments_;
+    std::string current_;
+};
+
 std::string RecognizeOnline(const LoadedRecognizer &recognizer, const std::vector<float> &samples)
 {
-    const SherpaApi &api = *recognizer.api;
-    const SherpaOnnxOnlineStream *stream = api.SherpaOnnxCreateOnlineStream(recognizer.online);
-    if (!stream)
+    OnlineDecoder decoder(recognizer);
+    if (!decoder.Valid())
         return {};
-    std::vector<std::string> segments;
-    std::string current;
-    const auto decode = [&] {
-        while (api.SherpaOnnxIsOnlineStreamReady(recognizer.online, stream))
-            api.SherpaOnnxDecodeOnlineStream(recognizer.online, stream);
-        current = ResultText(api, recognizer.online, stream);
-        if (api.SherpaOnnxOnlineStreamIsEndpoint(recognizer.online, stream))
-        {
-            if (!current.empty())
-                segments.push_back(current);
-            current.clear();
-            api.SherpaOnnxOnlineStreamReset(recognizer.online, stream);
-        }
-    };
-    // C API 的采样数是 int32，长录音分片送入。
-    constexpr std::size_t kSlice = kSampleRate * 10;
-    for (std::size_t offset = 0; offset < samples.size(); offset += kSlice)
-    {
-        const auto count = static_cast<int32_t>((std::min)(kSlice, samples.size() - offset));
-        api.SherpaOnnxOnlineStreamAcceptWaveform(stream, kSampleRate, samples.data() + offset, count);
-        decode();
-    }
-    // 尾部补 1.2 秒静音，让最后一块音频越过 encoder 的前瞻再结束输入；松手即停的按住说话没有句末停顿，
-    // 补短了会丢最后一两个字。
-    const std::vector<float> tail(kSampleRate * 12 / 10, 0.0f);
-    api.SherpaOnnxOnlineStreamAcceptWaveform(stream, kSampleRate, tail.data(), static_cast<int32_t>(tail.size()));
-    api.SherpaOnnxOnlineStreamInputFinished(stream);
-    decode();
-    api.SherpaOnnxDestroyOnlineStream(stream);
-    if (!current.empty())
-        segments.push_back(current);
-    return JoinSegments(segments);
+    decoder.Accept(samples.data(), samples.size());
+    return decoder.Finish();
 }
 
 std::string DecodeOfflineSegment(const LoadedRecognizer &recognizer, const float *samples, int32_t count)
@@ -660,6 +707,141 @@ RecognitionResult Recognize(const std::vector<float> &samples, const std::string
     {
         return {{}, "本地语音识别失败"};
     }
+}
+
+bool SupportsStreaming(const std::string &model_id)
+{
+    const ModelEntry *model = FindModel(model_id);
+    return model && model->kind == ModelKind::OnlineTransducer;
+}
+
+StreamingSession::StreamingSession(std::string model_id, PartialCallback on_partial)
+    : model_id_(std::move(model_id)), on_partial_(std::move(on_partial))
+{
+}
+
+StreamingSession::~StreamingSession()
+{
+    Stop(true);
+}
+
+bool StreamingSession::Start()
+{
+    if (!SupportsStreaming(model_id_))
+        return false;
+    if (std::string error = ReadinessError(model_id_); !error.empty())
+    {
+        error_ = std::move(error);
+        return false;
+    }
+    worker_ = std::thread(&StreamingSession::Run, this);
+    return true;
+}
+
+void StreamingSession::PushFloatSamples(const float *samples, std::size_t count)
+{
+    if (!samples || count == 0)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (finishing_ || canceled_)
+            return;
+        pending_.insert(pending_.end(), samples, samples + count);
+    }
+    cv_.notify_one();
+}
+
+std::string StreamingSession::Finish()
+{
+    Stop(false);
+    std::lock_guard<std::mutex> lock(mutex_);
+    return result_;
+}
+
+std::string StreamingSession::LastError() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return error_;
+}
+
+void StreamingSession::Cancel()
+{
+    Stop(true);
+}
+
+void StreamingSession::Stop(bool cancel)
+{
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        finishing_ = true;
+        canceled_ = canceled_ || cancel;
+    }
+    cv_.notify_one();
+    if (worker_.joinable())
+        worker_.join();
+}
+
+void StreamingSession::Run()
+{
+    const auto fail = [this](std::string error) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_ = std::move(error);
+    };
+    std::string error;
+    const SherpaApi *api = LoadRuntime(error);
+    if (!api)
+        return fail(error);
+    StartReaper();
+    std::shared_ptr<LoadedRecognizer> recognizer;
+    try
+    {
+        recognizer = Acquire(*api, *FindModel(model_id_), {}, error);
+    }
+    catch (const std::exception &)
+    {
+        error = "本地语音识别失败";
+    }
+    if (!recognizer)
+        return fail(error.empty() ? "本地语音识别失败" : error);
+
+    OnlineDecoder decoder(*recognizer);
+    if (!decoder.Valid())
+        return fail("本地语音识别失败");
+    std::string shown;
+    std::vector<float> chunk;
+    for (;;)
+    {
+        bool finishing = false;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            cv_.wait(lock, [this] { return !pending_.empty() || finishing_; });
+            if (canceled_)
+                break;
+            chunk.swap(pending_);
+            pending_.clear();
+            finishing = finishing_;
+        }
+        if (!chunk.empty())
+        {
+            decoder.Accept(chunk.data(), chunk.size());
+            chunk.clear();
+            const std::string text = TidyTranscript(decoder.Text());
+            if (text != shown && !text.empty() && on_partial_)
+            {
+                shown = text;
+                on_partial_(text);
+            }
+        }
+        if (finishing)
+        {
+            // finishing_ 之后不再收音频（PushFloatSamples 拒收），刚才那批就是最后一批。
+            std::string text = TidyTranscript(decoder.Finish());
+            std::lock_guard<std::mutex> lock(mutex_);
+            result_ = std::move(text);
+            break;
+        }
+    }
+    recognizer->Touch();
 }
 
 std::string TidyTranscript(const std::string &text)
