@@ -10,6 +10,9 @@
 #include <utility>
 #include "ipc.h"
 #include "ipc/candidate_selection_policy.h"
+#include "ipc/candidate_requery_policy.h"
+#include "ipc/candidate_rescore_budget.h"
+#include "ipc/translation_page_visibility.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "global/globals.h"
@@ -22,6 +25,8 @@
 #include "english/english_ime.h"
 #include "config/ime_config.h"
 #include "mixed/mixed_candidates.h"
+#include "utils/common_utils.h"
+#include "log/candidate_diag_log.h"
 
 using namespace event_listener_detail;
 
@@ -30,6 +35,10 @@ namespace
 std::string g_jev_word;
 std::string g_jev_identity;
 uint64_t g_jev_generation = 0;
+// 同一输入的重排回包会连着来：每次都在任务线程上重算整页，但第一页通常两三批就定了。给每个输入一个
+// 上限，超出的批次只让引擎缓存变新，下一键自然读到；组合边界（提交/隐藏）要重置，避免同一串重新输入
+// 时继承上一段用掉的额度。
+FanyImeIpc::RescoreRequeryBudget g_rescore_requery_budget;
 } // namespace
 
 namespace event_listener_detail
@@ -132,9 +141,15 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     PushUiLessCandidatesToOwner();
 }
 
-bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner)
+bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late)
 {
     const std::vector<WordItem> before = g_inputSession->get_candidates();
+    const size_t page_size = static_cast<size_t>((std::max)(GetConfiguredCandidatePageSize(), 1));
+    const auto first_page = [page_size](const std::vector<WordItem> &items) {
+        const size_t count = (std::min)(page_size, items.size());
+        return std::vector<WordItem>(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(count));
+    };
+    const std::vector<WordItem> before_page = first_page(Global::candidate_ui.items);
     // 云/AI 候选只活在 series cache 里，reset_cache 会把它们一起清掉，而它们的请求早已回来、不会
     // 再发一次——不补回来，重查一落地它们就从列表里消失了。重查不推进在线请求的 generation，
     // 所以用当前的 online_query 原样回填即可；回填时若同一句已被整句候选占了，引擎自己会拒绝。
@@ -154,16 +169,14 @@ bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner
                 g_inputSession->apply_online_candidate(*query, item.word, item.source);
         }
     }
-    const std::vector<WordItem> &after = g_inputSession->get_candidates();
-    if (after.size() == before.size() &&
-        std::equal(before.begin(), before.end(), after.begin(),
-                   [](const WordItem &a, const WordItem &b) { return a.word == b.word; }))
-        return false;
-
+    // 首屏没变就不请求重画，但内部列表仍然要更新：用户马上翻页时读的是 ui.items，不能让他看到旧的后几页。
     PrepareCandidateList(owner.client_id, owner.activation_epoch);
-    RequestShowCandidateWindow();
+    const std::vector<WordItem> after_page = first_page(Global::candidate_ui.items);
+    const bool visible_changed = FanyImeIpc::VisibleCandidatePageChanged(before_page, after_page, page_size);
+    if (visible_changed)
+        RequestShowCandidateWindowDeferred(late);
     PushUiLessCandidatesToOwner();
-    return true;
+    return visible_changed;
 }
 
 // 候选列表当初是按词格的静态顺序发出去的，因为打分那会儿还没算完。现在算完了：把引擎的候选缓存
@@ -184,7 +197,22 @@ void ApplyRescoredOrder()
     const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
     if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
         return;
+    const std::string input = g_inputSession->get_pinyin_sequence_with_cases();
+    if (!g_rescore_requery_budget.TryAcquire(input))
+    {
+        if (!input.empty())
+        {
+            CAND_DIAG_LOGF(L"rescore requery capped count={} input_units={}", g_rescore_requery_budget.count(),
+                           input.size());
+        }
+        return;
+    }
     (void)RequeryCandidatesPreservingOnline(owner);
+}
+
+void ResetRescoreRequeryBudget()
+{
+    g_rescore_requery_budget.Reset();
 }
 
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,
@@ -327,6 +355,7 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
     // Most lookups on a new keystroke hit words the previous page already
     // glossed; repainting for them cost a full candidate frame per keystroke.
     bool glosses_changed = false;
+    std::vector<std::string> changed_keys;
     for (auto &result : results)
     {
         std::string gloss = std::move(result.gloss);
@@ -347,13 +376,17 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
                 g_candidate_translation_glosses.clear();
             g_candidate_translation_glosses[identity] = {std::move(gloss), from_dictionary};
             glosses_changed = true;
+            changed_keys.push_back(result.key);
         }
         else if (!merge)
         {
             // The authoritative lookup found nothing: drop what an earlier
             // configuration may have cached for this word.
             if (g_candidate_translation_glosses.erase(identity) > 0)
+            {
                 glosses_changed = true;
+                changed_keys.push_back(result.key);
+            }
             const bool cloud_translatable = result.direction == EnglishIme::TranslationDirection::EnglishToChinese
                                                 ? CloudTranslation::IsCloudTranslatableEnglish(result.key)
                                                 : CloudTranslation::IsCloudTranslatableChinese(result.key);
@@ -362,8 +395,15 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
         }
     }
     const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
-    if (glosses_changed && owner && IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
-        RefreshCandidatePageUi(true);
+    std::vector<std::string> page_words;
+    page_words.reserve(Global::candidate_ui.page_words.size());
+    for (const std::wstring &word : Global::candidate_ui.page_words)
+        page_words.push_back(wstring_to_string(word));
+    const bool visible_gloss_changed =
+        page_words.empty() || FanyImeIpc::AnyTranslatedKeyOnPage(page_words, changed_keys);
+    if (glosses_changed && visible_gloss_changed && owner &&
+        IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+        RefreshCandidatePageUiLate();
     if (!merge)
         CloudTranslation::RequestMisses(std::move(misses), generation);
 }
@@ -492,7 +532,7 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiCoalesced();
     PushUiLessCandidatesToOwner();
 }
 } // namespace FanyNamedPipe

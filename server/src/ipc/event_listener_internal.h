@@ -6,6 +6,7 @@
 
 #include <Windows.h>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -194,6 +195,20 @@ void SyncShuangpinPreeditForms();
 void EnsureCandidatePageReady();
 std::wstring BuildUiLessCandidatePageW();
 void RefreshCandidatePageUi(bool show_window);
+// Fast asynchronous sources (mixed English, neural reorder) coalesce into one additional frame per keystroke.
+// The first frame is still published immediately by the key path; these helpers only defer the enrichment frame
+// until the burst settles. Late enhancements (effect-tier rerank, gloss updates) may add one more frame after the
+// fast settle, because they intentionally arrive after the user stops typing.
+void RefreshCandidatePageUiCoalesced();
+void RefreshCandidatePageUiLate();
+void RequestShowCandidateWindowDeferred(bool late = false);
+std::optional<std::chrono::steady_clock::time_point> CandidatePresentSettleDeadline();
+bool CandidatePresentSettleIsDue(std::chrono::steady_clock::time_point now);
+void FlushCandidatePresentSettleIfDue(std::chrono::steady_clock::time_point now);
+// A new keystroke starts a new input: allow it its own single enrichment frame.
+void ResetCandidatePresentSettle();
+// Selection, hide or a counter action: a late enrichment frame would fight the user.
+void CancelCandidatePresentSettle();
 
 // event_listener_pipes.cpp
 void WakeNamedPipeListenersForShutdown();
@@ -306,9 +321,12 @@ void WaitForCandidateRenderSync(UINT keycode);
 void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin, uint64_t generation,
                          const std::optional<metasequoia::OnlineQuery> &query);
 void ApplyRescoredOrder();
-// 用当前会话状态重查一次候选，保留只活在 series cache 里的云/AI 候选；候选没变就不动 UI。
-// 调用方负责前置守卫（选词中/造词/子页、owner 有效性）。返回是否重发了候选页。
-bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner);
+// 用当前会话状态重查一次候选，保留只活在 series cache 里的云/AI 候选；首屏没变就不请求重画，
+// 但内部列表仍会更新（翻页要读到新结果）。调用方负责前置守卫（选词中/造词/子页、owner 有效性）。
+// 返回是否请求了新的首屏帧。
+bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late = false);
+// 组合边界（提交、隐藏、清理）重置重排重查额度；同一串重新输入时不得继承上一段用掉的次数。
+void ResetRescoreRequeryBudget();
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,
                       const std::optional<metasequoia::OnlineQuery> &query);
 void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string &input, uint64_t generation);

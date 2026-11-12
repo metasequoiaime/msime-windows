@@ -157,6 +157,10 @@ void WaitForCandidateRenderSync(UINT keycode)
         return;
     }
 
+    // 合并发布的快照可能已经比屏幕新，而这次按键又取消了还没到点的定稿帧。必须先保证有一帧正在
+    // 路上，否则下面的等待只能超时，然后对用户没看到的页选词。
+    RequestShowCandidateWindow();
+
     const auto started = std::chrono::steady_clock::now();
     bool synced = false;
     {
