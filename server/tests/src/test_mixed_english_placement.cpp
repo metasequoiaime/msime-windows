@@ -1640,9 +1640,11 @@ TEST_CASE(AnchorAfterTheFirstPageYieldsToTheSpellingGroupThatCrossesIt)
     REQUIRE_EQ(items[5].fixed_position, 5);
 }
 
-// 中英混输精确英文命中：整串输入恰好是一个英文词时，简拼展开猜出来的整句（sentence_association）不再显示。
+// 中英混输精确英文命中：整串输入恰好是一个英文词、且输入含简拼或没打完的音节（如 markdown）时，简拼展开
+// 猜出来的整句（sentence_association）不再显示；完整拼音输入（如 banana）命中精确英文时整句是正常候选，保留。
 // 普通词、单字、前缀补全、快捷短语、emoji 与用户固定了位置的候选都不动；只有前缀补全不算精确命中。
-// 判据只用 WordItem::pinyin 与 EnglishPlacement::input（EnglishInputKey 已经把输入转成小写）。
+// 判据用 WordItem::pinyin、EnglishPlacement::input（EnglishInputKey 已经把输入转成小写）与
+// EnglishPlacement::hide_guessed_sentences（生产侧取自 is_all_complete_pure_pinyin）。
 namespace
 {
 WordItem ExactEnglish(const std::string &word)
@@ -1650,19 +1652,21 @@ WordItem ExactEnglish(const std::string &word)
     return WordItem(word, word, 0, CandidateSource::EnglishDictionary);
 }
 
-WordItem GuessedSentence(const std::string &word, std::int64_t weight = 1)
+WordItem GuessedSentence(const std::string &word, const std::string &pinyin = "ma'r'k'do'w'n", std::int64_t weight = 1)
 {
-    WordItem item("ma'r'k'do'w'n", word, weight, CandidateSource::Generated);
+    WordItem item(pinyin, word, weight, CandidateSource::Generated);
     item.sentence_association = true;
     return item;
 }
 
 // 模拟 EnglishInputKey：大小写不影响精确命中判据，placement.input 只拿到小写后的整串输入。
+// markdown 这类简拼/不完整输入在生产侧会置 hide_guessed_sentences，测试辅助函数同样置位。
 FanyImeIpc::EnglishPlacement ExactEnglishPlacement(const std::string &raw_input, size_t page_size)
 {
     FanyImeIpc::EnglishPlacement placement;
     placement.page_size = page_size;
     placement.require_exact = true;
+    placement.hide_guessed_sentences = true;
     placement.input = raw_input;
     std::transform(placement.input.begin(), placement.input.end(), placement.input.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
@@ -1674,6 +1678,13 @@ std::vector<WordItem> MarkdownItems()
 {
     return {ExactEnglish("markdown"), GuessedSentence("骂人看到欧文你"), WordItem("ma'r'k'do'w'n", "骂人", 100),
             WordItem("ma'r'k'do'w'n", "麻仁", 90), WordItem("ma'r'k'do'w'n", "马睿", 80)};
+}
+
+// banana 的候选：完整拼音（ba'na'na）的精确英文、正常整句猜测、三条普通中文词。
+std::vector<WordItem> BananaItems()
+{
+    return {ExactEnglish("banana"), GuessedSentence("爸拿拿", "ba'na'na"), WordItem("ba'na'na", "爸", 100),
+            WordItem("ba'na'na", "把", 90), WordItem("ba'na'na", "拿", 80)};
 }
 
 size_t CountGuessedSentences(const std::vector<WordItem> &items)
@@ -1705,14 +1716,30 @@ TEST_CASE(ExactEnglishHidesGuessedSentencesAndLeavesOtherCandidatesInPlace)
     REQUIRE(ContainsWord(items, "马睿"));
 }
 
-TEST_CASE(UppercaseInputStillHidesGuessedSentences)
+TEST_CASE(CompletePinyinKeepsGuessedSentencesOnExactEnglish)
 {
-    auto items = MarkdownItems();
-    const auto placement = ExactEnglishPlacement("Markdown", 6);
-    REQUIRE_EQ(placement.input, std::string("markdown"));
+    // 完整拼音命中精确英文时整句是正常候选；生产侧 CurrentEnglishPlacement 只在输入不是完整拼音时
+    // 置 hide_guessed_sentences（引擎判据见 test_engine_shuangpin_session.cpp）。
+    auto placement = ExactEnglishPlacement("banana", 6);
+    placement.hide_guessed_sentences = false;
+
+    auto items = BananaItems();
     FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, placement);
-    REQUIRE_EQ(CountGuessedSentences(items), size_t{0});
-    REQUIRE(ContainsWord(items, "markdown"));
+    REQUIRE_EQ(CountGuessedSentences(items), size_t{1});
+    REQUIRE(ContainsWord(items, "爸拿拿"));
+    REQUIRE(ContainsWord(items, "banana"));
+
+    // 选词中扩展只追加，不走归一化：完整拼音下引擎重建出来的整句同样保留。
+    Global::CandidateUiState ui;
+    ui.page_size = 6;
+    ui.set_items(items);
+    ui.begin_selection();
+    auto expanded = BananaItems();
+    expanded.push_back(GuessedSentence("爸拿拿呀", "ba'na'na"));
+    expanded.emplace_back("ba'na'na", "拿拿", 70);
+    REQUIRE(FanyImeIpc::SetExpandedCandidatesKeepingPagePosition(ui, std::move(expanded), placement));
+    REQUIRE_EQ(CountGuessedSentences(ui.items), size_t{2});
+    REQUIRE(ContainsWord(ui.items, "爸拿拿呀"));
 }
 
 TEST_CASE(EnglishPrefixCompletionDoesNotHideGuessedSentences)

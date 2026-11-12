@@ -640,6 +640,8 @@ FanyImeIpc::EnglishPlacement CurrentEnglishPlacement(const std::vector<WordItem>
         return placement;
     placement.input = EnglishInputKey();
     placement.require_exact = g_inputSession->reads_as_pinyin();
+    // 完整拼音输入的整句是正常候选，只有简拼/不完整输入才把猜出来的整句藏掉。
+    placement.hide_guessed_sentences = !g_inputSession->is_all_complete_pure_pinyin();
     // 调频关闭时不用学到的槽位，英文回到默认位置。
     if (GetConfiguredFrequencyAdjustment().mode != "disabled")
     {
