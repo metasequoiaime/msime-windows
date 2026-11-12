@@ -107,7 +107,13 @@ enum KEYSTROKE_FUNCTION
     // over the end block it opened. The Server rewrites the raw spelling (or answers the key as punctuation when it
     // cannot), so the key goes through the async Server-candidate-key path and TSF applies the reply instead of
     // editing its buffer. Append-only, like every function above.
-    FUNCTION_SERVER_COMPOSITION_REWRITE
+    FUNCTION_SERVER_COMPOSITION_REWRITE,
+
+    // Home / End inside a composition: move the caret to the start / end of the raw spelling. Like plain Left /
+    // Right, TSF moves its own caret and the Server mirrors the move on the same key. Append-only, like every
+    // function above.
+    FUNCTION_MOVE_HOME,
+    FUNCTION_MOVE_END
 };
 
 //---------------------------------------------------------------------
