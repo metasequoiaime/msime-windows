@@ -176,16 +176,30 @@ class StyledInput : public msimeui::Container
 };
 
 // Page root that owns the page's state, so the state lives exactly as long as the page.
+// `onFirstAttach` runs once, when the page is actually shown: the indexer builds every page up
+// front for the search index, so a builder must not do work the user has not asked for yet.
 class OwnerBox : public msimeui::Container
 {
   public:
-    OwnerBox(VisualPtr child, std::shared_ptr<void> owned)
-        : msimeui::Container(std::move(child)), owned_(std::move(owned))
+    OwnerBox(VisualPtr child, std::shared_ptr<void> owned, std::function<void()> onFirstAttach = {})
+        : msimeui::Container(std::move(child)), owned_(std::move(owned)), onFirstAttach_(std::move(onFirstAttach))
     {
+    }
+
+    void Attach(msimeui::Window *window) override
+    {
+        msimeui::Container::Attach(window);
+        if (!onFirstAttach_)
+            return;
+        // Move the handler out first: it may show or hide things that attach again.
+        const auto handler = std::move(onFirstAttach_);
+        onFirstAttach_ = nullptr;
+        handler();
     }
 
   private:
     std::shared_ptr<void> owned_;
+    std::function<void()> onFirstAttach_;
 };
 
 // A thread-affine timer on the settings window that calls `tick` until destroyed.
