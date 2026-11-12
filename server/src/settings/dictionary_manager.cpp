@@ -234,34 +234,45 @@ std::string SanitizeExportField(std::string value)
     return value;
 }
 
+// 日志里 `dictionary` 列的取值。未知词库返回 nullptr。
+const char *JournalKind(const std::string &dictionary)
+{
+    if (dictionary == "quanpin")
+        return "pinyin";
+    if (dictionary == "wubi")
+        return "wubi";
+    if (dictionary == "english")
+        return "english";
+    if (dictionary == "quick")
+        return "quick";
+    return nullptr;
+}
+
+// 用户词库的只读连接；调用方先确认文件存在，schema 升级由 ensure_user_database 负责。
+Db OpenUserDatabaseReadOnly(const std::string &path, std::string &error)
+{
+    sqlite3 *raw = nullptr;
+    if (sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
+    {
+        error = raw ? sqlite3_errmsg(raw) : "无法打开用户词库";
+        if (raw)
+            sqlite3_close(raw);
+        return nullptr;
+    }
+    Db db(raw);
+    sqlite3_busy_timeout(db.get(), 3000);
+    return db;
+}
+
 json::object ExportUserDictionary(const std::string &dictionary)
 {
-    std::string journal_kind;
-    std::string filename;
-    if (dictionary == "quanpin")
-    {
-        journal_kind = "pinyin";
-        filename = "水杉IME-拼音用户词库.txt";
-    }
-    else if (dictionary == "wubi")
-    {
-        journal_kind = "wubi";
-        filename = "水杉IME-五笔用户词库.txt";
-    }
-    else if (dictionary == "english")
-    {
-        journal_kind = "english";
-        filename = "水杉IME-英文用户词库.txt";
-    }
-    else if (dictionary == "quick")
-    {
-        journal_kind = "quick";
-        filename = "水杉IME-快捷短语用户词库.txt";
-    }
-    else
-    {
+    const char *journal_kind = JournalKind(dictionary);
+    if (journal_kind == nullptr)
         return Result(false, "未知词库");
-    }
+    const std::string filename = dictionary == "quanpin"   ? "水杉IME-拼音用户词库.txt"
+                                 : dictionary == "wubi"    ? "水杉IME-五笔用户词库.txt"
+                                 : dictionary == "english" ? "水杉IME-英文用户词库.txt"
+                                                           : "水杉IME-快捷短语用户词库.txt";
 
     const std::string path = user_dictionary::default_user_db_path();
     if (!std::filesystem::exists(path))
@@ -269,18 +280,11 @@ json::object ExportUserDictionary(const std::string &dictionary)
     if (!user_dictionary::ensure_user_database(path))
         return Result(false, "升级用户词库格式失败");
 
-    sqlite3 *raw = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
-    {
-        const std::string error = raw ? sqlite3_errmsg(raw) : "无法打开用户词库";
-        if (raw)
-            sqlite3_close(raw);
-        return Result(false, "打开用户词库失败：" + error);
-    }
-    Db db(raw);
-    sqlite3_busy_timeout(db.get(), 3000);
-
     std::string error;
+    Db db = OpenUserDatabaseReadOnly(path, error);
+    if (!db)
+        return Result(false, "打开用户词库失败：" + error);
+
     const std::string export_filter = dictionary == "quanpin"
                                           ? "WHERE dictionary=?1 AND operation='upsert' "
                                           : "WHERE dictionary=?1 AND operation='upsert' AND user_inserted=1 ";
@@ -324,6 +328,49 @@ json::object ExportUserDictionary(const std::string &dictionary)
     result["filename"] = std::move(filename);
     result["entryCount"] = count;
     return result;
+}
+
+// 词库页的默认视图：只列用户新增或亲手改过权重的条目，最近修改在前。
+// 自动调频的行 user_inserted 和 weight_edited 都是 0，那不是用户编辑，不进列表。
+json::object QueryUserEntries(const std::string &dictionary, const json::object &request)
+{
+    const bool latin = dictionary == "latin";
+    const char *journal_kind = latin ? nullptr : JournalKind(dictionary);
+    if (!latin && journal_kind == nullptr)
+        return Result(false, "未知词库");
+
+    const std::string path = user_dictionary::default_user_db_path();
+    if (!std::filesystem::exists(path))
+    {
+        json::object empty = Result(true, "没有找到词条");
+        empty["hasMore"] = false;
+        empty["offset"] = Paging::Integer(request, "offset", 0, 2147483647);
+        return empty;
+    }
+    if (!user_dictionary::ensure_user_database(path))
+        return Result(false, "升级用户词库格式失败");
+
+    std::string error;
+    Db db = OpenUserDatabaseReadOnly(path, error);
+    if (!db)
+        return Result(false, "打开用户词库失败：" + error);
+
+    Stmt stmt;
+    if (latin)
+        stmt = Prepare(db.get(),
+                       "SELECT key,value,weight FROM user_latin_words ORDER BY updated_at DESC,key,value" +
+                           Paging::Sql(request),
+                       error);
+    else
+        stmt = Prepare(db.get(),
+                       "SELECT key,value,weight FROM user_dictionary_operations WHERE dictionary=?1 AND "
+                       "operation='upsert' AND (user_inserted=1 OR weight_edited=1) "
+                       "ORDER BY updated_at DESC,key,value" +
+                           Paging::Sql(request),
+                       error);
+    if (!stmt || (!latin && !BindText(stmt.get(), 1, journal_kind)))
+        return Result(false, "查询用户词库失败：" + error);
+    return Paging::Read(stmt.get(), request, dictionary == "english");
 }
 
 bool NormalizePinyin(const std::string &mode, const std::string &input, quanpin::Segments &segments,
@@ -490,15 +537,10 @@ std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars()
     if (!std::filesystem::exists(path, exists_error))
         return entries;
 
-    sqlite3 *raw = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
-    {
-        if (raw)
-            sqlite3_close(raw);
+    std::string open_error;
+    Db db = OpenUserDatabaseReadOnly(path, open_error);
+    if (!db)
         return entries;
-    }
-    Db db(raw);
-    sqlite3_busy_timeout(db.get(), 3000);
 
     std::string error;
     Stmt stmt = Prepare(db.get(),
@@ -1816,6 +1858,8 @@ json::object HandleRequest(const json::object &request)
 {
     const std::string dictionary = StringValue(request, "dictionary");
     const std::string action = StringValue(request, "action");
+    if (action == "query" && StringValue(request, "scope") == "user")
+        return QueryUserEntries(dictionary, request);
     if (dictionary == "latin")
         return HandleLatin(request);
     if (action == "export")

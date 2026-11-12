@@ -436,6 +436,52 @@ TEST_CASE(QuanpinImportAndQueryKeepExplicitSyllableBoundaries)
     }
 }
 
+// 词库页的默认视图：只列用户新增或亲手改过权重的条目，最近修改在前，删掉的不再出现。
+TEST_CASE(UserDictionaryViewListsOnlyTheUsersOwnEntries)
+{
+    const ScopedTempDir dir(L"msime-user-dictionary-view");
+    const ScopedDataDir scoped(dir.path());
+    const std::string journal = user_dictionary::default_user_db_path();
+
+    // 还没有用户词库：查询成功，列表为空。
+    const auto before =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}});
+    REQUIRE(before.at("ok").as_bool());
+    REQUIRE(before.at("rows").as_array().empty());
+
+    REQUIRE(user_dictionary::record_user_insert(journal, user_dictionary::DictionaryKind::Pinyin, "ce'shi'ci", "测试词",
+                                                10, ""));
+    // 同一秒写入的两行只会按 key 排序，把第一行挪到过去，排序才有确定答案。
+    {
+        sqlite3 *raw = nullptr;
+        REQUIRE_EQ(sqlite3_open(journal.c_str(), &raw), SQLITE_OK);
+        const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+        REQUIRE_EQ(
+            sqlite3_exec(db.get(), "UPDATE user_dictionary_operations SET updated_at=100", nullptr, nullptr, nullptr),
+            SQLITE_OK);
+    }
+    REQUIRE(user_dictionary::record_weight_edit(journal, user_dictionary::DictionaryKind::Pinyin, "ni'hao", "你好", 20,
+                                                ""));
+    // 自动调频写进来的行两个标记都是 0，那不是用户编辑。
+    REQUIRE(
+        user_dictionary::record_upsert(journal, user_dictionary::DictionaryKind::Pinyin, "shi'jie", "世界", 30, ""));
+    user_dictionary::close_default_user_database();
+
+    const auto listed =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}});
+    REQUIRE(listed.at("ok").as_bool());
+    const auto &rows = listed.at("rows").as_array();
+    REQUIRE_EQ(rows.size(), size_t{2});
+    REQUIRE_EQ(std::string(rows[0].as_object().at("code").as_string()), std::string("ni'hao"));
+    REQUIRE_EQ(std::string(rows[1].as_object().at("word").as_string()), std::string("测试词"));
+
+    REQUIRE(user_dictionary::record_delete(journal, user_dictionary::DictionaryKind::Pinyin, "ce'shi'ci", "测试词"));
+    user_dictionary::close_default_user_database();
+    const auto after =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}});
+    REQUIRE_EQ(after.at("rows").as_array().size(), size_t{1});
+}
+
 namespace
 {
 int CountRows(sqlite3 *db, const std::string &sql)
@@ -546,6 +592,12 @@ TEST_CASE(LatinWordsAreImportedRoutedAndManagedInSettings)
     REQUIRE(remove.at("ok").as_bool());
     REQUIRE(LatinRows("xxian").empty());
     REQUIRE_EQ(user_dictionary::user_latin_words(user_dictionary::default_user_db_path()).size(), size_t{3});
+
+    // 字母词的默认视图：scope=user 不看编码，直接列用户加过的整张表。
+    const auto user_view =
+        SettingsDictionary::HandleRequest({{"dictionary", "latin"}, {"action", "query"}, {"scope", "user"}});
+    REQUIRE(user_view.at("ok").as_bool());
+    REQUIRE_EQ(user_view.at("rows").as_array().size(), size_t{3});
 
     // 导出的文件原样导回来：全都已存在。
     const auto again =
