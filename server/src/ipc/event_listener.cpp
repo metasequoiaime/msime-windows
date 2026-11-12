@@ -42,7 +42,7 @@
 #include "log/candidate_diag_log.h"
 #include "ipc/event_listener_internal.h"
 #include "ipc/candidate_interaction_latch_policy.h"
-#include "ipc/candidate_present_settle_policy.h"
+#include "ipc/candidate_render_sync.h"
 #include "ai/jev_candidate_policy.h"
 
 using namespace event_listener_detail;
@@ -112,8 +112,8 @@ void LatchCandidateUiInteraction()
     // 只认用户操作时屏幕上那一页：已发布但还没画出来的一页不算。
     if (FanyImeIpc::ShouldLatchCandidateInteraction(generation, rendered))
     {
+        NoteCandidatePageGesture(generation);
         Global::candidate_ui.begin_selection();
-        CancelCandidatePresentSettle();
     }
 }
 
@@ -157,7 +157,7 @@ void ApplyUiLessFromPacket(const FanyImeNamedpipeData &pipe_data)
         // A prior non-UILess session may have left the candidate HWND visible;
         // hide it immediately when the host takes over drawing.
         ::is_global_wnd_cand_shown = false;
-        Global::SetCandidateWindowRenderedVisible(false);
+        NoteCandidatePageVisibility(false);
         if (::global_hwnd && IsWindow(::global_hwnd))
         {
             PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
@@ -190,54 +190,148 @@ bool IsDedicatedEnglishAnswerPending()
     return g_dedicated_english_answer_pending && !GlobalIme::composition.creating_word.active &&
            !IsCandidateSubPageActive();
 }
+
+// Timer queue for CandidatePages. The module never exposes its deadlines; the worker asks this adapter when to
+// wake and fires the due callbacks outside the task-queue lock. Callbacks are no-ops when their page no longer
+// exists, so a timer that outlives its page costs nothing.
+class CandidatePageTimerQueue : public FanyImeIpc::CandidatePages::ClockPort
+{
+  public:
+    using Clock = FanyImeIpc::CandidatePages::Clock;
+
+    Clock::time_point now() const override
+    {
+        return Clock::now();
+    }
+
+    void schedule_at(Clock::time_point deadline, std::function<void()> fn) override
+    {
+        std::lock_guard lock(mutex_);
+        timers_.push_back({deadline, std::move(fn)});
+    }
+
+    std::optional<Clock::time_point> deadline() const
+    {
+        std::lock_guard lock(mutex_);
+        if (timers_.empty())
+            return std::nullopt;
+        return std::min_element(timers_.begin(), timers_.end(),
+                                [](const auto &left, const auto &right) { return left.deadline < right.deadline; })
+            ->deadline;
+    }
+
+    bool due(Clock::time_point now) const
+    {
+        std::lock_guard lock(mutex_);
+        return std::any_of(timers_.begin(), timers_.end(), [now](const auto &timer) { return timer.deadline <= now; });
+    }
+
+    void fire_due(Clock::time_point now)
+    {
+        std::vector<std::function<void()>> due;
+        {
+            std::lock_guard lock(mutex_);
+            const auto split = std::stable_partition(timers_.begin(), timers_.end(),
+                                                     [now](const auto &timer) { return timer.deadline > now; });
+            for (auto timer = split; timer != timers_.end(); ++timer)
+                due.push_back(std::move(timer->fn));
+            timers_.erase(split, timers_.end());
+        }
+        for (auto &fn : due)
+            fn();
+    }
+
+  private:
+    struct Timer
+    {
+        Clock::time_point deadline;
+        std::function<void()> fn;
+    };
+
+    mutable std::mutex mutex_;
+    std::vector<Timer> timers_;
+};
+
+class CandidatePageSurface : public FanyImeIpc::CandidatePages::SurfacePort
+{
+  public:
+    void publish(const FanyImeIpc::CandidatePage &page) override
+    {
+        if (!page.snapshot)
+            return;
+        Global::candidate_page_generation.store(page.generation, std::memory_order_release);
+        Global::PublishCandidatePageSnapshot(page.snapshot);
+        ::WriteDataToSharedMemory(page.snapshot->candidate_string, true);
+    }
+
+    void request_show() override
+    {
+        if (IsUiLessMode() || !::global_hwnd)
+        {
+            CAND_DIAG_LOGF(L"show request skipped uiless={} hwnd_present={}", IsUiLessMode(), ::global_hwnd != nullptr);
+            return;
+        }
+        if (IsDedicatedEnglishAnswerPending())
+        {
+            CAND_DIAG_LOGF(L"show request deferred to english query raw_units={}",
+                           GlobalIme::composition.raw_input_with_cases.size());
+            return;
+        }
+        bool expected = false;
+        if (!g_candidate_show_msg_pending.compare_exchange_strong(expected, true))
+        {
+            CAND_DIAG_LOGF(L"show request coalesced raw_units={} candidate_count={}",
+                           GlobalIme::composition.raw_input_with_cases.size(), Global::candidate_ui.items.size());
+            return;
+        }
+        CAND_DIAG_LOGF(L"show request posted raw_units={} candidate_count={}",
+                       GlobalIme::composition.raw_input_with_cases.size(), Global::candidate_ui.items.size());
+        if (!PostMessage(::global_hwnd, WM_SHOW_MAIN_WINDOW, 0, 0))
+            g_candidate_show_msg_pending.store(false);
+    }
+
+    void hide() override
+    {
+        Global::CandidateString.clear();
+        Global::ClearCandidatePageSnapshot();
+        ::is_global_wnd_cand_shown = false;
+        Global::SetCandidateWindowRenderedVisible(false);
+        if (::global_hwnd && IsWindow(::global_hwnd))
+            PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+    }
+
+    bool visible() const override
+    {
+        return Global::candidate_window_rendered_visible.load(std::memory_order_acquire);
+    }
+
+    bool uiless() const override
+    {
+        return IsUiLessMode();
+    }
+};
+
+struct CandidatePagesRuntime
+{
+    CandidatePageTimerQueue timer;
+    CandidatePageSurface surface;
+    FanyImeIpc::CandidatePages pages{timer, surface, std::chrono::milliseconds{120},
+                                     std::chrono::milliseconds{FanyImeIpc::kCandidateSelectionRenderWaitMaxMs}};
+};
+
+CandidatePagesRuntime &Pages()
+{
+    static CandidatePagesRuntime runtime;
+    return runtime;
+}
 } // namespace
 
 namespace event_listener_detail
 {
 void RequestShowCandidateWindow()
 {
-    if (IsUiLessMode() || !::global_hwnd)
-    {
-        CAND_DIAG_LOGF(L"show request skipped uiless={} hwnd_present={}", IsUiLessMode(), ::global_hwnd != nullptr);
-        return;
-    }
-    if (IsDedicatedEnglishAnswerPending())
-    {
-        CAND_DIAG_LOGF(L"show request deferred to english query raw_units={}",
-                       GlobalIme::composition.raw_input_with_cases.size());
-        return;
-    }
-    bool expected = false;
-    if (!g_candidate_show_msg_pending.compare_exchange_strong(expected, true))
-    {
-        CAND_DIAG_LOGF(L"show request coalesced raw_units={} candidate_count={}",
-                       GlobalIme::composition.raw_input_with_cases.size(), Global::candidate_ui.items.size());
-        return;
-    }
-    CAND_DIAG_LOGF(L"show request posted raw_units={} candidate_count={}",
-                   GlobalIme::composition.raw_input_with_cases.size(), Global::candidate_ui.items.size());
-    if (!PostMessage(::global_hwnd, WM_SHOW_MAIN_WINDOW, 0, 0))
-    {
-        g_candidate_show_msg_pending.store(false);
-    }
+    ShowPublishedCandidatePage();
 }
-
-namespace
-{
-// Fast enrichment (mixed English, neural reorder) can republish the same composition many times while it
-// converges. The key path still paints its first frame immediately; later fast results are folded into a single
-// additional frame so row contents do not alternate on screen. Slow sources (cloud, AI) keep their own shows.
-using CandidateSettleClock = FanyImeIpc::CandidatePresentSettle::Clock;
-constexpr auto kCandidateSettleDelay = std::chrono::milliseconds(120);
-
-// Worker-thread only: every function below runs on the task thread.
-FanyImeIpc::CandidatePresentSettle g_candidate_settle;
-
-std::string CurrentCandidateSettleInput()
-{
-    return g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
-}
-} // namespace
 
 void RequestShowCandidateWindowDeferred(bool late)
 {
@@ -253,11 +347,10 @@ void RequestShowCandidateWindowDeferred(bool late)
                        GlobalIme::composition.raw_input_with_cases.size());
         return;
     }
-    const std::string input = CurrentCandidateSettleInput();
-    if (input.empty() || Global::candidate_ui.items.empty())
+    if (!g_inputSession || g_inputSession->get_pinyin_sequence_with_cases().empty() ||
+        Global::candidate_ui.items.empty())
     {
-        CAND_DIAG_LOGF(L"settle request skipped empty input={} items={}", input.empty(),
-                       Global::candidate_ui.items.size());
+        CAND_DIAG_LOGF(L"settle request skipped empty");
         return;
     }
     if (!CanMergeAsyncCandidates())
@@ -266,48 +359,102 @@ void RequestShowCandidateWindowDeferred(bool late)
         return;
     }
 
-    const bool accepted = g_candidate_settle.Request(input, late, CandidateSettleClock::now(), kCandidateSettleDelay);
-    CAND_DIAG_LOGF(L"settle request late={} accepted={} armed={} late_pending={} raw_units={} candidate_count={}", late,
-                   accepted, g_candidate_settle.armed, g_candidate_settle.late_pending, input.size(),
-                   Global::candidate_ui.items.size());
+    const bool accepted =
+        UpdateCurrentCandidatePage(late ? FanyImeIpc::CandidateFreshness::Late : FanyImeIpc::CandidateFreshness::Fast);
+    CAND_DIAG_LOGF(L"settle request late={} accepted={} raw_units={} candidate_count={}", late, accepted,
+                   g_inputSession->get_pinyin_sequence_with_cases().size(), Global::candidate_ui.items.size());
 }
 
-std::optional<CandidateSettleClock::time_point> CandidatePresentSettleDeadline()
+void PublishCandidatePage(FanyImeIpc::CandidatePage page)
 {
-    if (!g_candidate_settle.armed)
-        return std::nullopt;
-    return g_candidate_settle.deadline;
+    Pages().pages.Publish(std::move(page));
 }
 
-bool CandidatePresentSettleIsDue(CandidateSettleClock::time_point now)
+void ShowCandidatePage(FanyImeIpc::CandidatePage page)
 {
-    return g_candidate_settle.Due(now);
+    Pages().pages.Show(std::move(page));
 }
 
-void FlushCandidatePresentSettleIfDue(CandidateSettleClock::time_point now)
+void UpdateCandidatePage(FanyImeIpc::CandidatePage page, FanyImeIpc::CandidateFreshness freshness)
 {
-    if (!g_candidate_settle.Due(now))
-        return;
-    // 合并发布的快照可能已经比屏幕新：先把用户对已渲染页的操作结算掉，别让定稿帧盖在点击/选词上。
-    LatchCandidateUiInteraction();
-    const std::string input = CurrentCandidateSettleInput();
-    const bool can_show =
-        g_inputSession && !input.empty() && !Global::candidate_ui.items.empty() && CanMergeAsyncCandidates();
-    const bool show = g_candidate_settle.Consume(now, input, can_show);
-    CAND_DIAG_LOGF(L"settle publish show={} can_show={} raw_units={} candidate_count={}", show, can_show, input.size(),
-                   Global::candidate_ui.items.size());
-    if (show)
-        RequestShowCandidateWindow();
+    (void)Pages().pages.Update(std::move(page), freshness);
 }
 
-void ResetCandidatePresentSettle()
+bool UpdateCurrentCandidatePage(FanyImeIpc::CandidateFreshness freshness)
 {
-    g_candidate_settle.Reset();
+    return Pages().pages.UpdateCurrent(freshness);
 }
 
-void CancelCandidatePresentSettle()
+void ShowPublishedCandidatePage()
 {
-    g_candidate_settle.Cancel();
+    Pages().pages.Show();
+}
+
+void HideCandidatePages()
+{
+    Pages().pages.Hide();
+}
+
+void ResetCandidatePageFrames()
+{
+    Pages().pages.ResetFrameBudget();
+}
+
+void CancelCandidatePageFrames()
+{
+    Pages().pages.CancelPending();
+}
+
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateSlot(int index_in_page)
+{
+    return Pages().pages.CommitSlot(index_in_page);
+}
+
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateHighlighted()
+{
+    return Pages().pages.CommitHighlighted();
+}
+
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateAt(int index_in_page)
+{
+    return Pages().pages.CommitAt(index_in_page);
+}
+
+bool HasCandidatePage()
+{
+    return Pages().pages.HasPage();
+}
+
+void NoteCandidatePagePainted(std::uint64_t generation, bool visible)
+{
+    if (Pages().pages.Painted(generation, visible))
+        Global::PublishRenderedCandidatePageGeneration(generation);
+}
+
+void NoteCandidatePageGesture(std::uint64_t generation)
+{
+    Pages().pages.Gesture(generation);
+}
+
+void NoteCandidatePageVisibility(bool visible)
+{
+    Pages().pages.Visibility(visible);
+    Global::SetCandidateWindowRenderedVisible(visible);
+}
+
+std::optional<std::chrono::steady_clock::time_point> CandidatePageTimerDeadline()
+{
+    return Pages().timer.deadline();
+}
+
+bool CandidatePageTimerIsDue(std::chrono::steady_clock::time_point now)
+{
+    return Pages().timer.due(now);
+}
+
+void FireDueCandidatePageTimers(std::chrono::steady_clock::time_point now)
+{
+    Pages().timer.fire_due(now);
 }
 
 // Drop every published candidate page and hide the candidate window without
@@ -316,21 +463,9 @@ void CancelCandidatePresentSettle()
 // because there is nothing left to offer as candidates.
 void HideCandidateWindowAndDropItems()
 {
-    CancelCandidatePresentSettle();
     FanyNamedPipe::ResetRescoreRequeryBudget();
-    // Drop published candidates before a queued show can re-render an
-    // empty-preedit + stale-candidate view.
-    Global::CandidateString.clear();
-    Global::ClearCandidatePageSnapshot();
     Global::candidate_ui.set_items({});
-    // Clear the shown flag first so async callbacks refuse to resurrect the
-    // window, then post the actual hide message.
-    ::is_global_wnd_cand_shown = false;
-    Global::SetCandidateWindowRenderedVisible(false);
-    if (::global_hwnd && IsWindow(::global_hwnd))
-    {
-        PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
-    }
+    HideCandidatePages();
 }
 } // namespace event_listener_detail
 
@@ -916,6 +1051,16 @@ void NoteCandidateUiInteraction(uint64_t page_generation)
 {
     if (page_generation != 0)
         g_candidate_ui_interaction_generation.store(page_generation, std::memory_order_release);
+}
+
+void NoteCandidatePagePainted(uint64_t page_generation, bool visible)
+{
+    event_listener_detail::NoteCandidatePagePainted(page_generation, visible);
+}
+
+void NoteCandidatePageVisibility(bool visible)
+{
+    event_listener_detail::NoteCandidatePageVisibility(visible);
 }
 
 FanyImeTemporaryJapanese::Policy TemporaryJapanesePolicy()

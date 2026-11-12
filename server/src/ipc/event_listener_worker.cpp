@@ -133,7 +133,7 @@ void ReplayDeferredClientActivation()
     }
     FTB_DIAG_LOGF(L"replaying client activation deferred until candidate window existed");
     PostMessage(::global_hwnd, WM_IMEACTIVATE, 0, 0);
-    PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+    HideCandidatePages();
 }
 
 struct Task
@@ -318,10 +318,10 @@ void WorkerThread()
             }
             const auto gate_deadline = cadence.Deadline(idle_gate_ms);
             auto wake_deadline = gate_deadline;
-            if (const auto settle_deadline = CandidatePresentSettleDeadline())
+            if (const auto page_deadline = CandidatePageTimerDeadline())
             {
-                if (wake_deadline == InputCadence::Clock::time_point{} || *settle_deadline < wake_deadline)
-                    wake_deadline = *settle_deadline;
+                if (wake_deadline == InputCadence::Clock::time_point{} || *page_deadline < wake_deadline)
+                    wake_deadline = *page_deadline;
             }
             if (wake_deadline == InputCadence::Clock::time_point{})
             {
@@ -335,12 +335,12 @@ void WorkerThread()
             if (!pipe_running)
                 break;
             const auto now = InputCadence::Clock::now();
-            const bool settle_due = CandidatePresentSettleIsDue(now);
+            const bool page_frame_due = CandidatePageTimerIsDue(now);
             const bool has_queued_task = AnyTaskQueuedLocked();
             const FanyImeIpc::SettleFlushDecision settle_decision = FanyImeIpc::DecideSettleFlush(
-                settle_due, has_queued_task, has_queued_task ? NextQueuedTaskClassLocked() : TaskClass::Foreground);
-            const bool flush_settle = settle_decision == FanyImeIpc::SettleFlushDecision::FlushSettle;
-            if (!flush_settle && cadence.ShouldCloseGate(now, idle_gate_ms))
+                page_frame_due, has_queued_task, has_queued_task ? NextQueuedTaskClassLocked() : TaskClass::Foreground);
+            const bool flush_page_frame = settle_decision == FanyImeIpc::SettleFlushDecision::FlushSettle;
+            if (!flush_page_frame && cadence.ShouldCloseGate(now, idle_gate_ms))
             {
                 // 到点且没有新按键：这段连续打字结束。先关闸再排重查，保证
                 // recompute_candidates 里重新应用的配置看到的是 Idle。
@@ -355,11 +355,15 @@ void WorkerThread()
                     PushTaskLocked(std::move(refresh));
                 }
             }
-            if (flush_settle)
+            if (flush_page_frame)
             {
-                // 这帧只请求显示一次，不在锁里 PostMessage。
+                // 这帧只请求显示一次，不在锁里 PostMessage。先把用户对已渲染页的操作结算掉，
+                // 别让定稿帧盖在点击/选词上。
                 lock.unlock();
-                FlushCandidatePresentSettleIfDue(now);
+                LatchCandidateUiInteraction();
+                if (!CanMergeAsyncCandidates())
+                    CancelCandidatePageFrames();
+                FireDueCandidatePageTimers(now);
                 continue;
             }
             // wait 与上面的超时分支都保证此刻队列非空；这里只是防御 TakeNextTaskLocked
@@ -791,7 +795,9 @@ void WorkerThread()
                     break;
                 }
             }
-            ProcessSelectionKey(0, task.client_id, task.activation_epoch, index_in_page);
+            ProcessSelectionKey(0, task.client_id, task.activation_epoch, index_in_page,
+                                /*count_first_word=*/true,
+                                /*resolve_live_page=*/task.type == TaskType::UiCommitCandidateAt);
             if (Global::MsgTypeToTsf == Global::DataFromServerMsgType::Normal)
             {
                 // The worker packet is the complete edit-session-owned commit
@@ -979,7 +985,7 @@ void WorkerThread()
             g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
-            PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+            HideCandidatePages();
             break;
         }
 
@@ -999,7 +1005,7 @@ void WorkerThread()
             g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
-            PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+            HideCandidatePages();
             break;
         }
 

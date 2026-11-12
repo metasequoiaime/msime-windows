@@ -137,14 +137,16 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiImmediate();
     PushUiLessCandidatesToOwner();
 }
 
 bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late)
 {
     const std::vector<WordItem> before = g_inputSession->get_candidates();
-    const size_t page_size = static_cast<size_t>((std::max)(GetConfiguredCandidatePageSize(), 1));
+    const int live_page_size =
+        Global::candidate_ui.page_size > 0 ? Global::candidate_ui.page_size : GetConfiguredCandidatePageSize();
+    const size_t page_size = static_cast<size_t>((std::max)(live_page_size, 1));
     const auto first_page = [page_size](const std::vector<WordItem> &items) {
         const size_t count = (std::min)(page_size, items.size());
         return std::vector<WordItem>(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(count));
@@ -248,7 +250,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
         g_jev_word = candidate;
         g_jev_identity = identity;
         g_jev_generation = generation;
-        RefreshCandidatePageUi(true);
+        RefreshCandidatePageUiImmediate();
         PushUiLessCandidatesToOwner();
         return;
     }
@@ -280,7 +282,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiImmediate();
     PushUiLessCandidatesToOwner();
 }
 
@@ -338,7 +340,7 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
     Global::candidate_ui.selection_started = false;
     Global::candidate_ui.clear_page();
     g_dedicated_english_answer_pending = false;
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiImmediate();
     PushUiLessCandidatesToOwner();
 }
 

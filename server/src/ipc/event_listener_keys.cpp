@@ -958,7 +958,7 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
                                                  g_r_mode_triggered))
     {
         ResetRescoreRequeryBudget();
-        CancelCandidatePresentSettle();
+        CancelCandidatePageFrames();
         g_inputSession->set_pinyin_sequence("");
         g_inputSession->set_pinyin_sequence_with_cases("");
         g_inputSession->recompute_candidates();
@@ -1114,7 +1114,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
 {
     const ScopedServerKeyLatency latency{client_id, activation_epoch, request_id};
     // 新的一键就是新的一段输入：上一段还没发布的异步定稿帧不该再抢在新首帧前面。
-    ResetCandidatePresentSettle();
+    ResetCandidatePageFrames();
     /* 先清理一下状态 */
     Global::MsgTypeToTsf = Global::DataFromServerMsgType::Normal;
     ScopedKeyStage read_packet{client_id, activation_epoch, request_id, L"handle-read-packet"};
@@ -1579,7 +1579,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         Global::candidate_ui.select_first_on_page();
         ScopedKeyStage select_auto_commit{client_id, activation_epoch, request_id, L"handle-selection"};
         ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0,
-                            /*count_first_word=*/false);
+                            /*count_first_word=*/false, /*resolve_live_page=*/true);
         select_auto_commit.Stop();
         ScopedKeyStage push_auto_commit{client_id, activation_epoch, request_id, L"handle-worker-push"};
         if (Global::MsgTypeToTsf == Global::DataFromServerMsgType::Normal)
@@ -1627,7 +1627,8 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         prepare_top_commit.Stop();
         Global::candidate_ui.select_first_on_page();
         ScopedKeyStage select_top_commit{client_id, activation_epoch, request_id, L"handle-selection"};
-        ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0);
+        ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0,
+                            /*count_first_word=*/true, /*resolve_live_page=*/true);
         select_top_commit.Stop();
         const std::wstring committed_text = Global::candidate_ui.selected_text;
 
