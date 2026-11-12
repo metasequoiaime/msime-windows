@@ -131,6 +131,8 @@ inline size_t IndexAfterLocalCandidates(const std::vector<WordItem> &items, size
 //                  没学过时用默认位置。
 //   require_exact  输入能读成拼音时置位：和输入完全相同的英文词优先占槽位，默认紧跟第一个中文
 //                  候选；没有精确匹配时由最前的补全词（zai → zaire）占槽位，默认退到首页末位。
+//   hide_guessed_sentences 输入含简拼或没打完的音节时置位：精确英文命中时隐藏整句猜测。完整拼音输入的
+//                  整句是正常候选，不能因为同一串字符恰好也是英文词就删掉。
 //   input          小写的当前输入，用来认精确匹配。
 //   page_size      每页候选数，给补全词的默认位置、槽位上限、首个 emoji 与字母词、首个符号的位置用；
 //                  0 表示不限。
@@ -140,6 +142,7 @@ struct EnglishPlacement
 {
     std::optional<size_t> slot;
     bool require_exact = false;
+    bool hide_guessed_sentences = false;
     std::string input;
     size_t page_size = 0;
     size_t first_page_count = 1;
@@ -148,6 +151,26 @@ struct EnglishPlacement
 inline bool IsExactEnglishMatch(const WordItem &item, const EnglishPlacement &placement)
 {
     return item.source == CandidateSource::EnglishDictionary && item.pinyin == placement.input;
+}
+
+// 当前列表里有没有与整串输入完全相同的英文词。英文是异步插进来的，首次组页时 input 为空；
+// 只要有一个（包括用户固定了位置的），就算这次输入有有效英文。
+inline bool HasExactEnglishCandidate(const std::vector<WordItem> &items, const EnglishPlacement &english_placement)
+{
+    return !english_placement.input.empty() && std::any_of(items.begin(), items.end(), [&](const WordItem &item) {
+        return IsExactEnglishMatch(item, english_placement);
+    });
+}
+
+// 整句是猜出来的，词库里没有它那一行；输入整串正好是一个英文词时，留着它只会排在英文前后诱使误选。
+// 只认 sentence_association，不按来源一刀切（Generated 还用于简拼展开、纠错等非整句候选）；用户显式
+// 固定了位置的候选不动。
+inline void HideGuessedSentences(std::vector<WordItem> &items)
+{
+    items.erase(
+        std::remove_if(items.begin(), items.end(),
+                       [](const WordItem &item) { return item.sentence_association && item.fixed_position == 0; }),
+        items.end());
 }
 
 // 占着英文槽位的那个候选在列表里的下标；没有未固定位置的英文时为空。
@@ -185,6 +208,12 @@ inline std::optional<size_t> SlottedEnglishIndex(const std::vector<WordItem> &it
 inline void NormalizeMixedCandidateOrder(std::vector<WordItem> &items, size_t local_prefix_slots = 1,
                                          const EnglishPlacement &english_placement = {})
 {
+    // 精确英文命中且有简拼/不完整输入时先去掉整句猜测：英文、普通词的位置都不动，只少了猜出来的那几条。
+    // 完整拼音输入的整句是正常候选，隐藏由调用方按 is_all_complete_pure_pinyin 决定。
+    // 英文到达前 input 为空，这里不动列表；英文回来后再归一化时生效，重复归一化不会多删。
+    if (english_placement.hide_guessed_sentences && HasExactEnglishCandidate(items, english_placement))
+        HideGuessedSentences(items);
+
     // 字母词与首个符号先取出，固定位置的候选留在原下标，等于在不含它们的列表上放固定位置；列表已归一化过时，
     // 这还原出上次放它们之前的列表，再归一化结果不变。
     bool first_symbol_taken = false;

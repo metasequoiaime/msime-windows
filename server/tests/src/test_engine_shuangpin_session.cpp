@@ -1462,6 +1462,29 @@ TEST_CASE(EngineQuanpinSessionHasActiveHelpcodeTracksCloudQueryGate)
     REQUIRE(!session.get_cloud_query_state().should_query);
 }
 
+TEST_CASE(EngineSessionsDistinguishCompletePinyinFromPartialInput)
+{
+    // CurrentEnglishPlacement 用这个判据决定精确英文命中时要不要隐藏整句猜测：markdown 这类简拼/不完整
+    // 输入不是完整拼音，banana 这类整串都是完整音节的是。
+    EngineInputSession quanpin_markdown(SchemeType::Quanpin);
+    InputLetters(quanpin_markdown, "markdown");
+    REQUIRE(!quanpin_markdown.is_all_complete_pure_pinyin());
+
+    EngineInputSession quanpin_banana(SchemeType::Quanpin);
+    InputLetters(quanpin_banana, "banana");
+    REQUIRE(quanpin_banana.is_all_complete_pure_pinyin());
+
+    // 双拼同样按音节判定，不按「两键一个音节」一律放行：banana 在默认小鹤方案下切成 ba'na'na，判为完整；
+    // markdown 的 rk/ow/wn 都解不出音节，贪心切分里留下单字母段（ma'r'kai'o'w'n），判为不完整。
+    EngineInputSession shuangpin_banana(SchemeType::Shuangpin);
+    InputLetters(shuangpin_banana, "banana");
+    REQUIRE(shuangpin_banana.is_all_complete_pure_pinyin());
+
+    EngineInputSession shuangpin_markdown(SchemeType::Shuangpin);
+    InputLetters(shuangpin_markdown, "markdown");
+    REQUIRE(!shuangpin_markdown.is_all_complete_pure_pinyin());
+}
+
 TEST_CASE(EngineShuangpinSessionUsesZiranmaProfileEndToEnd)
 {
     EngineInputSession session(SchemeType::Shuangpin, GetZiranmaShuangpinProfile());
