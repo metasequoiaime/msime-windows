@@ -223,12 +223,10 @@ foreach ($required in @($tsfCompile, $serverCompile)) {
     }
 }
 
-# Prepare-PackageFiles writes the requested version into msime_setup.iss. Keep that implementation
-# as the single source of installer naming/version logic, but do not leave a local packaging command
-# changing the tracked template after it finishes.
-$issPath = Join-Path $PSScriptRoot 'msime_setup.iss'
+# apply_version.py writes the requested version into the tracked TSF resource template; restore it
+# afterwards so a local packaging command does not leave a diff. msime_setup.iss is not touched:
+# Compile-Installer.ps1 passes the version to ISCC with /D.
 $tsfResourcePath = Join-Path $repoRoot 'windows\src\IME\MetasequoiaIME.rc'
-$originalIss = [IO.File]::ReadAllBytes($issPath)
 $originalTsfResource = [IO.File]::ReadAllBytes($tsfResourcePath)
 $lightSuffix = if ($Light) { '_light' } else { '' }
 $compiledInstallerPath = Join-Path $PSScriptRoot "Output\MetasequoiaIME_Setup_v$Version$lightSuffix.exe"
@@ -275,7 +273,7 @@ try {
     # 用户看到的就是输入法装完之后某个面板打不开。外层安装包在编译之后单独签。
     Invoke-SimplySign -LiteralPath (Get-PayloadBinaryPaths) -Certificate $certificate
 
-    & (Join-Path $PSScriptRoot 'Compile-Installer.ps1') -IsccPath $IsccPath -Light:$Light
+    & (Join-Path $PSScriptRoot 'Compile-Installer.ps1') -IsccPath $IsccPath -Light:$Light -TargetVersion $Version
     if (-not (Test-Path -LiteralPath $compiledInstallerPath -PathType Leaf)) {
         throw "Inno Setup 没有生成预期的安装包：$compiledInstallerPath"
     }
@@ -297,7 +295,6 @@ try {
     Write-Host "  SHA256: $hash"
 }
 finally {
-    [IO.File]::WriteAllBytes($issPath, $originalIss)
     [IO.File]::WriteAllBytes($tsfResourcePath, $originalTsfResource)
     Pop-Location
 }

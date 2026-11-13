@@ -343,14 +343,9 @@ $versionInfo = ($TargetVersion -replace '-.*$', '')
 if ($versionInfo -notmatch '^[0-9]+(\.[0-9]+)*$') {
     throw "目标版本剥掉后缀后不是数字版本号，无法写进 VersionInfoVersion：$TargetVersion"
 }
-# Compile-Installer.ps1 通过 ISCC /D 覆盖 msime_setup.iss 里的默认版本；不要把版本写回
-# 受版本控制的安装脚本，否则每次打包都会留下一个与提交无关的 diff。
-$outputDirectory = Join-Path $PSScriptRoot 'Output'
-New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
-$packageVersionPath = Join-Path $outputDirectory 'package-version.json'
-@{ appVersion = $TargetVersion; versionInfo = $versionInfo } |
-    ConvertTo-Json |
-    Set-Content -LiteralPath $packageVersionPath -Encoding utf8NoBOM
+# 这里只提前校验，让坏版本号在签名之前就失败。版本本身由调用方再传给
+# Compile-Installer.ps1 -TargetVersion，经 ISCC /D 覆盖 msime_setup.iss 里的默认值；
+# 不写回受版本控制的安装脚本，也不经中间文件传递。
 
 $serverBinaryCount = @(Get-ChildItem -LiteralPath $targetServer -Recurse -File -Include '*.exe', '*.dll').Count
 $tsfBinaryCount = @(Get-ChildItem -LiteralPath $targetTsf -Recurse -File -Include '*.exe', '*.dll').Count

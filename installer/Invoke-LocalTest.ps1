@@ -21,7 +21,8 @@ param(
     [switch]$IncludeSymbols,
     # 强制重跑 CMake configure（改了 preset、换了工具链或怀疑缓存不对时用）。
     [switch]$Reconfigure,
-    # 只构建安装包，不启动安装程序。CI、脚本化验证和“只想要个包”的场景用这个。
+    # 只构建安装包，不启动安装程序。仍会用本机测试证书签名（首次运行会创建证书并尝试写入
+    # 本机受信任存储），所以只适合开发机，不要在 CI 或共享构建机上用。
     [switch]$NoInstall,
     # 安装包版本；默认从仓库根的 version.txt 派生 <版本>-local。
     [string]$TargetVersion

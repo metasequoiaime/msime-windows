@@ -3,7 +3,7 @@ param(
     [string]$IsccPath,
     [string]$IssPath = (Join-Path $PSScriptRoot 'msime_setup.iss'),
     [switch]$Light,
-    # 安装包版本；缺省时优先读 Prepare-PackageFiles.ps1 留下的 metadata，再退回 .iss 默认值。
+    # 安装包版本，通过 ISCC /D 传入；缺省时用 msime_setup.iss 里的默认值（0.0.1）。
     [string]$TargetVersion
 )
 
@@ -80,34 +80,32 @@ $resolvedIssPath = (Resolve-Path -LiteralPath $IssPath).Path
 $resolvedIsccPath = Resolve-IsccPath -ExplicitPath $IsccPath
 
 $outputDirectory = Join-Path $PSScriptRoot 'Output'
-$packageVersionPath = Join-Path $outputDirectory 'package-version.json'
 $lastBuildPath = Join-Path $outputDirectory 'last-build.json'
+# 先删掉旧记录：这次编译失败时，Sign-Installer-Local.ps1 / Install.ps1 应该报错，而不是拿上一次的包。
 Remove-Item -LiteralPath $lastBuildPath -Force -ErrorAction SilentlyContinue
 
-$appVersion = $TargetVersion
-$versionInfo = $null
-if (-not $appVersion -and (Test-Path -LiteralPath $packageVersionPath -PathType Leaf)) {
-    $metadata = Get-Content -LiteralPath $packageVersionPath -Raw | ConvertFrom-Json
-    $appVersion = [string]$metadata.appVersion
-    $versionInfo = [string]$metadata.versionInfo
-}
-if (-not $appVersion) {
-    $issContent = Get-Content -LiteralPath $resolvedIssPath -Raw
-    if ($issContent -match '(?m)^#define\s+MyAppVersion\s+"(?<version>[^"]+)"') {
-        $appVersion = $Matches.version
-    }
-    if ($issContent -match '(?m)^#define\s+MyVersionInfo\s+"(?<version>[^"]+)"') {
-        $versionInfo = $Matches.version
-    }
-}
-if (-not $appVersion) {
-    throw '未能确定安装包版本：既没有 -TargetVersion，也没有 Prepare-PackageFiles.ps1 的 metadata。'
-}
-if (-not $versionInfo) {
+# 版本只从参数来，不经任何中间文件：调用方（CI workflow、package-simplysign.ps1、
+# Invoke-LocalTest.ps1）本来就知道版本。不传时用 .iss 里的默认值，与直接用 ISCC 编译本文件一致。
+if ($TargetVersion) {
+    $appVersion = $TargetVersion
+    # VersionInfoVersion 只接受数字和点号；从目标版本剥掉 -后缀（dev 构建的
+    # 0.7.1-dev.20261019.<hash> → 0.7.1），正式版本剥了也原样。
     $versionInfo = ($appVersion -replace '-.*$', '')
 }
+else {
+    $issContent = Get-Content -LiteralPath $resolvedIssPath -Raw
+    if ($issContent -notmatch '(?m)^#define\s+MyAppVersion\s+"(?<version>[^"]+)"') {
+        throw '没有传 -TargetVersion，也未能在安装脚本中找到默认的 MyAppVersion。'
+    }
+    $appVersion = $Matches.version
+    if ($issContent -notmatch '(?m)^#define\s+MyVersionInfo\s+"(?<version>[^"]+)"') {
+        throw '没有传 -TargetVersion，也未能在安装脚本中找到默认的 MyVersionInfo。'
+    }
+    $versionInfo = $Matches.version
+    Write-Warning "没有传 -TargetVersion，使用安装脚本里的默认版本 $appVersion。"
+}
 if ($versionInfo -notmatch '^[0-9]+(\.[0-9]+)*$') {
-    throw "VersionInfoVersion 只接受数字和点号：$versionInfo"
+    throw "目标版本剥掉后缀后不是数字版本号，无法写进 VersionInfoVersion：$appVersion"
 }
 
 Write-Host "Inno Setup 编译器：$resolvedIsccPath"
@@ -145,6 +143,5 @@ if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
     light         = [bool]$Light
     installerPath = (Resolve-Path -LiteralPath $installerPath).Path
 } | ConvertTo-Json | Set-Content -LiteralPath $lastBuildPath -Encoding utf8NoBOM
-Remove-Item -LiteralPath $packageVersionPath -Force -ErrorAction SilentlyContinue
 
 Write-Host "安装包编译完成：$installerPath"

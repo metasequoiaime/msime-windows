@@ -3,7 +3,9 @@
 ;
 ; 编译方法：
 ;   1. 安装 Inno Setup 6.6 或更高版本：https://jrsoftware.org/isinfo.php
-;   2. 运行 .\Compile-Installer.ps1（或用 Inno Setup Compiler 打开本文件并按 Ctrl+F9）
+;   2. 运行 .\Compile-Installer.ps1 -TargetVersion <版本>（或用 Inno Setup Compiler 打开本文件并按
+;      Ctrl+F9，此时用下面的默认版本；GUI 编出的包要用 -InstallerPath 交给 Sign-Installer-Local.ps1
+;      和 Install.ps1，它们默认只认 Compile-Installer.ps1 记录的 Output\last-build.json）
 ;   输出安装包默认在：Output\
 ;
 ; 本地测试打包顺序：
