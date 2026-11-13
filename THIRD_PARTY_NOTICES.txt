@@ -1176,10 +1176,12 @@ Sources of helpcodes/*.txt, via MSIME-HelpCode:
   shouyou2_0_helpcode.txt         shouyou2_0   首右 2.0 helpcode scheme
   shouyouplus_helpcode.txt        shouyouplus  首右 plus helpcode scheme
   xiaohe_helpcode.txt             xiaohe       小鹤 shape-code scheme
-  jiajia_helpcode.txt             jiajia       加加辅助码, aligned with the helpcode table
-                                               embedded in the commercial 拼音加加 5.x
-                                               installer (fzm.bin); not an official
-                                               拼音加加 table
+  jiajia_helpcode.txt             jiajia       加加辅助码, common characters aligned with
+                                               the helpcode table embedded in the
+                                               commercial 拼音加加 5.x installer (fzm.bin);
+                                               the rest generated from the rime-radical-pinyin
+                                               decomposition data by the same rule; not an
+                                               official 拼音加加 table
 
 Sources of radical/decomposition.txt, the U-mode radical-reverse-lookup table:
 
