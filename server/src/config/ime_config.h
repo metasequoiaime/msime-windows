@@ -222,6 +222,27 @@ struct FrequencyAdjustmentConfig
     int linear_step = 1;
 };
 
+// [sync] 段：把用户数据备份到用户自己的 WebDAV 或 S3 兼容存储。
+// 默认关闭。密码与密钥在 config.toml 里按 IsCredentialKey 走 DPAPI 加密。
+struct SyncConfig
+{
+    bool enabled = false;
+    std::string backend = "off"; // off | webdav | s3
+    int auto_upload_minutes = 0; // 0 = 只手动触发
+    int keep_snapshots = 5;
+    bool include_models = false;
+    std::string webdav_url;
+    std::string webdav_username;
+    std::string webdav_password;
+    std::string s3_endpoint;
+    std::string s3_region = "us-east-1";
+    std::string s3_bucket;
+    bool s3_path_style = true;
+    std::string s3_prefix = "msime";
+    std::string s3_access_key;
+    std::string s3_secret_key;
+};
+
 void InitImeConfig();
 void InvalidateImeConfigWriteTime();
 void NotifyImeServerConfigChanged();
@@ -783,6 +804,11 @@ std::string NormalizeNetworkProxyServer(const std::string &value);
 const FrequencyAdjustmentConfig &GetConfiguredFrequencyAdjustment();
 bool SetConfiguredFrequencyAdjustmentString(const std::string &key, const std::string &value);
 bool SetConfiguredFrequencyAdjustmentInt(const std::string &key, int value);
+// [sync] 段。快照按值返回：后台上传线程与设置页会同时读它。
+SyncConfig GetConfiguredSync();
+bool SetConfiguredSyncBool(const std::string &key, bool value);
+bool SetConfiguredSyncInt(const std::string &key, int value);
+bool SetConfiguredSyncString(const std::string &key, const std::string &value);
 bool SetConfiguredAiAssistantString(const std::string &key, const std::string &value);
 // 按服务商写 endpoint / model：落槽位键 endpoint_<id> / model_<id>，单值键只在目标就是活动服务商时改写。
 // 设置页在多提供商之间切换时用它，免得"写单值键"被当成写给后端此刻的活动服务商。

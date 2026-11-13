@@ -33,8 +33,11 @@ namespace ime_config_detail
 // 文件是否损坏，只要用户填过真值就一条都不能丢。
 bool IsCredentialKey(const std::string &key)
 {
-    static const std::set<std::string> exact = {"token",  "api_key",     "apikey",    "secret_id",   "secret_key",
-                                                "app_id", "asr_app_key", "asr_token", "polish_token"};
+    // s3_access_key 是标识符不是密钥：S3 的签名里它是明文参与 canonical request 的，
+    // 加密存储只会让设置页读不出来，而它本身并不保密。真正要保护的是 secret key。
+    static const std::set<std::string> exact = {"token",        "api_key",         "apikey",       "secret_id",
+                                                "secret_key",   "app_id",          "asr_app_key",  "asr_token",
+                                                "polish_token", "webdav_password", "s3_secret_key"};
     if (exact.count(key) != 0)
     {
         return true;
