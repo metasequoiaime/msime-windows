@@ -26,7 +26,6 @@ using detail::IsTransient;
 using detail::JoinUrl;
 using detail::Perform;
 using detail::Retry;
-using detail::SplitUrl;
 using detail::UrlRoot;
 
 std::string NormalizeBase(std::string base)
@@ -104,13 +103,15 @@ bool ParseXml(const std::string &xml, XmlNode &root)
     while (position < xml.size())
     {
         const std::size_t open = xml.find('<', position);
+        // 文本节点要解实体：href 里的 &amp;、getetag 里的 &quot; 不解就和 HEAD 拿到的对不上。
+        // 标签之间的一段文本不会把实体切开，所以逐段解码是安全的；CDATA 不解。
         if (open == std::string::npos)
         {
-            stack.back()->text += xml.substr(position);
+            stack.back()->text += detail::XmlDecodeEntities(xml.substr(position));
             break;
         }
         if (open > position)
-            stack.back()->text += xml.substr(position, open - position);
+            stack.back()->text += detail::XmlDecodeEntities(xml.substr(position, open - position));
 
         if (xml.compare(open, 4, "<!--") == 0)
         {
@@ -201,62 +202,81 @@ std::string Trimmed(const std::string &text)
     return text.substr(begin, end - begin + 1);
 }
 
-int HexDigit(char ch)
+// 取 URL 的路径部分（不含 scheme://authority、查询串与片段），解码成原文，去掉首尾斜杠。
+std::string DecodedUrlPath(const std::string &url)
 {
-    if (ch >= '0' && ch <= '9')
-        return ch - '0';
-    if (ch >= 'a' && ch <= 'f')
-        return ch - 'a' + 10;
-    if (ch >= 'A' && ch <= 'F')
-        return ch - 'A' + 10;
-    return -1;
-}
-
-// 服务端给的 href 可能是完整 URL、绝对路径或相对路径，末尾可能带斜杠，也可能做了
-// 百分号编码。统一成"相对于 base_url 的 key"。
-std::string HrefToKey(const std::string &href, const std::string &base_url)
-{
-    std::string path = href;
+    std::string path = url;
     const std::size_t scheme = path.find("://");
     if (scheme != std::string::npos)
     {
         const std::size_t slash = path.find('/', scheme + 3);
         path = slash == std::string::npos ? std::string() : path.substr(slash);
     }
-    // base_url 自己的路径前缀要去掉。
-    const std::size_t base_scheme = base_url.find("://");
-    const std::size_t base_slash =
-        base_scheme == std::string::npos ? std::string::npos : base_url.find('/', base_scheme + 3);
-    const std::string base_path =
-        base_slash == std::string::npos ? std::string() : NormalizeBase(base_url.substr(base_slash));
-    if (!base_path.empty() && path.compare(0, base_path.size(), base_path) == 0)
-        path = path.substr(base_path.size());
+    const std::size_t query = path.find_first_of("?#");
+    if (query != std::string::npos)
+        path.erase(query);
+    path = detail::PercentDecode(path);
     while (!path.empty() && path.front() == '/')
         path.erase(path.begin());
     while (!path.empty() && path.back() == '/')
         path.pop_back();
-    if (path.empty())
-        return {};
-
-    std::string decoded;
-    decoded.reserve(path.size());
-    for (std::size_t i = 0; i < path.size(); ++i)
-    {
-        if (path[i] == '%' && i + 2 < path.size())
-        {
-            const int high = HexDigit(path[i + 1]);
-            const int low = HexDigit(path[i + 2]);
-            if (high >= 0 && low >= 0)
-            {
-                decoded.push_back(static_cast<char>((high << 4) | low));
-                i += 2;
-                continue;
-            }
-        }
-        decoded.push_back(path[i]);
-    }
-    return decoded;
+    return path;
 }
+
+// 把 base_url 规范成"路径只编码一次"的写法。用户可能填原文（我的坚果云）也可能填
+// 编码后的（%E6%88%91…），两种都先解码再统一编码，后面 JoinUrl 拼 key 就不会出现
+// %25 这种二次编码。
+std::string CanonicalBaseUrl(const std::string &url)
+{
+    const std::string root = UrlRoot(url);
+    if (root.empty())
+        return NormalizeBase(url);
+    const std::string path = DecodedUrlPath(url);
+    return path.empty() ? root : root + "/" + detail::UriEncode(path, false);
+}
+
+// PROPFIND 一个 response 里可能有多个 propstat（200 的一块、404 的一块），顺序不保证；
+// 只认状态为 200 的那块，没写 status 的按 200 处理。
+const XmlNode *SuccessfulProp(const XmlNode &response)
+{
+    for (const XmlNode &propstat : response.children)
+    {
+        if (propstat.name != "propstat")
+            continue;
+        const XmlNode *status = FindChild(propstat, "status");
+        if (status && Trimmed(status->text).find(" 200 ") == std::string::npos)
+            continue;
+        if (const XmlNode *prop = FindChild(propstat, "prop"))
+            return prop;
+    }
+    return nullptr;
+}
+} // namespace
+
+namespace detail
+{
+std::string WebDavHrefToKey(const std::string &href, const std::string &base_url)
+{
+    // 两边都先解码再比：服务端回的 href 是编码过的（大小写也不定），base 可能是原文。
+    std::string path = DecodedUrlPath(href);
+    const std::string base_path = DecodedUrlPath(base_url);
+    if (!base_path.empty())
+    {
+        if (path == base_path)
+            return {};
+        if (path.size() > base_path.size() && path.compare(0, base_path.size(), base_path) == 0 &&
+            path[base_path.size()] == '/')
+            path = path.substr(base_path.size() + 1);
+    }
+    while (!path.empty() && path.front() == '/')
+        path.erase(path.begin());
+    return path;
+}
+} // namespace detail
+
+namespace
+{
+using detail::WebDavHrefToKey;
 
 std::int64_t ParseHttpDate(const std::string &text)
 {
@@ -322,7 +342,7 @@ class WebDavStore final : public RemoteStore
   public:
     explicit WebDavStore(WebDavOptions options) : options_(std::move(options))
     {
-        options_.base_url = NormalizeBase(options_.base_url);
+        options_.base_url = CanonicalBaseUrl(options_.base_url);
     }
 
     bool Put(const std::string &key, const std::filesystem::path &file, const ProgressCallback &progress,
@@ -335,7 +355,7 @@ class WebDavStore final : public RemoteStore
                 request.url = JoinUrl(options_.base_url, key);
                 request.headers = BaseHeaders(options_);
                 request.upload_file = file;
-                request.timeout_seconds = 600;
+                request.timeout_seconds = 0;
                 const HttpResponse response = Perform(request, progress);
                 if (IsSuccess(response.status))
                     return AttemptResult::Ok;
@@ -356,7 +376,7 @@ class WebDavStore final : public RemoteStore
                 request.url = JoinUrl(options_.base_url, key);
                 request.headers = BaseHeaders(options_);
                 request.download_file = file;
-                request.timeout_seconds = 600;
+                request.timeout_seconds = 0;
                 const HttpResponse response = Perform(request, progress);
                 if (IsSuccess(response.status))
                     return AttemptResult::Ok;
@@ -480,7 +500,7 @@ class WebDavStore final : public RemoteStore
             const XmlNode *href_node = FindChild(response, "href");
             if (!href_node)
                 continue;
-            const std::string key = HrefToKey(Trimmed(href_node->text), options_.base_url);
+            const std::string key = WebDavHrefToKey(Trimmed(href_node->text), options_.base_url);
             if (key.empty() || key == directory_key)
                 continue; // 目录自己
             // 只取这一层的直接子项，不递归进子目录。
@@ -495,10 +515,7 @@ class WebDavStore final : public RemoteStore
             {
                 continue;
             }
-            const XmlNode *propstat = FindChild(response, "propstat");
-            if (!propstat)
-                continue;
-            const XmlNode *prop = FindChild(*propstat, "prop");
+            const XmlNode *prop = SuccessfulProp(response);
             if (!prop)
                 continue;
             // 目录项（resourcetype 里有 collection）不算文件。
@@ -583,26 +600,18 @@ class WebDavStore final : public RemoteStore
         // 建 base_url 路径的末段（例如 /dav/msime-service-e2e 里的 msime-service-e2e），
         // 再建 key 里的每一段。base 前面的部分由服务端保证存在：/dav 是坚果云的根集合，
         // 对根集合发 MKCOL 会返回 403 OperationNotAllowed。
+        // 路径一律用解码后的原文拼，最后由 JoinUrl 只编码一次；直接拿 base_url 里已编码的
+        // 路径再进 JoinUrl 会变成 %25E6… 这种二次编码。
         std::vector<std::string> segments;
         std::string base_prefix;
         {
-            std::string base_path;
-            std::string scheme;
-            std::string host;
-            std::string port;
-            if (SplitUrl(options_.base_url, scheme, host, port, base_path))
+            const std::string base_path = DecodedUrlPath(options_.base_url);
+            if (!base_path.empty())
             {
-                while (!base_path.empty() && base_path.front() == '/')
-                    base_path.erase(base_path.begin());
-                while (!base_path.empty() && base_path.back() == '/')
-                    base_path.pop_back();
-                if (!base_path.empty())
-                {
-                    // 只取最后一段：前面的路径属于服务端已有的集合层级。
-                    const std::size_t last = base_path.rfind('/');
-                    base_prefix = last == std::string::npos ? std::string() : base_path.substr(0, last + 1);
-                    segments.push_back(last == std::string::npos ? base_path : base_path.substr(last + 1));
-                }
+                // 只取最后一段：前面的路径属于服务端已有的集合层级。
+                const std::size_t last = base_path.rfind('/');
+                base_prefix = last == std::string::npos ? std::string() : base_path.substr(0, last + 1);
+                segments.push_back(last == std::string::npos ? base_path : base_path.substr(last + 1));
             }
         }
         std::size_t position = 0;
@@ -620,20 +629,22 @@ class WebDavStore final : public RemoteStore
 
         std::string accumulated = base_prefix;
         std::string first_failure;
-        for (const std::string &segment : segments)
+        for (std::size_t index = 0; index < segments.size(); ++index)
         {
-            accumulated += segment;
+            accumulated += segments[index];
             HttpRequest request;
             request.method = "MKCOL";
             request.url = JoinUrl(UrlRoot(options_.base_url), accumulated);
             request.headers = BaseHeaders(options_);
             request.timeout_seconds = 60;
             const HttpResponse response = Perform(request);
-            // 201 新建、405 已存在、409 说明上级还没建（继续往下走，下一段会补上）。
-            // 403 是"不允许在这个位置建集合"：服务端已有的根集合就是这种响应，
-            // 说明这一级本来就在，不是错误。真正缺的下一级会由后面的段建出来。
-            if (!IsSuccess(response.status) && response.status != 405 && response.status != 409 &&
-                response.status != 403)
+            // 201 新建、405 已存在。中间层级再放过 409（上级还没建，下一段会补上）与 403
+            // （服务端已有的根集合不许 MKCOL，坚果云的 /dav 就是）。最后一级必须真的存在：
+            // 它若是 403 / 409，后面的 PUT 一定失败，在这里报出来比让 PUT 回一个 409 好懂。
+            const bool is_leaf = index + 1 == segments.size();
+            const bool exists = IsSuccess(response.status) || response.status == 405;
+            const bool tolerated = !is_leaf && (response.status == 409 || response.status == 403);
+            if (!exists && !tolerated)
             {
                 if (first_failure.empty())
                     first_failure = accumulated + "：" + DescribeHttpFailure(response);
@@ -686,17 +697,8 @@ class WebDavStore final : public RemoteStore
         {
             if (entry.name != "response")
                 continue;
-            // PROPFIND 可能给出多个 propstat，取带 200 的那一块。
-            for (const XmlNode &propstat : entry.children)
+            if (const XmlNode *prop = SuccessfulProp(entry))
             {
-                if (propstat.name != "propstat")
-                    continue;
-                const XmlNode *status = FindChild(propstat, "status");
-                if (status && Trimmed(status->text).find(" 200 ") == std::string::npos)
-                    continue;
-                const XmlNode *prop = FindChild(propstat, "prop");
-                if (!prop)
-                    continue;
                 if (const XmlNode *length = FindChild(*prop, "getcontentlength"))
                     object.size = static_cast<std::uint64_t>(std::strtoull(Trimmed(length->text).c_str(), nullptr, 10));
                 if (const XmlNode *modified = FindChild(*prop, "getlastmodified"))

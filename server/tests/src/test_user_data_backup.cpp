@@ -1167,3 +1167,51 @@ TEST_CASE(user_data_backup_plain_import_merges_user_dictionary_rows)
     sqlite3_finalize(statement);
     sqlite3_close(db);
 }
+
+// 统计还没按设备分账：同步恢复整份替换 stats.db 就是拿别的设备的统计抹掉本机的。
+// 分账落地之前，同步恢复不动它；普通导入（用户自己选的完整备份）仍然恢复统计。
+TEST_CASE(user_data_backup_merging_keeps_local_statistics)
+{
+    Workspace workspace("merging-statistics");
+    const auto archive = workspace.root / "backup.zip";
+
+    const auto make_stats = [](const fs::path &path, const char *marker) {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(path).c_str(), &db) == SQLITE_OK);
+        const std::string sql =
+            std::string("CREATE TABLE marker(value TEXT);INSERT INTO marker VALUES('") + marker + "');";
+        REQUIRE(sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    };
+    const fs::path remote_stats = workspace.root / "remote-stats.db";
+    make_stats(remote_stats, "remote");
+
+    std::string message;
+    {
+        user_data_zip::Writer writer(archive);
+        user_data_zip::Entry config_entry;
+        REQUIRE(writer.AddBytes("config.toml", "[appearance]\ntheme_mode = \"light\"\n", message, &config_entry));
+        user_data_zip::Entry stats_entry;
+        REQUIRE(writer.AddFile("stats.db", remote_stats, message, &stats_entry));
+        REQUIRE(writer.AddBytes("manifest.json", SerializeManifest({config_entry, stats_entry}), message));
+        REQUIRE(writer.Finish(message));
+    }
+
+    const SettingsUserDataBackup::Context destination = MakeContext(workspace.root / "destination");
+    WriteFile(destination.data_dir / "config.toml", "[appearance]\ntheme_mode = \"dark\"\n");
+    const fs::path local_stats = destination.data_dir / "stats.db";
+    make_stats(local_stats, "local");
+
+    auto state = std::make_shared<HookState>();
+    SettingsUserDataBackup::MergeImportReport report;
+    REQUIRE(SettingsUserDataBackup::ImportMerging(destination, archive, MakeHooks(state), report, message));
+
+    sqlite3 *db = nullptr;
+    REQUIRE(sqlite3_open(test::Utf8(local_stats).c_str(), &db) == SQLITE_OK);
+    sqlite3_stmt *statement = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT value FROM marker", -1, &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(std::string(reinterpret_cast<const char *>(sqlite3_column_text(statement, 0))), std::string("local"));
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+}

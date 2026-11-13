@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 
 #pragma comment(lib, "bcrypt.lib")
@@ -71,9 +72,23 @@ std::size_t ReadCallback(char *buffer, std::size_t size, std::size_t count, void
         if (context->progress && *context->progress)
             (*context->progress)({context->sent, context->total});
     }
+    // 短读会被 curl 当成 EOF，请求体被截断却照样发完；读错必须显式中止。
     if (read < wanted && std::ferror(context->file))
+    {
         context->error = "读取待上传文件失败";
+        return CURL_READFUNC_ABORT;
+    }
     return read;
+}
+
+// 跟随重定向或认证重发时 curl 需要把请求体倒回开头，没有这个回调会以 SEND_FAIL_REWIND 失败。
+int SeekCallback(void *user, curl_off_t offset, int origin)
+{
+    auto *context = static_cast<UploadContext *>(user);
+    if (_fseeki64(context->file, static_cast<__int64>(offset), origin) != 0)
+        return CURL_SEEKFUNC_FAIL;
+    context->sent = static_cast<std::uint64_t>(offset);
+    return CURL_SEEKFUNC_OK;
 }
 
 std::size_t WriteCallback(char *data, std::size_t size, std::size_t count, void *user)
@@ -165,6 +180,120 @@ std::string UriEncode(const std::string &value, bool encode_slash)
             out.push_back(kHex[(ch >> 4) & 0x0F]);
             out.push_back(kHex[ch & 0x0F]);
         }
+    }
+    return out;
+}
+
+namespace
+{
+int HexDigit(char ch)
+{
+    if (ch >= '0' && ch <= '9')
+        return ch - '0';
+    if (ch >= 'a' && ch <= 'f')
+        return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F')
+        return ch - 'A' + 10;
+    return -1;
+}
+} // namespace
+
+std::string PercentDecode(const std::string &value)
+{
+    std::string decoded;
+    decoded.reserve(value.size());
+    for (std::size_t i = 0; i < value.size(); ++i)
+    {
+        if (value[i] == '%' && i + 2 < value.size())
+        {
+            const int high = HexDigit(value[i + 1]);
+            const int low = HexDigit(value[i + 2]);
+            if (high >= 0 && low >= 0)
+            {
+                decoded.push_back(static_cast<char>((high << 4) | low));
+                i += 2;
+                continue;
+            }
+        }
+        decoded.push_back(value[i]);
+    }
+    return decoded;
+}
+
+std::string XmlDecodeEntities(const std::string &value)
+{
+    // 单遍扫描：逐个替换的写法会把 &amp;lt; 先变成 &lt; 再变成 <，多解一层。
+    std::string out;
+    out.reserve(value.size());
+    std::size_t position = 0;
+    while (position < value.size())
+    {
+        const std::size_t amp = value.find('&', position);
+        if (amp == std::string::npos)
+        {
+            out.append(value, position, std::string::npos);
+            break;
+        }
+        out.append(value, position, amp - position);
+        const std::size_t semicolon = value.find(';', amp + 1);
+        if (semicolon == std::string::npos || semicolon - amp > 12)
+        {
+            out.push_back('&');
+            position = amp + 1;
+            continue;
+        }
+        const std::string entity = value.substr(amp + 1, semicolon - amp - 1);
+        std::uint32_t code_point = 0;
+        bool known = true;
+        if (entity == "amp")
+            code_point = '&';
+        else if (entity == "lt")
+            code_point = '<';
+        else if (entity == "gt")
+            code_point = '>';
+        else if (entity == "quot")
+            code_point = '"';
+        else if (entity == "apos")
+            code_point = '\'';
+        else if (entity.size() > 1 && entity[0] == '#')
+        {
+            const bool hex = entity[1] == 'x' || entity[1] == 'X';
+            const std::string digits = entity.substr(hex ? 2 : 1);
+            char *end = nullptr;
+            const unsigned long parsed = std::strtoul(digits.c_str(), &end, hex ? 16 : 10);
+            known = !digits.empty() && end && *end == '\0' && parsed > 0 && parsed <= 0x10FFFF;
+            code_point = static_cast<std::uint32_t>(parsed);
+        }
+        else
+            known = false;
+        if (!known)
+        {
+            out.push_back('&');
+            position = amp + 1;
+            continue;
+        }
+        // 按 UTF-8 写出码点。
+        if (code_point < 0x80)
+            out.push_back(static_cast<char>(code_point));
+        else if (code_point < 0x800)
+        {
+            out.push_back(static_cast<char>(0xC0 | (code_point >> 6)));
+            out.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+        }
+        else if (code_point < 0x10000)
+        {
+            out.push_back(static_cast<char>(0xE0 | (code_point >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+        }
+        else
+        {
+            out.push_back(static_cast<char>(0xF0 | (code_point >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((code_point >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+        }
+        position = semicolon + 1;
     }
     return out;
 }
@@ -321,9 +450,8 @@ std::string UrlRoot(const std::string &url)
     return slash == std::string::npos ? url : url.substr(0, slash);
 }
 
-// 从原始响应头里取一个字段（大小写不敏感）。只看**最后一个**响应块：
-// 带认证的请求通常先收到 401 挑战再收到 200，挑战块里的 Content-Length: 0
-// 不是最终响应的事实，扫全部块会把真实值覆盖成 0。
+// 从原始响应头里取一个字段（大小写不敏感）。只看**最后一个**响应块：跟随重定向或
+// 认证协商时会先收到 3xx / 401 再收到 200，前面那块里的 Content-Length 不是最终响应的事实。
 std::string HeaderValue(const std::string &headers, const std::string &name)
 {
     std::string lower_name = name;
@@ -451,7 +579,11 @@ HttpResponse Perform(const HttpRequest &request, const ProgressCallback &progres
     curl_easy_setopt(curl, CURLOPT_URL, request.url.c_str());
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 15000L);
+    // 大归档的总耗时取决于带宽，给它定总时长上限只会让慢速上行必然超时；传输类请求传 0，
+    // 改由低速判定识别卡死：连续 60 秒低于 1 KB/s 才算断了。
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, request.timeout_seconds);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, request.follow_redirects ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
@@ -481,17 +613,25 @@ HttpResponse Perform(const HttpRequest &request, const ProgressCallback &progres
             curl_easy_cleanup(curl);
             return response;
         }
+        // 大小必须如实给出，空文件也要给 0：不设 INFILESIZE 时 curl 改用 chunked 编码，
+        // S3、R2 与不少 WebDAV 实现直接回 411 / 501。
         std::error_code ec;
         upload.total = std::filesystem::file_size(request.upload_file, ec);
         if (ec)
-            upload.total = 0;
+        {
+            response.error = "无法读取待上传文件的大小";
+            std::fclose(upload_file);
+            curl_easy_cleanup(curl);
+            return response;
+        }
         upload.file = upload_file;
         upload.progress = &progress;
         curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
         curl_easy_setopt(curl, CURLOPT_READFUNCTION, ReadCallback);
         curl_easy_setopt(curl, CURLOPT_READDATA, &upload);
-        if (upload.total > 0)
-            curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(upload.total));
+        curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION, SeekCallback);
+        curl_easy_setopt(curl, CURLOPT_SEEKDATA, &upload);
+        curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(upload.total));
     }
     else if (request.method == "POST" || !request.body.empty())
     {
@@ -536,6 +676,10 @@ HttpResponse Perform(const HttpRequest &request, const ProgressCallback &progres
         response.error = upload.error;
     if (!download.error.empty())
         response.error = download.error;
+    // 传输没走完时，状态码只是响应头里的那个数字：200 之后断网、磁盘写满都会留下一个
+    // 截断的文件或列表。把状态码清零，让每个调用点的 IsSuccess 都判失败，不必各自记着查 code。
+    if (response.code != CURLE_OK)
+        response.status = 0;
 
     curl_easy_cleanup(curl);
     if (upload_file)

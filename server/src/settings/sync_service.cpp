@@ -130,7 +130,7 @@ std::string JsonEscape(const std::string &value)
 
 std::string MakeRevision()
 {
-    // 时间戳加进程号：同一秒内两次上传也不会撞名，且字典序即时间序，方便按名字排。
+    // 时间戳加进程号：同一秒内两次上传也不会撞名。先后顺序按 RevisionOrder 数值比，不按字符串。
     const auto now = std::chrono::system_clock::now();
     const std::int64_t seconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     return std::to_string(seconds) + "-" + std::to_string(GetCurrentProcessId());
@@ -144,6 +144,32 @@ bool SafeRevision(const std::string &revision)
         return false;
     return std::all_of(revision.begin(), revision.end(),
                        [](unsigned char ch) { return (ch >= '0' && ch <= '9') || ch == '-'; });
+}
+
+// revision 按数值比先后：(秒级时间戳, 进程号)。按字符串比在进程号位数不同时就错了
+// （"…-9" 排在 "…-12" 后面）。解析不了的排在最旧。
+std::pair<std::int64_t, std::int64_t> RevisionOrder(const std::string &revision)
+{
+    const std::size_t dash = revision.find('-');
+    const std::string seconds = revision.substr(0, dash);
+    const std::string pid = dash == std::string::npos ? std::string() : revision.substr(dash + 1);
+    const auto parse = [](const std::string &text) -> std::int64_t {
+        if (text.empty() || text.size() > 18 ||
+            !std::all_of(text.begin(), text.end(), [](unsigned char ch) { return ch >= '0' && ch <= '9'; }))
+            return -1;
+        return std::stoll(text);
+    };
+    return {parse(seconds), parse(pid)};
+}
+
+// 从快照 key（devices/<id>/<revision>.zip）里取 revision。
+std::string RevisionFromSnapshotKey(const std::string &key)
+{
+    const std::size_t slash = key.rfind('/');
+    std::string name = slash == std::string::npos ? key : key.substr(slash + 1);
+    if (name.size() > 4 && name.compare(name.size() - 4, 4, ".zip") == 0)
+        name.resize(name.size() - 4);
+    return name;
 }
 
 std::filesystem::path TemporaryArchive(const std::filesystem::path &data_dir, const std::string &revision)
@@ -267,24 +293,46 @@ bool SyncService::ReadDeviceInfo(const std::string &device_id, DeviceInfo &info,
     return true;
 }
 
-void SyncService::PruneSnapshots(const std::string &device_id)
+std::vector<std::string> SyncService::ListSnapshotRevisions(const std::string &device_id, std::string &message)
 {
     std::vector<RemoteObject> objects;
-    std::string ignored;
-    if (!store_->List(std::string(kDevicesPrefix) + "/" + device_id, objects, ignored))
-        return;
-    std::vector<RemoteObject> snapshots;
-    for (RemoteObject &object : objects)
+    std::vector<std::string> revisions;
+    if (!store_->List(std::string(kDevicesPrefix) + "/" + device_id, objects, message))
+        return revisions;
+    for (const RemoteObject &object : objects)
     {
-        if (DeviceIdFromSnapshotKey(object.key) == device_id)
-            snapshots.push_back(std::move(object));
+        if (DeviceIdFromSnapshotKey(object.key) != device_id)
+            continue;
+        const std::string revision = RevisionFromSnapshotKey(object.key);
+        if (SafeRevision(revision))
+            revisions.push_back(revision);
     }
-    // 名字里带时间戳，字典序即时间序；倒序后前 keep_snapshots 个是要留下的。
-    std::sort(snapshots.begin(), snapshots.end(),
-              [](const RemoteObject &left, const RemoteObject &right) { return left.key > right.key; });
+    // 新的在前。
+    std::sort(revisions.begin(), revisions.end(), [](const std::string &left, const std::string &right) {
+        return RevisionOrder(left) > RevisionOrder(right);
+    });
+    return revisions;
+}
+
+void SyncService::PruneSnapshots(const std::string &device_id, const std::string &current_revision)
+{
+    std::string ignored;
+    const std::vector<std::string> revisions = ListSnapshotRevisions(device_id, ignored);
+    // 刚上传、设备信息正指向的那一份无条件保留，不参与排序淘汰：系统时钟曾经超前过时，
+    // 它的时间戳会比云端的旧快照还小，按时间淘汰就会删掉设备 json 正指着的对象。
     const std::size_t keep = static_cast<std::size_t>((std::max)(options_.keep_snapshots, 1));
-    for (std::size_t index = keep; index < snapshots.size(); ++index)
-        (void)store_->Delete(snapshots[index].key, ignored);
+    std::size_t kept = current_revision.empty() ? 0 : 1;
+    for (const std::string &revision : revisions)
+    {
+        if (revision == current_revision)
+            continue;
+        if (kept < keep)
+        {
+            ++kept;
+            continue;
+        }
+        (void)store_->Delete(SnapshotKey(device_id, revision), ignored);
+    }
 }
 
 UploadResult SyncService::Upload(const ArchiveBuilder &build_archive, const ProgressCallback &progress)
@@ -341,7 +389,7 @@ UploadResult SyncService::Upload(const ArchiveBuilder &build_archive, const Prog
         result.message = "快照已上传，但设备信息更新失败：" + info_message;
         return result;
     }
-    PruneSnapshots(device_id_);
+    PruneSnapshots(device_id_, revision);
     result.ok = true;
     result.revision = revision;
     result.message = "已上传备份快照";
@@ -421,7 +469,20 @@ DownloadResult SyncService::Download(const std::string &device_id, const Progres
     if (!store_->Get(SnapshotKey(target->device_id, target->revision), archive, progress, result.message))
     {
         std::filesystem::remove(archive, error);
-        return result;
+        // 设备信息指向的那份不在了（旧版本的保留策略可能删掉过它，或另一台机器同时在清理），
+        // 退回到这台设备目录下实际存在的最新一份，而不是让这台设备永远恢复不了。
+        std::string fallback_message;
+        const std::vector<std::string> revisions = ListSnapshotRevisions(target->device_id, fallback_message);
+        const auto fallback = std::find_if(revisions.begin(), revisions.end(),
+                                           [&](const std::string &revision) { return revision != target->revision; });
+        if (fallback == revisions.end())
+            return result;
+        std::string retry_message;
+        if (!store_->Get(SnapshotKey(target->device_id, *fallback), archive, progress, retry_message))
+        {
+            std::filesystem::remove(archive, error);
+            return result;
+        }
     }
     // 下载完立刻验一遍：损坏的归档不能进入后面的"停 Server 再覆盖"流程。
     std::string validate_message;

@@ -90,6 +90,15 @@ class FakeStore final : public user_data_sync::RemoteStore
         return true;
     }
 
+    void Seed(const std::string &key, const std::string &content)
+    {
+        objects_[key] = content;
+    }
+    bool Has(const std::string &key) const
+    {
+        return objects_.count(key) != 0;
+    }
+
   private:
     std::map<std::string, std::string> objects_;
 };
@@ -139,4 +148,67 @@ TEST_CASE(fake_store_upload_and_list_devices)
     REQUIRE_EQ(devices.size(), static_cast<std::size_t>(1));
     REQUIRE_EQ(devices.front().device_id, service.DeviceId());
     REQUIRE_EQ(devices.front().revision, uploaded.revision);
+}
+
+namespace
+{
+bool WritePayload(const fs::path &destination, std::string &message)
+{
+    std::ofstream file(destination, std::ios::binary | std::ios::trunc);
+    if (!file)
+    {
+        message = "write failed";
+        return false;
+    }
+    file << "payload";
+    return true;
+}
+} // namespace
+
+// 刚上传的那份无条件保留：系统时钟曾经超前过时，云端旧快照的时间戳比新上传的还大，
+// 按时间淘汰会删掉设备信息正指向的对象，别的设备就再也恢复不了这台。
+TEST_CASE(prune_never_deletes_the_snapshot_just_uploaded)
+{
+    const fs::path root = TempDir("sync-service-prune-skew");
+    std::string message;
+    const std::string device = user_data_sync::LoadOrCreateDeviceId(root, message);
+    REQUIRE(user_data_sync::IsValidDeviceId(device));
+
+    auto store = std::make_unique<FakeStore>();
+    FakeStore *raw = store.get();
+    const std::string future = user_data_sync::SnapshotKey(device, "9999999999-1");
+    raw->Seed(future, "old but future-dated");
+    user_data_sync::SyncOptions options;
+    options.keep_snapshots = 1;
+    user_data_sync::SyncService service(std::move(store), root, options);
+
+    const user_data_sync::UploadResult uploaded = service.Upload(WritePayload, {});
+    REQUIRE(uploaded.ok);
+    REQUIRE(raw->Has(user_data_sync::SnapshotKey(device, uploaded.revision)));
+    REQUIRE(!raw->Has(future));
+}
+
+// 先后按数值比：同一秒内进程号 12 比 9 新，按字符串比会反过来。
+TEST_CASE(prune_orders_revisions_numerically)
+{
+    const fs::path root = TempDir("sync-service-prune-order");
+    std::string message;
+    const std::string device = user_data_sync::LoadOrCreateDeviceId(root, message);
+    REQUIRE(user_data_sync::IsValidDeviceId(device));
+
+    auto store = std::make_unique<FakeStore>();
+    FakeStore *raw = store.get();
+    const std::string older = user_data_sync::SnapshotKey(device, "1700000000-9");
+    const std::string newer = user_data_sync::SnapshotKey(device, "1700000000-12");
+    raw->Seed(older, "a");
+    raw->Seed(newer, "b");
+    user_data_sync::SyncOptions options;
+    options.keep_snapshots = 2;
+    user_data_sync::SyncService service(std::move(store), root, options);
+
+    const user_data_sync::UploadResult uploaded = service.Upload(WritePayload, {});
+    REQUIRE(uploaded.ok);
+    REQUIRE(raw->Has(user_data_sync::SnapshotKey(device, uploaded.revision)));
+    REQUIRE(raw->Has(newer));
+    REQUIRE(!raw->Has(older));
 }

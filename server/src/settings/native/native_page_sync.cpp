@@ -184,6 +184,9 @@ struct SyncState
     std::shared_ptr<CssButton> refresh;
     std::shared_ptr<DeviceList> devices;
     bool busy = false;
+    // 本页最近发出、还没收到回执的请求。别的请求的回执（页面重建前发出的、或者后端拒绝的
+    // 并发请求）不能把忙碌状态提前解除。
+    std::string pendingRequestId;
     std::string localDeviceId;
 };
 
@@ -261,22 +264,29 @@ void RebuildDeviceList(const std::shared_ptr<SyncState> &state, SettingsModel *m
             detail = L"本机 · " + detail;
         row.title->SetText(hostname.empty() ? L"未命名设备" : hostname);
         row.detail->SetText(detail);
-        // 本机自己那份没有恢复的意义，直接禁用，避免用户误点后覆盖正在使用的数据。
-        row.restore->SetDisabled(local);
+        // 本机那份也允许恢复：设备标识跨重装保留，本机数据坏了时云端最近的就是"本机"这一行。
+        // 恢复是合并而不是覆盖（词库较新者胜、配置只采纳改过的键），从自己的旧快照恢复
+        // 只会把丢掉的东西补回来，不会冲掉之后的改动。确认框按这两种情况分别说明。
+        row.restore->SetDisabled(false);
         std::weak_ptr<SyncState> weak = state;
         row.restore->SetOnClick([model, weak, deviceId, local]() {
             auto locked = weak.lock();
-            if (!locked || locked->busy || local || deviceId.empty())
+            if (!locked || locked->busy || deviceId.empty())
                 return;
+            const wchar_t *prompt =
+                local ? L"这是本机此前上传的快照。恢复会先停止输入法后台进程，把云端快照里有、本机已经丢失的"
+                        L"词条与设置合并回来；本机之后做的改动不会被冲掉。将被覆盖的皮肤和模型会先备份到数据目录的 "
+                        L".backup-before-import。\n\n继续恢复吗？"
+                      : L"恢复会先停止输入法后台进程，并把将被覆盖的配置、皮肤和模型备份到数据目录的 "
+                        L".backup-before-import。词库按日志合并，不会替换现有数据库；本机的同步设置、代理和"
+                        L"输入统计保持不变。\n\n继续恢复吗？";
             const int answer =
-                MessageBoxW(GetActiveWindow(),
-                            L"恢复会先停止输入法后台进程，并把将被覆盖的配置、统计、皮肤和模型备份到数据目录的 "
-                            L".backup-before-import。词库按日志合并，不会替换现有数据库。\n\n继续恢复吗？",
-                            L"从云端恢复", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+                MessageBoxW(GetActiveWindow(), prompt, L"从云端恢复", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
             if (answer != IDOK)
                 return;
             SetBusy(*locked, true);
-            PostSync(model, NextRequestId("download"), "download", deviceId);
+            locked->pendingRequestId = NextRequestId("download");
+            PostSync(model, locked->pendingRequestId, "download", deviceId);
         });
     }
 }
@@ -378,21 +388,14 @@ VisualPtr BuildSyncPage(PageContext &context)
         bindField(state->s3Prefix, "sync.s3_prefix");
     }
 
-    // 开关与自动上传
+    // 开关与快照选项
+    //
+    // sync.auto_upload_minutes 的配置键已留好，但后台定时上传还没接（归档构建在设置进程里，
+    // 设置窗口一关就停的上传不叫自动上传，见 docs/user-data-sync.md）。接上之前不在界面上
+    // 露出这一项：用户选了「每天一次」就会以为有了定期备份。
     {
         auto rows = std::make_shared<Column>(0.0f);
         rows->Add(MakeRow(L"启用同步", L"关闭后不再上传，也不影响已经上传的快照", BindToggle(context, "sync.enabled")));
-        rows->Add(std::make_shared<Divider>());
-        Dropdown::Options frequency;
-        frequency.minWidth = 130.0f;
-        rows->Add(MakeRow(L"自动上传间隔", L"按固定间隔把当前数据打包上传一次；仅手动表示只在下面点「立即上传」",
-                          BindDropdown(context, "sync.auto_upload_minutes",
-                                       Options({{"0", L"仅手动"},
-                                                {"30", L"每 30 分钟"},
-                                                {"120", L"每 2 小时"},
-                                                {"360", L"每 6 小时"},
-                                                {"1440", L"每天一次"}}),
-                                       frequency, ValueKind::Integer)));
         rows->Add(std::make_shared<Divider>());
         Dropdown::Options keep;
         keep.minWidth = 110.0f;
@@ -436,21 +439,24 @@ VisualPtr BuildSyncPage(PageContext &context)
             if (!locked || locked->busy)
                 return;
             SetBusy(*locked, true);
-            PostSync(model, NextRequestId("probe"), "probe", {});
+            locked->pendingRequestId = NextRequestId("probe");
+            PostSync(model, locked->pendingRequestId, "probe", {});
         });
         state->upload->SetOnClick([model, weak]() {
             auto locked = weak.lock();
             if (!locked || locked->busy)
                 return;
             SetBusy(*locked, true);
-            PostSync(model, NextRequestId("upload"), "upload", {});
+            locked->pendingRequestId = NextRequestId("upload");
+            PostSync(model, locked->pendingRequestId, "upload", {});
         });
         state->refresh->SetOnClick([model, weak]() {
             auto locked = weak.lock();
             if (!locked || locked->busy)
                 return;
             SetBusy(*locked, true);
-            PostSync(model, NextRequestId("list"), "listDevices", {});
+            locked->pendingRequestId = NextRequestId("list");
+            PostSync(model, locked->pendingRequestId, "listDevices", {});
         });
 
         // 回执：成功给绿色提示，失败给红色；列表类回执顺带重建设备列表。
@@ -458,6 +464,18 @@ VisualPtr BuildSyncPage(PageContext &context)
             auto locked = weak.lock();
             if (!locked)
                 return;
+            const std::string requestId = message.contains("requestId") && message["requestId"].is_string()
+                                              ? message["requestId"].get<std::string>()
+                                              : std::string();
+            // 不是本页在等的那条：只更新设备列表，不碰忙碌状态与提示。
+            const bool awaited = locked->pendingRequestId.empty() || requestId == locked->pendingRequestId;
+            if (!awaited)
+            {
+                if (message.contains("devices") && message["devices"].is_array())
+                    RebuildDeviceList(locked, model, message["devices"]);
+                return;
+            }
+            locked->pendingRequestId.clear();
             SetBusy(*locked, false);
             const bool ok = message.contains("ok") && message["ok"].is_boolean() && message["ok"].get<bool>();
             const std::string text = message.contains("message") && message["message"].is_string()

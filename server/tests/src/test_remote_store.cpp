@@ -154,3 +154,46 @@ TEST_CASE(header_value_ignores_the_auth_challenge_block)
     const std::string only_challenge = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
     REQUIRE_EQ(user_data_sync::detail::HeaderValue(only_challenge, "content-length"), std::string("0"));
 }
+
+// 坚果云的默认目录叫「我的坚果云」。服务端回的 href 是百分号编码（大小写不定），用户填的
+// base 可能是原文也可能是编码过的；两边不先解码再比，List 就永远是空的。
+TEST_CASE(webdav_href_to_key_decodes_both_sides)
+{
+    using user_data_sync::detail::WebDavHrefToKey;
+    const std::string encoded_href = "/dav/%E6%88%91%E7%9A%84%E5%9D%9A%E6%9E%9C%E4%BA%91/msime/devices/abc.json";
+    const std::string lower_href = "/dav/%e6%88%91%e7%9a%84%e5%9d%9a%e6%9e%9c%e4%ba%91/msime/devices/abc.json";
+    const std::string raw_base = "https://dav.jianguoyun.com/dav/我的坚果云/msime";
+    const std::string encoded_base =
+        "https://dav.jianguoyun.com/dav/%E6%88%91%E7%9A%84%E5%9D%9A%E6%9E%9C%E4%BA%91/msime/";
+    REQUIRE_EQ(WebDavHrefToKey(encoded_href, raw_base), std::string("devices/abc.json"));
+    REQUIRE_EQ(WebDavHrefToKey(lower_href, encoded_base), std::string("devices/abc.json"));
+    // 完整 URL 形式的 href、目录项的尾斜杠。
+    REQUIRE_EQ(WebDavHrefToKey("https://dav.jianguoyun.com" + encoded_href, raw_base), std::string("devices/abc.json"));
+    REQUIRE_EQ(WebDavHrefToKey("/dav/%E6%88%91%E7%9A%84%E5%9D%9A%E6%9E%9C%E4%BA%91/msime/devices/", raw_base),
+               std::string("devices"));
+    // base 自己。
+    REQUIRE_EQ(WebDavHrefToKey("/dav/%E6%88%91%E7%9A%84%E5%9D%9A%E6%9E%9C%E4%BA%91/msime/", raw_base), std::string());
+    // 只共享前缀字符、不在 base 之下的（msime-old）不能被当成 base 里的东西。
+    REQUIRE(WebDavHrefToKey("/dav/x/msime-old/a.zip", "https://h/dav/x/msime").find('/') != std::string::npos);
+}
+
+TEST_CASE(xml_entities_decode_in_one_pass)
+{
+    using user_data_sync::detail::XmlDecodeEntities;
+    REQUIRE_EQ(XmlDecodeEntities("a&amp;b"), std::string("a&b"));
+    // 逐个替换的写法会把 &amp;lt; 多解一层成 <。
+    REQUIRE_EQ(XmlDecodeEntities("&amp;lt;"), std::string("&lt;"));
+    REQUIRE_EQ(XmlDecodeEntities("&quot;etag&quot;"), std::string("\"etag\""));
+    REQUIRE_EQ(XmlDecodeEntities("&#38;&#x41;&#x6C34;"), std::string("&A\xE6\xB0\xB4"));
+    // 认不出的实体原样保留。
+    REQUIRE_EQ(XmlDecodeEntities("&nbsp; & x"), std::string("&nbsp; & x"));
+}
+
+TEST_CASE(percent_decode_keeps_malformed_sequences)
+{
+    using user_data_sync::detail::PercentDecode;
+    REQUIRE_EQ(PercentDecode("a%20b"), std::string("a b"));
+    REQUIRE_EQ(PercentDecode("%E6%B0%B4"), std::string("\xE6\xB0\xB4"));
+    REQUIRE_EQ(PercentDecode("100%"), std::string("100%"));
+    REQUIRE_EQ(PercentDecode("%zz"), std::string("%zz"));
+}

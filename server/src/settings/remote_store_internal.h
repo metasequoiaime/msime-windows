@@ -25,9 +25,10 @@ struct HttpRequest
     std::string body;
     std::filesystem::path upload_file;
     std::filesystem::path download_file;
-    // 单条请求的挂钟上限。上传大归档要放宽，探活要收紧。
+    // 单条请求的挂钟上限，0 表示不限（上传下载归档用，卡死由低速判定兜底）；探活要收紧。
     long timeout_seconds = 120;
-    // 是否跟随重定向。WebDAV 的目录地址常 301 到带斜杠的写法，S3 会 301 到正确的 region。
+    // 是否跟随重定向。WebDAV 的目录地址常 301 到带斜杠的写法。S3 必须关掉：签名绑定了 host，
+    // 跳到别的 host 必然验签失败，而 path-style 的 301 PermanentRedirect 根本不带 Location。
     bool follow_redirects = true;
     // 需要读响应头的调用方（HEAD 取 size 与修改时间）把它设为非空。
     bool capture_headers = false;
@@ -56,6 +57,13 @@ std::string UriEncode(const std::string &value, bool encode_slash);
 std::string JoinUrl(const std::string &base_url, const std::string &key);
 // 取出 URL 的 scheme://authority 部分，用于拼绝对路径。
 std::string UrlRoot(const std::string &url);
+// 解码 %XX；不合法的 % 序列原样保留。
+std::string PercentDecode(const std::string &value);
+// 解码 XML 文本里的预定义实体与 &#NN; / &#xNN; 数字引用，单遍完成，不会多解一层。
+std::string XmlDecodeEntities(const std::string &value);
+// 把 PROPFIND 返回的 href（完整 URL、绝对路径，编码与否都行）换算成相对于 base_url 的 key。
+// 两边都先解码再比前缀；href 不在 base 之下时返回它的完整解码路径（含 /，调用方据此跳过）。
+std::string WebDavHrefToKey(const std::string &href, const std::string &base_url);
 // 规范化查询串：按编码后的参数名排序。
 std::string CanonicalQuery(const std::vector<std::pair<std::string, std::string>> &params);
 
@@ -73,7 +81,7 @@ bool IsRetryableStatus(long status);
 // 把失败转成给人看的中文，附带服务端返回的前若干字节（S3 的 XML 错误里有 Code/Message）。
 std::string DescribeHttpFailure(const HttpResponse &response);
 
-// 从原始响应头里取一个字段（大小写不敏感），取最后一个出现的。
+// 从原始响应头里取一个字段（大小写不敏感），只看最后一个响应块（跟随重定向时会有多块）。
 std::string HeaderValue(const std::string &headers, const std::string &name);
 
 enum class AttemptResult
