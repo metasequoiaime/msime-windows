@@ -104,6 +104,14 @@ string ShuangpinUtil::cvt_single_sp_to_pinyin(string sp_str, const ShuangpinProf
             res = sm + normalized_ym;
         }
     }
+    // 微软双拼的 T 键是 üe 的 ue 拼法（jue/que/xue），l/n 后的字典拼法是 ve。不补这一手，
+    // lt/nt 解出的 lue/nue 不是合法音节，会退成 l't/n't 两段简拼。同一键上还有别的合法
+    // 韵母时（首道的 l 键也是 ai）那个读法优先，所以只在没有别的读法时补。
+    if (res.empty() && (sm == "l" || sm == "n") && std::find(ym_list.begin(), ym_list.end(), "ue") != ym_list.end() &&
+        shuangpin_pinyin_set().count(sm + "ve") > 0)
+    {
+        res = sm + "ve";
+    }
     return res;
 }
 
