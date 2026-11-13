@@ -819,6 +819,13 @@ begin
   Result := CompareText(FileName, 'skins') = 0;
 end;
 
+function IsUserSyncStateFile(const FileName: String): Boolean;
+begin
+  { sync_state.json 存着本机的同步设备标识。丢了它，这台机器在云端会变成一台新设备，
+    旧快照虽然还在但设置页里对不上号，用户会以为数据没了。它没有出厂副本可回退。}
+  Result := CompareText(FileName, 'sync_state.json') = 0;
+end;
+
 function IsUserShuangpinDirectory(const FileName: String): Boolean;
 begin
   { shuangpin\custom 放的是用户自定义双拼方案，安装包不往 shuangpin 里写任何东西，整个目录都归用户。}
@@ -847,6 +854,7 @@ begin
     IsUserTranslationFile(FileName) or
     IsUserSkinDirectory(FileName) or
     IsUserShuangpinDirectory(FileName) or
+    IsUserSyncStateFile(FileName) or
     IsCollocationModelDirectory(FileName) or
     (CompareText(FileName, DataDirMarkerName) = 0);
 end;
@@ -1538,7 +1546,8 @@ begin
     '"' + RemoveBackslashUnlessRoot(OldDir) + '" "' + RemoveBackslashUnlessRoot(NewDir) + '" ' +
     'msime_user.db msime_user.db-wal msime_user.db-shm msime_user.db-journal ' +
     'stats.db stats.db-wal stats.db-shm stats.db-journal ' +
-    'config.toml config.base.toml custom_translations.txt /MOVE /R:2 /W:1 /NJH /NJS /NP /NFL /NDL',
+    'config.toml config.base.toml custom_translations.txt sync_state.json ' +
+    '/MOVE /R:2 /W:1 /NJH /NJS /NP /NFL /NDL',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,

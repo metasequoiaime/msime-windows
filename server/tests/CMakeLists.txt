@@ -250,6 +250,15 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/settings/remote_store_common.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/remote_store_s3.cpp"
     "${CMAKE_SOURCE_DIR}/src/settings/remote_store_webdav.cpp"
+    # 合并层：词库日志按较新者胜出、配置按键合并、凭据剥离。
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_sync_merge.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/sync_merge.cpp"
+    # 编排层：设备命名空间、快照 key、保留与下载校验，用内存假 store 驱动。
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_sync_service.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/sync_service.cpp"
+    # ime_config.cpp 的 LoadImeConfig 引用 g_sync_mutex / g_sync，这两个符号只在
+    # ime_config_sync.cpp 里定义，测试目标链接了 ime_config.cpp 就必须一并带上。
+    "${CMAKE_SOURCE_DIR}/src/config/ime_config_sync.cpp"
 )
 
 add_executable(${TEST_EXECUTABLE_NAME} ${TEST_SOURCE_FILES})

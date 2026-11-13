@@ -165,6 +165,36 @@
         "additionalProperties": false
       }
     },
+    "userDataSyncRequest": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "probe",
+              "listDevices",
+              "upload",
+              "download"
+            ]
+          },
+          "deviceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
     "copyText": {
       "surfaces": [
         "settings"
@@ -1174,6 +1204,65 @@
         }
       },
       "required": [
+        "action",
+        "ok",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "userDataSyncResponse": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "probe",
+            "listDevices",
+            "upload",
+            "download"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "deviceId": {
+                "type": "string"
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "uploadedUnix": {
+                "type": "integer"
+              },
+              "size": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "deviceId",
+              "hostname",
+              "uploadedUnix",
+              "size"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "localDeviceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
         "action",
         "ok",
         "message"

@@ -14,6 +14,8 @@
 #include "settings/dictionary_manager.h"
 #include "settings/native/native_settings_window.h"
 #include "settings/user_data_backup.h"
+#include "settings/sync_merge.h"
+#include "settings/sync_service.h"
 
 #include "msimeui/DeviceResources.h"
 #include "settings/serial_task_queue.h"
@@ -94,6 +96,9 @@ int g_restart_refresh_remaining = 0;
 // A DPI rebuild recreates the About page, so page-local button state cannot be
 // the only guard against a second import queueing behind the first one.
 std::atomic<bool> g_user_data_backup_busy{false};
+// 同步上传、下载、恢复都不能并行，和备份用同一个 worker 但独立一把锁：
+// 用户可以在一次备份完成后立刻开始同步，不需要等前一个 flag 释放。
+std::atomic<bool> g_user_data_sync_busy{false};
 // appearance.settings_window_linger 的 UI 线程副本，由 ConfigCompletion 更新。
 std::string g_settings_window_linger = "off";
 std::wstring g_last_config_message;
@@ -131,6 +136,51 @@ void PostRestartServerDone(bool ok)
 {
     PostToSettingsPage(
         json::value{{"type", "restartServerDone"}, {"protocolVersion", metasequoia::webview::Version}, {"ok", ok}});
+}
+
+// 按 [sync] 配置造一个传输层实例。凭据已在配置层解密，这里直接用。
+// 配置不完整时返回空指针并把原因写进 message，调用方据此回执给页面。
+std::unique_ptr<user_data_sync::RemoteStore> MakeSyncStore(const SyncConfig &config, std::string &message)
+{
+    if (!config.enabled)
+    {
+        message = "同步未开启，请先在设置里打开。";
+        return nullptr;
+    }
+    if (config.backend == "webdav")
+    {
+        if (config.webdav_url.empty())
+        {
+            message = "请先填写 WebDAV 地址。";
+            return nullptr;
+        }
+        user_data_sync::WebDavOptions options;
+        options.base_url = config.webdav_url;
+        options.username = config.webdav_username;
+        options.password = config.webdav_password;
+        return user_data_sync::MakeWebDavStore(std::move(options));
+    }
+    if (config.backend == "s3")
+    {
+        if (config.s3_endpoint.empty() || config.s3_bucket.empty())
+        {
+            message = "请先填写 S3 服务地址与存储桶。";
+            return nullptr;
+        }
+        user_data_sync::S3Options options;
+        options.endpoint = config.s3_endpoint;
+        options.region = config.s3_region;
+        options.bucket = config.s3_bucket;
+        options.access_key = config.s3_access_key;
+        options.secret_key = config.s3_secret_key;
+        // 路径风格完全按用户勾选：AWS 官方域名需要虚拟主机风格（不勾），MinIO / R2 / B2
+        // 需要路径风格（勾）。不做域名猜测，否则勾选框显示的状态会和实际行为相反。
+        options.path_style = config.s3_path_style;
+        options.prefix = config.s3_prefix;
+        return user_data_sync::MakeS3Store(std::move(options));
+    }
+    message = "请先选择同步方式。";
+    return nullptr;
 }
 
 // 冷启动打点：设置 METASEQUOIA_IME_SETTINGS_TRACE=1 后，各阶段距进程启动的毫秒数追加到
@@ -298,6 +348,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
     const NiuTransConfig &niutrans = GetConfiguredNiuTrans();
     const auto translation = GetConfiguredTranslation();
     const NetworkProxyConfig network_proxy = GetConfiguredNetworkProxy();
+    const SyncConfig sync = GetConfiguredSync();
     const FrequencyAdjustmentConfig &frequency = GetConfiguredFrequencyAdjustment();
     const FloatingToolbarItemsConfig &toolbar = GetConfiguredFloatingToolbarItems();
     const std::filesystem::path skins_root = std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"skins";
@@ -619,6 +670,22 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"niutrans", {{"enabled", niutrans.enabled}, {"app_id", niutrans.app_id}, {"apikey", niutrans.apikey}}},
           {"translation", {{"provider", translation->provider}}},
           {"network", {{"proxy_mode", network_proxy.mode}, {"proxy_server", network_proxy.server}}},
+          {"sync",
+           {{"enabled", sync.enabled},
+            {"backend", sync.backend},
+            {"auto_upload_minutes", sync.auto_upload_minutes},
+            {"keep_snapshots", sync.keep_snapshots},
+            {"include_models", sync.include_models},
+            {"webdav_url", sync.webdav_url},
+            {"webdav_username", sync.webdav_username},
+            {"webdav_password", sync.webdav_password},
+            {"s3_endpoint", sync.s3_endpoint},
+            {"s3_region", sync.s3_region},
+            {"s3_bucket", sync.s3_bucket},
+            {"s3_path_style", sync.s3_path_style},
+            {"s3_prefix", sync.s3_prefix},
+            {"s3_access_key", sync.s3_access_key},
+            {"s3_secret_key", sync.s3_secret_key}}},
           {"helpcode",
            {{"shuangpin_helpcode", GetConfiguredShuangpinHelpcodeEnabled()},
             {"shuangpin_helpcode_direct", GetConfiguredShuangpinHelpcodeDirect()},
@@ -1049,6 +1116,18 @@ bool ApplyConfigUpdate(const json::object &data)
         const json::value &value = data.at("value");
         return value.is_string() && SetConfiguredNetworkString(path.substr(std::string("network.").size()),
                                                                json::value_to<std::string>(value));
+    }
+    if (path.rfind("sync.", 0) == 0)
+    {
+        const json::value &value = data.at("value");
+        const std::string key = path.substr(std::string("sync.").size());
+        if (value.is_bool())
+            return SetConfiguredSyncBool(key, json::value_to<bool>(value));
+        if (value.is_int64())
+            return SetConfiguredSyncInt(key, static_cast<int>(value.as_int64()));
+        if (value.is_string())
+            return SetConfiguredSyncString(key, json::value_to<std::string>(value));
+        return false;
     }
     if (path == "helpcode.show_sp_helpcode_in_candidate_window")
         return SetConfiguredShowShuangpinHelpcodeInCandidateWindow(json::value_to<bool>(data.at("value")));
@@ -1668,6 +1747,189 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                 {
                     g_user_data_backup_busy.store(false);
                     post_done(action, false, "用户数据备份失败，请重试。");
+                }
+            }
+        }
+        else if (type == "userDataSyncRequest")
+        {
+            const auto &data = value.at("data").as_object();
+            const std::string request_id = json::value_to<std::string>(data.at("requestId"));
+            const std::string action = json::value_to<std::string>(data.at("action"));
+            const std::string device_id =
+                data.contains("deviceId") ? json::value_to<std::string>(data.at("deviceId")) : std::string();
+            const auto post_sync = [](const std::string &request_id, const std::string &action, const bool ok,
+                                      const std::string &message, const json::array &devices,
+                                      const bool include_devices, const std::string &local_device_id) {
+                json::value response = {{"type", "userDataSyncResponse"},
+                                        {"requestId", request_id},
+                                        {"action", action},
+                                        {"ok", ok},
+                                        {"message", message},
+                                        {"protocolVersion", metasequoia::webview::Version}};
+                // 列表类回执必须始终带 devices，哪怕是空数组：页面靠它判断"云端已经清空"
+                // 并重建设备列表。只在非空时下发会让旧行留在界面上。
+                if (include_devices)
+                    response.as_object()["devices"] = devices;
+                if (!local_device_id.empty())
+                    response.as_object()["localDeviceId"] = local_device_id;
+                if (metasequoia::webview::Validate(response, "server"))
+                    PostToSettingsPage(response);
+            };
+            if (action != "probe" && action != "listDevices" && action != "upload" && action != "download")
+            {
+                post_sync(request_id, action, false, "未知的同步操作。", json::array{}, false, {});
+            }
+            else if (g_user_data_sync_busy.exchange(true))
+            {
+                // 上传会生成完整归档、下载会覆盖本地数据，两者都不能并行。
+                post_sync(request_id, action, false, "已有同步操作正在进行，请稍后再试。", json::array{}, false, {});
+            }
+            else
+            {
+                try
+                {
+                    const bool submitted = g_worker->Submit([request_id, action, device_id,
+                                                             post_sync]() -> SerialTaskQueue::Completion {
+                        std::string message;
+                        bool ok = false;
+                        json::array devices;
+                        bool import_after_download = false;
+                        std::filesystem::path downloaded;
+                        std::string local_device_id;
+                        // 本机设备标识不依赖 store 是否构造成功：probe / upload 失败时也要能标出
+                        // 本机那一行并禁用它的「恢复…」，否则用户可以对自己的快照点恢复。
+                        {
+                            std::string id_message;
+                            local_device_id = user_data_sync::LoadOrCreateDeviceId(
+                                std::filesystem::path(CommonUtils::get_ime_data_path_w()), id_message);
+                        }
+                        try
+                        {
+                            const SyncConfig config = GetConfiguredSync();
+                            auto store = MakeSyncStore(config, message);
+                            if (!store)
+                            {
+                                // MakeSyncStore 已经把原因写进 message。
+                            }
+                            else
+                            {
+                                user_data_sync::SyncOptions options;
+                                options.keep_snapshots = config.keep_snapshots;
+                                options.include_models = config.include_models;
+                                user_data_sync::SyncService service(
+                                    std::move(store), std::filesystem::path(CommonUtils::get_ime_data_path_w()),
+                                    options);
+                                if (action == "probe")
+                                {
+                                    ok = service.Probe(message);
+                                }
+                                else if (action == "listDevices")
+                                {
+                                    std::vector<user_data_sync::DeviceInfo> listed;
+                                    ok = service.ListDevices(listed, message);
+                                    for (const user_data_sync::DeviceInfo &info : listed)
+                                    {
+                                        devices.push_back(json::value{{"deviceId", info.device_id},
+                                                                      {"hostname", info.hostname},
+                                                                      {"uploadedUnix", info.uploaded_unix},
+                                                                      {"size", static_cast<std::int64_t>(info.size)}});
+                                    }
+                                }
+                                else if (action == "upload")
+                                {
+                                    const SettingsUserDataBackup::Context context =
+                                        SettingsUserDataBackup::DefaultContext();
+                                    const SettingsUserDataBackup::Hooks hooks =
+                                        SettingsUserDataBackup::ProductionHooks();
+                                    // 上传不重算凭据：归档里的 config.toml 在写之前就被清洗掉，
+                                    // 远端永远不会出现 DPAPI 密文。
+                                    const user_data_sync::UploadResult result = service.Upload(
+                                        [&context, &hooks, include_models = config.include_models](
+                                            const std::filesystem::path &destination, std::string &build_message) {
+                                            return SettingsUserDataBackup::ExportSanitized(
+                                                context, destination, include_models, hooks,
+                                                [](const std::string &text) {
+                                                    return user_data_sync::StripCredentials(text);
+                                                },
+                                                build_message);
+                                        },
+                                        {});
+                                    ok = result.ok;
+                                    message = result.message;
+                                }
+                                else // download
+                                {
+                                    const user_data_sync::DownloadResult result = service.Download(device_id, {});
+                                    ok = result.ok;
+                                    message = result.message;
+                                    if (result.ok)
+                                    {
+                                        downloaded = result.archive;
+                                        import_after_download = true;
+                                    }
+                                }
+                            }
+                        }
+                        catch (...)
+                        {
+                            ok = false;
+                            message = "同步操作失败，请重试。";
+                        }
+                        // 恢复的落位必须在 worker 上做：Import 会停 Server 并等待进程退出，
+                        // 对 Server 与 Watchdog 各等最多 15 秒。放到 Completion（UI 线程）会把
+                        // 设置窗口冻住整段时间，和 userDataBackupRequest 的既有做法也不一致。
+                        if (import_after_download && ok)
+                        {
+                            std::string import_message;
+                            try
+                            {
+                                SettingsUserDataBackup::MergeImportReport report;
+                                ok = SettingsUserDataBackup::ImportMerging(
+                                    downloaded, SettingsUserDataBackup::ProductionHooks(), report, import_message);
+                                // 合并后的配置已经落盘，设置进程要跟上磁盘。
+                                InitImeConfig();
+                                if (ok)
+                                {
+                                    // 日志合并了但没回放时要说清楚：墓碑与远端权重要等下次
+                                    // 安装才生效，不能只报"已恢复"。
+                                    import_message = report.replay_skipped
+                                                         ? "已从云端恢复并导入。部分词条改动要等下次安装时才生效。"
+                                                         : "已从云端恢复并导入。";
+                                }
+                            }
+                            catch (...)
+                            {
+                                ok = false;
+                                import_message = "导入下载的备份失败，请重试。";
+                            }
+                            std::error_code remove_error;
+                            std::filesystem::remove(downloaded, remove_error);
+                            message = import_message;
+                            import_after_download = false;
+                        }
+                        return [request_id, action, ok, message = std::move(message), devices, local_device_id,
+                                post_sync] {
+                            g_user_data_sync_busy.store(false);
+                            post_sync(request_id, action, ok, message, devices, action == "listDevices",
+                                      local_device_id);
+                            // 配置被合并过才需要刷新快照；这里无法区分，统一刷一次代价很小。
+                            if (action == "download" && ok)
+                                PostConfig(true);
+                        };
+                    });
+                    // Submit 在队列已经停止时返回 false。不处理的话 busy 会永久停在 true，
+                    // 之后所有同步请求都回「已有同步操作正在进行」。
+                    if (!submitted)
+                    {
+                        g_user_data_sync_busy.store(false);
+                        post_sync(request_id, action, false, "设置窗口正在关闭，同步已取消。", json::array{}, false,
+                                  {});
+                    }
+                }
+                catch (...)
+                {
+                    g_user_data_sync_busy.store(false);
+                    post_sync(request_id, action, false, "同步操作失败，请重试。", json::array{}, false, {});
                 }
             }
         }
