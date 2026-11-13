@@ -22,7 +22,7 @@
 - `border_width_dip`：卡片外框线宽，`0`–`4`；颜色取 `border`，不写 `border` 时取 `base` 的边框色（杨柳青、秋桂没有外框，此时仍不可见）
 - `item_corner_radius_dip`：选中 / 悬停高亮的圆角，`0`–`16`；贴着卡片四角的那几个角仍跟 `corner_radius_dip`
 - `shadow`：卡片阴影，`none` | `soft` | `strong`；不写则沿用 `base`。只影响候选卡片，不影响右键菜单
-- `backdrop`：卡片背后的系统材质，`none` | `acrylic` | `mica`；不写等于 `none`。`acrylic` 模糊卡片后面的窗口；`mica` 模糊桌面壁纸，只透出壁纸色调（需要 Windows 11，更早的系统按 `acrylic` 画）。材质按 Fluent 配方叠「模糊背景 → 亮度层 → 色调」，色调颜色取 `surface`，两个不透明度见下面配色表里的 `backdrop_opacity` / `backdrop_luminosity`。系统关闭「透明效果」或不支持（低于 Windows 10 1903）时，`surface` 按不透明画。写了 `border_image` 时不生效
+- `backdrop`：卡片背后的系统材质，`none` | `acrylic` | `mica`；不写等于 `none`。`acrylic` 模糊卡片后面的窗口；`mica` 模糊桌面壁纸，只透出壁纸色调（需要 Windows 11，更早的系统按 `acrylic` 画）。材质按 Fluent 配方叠「模糊背景 → 亮度层 → 色调」，色调颜色取 `surface`，两个不透明度见下面配色表里的 `backdrop_opacity` / `backdrop_luminosity`。系统关闭「透明效果」或不支持（低于 Windows 10 1903）时，`surface` 按不透明画。写了 `border_image` 时不生效。条形悬浮工具栏也跟着垫同一种材质，见 [`[toolbar]`](#toolbar)
 - `font_family`：候选字体名，UTF-8 编码后最长 64 字节（约 21 个汉字），不能含引号、反斜杠、逗号、分号、尖括号、花括号和反引号。排在用户设置的字体前面，缺字时仍回落到用户字体；字号不由皮肤决定
 - `page_arrows`：候选框里的翻页箭头，`true` | `false`。横排时是候选右侧贴着最后一行的一小列，竖排时是最后一行下方的一矮行、“‹”与序号左对齐；颜色取 `number`，悬停底色取 `hover`。不写则沿用 `base` 的默认皮肤设置（数据目录 `skins\default\<base>\skin.toml`，出厂为 `false`）。也可以写进 `[candidate_window.horizontal]` / `[candidate_window.vertical]`，只改那一种排布
 - `fit_content`：卡片是否严格按候选文字所需的宽度收紧，`true` | `false`。打开后不再垫出厂的最小宽度（160 DIP），同一次输入里后到的翻译等内容消失时宽度也立刻缩回；`min_width_dip` 和装饰图 `width_dip` 仍然生效。不写则沿用 `base` 的默认皮肤设置（出厂为 `false`）。同样可以按排布分别写
@@ -217,6 +217,7 @@ translation_separator = "#529cca73"
 
 - `corner_radius_dip`：`0`–`32`
 - `[toolbar.dark]` / `[toolbar.light]`：`background`、`border`、`handle`（左侧拖动条）、`divider`、`icon`、`hover`。`handle` 不写时取同一主题的 `[candidate.*].accent`，与选中竖条、预编辑光标同色；`accent` 也没写才沿用 `base`。写的话也请与 `accent` 一致
+- 系统材质：`candidate_window.backdrop` 是 `acrylic` 或 `mica` 时，条形工具栏也垫同一种材质，色调取 `[toolbar.*].background`。`[toolbar.dark]` / `[toolbar.light]` 里可以另写 `backdrop_opacity`、`backdrop_luminosity`（`0`–`1`，含义同 `[candidate.dark]` / `[candidate.light]` 里那两个键），不写时沿用同一主题 `[candidate.*]` 的值。透明效果关闭或系统不支持时 `background` 按不透明画；图片模式不垫材质
 - `mode`：`bar`（默认，矩形条）| `image`（图片模式，见下）
 
 ### 图片模式（`mode = "image"`）
@@ -293,7 +294,7 @@ gap_dip = 2
 
 ## 颜色格式
 
-所有颜色键——`[candidate.dark]` / `[candidate.light]` 里除 `show_selected_bar` 外的键、`[candidate.*.menu]` 和 `[toolbar.dark]` / `[toolbar.light]` 的全部键——都接受以下写法。数字、布尔、枚举和路径类的键不是颜色，不能写成颜色值。
+所有颜色键——`[candidate.dark]` / `[candidate.light]` 里除 `show_selected_bar`、`backdrop_opacity`、`backdrop_luminosity` 外的键、`[candidate.*.menu]` 和 `[toolbar.dark]` / `[toolbar.light]` 里除 `backdrop_opacity`、`backdrop_luminosity` 外的键——都接受以下写法。数字、布尔、枚举和路径类的键不是颜色，不能写成颜色值。
 
 | 写法 | 示例 | 说明 |
 |---|---|---|

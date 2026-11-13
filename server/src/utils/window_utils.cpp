@@ -245,6 +245,18 @@ bool SystemAnimationsEnabled()
     return enabled != FALSE;
 }
 
+bool SystemTransparencyEnabled()
+{
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                     L"EnableTransparency", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
+    {
+        return true;
+    }
+    return value != 0;
+}
+
 bool IsWindowInMoveSizeLoop(HWND hwnd)
 {
     // Ask USER32 instead of mirroring WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE in a

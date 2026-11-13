@@ -97,6 +97,10 @@ void ClipWindowToVisibleScreens(HWND hwnd, ScreenArea area, HRGN shape = nullptr
 // frame. Reads as on when the setting cannot be read.
 bool SystemAnimationsEnabled();
 
+// 系统「透明效果」（设置 → 个性化 → 颜色）。关掉时系统材质一律退回纯色，皮肤的亚克力、云母也跟着退回
+// 不透明底色。读不到时按开启处理。
+bool SystemTransparencyEnabled();
+
 // True while `hwnd` is inside a native move/size loop (caption drag).
 bool IsWindowInMoveSizeLoop(HWND hwnd);
 // Top-left for a host about to be resized to `width` x `height` physical px.

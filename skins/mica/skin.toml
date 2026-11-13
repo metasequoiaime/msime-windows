@@ -7,9 +7,9 @@
 schema_version = 1
 id = "mica"
 name = "云母 Mica"
-version = "0.2.0"
+version = "0.3.0"
 author = "Metasequoia IME contributors"
-description = "候选卡片背后是系统云母：取样桌面壁纸，配 Fluent 风格的高亮与描边。"
+description = "候选卡片和悬浮工具栏背后是系统云母：取样桌面壁纸，配 Fluent 风格的高亮与描边。"
 base = "fluent"
 
 [supports]
@@ -56,3 +56,28 @@ background = "#f9f9f9"
 border = "rgba(0, 0, 0, 0.07)"
 text = "#1a1a1a"
 hover = "rgba(0, 0, 0, 0.04)"
+
+# 悬浮工具栏跟候选卡片垫同一层云母，色调取 background；backdrop_opacity / backdrop_luminosity 不写时沿用候选框的。
+[toolbar]
+corner_radius_dip = 8
+icon_corner_radius_dip = 4
+
+[toolbar.dark]
+background = "#202020"
+backdrop_opacity = 0.8
+backdrop_luminosity = 1
+border = "rgba(255, 255, 255, 0.08)"
+icon = "#ffffff"
+hover = "rgba(255, 255, 255, 0.06)"
+divider = "rgba(255, 255, 255, 0.08)"
+handle = "#4cc2ff"
+
+[toolbar.light]
+background = "#f3f3f3"
+backdrop_opacity = 0.5
+backdrop_luminosity = 1
+border = "rgba(0, 0, 0, 0.07)"
+icon = "#1a1a1a"
+hover = "rgba(0, 0, 0, 0.05)"
+divider = "rgba(0, 0, 0, 0.08)"
+handle = "#005fb8"

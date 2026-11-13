@@ -10,9 +10,9 @@
 schema_version = 1
 id = "acrylic"
 name = "亚克力 Acrylic"
-version = "0.2.0"
+version = "0.3.0"
 author = "Metasequoia IME contributors"
-description = "候选卡片背后是系统亚克力，模糊后面的窗口，亮度层保证亮暗背景上的文字对比度。"
+description = "候选卡片和悬浮工具栏背后是系统亚克力，模糊后面的窗口，亮度层保证亮暗背景上的文字对比度。"
 base = "fluent"
 
 [supports]
@@ -37,3 +37,26 @@ surface = "#fcfcfc"
 border = "rgba(0, 0, 0, 0.08)"
 backdrop_opacity = 0
 backdrop_luminosity = 0.85
+
+# 悬浮工具栏（条形）跟候选卡片垫同一层亚克力：background 是色调，两个材质键同上，不写时沿用候选框的。
+[toolbar]
+corner_radius_dip = 8
+icon_corner_radius_dip = 4
+
+[toolbar.dark]
+background = "#2c2c2c"
+backdrop_opacity = 0.15
+backdrop_luminosity = 0.96
+border = "rgba(255, 255, 255, 0.10)"
+icon = "#ffffff"
+hover = "rgba(255, 255, 255, 0.08)"
+divider = "rgba(255, 255, 255, 0.10)"
+
+[toolbar.light]
+background = "#fcfcfc"
+backdrop_opacity = 0
+backdrop_luminosity = 0.85
+border = "rgba(0, 0, 0, 0.08)"
+icon = "#1a1a1a"
+hover = "rgba(0, 0, 0, 0.06)"
+divider = "rgba(0, 0, 0, 0.08)"

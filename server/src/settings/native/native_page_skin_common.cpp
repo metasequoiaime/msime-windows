@@ -202,6 +202,10 @@ ToolbarLook ResolveToolbarLook(const SettingsModel &model, const std::string &sk
         ApplyFloatingToolbarSkinOverrides(skin, *package, light);
     ToolbarLook t;
     t.bg = skin.fill;
+    // No acrylic or mica in the settings window: a toolbar that wants one shows its tint opaque,
+    // as the real toolbar does when transparency effects are off.
+    if (package && !package->backdrop.empty() && package->backdrop != "none")
+        t.bg.a = 1.0f;
     t.border = skin.border;
     t.handle = skin.handle;
     t.divider = skin.divider;

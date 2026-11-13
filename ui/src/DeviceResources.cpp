@@ -860,18 +860,20 @@ bool DeviceResources::ApplyBackdropMaterial()
            SUCCEEDED(effectBrush.As(&brush)) && SUCCEEDED(surface_->backdropSprite->put_Brush(brush.Get()));
 }
 
-void DeviceResources::SetBackdrop(const RectF &rectDips, float radiusDips)
+void DeviceResources::SetBackdrop(const RectF &rectDips, float radiusDips, float opacity)
 {
     if (!surface_)
     {
         return;
     }
-    const bool visible = rectDips.width > 0.0f && rectDips.height > 0.0f;
+    opacity = (std::clamp)(opacity, 0.0f, 1.0f);
+    const bool visible = rectDips.width > 0.0f && rectDips.height > 0.0f && opacity > 0.0f;
     surface_->backdrop->put_IsVisible(visible);
     if (!visible)
     {
         return;
     }
+    surface_->backdrop->put_Opacity(opacity);
     // Composition visuals of a window target are laid out in physical pixels.
     const float scale = DpiForHwnd() / 96.0f;
     const float left = std::round(rectDips.x * scale);
