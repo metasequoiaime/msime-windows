@@ -7,6 +7,8 @@
 #include "window/candidate_skin_palette.h"
 #include "window/floating_toolbar_skin.h"
 
+#include "engine/shuangpin/shuangpin_profile.h"
+
 #include "msimeui/AnimatedImage.h"
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Fonts.h"
@@ -419,9 +421,50 @@ SizeF ImageFileSize(const std::wstring &path)
 // ---------------------------------------------------------------------------------
 namespace
 {
-const wchar_t *kSampleWords[] = {L"你们", L"你", L"尼", L"妮", L"泥", L"逆", L"拟", L"腻", L"拧"};
-const wchar_t *kSampleCodes[] = {L"(rR)", L"(rX)", L"(uV)", L"(nV)", L"(dV)", L"(zQ)", L"(fR)", L"(oD)", L"(nG)"};
-const wchar_t kSamplePreedit[] = L"ni'mf";
+constexpr size_t kSampleCount = 9;
+
+// 拼音方案共用一组候选；辅助码取自 helpcode.txt（单字「首码+大写次码」，词取各字首码）。
+const wchar_t *kPinyinWords[kSampleCount] = {L"拼音", L"拼", L"品", L"频", L"聘", L"嫔", L"颦", L"姘", L"贫"};
+const wchar_t *kPinyinCodes[kSampleCount] = {L"(fL)", L"(fC)", L"(kK)", L"(vA)", L"(eG)",
+                                             L"(nB)", L"(vU)", L"(nC)", L"(bB)"};
+// wubi86 里 ggtt 的前九个候选，按出厂权重排列。
+const wchar_t *kWubiWords[kSampleCount] = {L"五笔",     L"来来往往", L"开玩笑",   L"一笑",    L"一笔",
+                                           L"环球航行", L"事事处处", L"平平稳稳", L"事事物物"};
+// 日文罗马音 nijigen（二次元）：首选整词，其余是日文候选源对 ni 给出的读作「に」的单字汉字，按原顺序排列。
+const wchar_t *kJapaneseWords[kSampleCount] = {L"二次元", L"似", L"煮", L"荷", L"尼", L"二", L"丹", L"児", L"仁"};
+
+struct PreviewSample
+{
+    std::wstring preedit;
+    const wchar_t *const *words;
+    const wchar_t *const *codes; // nullptr: 方案没有辅助码
+};
+
+// 「拼音」两个音节按当前双拼方案编码；设置进程不注册自定义方案，取不到时引擎回退小鹤。
+std::wstring ShuangpinPinyinPreedit(const std::string &schemeName)
+{
+    const ShuangpinProfile &profile = GetShuangpinProfile(schemeName);
+    const auto key = [](const std::unordered_map<std::string, std::string> &map, const std::string &part) {
+        const auto found = map.find(part);
+        return found == map.end() ? part : found->second;
+    };
+    const std::string in = key(profile.finals, "in");
+    return Widen(key(profile.initials, "p") + in + "'" + key(profile.initials, "y") + in);
+}
+
+PreviewSample SampleFor(const SettingsModel &model)
+{
+    // 日文模式只有罗马音一种方案，预编辑就是原样的罗马音，没有辅助码。
+    if (model.GetString("input.mode", "chinese") == "japanese")
+        return {L"nijigen", kJapaneseWords, nullptr};
+    const std::string schema = model.GetString("input.schema", "shuangpin");
+    if (schema == "wubi")
+        return {L"ggtt", kWubiWords, nullptr};
+    if (schema == "quanpin")
+        return {L"pin'yin", kPinyinWords, kPinyinCodes};
+    return {ShuangpinPinyinPreedit(model.GetString("input.shuangpin_schema", "xiaohe")), kPinyinWords, kPinyinCodes};
+}
+
 // Replaced scene roots kept alive (see CandidatePreview::retired_).
 constexpr size_t kRetiredRoots = 8;
 } // namespace
@@ -462,12 +505,13 @@ void CandidatePreview::Set(const SettingsModel &model, const std::string &skinId
         SetChild(scene_->Root());
     }
 
+    const PreviewSample sample = SampleFor(model);
     msimeui::TextBlock &preedit = *scene_->Preedit();
     if (options.preedit)
     {
         preedit.ClearHeight();
-        preedit.SetText(kSamplePreedit);
-        preedit.SetCaretIndex(std::size(kSamplePreedit) - 1);
+        preedit.SetText(sample.preedit);
+        preedit.SetCaretIndex(sample.preedit.size());
     }
     else
     {
@@ -477,16 +521,16 @@ void CandidatePreview::Set(const SettingsModel &model, const std::string &skinId
     }
     std::vector<msimeui::CandidateList::Item> items;
     std::vector<CandidateSkinScene::PageWord> words;
-    const size_t count = std::min<size_t>(options.pageSize, std::size(kSampleWords));
+    const size_t count = std::min<size_t>(options.pageSize, kSampleCount);
     for (size_t i = 0; i < count; ++i)
     {
         msimeui::CandidateList::Item item;
         item.label = std::to_wstring(i + 1);
-        item.text = kSampleWords[i];
-        if (options.helpcode)
-            item.annotation = kSampleCodes[i];
+        item.text = sample.words[i];
+        if (options.helpcode && sample.codes)
+            item.annotation = sample.codes[i];
         items.push_back(std::move(item));
-        words.push_back({kSampleWords[i], L""});
+        words.push_back({sample.words[i], L""});
     }
     scene_->List()->SetItems(std::move(items));
     scene_->List()->SetSelectedIndex(0);
