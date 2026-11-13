@@ -19,10 +19,10 @@
 // candidates are run as one batch through each layer, so each weight matrix is streamed once for
 // the whole batch instead of once per candidate per token.
 //
-// Numerical details that MUST match the reference or results are garbage: exact erf-based GELU
-// (not the tanh approximation), LayerNorm eps 1e-5, attention scale 1/sqrt(n_embd/n_head), int8
-// per-output-row symmetric dequant (scale applied once after the dot product), and the rule that
-// position i predicts token i+1.
+// Numerical details that MUST match the reference or results are garbage: the GELU the model was
+// trained with (exact erf-based unless its config sets `gelu_tanh`), LayerNorm eps 1e-5, attention
+// scale 1/sqrt(n_embd/n_head), int8 per-output-row symmetric dequant (scale applied once after the
+// dot product), and the rule that position i predicts token i+1.
 
 #include <cstdint>
 #include <memory>
@@ -64,6 +64,12 @@ struct Config
     std::size_t n_head = 0;
     std::size_t n_embd = 0;
     std::size_t context = 0;
+    // GELU's tanh form instead of the exact one (config key `gelu_tanh`, default false).
+    bool gelu_tanh = false;
+    // Trained so that a character's raw logit is its log-probability (config key `self_normalized`,
+    // default false). Such a model is scored the way it was trained and evaluated: by the bare dot
+    // product with the target's row, without the softmax over the vocabulary.
+    bool self_normalized = false;
 };
 
 struct Block
@@ -118,7 +124,8 @@ class SentenceModel
     // The token id this model uses for a character (a Unicode code point), if any.
     std::optional<std::uint32_t> token(char32_t character) const;
 
-    // log P(next character | text), over the whole vocabulary. Index by token id.
+    // log P(next character | text), over the whole vocabulary. Index by token id. For a
+    // self-normalized model these are the raw logits, the same reading score_sentences uses.
     std::vector<float> next_log_probabilities(const std::string &text) const;
 
     // Sum over characters of log P(character | context and everything before it in the text), one

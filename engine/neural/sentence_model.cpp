@@ -22,8 +22,10 @@ namespace neural
 namespace
 {
 
-// The exact GELU, matching torch.nn.functional.gelu with its default settings. The tanh
-// approximation is a different function and the model was not trained with it.
+// The exact GELU, matching torch.nn.functional.gelu with its default settings, is what the
+// sentence models (model-v1) and the 8x448 reranker were trained with. The tanh form is a different
+// function; only a model whose config says `gelu_tanh` was trained with it (the 6x256 reranker), and
+// each model must be run with its own.
 float erf_approx(float x)
 {
     // Abramowitz and Stegun 7.1.26; error stays below 1.5e-7 across the range.
@@ -38,6 +40,13 @@ float gelu(float x)
 {
     constexpr float kInvSqrt2 = 0.70710678118654752440f;
     return 0.5f * x * (1.0f + erf_approx(x * kInvSqrt2));
+}
+
+// torch.nn.GELU(approximate="tanh").
+float gelu_tanh(float x)
+{
+    constexpr float kSqrt2OverPi = 0.79788456080286535588f;
+    return 0.5f * x * (1.0f + std::tanh(kSqrt2OverPi * (x + 0.044715f * x * x * x)));
 }
 
 // Four independent accumulators, not one.
@@ -483,6 +492,28 @@ std::unique_ptr<SentenceModel> SentenceModel::load(const std::vector<std::uint8_
         model->config_.n_head = config_uint("n_head");
         model->config_.n_embd = config_uint("n_embd");
         model->config_.context = config_uint("context");
+        // Optional flags the converted rerank models carry (scripts/convert-rerank-model.py); format
+        // version 1 files (model-v1) have neither and mean false for both. A present value that is
+        // not a boolean is a file this loader does not understand, and guessing would change every
+        // score without any error.
+        auto config_flag = [&](const std::string &key, bool &out) -> bool {
+            const json::Value *value = config_json.find(key);
+            if (value == nullptr)
+            {
+                return true;
+            }
+            if (value->type != json::Value::Type::Bool)
+            {
+                return false;
+            }
+            out = value->boolean;
+            return true;
+        };
+        if (!config_flag("gelu_tanh", model->config_.gelu_tanh) ||
+            !config_flag("self_normalized", model->config_.self_normalized))
+        {
+            return nullptr;
+        }
         const Config &config = model->config_;
         if (config.n_head == 0 || config.n_embd == 0 || config.n_embd % config.n_head != 0 || config.vocab == 0 ||
             config.n_layer == 0 || config.context == 0)
@@ -825,9 +856,19 @@ void SentenceModel::feed_forward(std::vector<float> &x, const Block &block, Work
     layer_norm_into(x.data(), rows, block.ln2_weight, block.ln2_bias, n_embd, workspace.normed);
     linear_into(workspace.normed, block.fc_weight, block.fc_bias, n_embd, 4 * n_embd, workspace.ff_hidden,
                 workspace.linear_scratch);
-    for (float &value : workspace.ff_hidden)
+    if (config_.gelu_tanh)
     {
-        value = gelu(value);
+        for (float &value : workspace.ff_hidden)
+        {
+            value = gelu_tanh(value);
+        }
+    }
+    else
+    {
+        for (float &value : workspace.ff_hidden)
+        {
+            value = gelu(value);
+        }
     }
     linear_into(workspace.ff_hidden, block.out_weight, block.out_bias, 4 * n_embd, n_embd, workspace.ff_out,
                 workspace.linear_scratch);
@@ -904,6 +945,10 @@ std::vector<float> SentenceModel::distribution(const std::vector<float> &hidden)
         logits[row] = logit;
         highest = std::max(highest, logit);
     }
+    if (config_.self_normalized)
+    {
+        return logits;
+    }
     float sum = 0.0f;
     for (float logit : logits)
     {
@@ -934,6 +979,16 @@ std::vector<float> SentenceModel::target_log_probs(const std::vector<float> &hid
     std::vector<float> out(rows, 0.0f);
     if (active_rows.empty())
     {
+        return out;
+    }
+    // A self-normalized model's score for a character is its raw logit: one row of the token table
+    // per scored position instead of all of them, which on the 12288-entry table is most of the work.
+    if (config_.self_normalized)
+    {
+        for (std::size_t row : active_rows)
+        {
+            out[row] = token_.dot_row(&hidden[row * n_embd], targets[row], n_embd);
+        }
         return out;
     }
 
