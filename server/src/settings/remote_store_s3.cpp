@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -239,22 +240,24 @@ std::string FirstElement(const std::string &xml, const std::string &tag)
     return values.empty() ? std::string() : values.front();
 }
 
-std::string XmlUnescape(std::string value)
+std::string XmlUnescape(const std::string &value)
 {
-    const std::pair<const char *, const char *> entities[] = {
-        {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&apos;", "'"}};
-    for (const auto &entity : entities)
+    return detail::XmlDecodeEntities(value);
+}
+
+// S3 请求不跟随重定向（见 HttpRequest::follow_redirects），3xx 原样落到这里。最常见的原因是
+// 区域填错：AWS 会在 x-amz-bucket-region 里给出正确的区域，path-style 的 301 连 Location 都没有。
+std::string DescribeS3Failure(const HttpResponse &response)
+{
+    if (response.status >= 300 && response.status < 400)
     {
-        std::size_t position = 0;
-        const std::string from = entity.first;
-        const std::string to = entity.second;
-        while ((position = value.find(from, position)) != std::string::npos)
-        {
-            value.replace(position, from.size(), to);
-            position += to.size();
-        }
+        std::string message = "存储桶不在所填的区域，或服务地址不对（HTTP " + std::to_string(response.status) + "）";
+        const std::string region = HeaderValue(response.headers, "x-amz-bucket-region");
+        if (!region.empty())
+            message += "，服务端提示区域应为 " + region;
+        return message;
     }
-    return value;
+    return DescribeHttpFailure(response);
 }
 
 std::int64_t ParseIso8601(const std::string &text)
@@ -342,13 +345,15 @@ class S3Store final : public RemoteStore
                 request.method = "PUT";
                 request.url = signed_request.url;
                 request.headers = signed_request.headers;
+                request.follow_redirects = false;
+                request.capture_headers = true;
                 request.headers.push_back("Content-Type: application/octet-stream");
                 request.upload_file = file;
-                request.timeout_seconds = 600;
+                request.timeout_seconds = 0;
                 const HttpResponse response = Perform(request, progress);
                 if (IsSuccess(response.status))
                     return AttemptResult::Ok;
-                attempt_message = DescribeHttpFailure(response);
+                attempt_message = DescribeS3Failure(response);
                 return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
                                                                                         : AttemptResult::Fatal;
             },
@@ -372,12 +377,14 @@ class S3Store final : public RemoteStore
                 request.method = "GET";
                 request.url = signed_request.url;
                 request.headers = signed_request.headers;
+                request.follow_redirects = false;
+                request.capture_headers = true;
                 request.download_file = file;
-                request.timeout_seconds = 600;
+                request.timeout_seconds = 0;
                 const HttpResponse response = Perform(request, progress);
                 if (IsSuccess(response.status))
                     return AttemptResult::Ok;
-                attempt_message = IsNotFound(response.status) ? "云端没有这个文件" : DescribeHttpFailure(response);
+                attempt_message = IsNotFound(response.status) ? "云端没有这个文件" : DescribeS3Failure(response);
                 return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
                                                                                         : AttemptResult::Fatal;
             },
@@ -401,8 +408,9 @@ class S3Store final : public RemoteStore
                 request.method = "HEAD";
                 request.url = signed_request.url;
                 request.headers = signed_request.headers;
-                request.timeout_seconds = 60;
+                request.follow_redirects = false;
                 request.capture_headers = true;
+                request.timeout_seconds = 60;
                 const HttpResponse response = Perform(request);
                 if (IsNotFound(response.status))
                 {
@@ -422,7 +430,7 @@ class S3Store final : public RemoteStore
                     object.modified_unix = ParseHttpDate(HeaderValue(response.headers, "last-modified"));
                     return AttemptResult::Ok;
                 }
-                attempt_message = DescribeHttpFailure(response);
+                attempt_message = DescribeS3Failure(response);
                 return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
                                                                                         : AttemptResult::Fatal;
             },
@@ -430,65 +438,22 @@ class S3Store final : public RemoteStore
         return ok && found;
     }
 
+    // 语义与 WebDAV 的 PROPFIND Depth: 1 对齐：只列 prefix 这一"层"的直接子对象。
+    // 前缀补上尾斜杠，否则 devices 会连 devices-old/… 一起匹配；带 delimiter=/，否则
+    // devices 会把每台设备 devices/<id>/ 下的快照也递归列出来。
     bool List(const std::string &prefix, std::vector<RemoteObject> &objects, std::string &message) override
     {
         objects.clear();
+        std::string full_prefix = PrefixedKey(options_, prefix);
+        if (!full_prefix.empty() && full_prefix.back() != '/')
+            full_prefix.push_back('/');
         std::string continuation;
         for (int page = 0; page < 1000; ++page)
         {
-            std::string page_message;
             std::string next;
             bool truncated = false;
-            const bool listed = Retry(
-                [&](std::string &attempt_message) {
-                    std::vector<std::pair<std::string, std::string>> query = {{"list-type", "2"}, {"max-keys", "1000"}};
-                    const std::string full_prefix = PrefixedKey(options_, prefix);
-                    if (!full_prefix.empty())
-                        query.emplace_back("prefix", full_prefix);
-                    if (!continuation.empty())
-                        query.emplace_back("continuation-token", continuation);
-                    const SignedRequest signed_request =
-                        BuildSignedRequest(options_, "GET", {}, query, EmptyPayloadSha256(), std::time(nullptr));
-                    if (!signed_request.ok)
-                    {
-                        attempt_message = signed_request.message;
-                        return AttemptResult::Fatal;
-                    }
-                    HttpRequest request;
-                    request.method = "GET";
-                    request.url = signed_request.url;
-                    request.headers = signed_request.headers;
-                    request.timeout_seconds = 120;
-                    const HttpResponse response = Perform(request);
-                    if (!IsSuccess(response.status))
-                    {
-                        attempt_message = DescribeHttpFailure(response);
-                        return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
-                                                                                                : AttemptResult::Fatal;
-                    }
-                    // <Contents> 里各有 Key / Size / ETag / LastModified，按块切再逐块取。
-                    for (const std::string &block : Blocks(response.body, "Contents"))
-                    {
-                        RemoteObject object;
-                        object.key = StripPrefix(options_, XmlUnescape(FirstElement(block, "Key")));
-                        const std::string size = FirstElement(block, "Size");
-                        object.size =
-                            size.empty() ? 0 : static_cast<std::uint64_t>(std::strtoull(size.c_str(), nullptr, 10));
-                        object.etag = XmlUnescape(FirstElement(block, "ETag"));
-                        object.modified_unix = ParseIso8601(FirstElement(block, "LastModified"));
-                        if (!object.key.empty())
-                            objects.push_back(std::move(object));
-                    }
-                    next = XmlUnescape(FirstElement(response.body, "NextContinuationToken"));
-                    truncated = FirstElement(response.body, "IsTruncated") == "true";
-                    return AttemptResult::Ok;
-                },
-                page_message);
-            if (!listed)
-            {
-                message = page_message.empty() ? "列举云端文件失败" : page_message;
+            if (!ListPage(full_prefix, continuation, 1000, objects, next, truncated, message))
                 return false;
-            }
             if (!truncated || next.empty())
                 return true;
             continuation = next;
@@ -513,22 +478,30 @@ class S3Store final : public RemoteStore
                 request.method = "DELETE";
                 request.url = signed_request.url;
                 request.headers = signed_request.headers;
+                request.follow_redirects = false;
+                request.capture_headers = true;
                 request.timeout_seconds = 60;
                 const HttpResponse response = Perform(request);
                 // S3 的 DELETE 是幂等的：不存在也回 204。
                 if (IsSuccess(response.status) || IsNotFound(response.status))
                     return AttemptResult::Ok;
-                attempt_message = DescribeHttpFailure(response);
+                attempt_message = DescribeS3Failure(response);
                 return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
                                                                                         : AttemptResult::Fatal;
             },
             message);
     }
 
+    // 测试连接只要一页、一个对象：桶里文件多时完整 List 要翻成百上千页。
     bool Probe(std::string &message) override
     {
         std::vector<RemoteObject> ignored;
-        return List(std::string(), ignored, message);
+        std::string next;
+        bool truncated = false;
+        std::string full_prefix = PrefixedKey(options_, std::string());
+        if (!full_prefix.empty())
+            full_prefix.push_back('/');
+        return ListPage(full_prefix, std::string(), 1, ignored, next, truncated, message);
     }
 
     // S3 没有目录：对象 key 里的斜杠只是名字的一部分。
@@ -538,6 +511,67 @@ class S3Store final : public RemoteStore
     }
 
   private:
+    bool ListPage(const std::string &full_prefix, const std::string &continuation, int max_keys,
+                  std::vector<RemoteObject> &objects, std::string &next, bool &truncated, std::string &message)
+    {
+        std::string page_message;
+        const bool listed = Retry(
+            [&](std::string &attempt_message) {
+                std::vector<std::pair<std::string, std::string>> query = {
+                    {"list-type", "2"}, {"max-keys", std::to_string(max_keys)}, {"delimiter", "/"}};
+                if (!full_prefix.empty())
+                    query.emplace_back("prefix", full_prefix);
+                if (!continuation.empty())
+                    query.emplace_back("continuation-token", continuation);
+                const SignedRequest signed_request =
+                    BuildSignedRequest(options_, "GET", {}, query, EmptyPayloadSha256(), std::time(nullptr));
+                if (!signed_request.ok)
+                {
+                    attempt_message = signed_request.message;
+                    return AttemptResult::Fatal;
+                }
+                HttpRequest request;
+                request.method = "GET";
+                request.url = signed_request.url;
+                request.headers = signed_request.headers;
+                request.follow_redirects = false;
+                request.capture_headers = true;
+                request.timeout_seconds = 120;
+                const HttpResponse response = Perform(request);
+                if (!IsSuccess(response.status))
+                {
+                    attempt_message = DescribeS3Failure(response);
+                    return IsTransient(response.code) || IsRetryableStatus(response.status) ? AttemptResult::Retry
+                                                                                            : AttemptResult::Fatal;
+                }
+                // 重试的那一次不能把上一次已经收进来的对象再收一遍：先收到局部，成功再并入。
+                std::vector<RemoteObject> page_objects;
+                // <Contents> 里各有 Key / Size / ETag / LastModified，按块切再逐块取。
+                // CommonPrefixes 是"子目录"，与 WebDAV 跳过集合一样不算对象。
+                for (const std::string &block : Blocks(response.body, "Contents"))
+                {
+                    RemoteObject object;
+                    object.key = StripPrefix(options_, XmlUnescape(FirstElement(block, "Key")));
+                    const std::string size = FirstElement(block, "Size");
+                    object.size =
+                        size.empty() ? 0 : static_cast<std::uint64_t>(std::strtoull(size.c_str(), nullptr, 10));
+                    object.etag = XmlUnescape(FirstElement(block, "ETag"));
+                    object.modified_unix = ParseIso8601(FirstElement(block, "LastModified"));
+                    if (!object.key.empty())
+                        page_objects.push_back(std::move(object));
+                }
+                objects.insert(objects.end(), std::make_move_iterator(page_objects.begin()),
+                               std::make_move_iterator(page_objects.end()));
+                next = XmlUnescape(FirstElement(response.body, "NextContinuationToken"));
+                truncated = FirstElement(response.body, "IsTruncated") == "true";
+                return AttemptResult::Ok;
+            },
+            page_message);
+        if (!listed)
+            message = page_message.empty() ? "列举云端文件失败" : page_message;
+        return listed;
+    }
+
     S3Options options_;
 };
 
