@@ -3,7 +3,9 @@
 ;
 ; 编译方法：
 ;   1. 安装 Inno Setup 6.6 或更高版本：https://jrsoftware.org/isinfo.php
-;   2. 运行 .\Compile-Installer.ps1（或用 Inno Setup Compiler 打开本文件并按 Ctrl+F9）
+;   2. 运行 .\Compile-Installer.ps1 -TargetVersion <版本>（或用 Inno Setup Compiler 打开本文件并按
+;      Ctrl+F9，此时用下面的默认版本；GUI 编出的包要用 -InstallerPath 交给 Sign-Installer-Local.ps1
+;      和 Install.ps1，它们默认只认 Compile-Installer.ps1 记录的 Output\last-build.json）
 ;   输出安装包默认在：Output\
 ;
 ; 本地测试打包顺序：
@@ -19,11 +21,16 @@
 ; 本仓库不包含任何预置代码签名证书。
 
 #define MyAppName      "Metasequoia IME 水杉输入法"
+; Compile-Installer.ps1 用 ISCC /D 覆盖这两项；保留默认值让直接编译本文件仍然可用。
+#ifndef MyAppVersion
 #define MyAppVersion   "0.0.1"
+#endif
 ; VersionInfoVersion 是 PE 的 VERSIONINFO，只接受数字和点号；dev 构建的 MyAppVersion 带
-; -dev.<日期>.<hash> 后缀（Prepare-PackageFiles.ps1 会把数字部分同步写进这个 define），
+; -dev.<日期>.<hash> 后缀（Compile-Installer.ps1 会把数字部分通过 /DMyVersionInfo 传入），
 ; 文件名与 AppVersion 用完整串，这里只用数字段。
+#ifndef MyVersionInfo
 #define MyVersionInfo  "0.0.1"
+#endif
 #define MyAppPublisher "Metasequoia"
 #define MyAppExeName   "MetasequoiaImeServer.exe"
 #define MySettingsExeName "MetasequoiaImeSettings.exe"

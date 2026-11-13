@@ -337,32 +337,15 @@ Copy-Item -LiteralPath $thirdPartyNotices -Destination (Join-Path $PSScriptRoot 
 # points at "the LICENSE file" without carrying the GPL text itself.
 Copy-Item -LiteralPath $license -Destination (Join-Path $PSScriptRoot 'LICENSE.txt') -Force
 
-$targetIss = Join-Path $PSScriptRoot 'msime_setup.iss'
-Assert-PathExists -LiteralPath $targetIss -Description '安装脚本'
-$issContent = Get-Content -LiteralPath $targetIss -Raw
-if ($issContent -notmatch '(?m)^#define\s+MyAppVersion\s+"[^"]+"\s*$') {
-    throw '未能在安装脚本中找到 MyAppVersion。'
-}
-$updatedIss = [regex]::Replace(
-    $issContent,
-    '(?m)^#define\s+MyAppVersion\s+"[^"]+"\s*$',
-    "#define MyAppVersion   `"$TargetVersion`""
-)
 # VersionInfoVersion 只接受数字和点号；从目标版本剥掉 -后缀（dev 构建的
 # 0.7.1-dev.20261019.<hash> → 0.7.1），正式版本剥了也原样。
 $versionInfo = ($TargetVersion -replace '-.*$', '')
 if ($versionInfo -notmatch '^[0-9]+(\.[0-9]+)*$') {
     throw "目标版本剥掉后缀后不是数字版本号，无法写进 VersionInfoVersion：$TargetVersion"
 }
-$updatedIss = [regex]::Replace(
-    $updatedIss,
-    '(?m)^#define\s+MyVersionInfo\s+"[^"]+"\s*$',
-    "#define MyVersionInfo  `"$versionInfo`""
-)
-# .gitattributes pins this repo to eol=lf; emit LF so packaging does not leave the file as a
-# CRLF-only diff that git flags as modified while `git diff` shows no textual change.
-$updatedIss = $updatedIss.TrimEnd("`r", "`n") + "`n"
-Set-Content -LiteralPath $targetIss -Value $updatedIss -Encoding utf8NoBOM -NoNewline
+# 这里只提前校验，让坏版本号在签名之前就失败。版本本身由调用方再传给
+# Compile-Installer.ps1 -TargetVersion，经 ISCC /D 覆盖 msime_setup.iss 里的默认值；
+# 不写回受版本控制的安装脚本，也不经中间文件传递。
 
 $serverBinaryCount = @(Get-ChildItem -LiteralPath $targetServer -Recurse -File -Include '*.exe', '*.dll').Count
 $tsfBinaryCount = @(Get-ChildItem -LiteralPath $targetTsf -Recurse -File -Include '*.exe', '*.dll').Count
