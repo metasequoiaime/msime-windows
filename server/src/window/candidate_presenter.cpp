@@ -113,20 +113,6 @@ float StickyCardExtent(float kept, float natural)
 // 候选窗 HWND 上的动图帧定时器。宿主自己的定时器编号见 ime_windows_internal.h（2–14），这里避开它们。
 constexpr UINT_PTR kCandidateAnimationTimerId = 0x0A11;
 
-// 系统「透明效果」（设置 → 个性化 → 颜色）。关掉时系统材质一律退回纯色，皮肤的亚克力也跟着退回不透明底色。
-// 读不到时按开启处理。
-bool SystemTransparencyEnabled()
-{
-    DWORD value = 1;
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                     L"EnableTransparency", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
-    {
-        return true;
-    }
-    return value != 0;
-}
-
 } // namespace
 
 struct CandidatePresenter::Impl

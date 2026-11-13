@@ -203,6 +203,11 @@ class ManifestTests(unittest.TestCase):
                     for key in ("backdrop_opacity", "backdrop_luminosity"):
                         if key in colors:
                             self.assertTrue(0 <= colors[key] <= 1, f"candidate.{theme}.{key}")
+                for theme in ("dark", "light"):
+                    colors = data.get("toolbar", {}).get(theme, {})
+                    for key in ("backdrop_opacity", "backdrop_luminosity"):
+                        if key in colors:
+                            self.assertTrue(0 <= colors[key] <= 1, f"toolbar.{theme}.{key}")
                 for theme in data["supports"]["themes"]:
                     self.assertIn(theme, data["candidate"])
                     if "toolbar" in data:

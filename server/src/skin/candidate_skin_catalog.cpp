@@ -635,7 +635,9 @@ bool ReadToolbarColors(const toml::node *node, ToolbarColors &out)
     const auto *table = node->as_table();
     return table && ReadCssColor(*table, "background", out.background) && ReadCssColor(*table, "border", out.border) &&
            ReadCssColor(*table, "handle", out.handle) && ReadCssColor(*table, "divider", out.divider) &&
-           ReadCssColor(*table, "icon", out.icon) && ReadCssColor(*table, "hover", out.hover);
+           ReadCssColor(*table, "icon", out.icon) && ReadCssColor(*table, "hover", out.hover) &&
+           ReadOptionalBounded(*table, "backdrop_opacity", 1.0, out.backdropOpacity) &&
+           ReadOptionalBounded(*table, "backdrop_luminosity", 1.0, out.backdropLuminosity);
 }
 
 // [candidate_window.decoration] 里的 candidate_overlay_* 一组键；candidate_overlay 不是 true 时其余键不读。

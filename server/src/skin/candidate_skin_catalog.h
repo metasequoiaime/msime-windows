@@ -64,6 +64,10 @@ struct ToolbarColors
     std::string divider;
     std::string icon;
     std::string hover;
+    // candidate_window.backdrop 不是 none 时工具栏（条形）同样垫系统材质，色调取 background。两项含义同
+    // CandidateColors::backdropOpacity / backdropLuminosity；不写时沿用同一主题候选框的值。
+    std::optional<double> backdropOpacity;
+    std::optional<double> backdropLuminosity;
 };
 
 // 图片模式（[toolbar] mode = "image"）下一个按钮的摆法与贴图：[toolbar.buttons.<key>]。
