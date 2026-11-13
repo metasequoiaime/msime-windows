@@ -1,6 +1,8 @@
 #pragma once
 
+#include "../core/scheme_type.h"
 #include "../core/word_item.h"
+#include "../shuangpin/shuangpin_profile.h"
 
 #include <string>
 #include <vector>
@@ -20,6 +22,10 @@ struct LocalDateTime
 
 LocalDateTime current_local_date_time();
 bool is_date_time_keyword(const std::string &keyword);
+// Shift+T 后面那一串（不含 T）交给下面几个函数之前的归一：双拼下唤醒词的整拼要按方案读（小鹤 shijian 打成
+// uijm、微软 xingqi 打成 x;qi），读出来是唤醒词时返回全拼。原样已是唤醒词（rq、sj、date）、全拼和五笔、
+// 或读出来不是唤醒词（指定的日期时间、没打完的词）时原样返回。
+std::string date_time_query_input(const std::string &input, SchemeType scheme, const ShuangpinProfile &profile);
 // Shift+T 后面那一串（不含 T）出得了候选：是唤醒词，或者是写完了、取值也对的指定日期时间
 // （20241225、2024/12/25、12/25、14:30 等，形状见 contracts/date_time_input.h）。只写月日时年份取 now 的。
 bool is_date_time_query(const std::string &input, const LocalDateTime *now = nullptr);

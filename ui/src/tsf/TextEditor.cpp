@@ -401,7 +401,8 @@ BOOL CTextEditor::MoveSelectionToLineFirstEnd(BOOL bFirst)
 
 BOOL CTextEditor::InsertAtSelection(LPCWSTR psz)
 {
-    LONG lOldSelEnd = _nSelEnd;
+    const LONG lOldSelStart = _nSelStart;
+    const LONG lOldSelEnd = _nSelEnd;
     if (!RemoveText(_nSelStart, _nSelEnd - _nSelStart))
         return FALSE;
 
@@ -414,7 +415,8 @@ BOOL CTextEditor::InsertAtSelection(LPCWSTR psz)
     UpdateLayout();
     _layout.EnsureCaretVisible(_nSelEnd);
 
-    _pTextStore->OnTextChange(_nSelStart, lOldSelEnd, _nSelEnd);
+    // The change spans from where the replaced selection started, not from the new caret.
+    _pTextStore->OnTextChange(lOldSelStart, lOldSelEnd, _nSelEnd);
     _pTextStore->OnSelectionChange();
     return TRUE;
 }

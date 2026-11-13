@@ -486,11 +486,10 @@ constexpr std::uint32_t EnumerationCommaKeysChanged = 38;
 // FanyImePipeFlags::HorizontalArrowSelection and applies the Server's answer instead of moving the caret itself.
 // Older DLLs ignore the opcode and keep moving the caret.
 constexpr std::uint32_t HorizontalArrowSelectionChanged = 39;
-// The Server has a finished, checksum-verified installer. Payload is three tab-separated fields:
-// version, absolute installer path, installer file name. The TSF side only asks the user and, on
-// agreement, sends "InstallUpdate|<file name>" down the Aux pipe; it launches nothing itself. The
-// Server re-derives the path from its own state and starts the installer. Broadcast to every
-// connected client: the download usually finishes while the user types elsewhere.
+// Retired: the Server no longer sends this. A finished background download is offered from the
+// settings window's About page instead of a modal prompt in the host, and the Server no longer
+// handles "InstallUpdate|<file name>" on the Aux pipe. The number stays reserved so older DLLs
+// never misread a future opcode. Former payload: version, installer path, installer file name.
 constexpr std::uint32_t UpdateInstallerReady = 40;
 // Which keys enter the shuangpin end helpcode while direct helpcode is on (helpcode.shuangpin_direct_helpcode_end_
 // trigger, keys from the end helpcode trigger settings). Payload one character, FanyImeEndHelpcode::PayloadFor with

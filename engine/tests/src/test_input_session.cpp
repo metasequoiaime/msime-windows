@@ -3551,7 +3551,9 @@ int run_test()
                                                                     "ririri\t晶\t106\n"
                                                                     "ririri\t曑\t1\n"
                                                                     "heng\t一\t18584\n"
-                                                                    "hengheng\t丁\t900\n");
+                                                                    "hengheng\t丁\t900\n"
+                                                                    "koukoukou\t品\t500\n"
+                                                                    "dingkou\t叮\t2\n");
     set_data_directory(radical_directory);
 
     metasequoia::InputSession radical_session(SchemeType::Quanpin);
@@ -3634,6 +3636,22 @@ int run_test()
     require(switch_clears_radical.handle_character('U', true).handled &&
                 switch_clears_radical.local_input_mode() == metasequoia::LocalInputMode::Radical,
             "Shuangpin could not enter radical mode.");
+    // 双拼下按会话的双拼方案解部件码：小鹤 口 = kz。
+    type(switch_clears_radical, "kzkzkz");
+    require(switch_clears_radical.preedit() == "Ukzkzkz" && !switch_clears_radical.candidates().empty() &&
+                switch_clears_radical.candidates().front().word == "品",
+            "Shuangpin radical mode did not decode the components with the session's profile.");
+    // 微软双拼的 ; 是 ing 韵母：开头的 U 不算键，d 后面的 ; 收进拆字码，k 后面（偶数键）的不收。
+    metasequoia::InputSession microsoft_radical(SchemeType::Shuangpin, GetMicrosoftShuangpinProfile());
+    require(microsoft_radical.handle_character('U', true).handled && microsoft_radical.handle_character('d').handled &&
+                microsoft_radical.handle_character(';').handled && microsoft_radical.preedit() == "Ud;",
+            "Microsoft shuangpin radical mode rejected the ; final after an initial.");
+    type(microsoft_radical, "kb");
+    require(microsoft_radical.preedit() == "Ud;kb" && !microsoft_radical.candidates().empty() &&
+                microsoft_radical.candidates().front().word == "叮",
+            "Microsoft shuangpin radical mode did not decode d;kb as dingkou.");
+    microsoft_radical.handle_character(';');
+    require(microsoft_radical.preedit() == "Ud;kb", "Microsoft shuangpin radical mode took ; after a full syllable.");
     switch_clears_radical.switch_scheme(SchemeType::Quanpin);
     require(!switch_clears_radical.has_composition() &&
                 switch_clears_radical.local_input_mode() == metasequoia::LocalInputMode::None,
@@ -3666,6 +3684,21 @@ int run_test()
     require(date_time_session.handle_command(metasequoia::Command::Cancel).handled &&
                 date_time_session.local_input_mode() == metasequoia::LocalInputMode::None,
             "Cancel did not leave date/time mode.");
+
+    // 双拼下唤醒词的整拼按方案读：微软双拼 xingqi 打成 x;qi，; 跟在开头的 T 之后的声母后面才收。
+    metasequoia::InputSession shuangpin_date_time(SchemeType::Shuangpin, GetMicrosoftShuangpinProfile());
+    shuangpin_date_time.set_local_date_time_provider(
+        [] { return metasequoia::local_modes::LocalDateTime{2026, 8, 9, 0, 14, 30, 0}; });
+    require(shuangpin_date_time.handle_character('T', true).handled &&
+                shuangpin_date_time.handle_character('x').handled &&
+                shuangpin_date_time.handle_character(';').handled && shuangpin_date_time.preedit() == "Tx;",
+            "Microsoft shuangpin date/time mode rejected the ; final.");
+    type(shuangpin_date_time, "qi");
+    require(shuangpin_date_time.preedit() == "Tx;qi" && !shuangpin_date_time.candidates().empty() &&
+                shuangpin_date_time.candidates().front().word == "星期日",
+            "Microsoft shuangpin date/time mode did not read x;qi as xingqi.");
+    shuangpin_date_time.handle_character(';');
+    require(shuangpin_date_time.preedit() == "Tx;qi", "Date/time mode took ; after a complete syllable.");
 
     require(date_time_session.handle_character('T', true).handled &&
                 date_time_session.handle_command(metasequoia::Command::Backspace).handled &&

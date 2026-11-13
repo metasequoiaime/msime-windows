@@ -482,6 +482,11 @@ struct FloatingToolbarPresenter::Impl
     bool shadow = false;
     float cardHeightDip = 0.0f;
     float opacity = 1.0f;
+    // 皮肤 candidate_window.backdrop 要亚克力或云母、系统开着透明效果时，条形工具栏的卡片下面垫一层系统材质
+    // （DeviceResources 的 backdrop composition），色调由合成层画，卡片底色留空。图片模式不垫。
+    bool backdropActive = false;
+    // 建不起 Windows.UI.Composition（系统太旧）：本次运行不再尝试，退回不透明底色。
+    bool backdropUnavailable = false;
     int cnEn = 1;
     int doubleSingleByte = 0;
     int punctuation = 1;
@@ -765,6 +770,8 @@ void FloatingToolbarPresenter::RebuildScene()
             {12.0f, impl_->light ? 0.18f : 0.34f, 8.0f, 10.0f},
             {4.0f, impl_->light ? 0.10f : 0.22f, 2.0f, 3.0f},
         });
+        // 卡片底色留空时阴影会透上来把材质压暗，只画在卡片外面（同候选窗）。
+        impl_->card->SetShadowOutsideOnly(impl_->backdropActive);
     }
     impl_->card->AddChild(row);
     impl_->frame = std::make_shared<msimeui::Container>();
@@ -832,6 +839,33 @@ void FloatingToolbarPresenter::ApplyTheme()
         impl_->resources.SetAnimationEpoch(msimeui::DeviceResources::AnimationClock::now());
         impl_->shapePath.clear();
     }
+    // 皮肤的系统材质（亚克力 / 云母）跟候选窗一样垫在条形工具栏下面：色调取工具栏 background，
+    // 两个材质参数先看 [toolbar.<主题>]，没写沿用同一主题候选框的。
+    const bool wantsBackdrop =
+        package && !impl_->imageMode && !package->backdrop.empty() && package->backdrop != "none";
+    impl_->backdropActive = wantsBackdrop && !impl_->backdropUnavailable && SystemTransparencyEnabled();
+    if (impl_->backdropActive)
+    {
+        const bool mica = package->backdrop == "mica";
+        const CandidateSkinCatalog::ToolbarColors &toolbarColors = light ? package->toolbarLight : package->toolbarDark;
+        const CandidateSkinCatalog::CandidateColors &candidateColors = light ? package->light : package->dark;
+        msimeui::BackdropMaterial material;
+        material.source =
+            mica ? msimeui::BackdropMaterial::Source::Wallpaper : msimeui::BackdropMaterial::Source::WindowsBehind;
+        material.tint = skin.fill;
+        material.tintOpacity = static_cast<float>(
+            toolbarColors.backdropOpacity.value_or(candidateColors.backdropOpacity.value_or(skin.fill.a)));
+        material.luminosityOpacity = static_cast<float>(
+            toolbarColors.backdropLuminosity.value_or(candidateColors.backdropLuminosity.value_or(mica ? 1.0 : 0.85)));
+        impl_->resources.SetBackdropMaterial(material);
+        skin.fill.a = 0.0f;
+    }
+    else if (wantsBackdrop)
+    {
+        // 要材质却用不上（透明效果关闭或系统不支持）：半透明底色补成不透明，免得直接透出后面的窗口。
+        skin.fill.a = 1.0f;
+    }
+    impl_->resources.SetBackdropComposition(impl_->backdropActive);
     impl_->fill = skin.fill;
     impl_->border = skin.border;
     impl_->glyph = skin.glyph;
@@ -1048,6 +1082,14 @@ void FloatingToolbarPresenter::Present()
     const UINT height = static_cast<UINT>((std::max)(1L, rc.bottom));
     if (!impl_->resources.EnsureForComposition(hwnd_))
     {
+        if (!impl_->resources.UsesBackdropComposition())
+        {
+            return;
+        }
+        // 建不起 Windows.UI.Composition：本次运行退回交换链，重新套一次主题换回不透明底色。
+        FTB_DIAG_LOGF(L"ftb-d2d backdrop composition unavailable, falling back to swap chain");
+        impl_->backdropUnavailable = true;
+        ApplyTheme();
         return;
     }
     impl_->resources.Resize(width, height);
@@ -1055,12 +1097,12 @@ void FloatingToolbarPresenter::Present()
     impl_->resources.SetAnimationsEnabled(impl_->skinAnimates && SystemAnimationsEnabled());
     // Samples the animation clock for this frame and starts the next-frame deadline over.
     impl_->resources.BeginFrame();
-    ID2D1RenderTarget *target = impl_->resources.GetRenderTarget();
-    if (!target)
+    // 材质合成时设备上下文只在 BeginDraw 与 EndDraw 之间存在，目标要在 BeginDraw 之后取。
+    if (!impl_->resources.BeginDraw())
     {
         return;
     }
-    target->BeginDraw();
+    ID2D1RenderTarget *target = impl_->resources.GetRenderTarget();
     target->Clear(D2D1::ColorF(0, 0.0f));
     msimeui::Scene *scene = impl_->window->GetScene();
     if (scene && impl_->opacity > 0.0f)
@@ -1083,7 +1125,13 @@ void FloatingToolbarPresenter::Present()
             target->PopLayer();
         }
     }
-    const HRESULT hr = target->EndDraw();
+    if (impl_->backdropActive)
+    {
+        // 和这一帧的内容同一次提交；自动隐藏淡出时材质跟着同一个不透明度淡，看不见时整个藏掉。
+        const RectF cardBounds = impl_->card && impl_->opacity > 0.0f ? impl_->card->GetBounds() : RectF{};
+        impl_->resources.SetBackdrop(cardBounds, impl_->radius * ToolbarUserScale(), impl_->opacity);
+    }
+    const HRESULT hr = impl_->resources.EndDraw();
     if (hr == D2DERR_RECREATE_TARGET)
     {
         impl_->resources.DiscardTarget();

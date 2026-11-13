@@ -26,7 +26,8 @@ add_executable(test_voice_lock_recovery
     src/test_voice_lock_recovery.cpp
     ${CMAKE_SOURCE_DIR}/src/voice-input/voice_input_service.cpp
     ${CMAKE_SOURCE_DIR}/src/voice-input/voice_providers.cpp
-    ${CMAKE_SOURCE_DIR}/src/voice-input/voice_batch_protocol.cpp)
+    ${CMAKE_SOURCE_DIR}/src/voice-input/voice_batch_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/voice-input/local_asr.cpp)
 target_compile_definitions(test_voice_lock_recovery PRIVATE MSIME_VOICE_CONTROL_TEST)
 target_include_directories(test_voice_lock_recovery
     PRIVATE
@@ -47,6 +48,22 @@ set_tests_properties(voice_lock_recovery PROPERTIES TIMEOUT 60)
 # Phase-A voice input target snapshot: pure policy in voice_target.h only. The
 # Windows/UIA adapter (voice_target.cpp) is host-only and stays out of this
 # standalone target; it links no engine, dictionary or third-party dependency.
+# 本地语音识别：目录一致性、就绪判断与纯函数；不载入运行库（真机识别靠环境变量另行开启）。
+add_executable(test_local_asr src/test_local_asr.cpp ../src/voice-input/local_asr.cpp)
+target_include_directories(test_local_asr PRIVATE ../src "${MSIME_REPO_ROOT}")
+target_compile_features(test_local_asr PRIVATE cxx_std_17)
+target_compile_definitions(test_local_asr PRIVATE NOMINMAX UNICODE _UNICODE)
+add_test(NAME local_asr COMMAND test_local_asr)
+
+# 本地语音模型安装器：网络会话换成总是失败的桩，覆盖导入识别、错误态与删除；解压用系统 tar.exe。
+add_executable(test_local_asr_download src/test_local_asr_download.cpp ../src/settings/local_asr_download.cpp)
+target_include_directories(test_local_asr_download PRIVATE ../src "${MSIME_REPO_ROOT}")
+target_compile_features(test_local_asr_download PRIVATE cxx_std_17)
+target_compile_definitions(test_local_asr_download PRIVATE NOMINMAX UNICODE _UNICODE)
+target_link_libraries(test_local_asr_download PRIVATE CURL::libcurl ole32)
+add_test(NAME local_asr_download COMMAND test_local_asr_download)
+set_tests_properties(local_asr_download PROPERTIES TIMEOUT 60)
+
 add_executable(test_voice_target src/test_voice_target.cpp)
 target_include_directories(test_voice_target PRIVATE ../src)
 target_compile_features(test_voice_target PRIVATE cxx_std_17)
@@ -136,6 +153,14 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_serial_task_runner.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/serial_task_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_task_classes.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_requery_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_settle_arbitration_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_interaction_latch_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_rescore_budget.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_mixed_english_preservation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_translation_page_visibility.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_mixed_candidates_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_pages.cpp"
     "${CMAKE_SOURCE_DIR}/src/ipc/event_listener_task_class.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_input_cadence.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_sentence_association_options.cpp"
@@ -148,6 +173,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_region_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_order_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_expansion_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_choice_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_performance.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_size_estimator.cpp"
     "${CMAKE_SOURCE_DIR}/src/utils/candidate_size_estimator.cpp"
@@ -183,6 +209,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_supports.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_toolbar_image.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_border_image_vertical.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_catalog_decoration_layouts.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_skin_palette.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_non_ascii_path_contract.cpp"
     "${CMAKE_SOURCE_DIR}/src/skin/candidate_skin_catalog.cpp"
@@ -306,9 +333,11 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     shell32
     advapi32
     ole32
-    # native_settings_update_download.cpp 用 WinHTTP 取包、用 BCrypt 算摘要。
+    # native_settings_update_download.cpp 用 WinHTTP 取包、用 BCrypt 算摘要，启动前用 WinVerifyTrust 验签名。
     winhttp
     bcrypt
+    wintrust
+    crypt32
     ws2_32
     # zip_archive.cpp 用 zlib 的 CRC 与 deflate 解压。
     ZLIB::ZLIB
@@ -324,6 +353,9 @@ set(SETTINGS_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/settings_ui_main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_dropdown_scroll.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_ai_model_list_scroll.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_voice_local_model.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_page_build.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_dictionary_panel.cpp"
 )
 foreach(_source IN LISTS _settings_sources)
     if(_source MATCHES "settings_app\\.cpp$" OR NOT _source MATCHES "\\.cpp$")
@@ -347,6 +379,8 @@ target_link_libraries(MetasequoiaImeSettingsUiTests PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
     bcrypt
+    wintrust
+    crypt32
     winhttp
     dwmapi
     dcomp

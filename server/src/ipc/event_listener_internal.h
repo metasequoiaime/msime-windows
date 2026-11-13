@@ -6,6 +6,7 @@
 
 #include <Windows.h>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -17,12 +18,14 @@
 #include <vector>
 #include "ipc.h"
 #include "ipc/async_request_origin.h"
+#include "ipc/candidate_pages.h"
 #include "ipc/candidate_selection_policy.h"
 #include "ipc/candidate_text_policy.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/event_listener_task_class.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "ipc/event_listener.h"
+#include "ipc/traditional_variant_choice_policy.h"
 #include "engine/contracts/v_mode_input.h"
 #include "window/caret_state_indicator_policy.h"
 
@@ -171,9 +174,14 @@ WordItem WithFirstTraditionalSpelling(WordItem item);
 // 一段简体文字整串的第一写法：ShownCandidateCharacterSet 是繁体（非日语方案）时取排序后的第一种写法，
 // 否则原样返回。不看 U 模式：造词前缀不来自拆字结果。
 std::string FirstSpellingOfText(const std::string &text);
+// 一段简体文字整串按当前地区排序（不计写法记录）的第一种繁体写法，不看字形设置；没有写法时原样返回。
+std::string RegionalFirstSpellingOfText(const std::string &text);
 // 当前造词已选部分（GlobalIme::composition.creating_word）的简体底词、显示文字与第一写法标记。
 // ShownCandidateCharacterSet 与第一段选中时不同，第一写法标记为 false，上屏按显示的文字拼接。
 FanyImeIpc::ChosenText CreatingWordChosenText();
+// 选中 item 这一刻的候选环境，判定要不要读写繁体写法记录（见 FanyImeIpc::RemembersVariantChoices）。
+// item 本身是日语候选时按日语方案算。要在 reset_state 之前取，理由同 IsRadicalCandidateListActive。
+FanyImeIpc::VariantChoiceScope CurrentVariantChoiceScope(const WordItem &item);
 // 每个按键包到达时调用：记下它是否来自密码 / PIN 输入框，并在宿主或焦点会话变化时清空 AI 上下文。
 void NoteAiContextKeySource(uint64_t client_id, uint64_t activation_epoch, bool sensitive_field);
 void AppendAiContext(const std::string &committed_word);
@@ -188,6 +196,36 @@ void SyncShuangpinPreeditForms();
 void EnsureCandidatePageReady();
 std::wstring BuildUiLessCandidatePageW();
 void RefreshCandidatePageUi(bool show_window);
+// Fast asynchronous sources (mixed English, neural reorder) coalesce into one additional frame per keystroke.
+// The first frame is still published immediately by the key path; these helpers only defer the enrichment frame
+// until the burst settles. Late enhancements (effect-tier rerank, gloss updates) may add one more frame after the
+// fast settle, because they intentionally arrive after the user stops typing.
+void RefreshCandidatePageUiCoalesced();
+void RefreshCandidatePageUiLate();
+// Cloud/AI/dedicated-English answers are not part of the settle budget: every arrival paints.
+void RefreshCandidatePageUiImmediate();
+void RequestShowCandidateWindowDeferred(bool late = false);
+
+// event_listener.cpp — CandidatePages runtime. Worker-thread calls are serialized by the task queue; Painted,
+// Gesture and Visibility are the only UI-thread entries.
+void PublishCandidatePage(FanyImeIpc::CandidatePage page);
+void ShowCandidatePage(FanyImeIpc::CandidatePage page);
+void UpdateCandidatePage(FanyImeIpc::CandidatePage page, FanyImeIpc::CandidateFreshness freshness);
+bool UpdateCurrentCandidatePage(FanyImeIpc::CandidateFreshness freshness);
+void ShowPublishedCandidatePage();
+void HideCandidatePages();
+void ResetCandidatePageFrames();
+void CancelCandidatePageFrames();
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateSlot(int index_in_page);
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateHighlighted();
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateAt(int index_in_page);
+bool HasCandidatePage();
+void NoteCandidatePagePainted(std::uint64_t generation, bool visible);
+void NoteCandidatePageGesture(std::uint64_t generation);
+void NoteCandidatePageVisibility(bool visible);
+std::optional<std::chrono::steady_clock::time_point> CandidatePageTimerDeadline();
+bool CandidatePageTimerIsDue(std::chrono::steady_clock::time_point now);
+void FireDueCandidatePageTimers(std::chrono::steady_clock::time_point now);
 
 // event_listener_pipes.cpp
 void WakeNamedPipeListenersForShutdown();
@@ -244,6 +282,26 @@ void EnqueueLearnEnglishSlotTask(const std::string &code, int english_index, std
                                  uint64_t client_id, uint64_t activation_epoch);
 // 日期时间格式的调频：选中了 format_id（WordItem::pinyin）那种格式。
 void EnqueueLearnDateTimeOrderTask(const std::string &format_id, uint64_t client_id, uint64_t activation_epoch);
+// 从用户日志库查繁体写法记录的查询函数。每次调用都在调用线程上查日志库。
+const FanyImeIpc::RememberedSpellingLookup &RememberedSpellingFromUserJournal();
+// 下面四个函数的 scope 都由调用方在 reset_state 之前取（见 CurrentVariantChoiceScope）。
+// 选中 item 之后，按 FanyImeIpc::VariantChoiceForSelection 记下或删掉写法记录。要改时在调用线程上算好改动，
+// 交给后台写线程，不等写完就返回：写完之前查到旧记录。写入失败时重试，都失败时记一条诊断日志。没有改动时不入队。
+// 只在任务线程上调用。
+void EnqueueRememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope,
+                                                       const WordItem &item);
+// 造好的词（键 key、简体词 word）以 committed_text 上屏之后，按 FanyImeIpc::VariantChoiceForComposedWord
+// 记下或删掉写法记录。写入方式与线程要求同上一个函数：写完之前查到旧记录。
+void EnqueueRememberOrForgetComposedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope,
+                                                       const FanyImeIpc::ComposedWordSegments &segments,
+                                                       const std::string &key, const std::string &word,
+                                                       const std::string &committed_text);
+// 置顶或固定 item 之后，按 FanyImeIpc::VariantChoiceForSelection 记下或删掉写法记录。在调用线程上直接写日志库，
+// 返回之后再查记录读到的就是改过的样子。
+void RememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item);
+// 删除候选 item 之后，按 FanyImeIpc::VariantChoiceWordToForgetOnDelete 删掉它的底词在所有键下的写法记录。
+// 在调用线程上直接写日志库，返回之后再查记录读到的就是改过的样子。
+void ForgetTraditionalVariantsOfDeletedCandidate(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item);
 
 // event_listener_keys.cpp
 // 把译文页或日期页换回进入之前的那一屏，进入之后切过字形时按当前字形换写法；都没打开时什么都不做。
@@ -274,15 +332,20 @@ bool RespellCandidatesForCharacterSetChange();
 void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id);
 void ClearState();
 // count_first_word = false 时这次上屏不进首词命中率（五笔四码唯一自动上屏：用户没有做选择）。
+// resolve_live_page: 展开面板点选的候选不在当前页上，MoveToExpandedCandidate 已把工作线程的页
+// 和高亮移到它那一项，这里只能按工作线程的列表结算，不能拿屏幕上那一页的页内下标去套。
 void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_epoch, int forced_index_in_page = -1,
-                         bool count_first_word = true);
+                         bool count_first_word = true, bool resolve_live_page = false);
 void WaitForCandidateRenderSync(UINT keycode);
 void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin, uint64_t generation,
                          const std::optional<metasequoia::OnlineQuery> &query);
 void ApplyRescoredOrder();
-// 用当前会话状态重查一次候选，保留只活在 series cache 里的云/AI 候选；候选没变就不动 UI。
-// 调用方负责前置守卫（选词中/造词/子页、owner 有效性）。返回是否重发了候选页。
-bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner);
+// 用当前会话状态重查一次候选，保留只活在 series cache 里的云/AI 候选；首屏没变就不请求重画，
+// 但内部列表仍会更新（翻页要读到新结果）。调用方负责前置守卫（选词中/造词/子页、owner 有效性）。
+// 返回是否请求了新的首屏帧。
+bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late = false);
+// 组合边界（提交、隐藏、清理）重置重排重查额度；同一串重新输入时不得继承上一段用掉的次数。
+void ResetRescoreRequeryBudget();
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,
                       const std::optional<metasequoia::OnlineQuery> &query);
 void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string &input, uint64_t generation);

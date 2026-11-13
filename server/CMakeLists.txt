@@ -414,6 +414,10 @@ set(SRC_FILES
     "./src/voice-input/system_audio_muter.h"
     "./src/voice-input/doubao_asr_client.cpp"
     "./src/voice-input/doubao_asr_client.h"
+    # 本地离线识别：sherpa-onnx 运行库按需下载、运行时 LoadLibrary，不参与链接。
+    "./src/voice-input/local_asr.cpp"
+    "./src/voice-input/local_asr.h"
+    "./src/voice-input/local_asr_catalog.h"
     "./src/voice-input/voice_batch_protocol.cpp"
     "./src/voice-input/voice_providers.cpp"
     "./src/voice-input/voice_providers.h"
@@ -428,6 +432,8 @@ set(SRC_FILES
     "./src/voice-input/voice_result_card.cpp"
     "./src/voice-input/voice_result_card.h"
     "./src/voice-input/voice_result_card_model.h"
+    "./src/voice-input/voice_notice_window.cpp"
+    "./src/voice-input/voice_notice_window.h"
     "./src/voice-input/voice_overlay_layout.h"
     "./src/voice-input/voice_commit_policy.h"
     "./src/main.cpp"
@@ -454,7 +460,7 @@ add_dependencies(${PROJECT_NAME} Dictionaries)
 target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
-target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 oleaut32 oleacc bcrypt)
+target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 oleaut32 oleacc bcrypt wintrust crypt32)
 target_link_libraries(${PROJECT_NAME} PRIVATE oleaut32)
 
 # The helper executables below already build at /W4. The server itself -- the process that owns
@@ -594,6 +600,9 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/lattice_model.h"
     "./src/settings/model_download.cpp"
     "./src/settings/model_download.h"
+    "./src/settings/local_asr_download.cpp"
+    "./src/settings/local_asr_download.h"
+    "./src/voice-input/local_asr_catalog.h"
     "./src/settings/zip_archive.cpp"
     "./src/settings/zip_archive.h"
     "./src/settings/user_data_backup.cpp"
@@ -757,6 +766,8 @@ target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
     bcrypt
+    wintrust
+    crypt32
     winhttp
     dwmapi
     dcomp

@@ -80,6 +80,8 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
         MakeTomlAssignmentId("utility", "kaomoji_mode"),
         MakeTomlAssignmentId("voice_input", "voice_input"),
         MakeTomlAssignmentId("voice_input", "doubao_enable_ddc"),
+        // 新装默认本地离线识别；老用户多半已在豆包上填好 Token，不能升级一次就被换到一个还没下载的本地模型。
+        MakeTomlAssignmentId("voice_input", "asr_provider"),
         MakeTomlAssignmentId("ai_assistant", "enabled"),
         MakeTomlAssignmentId("tencent_tmt", "enabled"),
         MakeTomlAssignmentId("aliyun_mt", "enabled"),

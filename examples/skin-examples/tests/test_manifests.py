@@ -20,14 +20,34 @@ V2_IMAGE_SUFFIXES = (".png", ".apng", ".gif", ".webp")
 
 class ManifestTests(unittest.TestCase):
     def _check_border_image_repeat(self, table):
-        """repeat 同 CSS border-image-repeat：1–2 个 stretch / repeat。"""
+        """repeat 同 CSS border-image-repeat：1–2 个 stretch / repeat / round / space。"""
         if "repeat" not in table:
             return
         values = table["repeat"]
         values = [values] if isinstance(values, str) else values
         self.assertIn(len(values), (1, 2), "border_image.repeat")
         for value in values:
-            self.assertIn(value, ("stretch", "repeat"), "border_image.repeat")
+            self.assertIn(value, ("stretch", "repeat", "round", "space"), "border_image.repeat")
+
+    def _check_length(self, table, key, maximum, maximum_em, where):
+        """Mirrors the Server catalog's ReadLength: 0–maximum DIP, or "<number>em" for 0–maximum_em font sizes."""
+        if key not in table:
+            return
+        value = table[key]
+        if isinstance(value, str):
+            match = re.fullmatch(r"(\d+(?:\.\d+)?)em", value)
+            self.assertIsNotNone(match, f"{where}.{key}")
+            self.assertLessEqual(float(match.group(1)), maximum_em, f"{where}.{key}")
+        else:
+            self.assertTrue(0 <= value <= maximum, f"{where}.{key}")
+
+    def _check_layouts(self, value, where):
+        """Mirrors the Server catalog: layouts lists horizontal / vertical, each at most once."""
+        self.assertIsInstance(value, list, where)
+        self.assertTrue(value, where)
+        self.assertEqual(len(value), len(set(value)), where)
+        for layout in value:
+            self.assertIn(layout, ("horizontal", "vertical"), where)
 
     def test_shipped_skins(self):
         manifests = list(SKINS_DIR.glob("*/skin.toml"))
@@ -49,6 +69,9 @@ class ManifestTests(unittest.TestCase):
                 else:
                     self.assertNotEqual(data["base"], CANVAS_BASE, "canvas needs schema 2")
                 window = data.get("candidate_window", {})
+                self._check_length(window, "min_width_dip", 1000, 10, "candidate_window")
+                for layout in ("horizontal", "vertical"):
+                    self._check_length(window.get(layout, {}), "min_width_dip", 1000, 10, f"candidate_window.{layout}")
                 assets = {key: data.get(key) for key in ("toolbar_stylesheet", "preview")}
                 for table in ("decoration", "background"):
                     if table in window:
@@ -69,22 +92,24 @@ class ManifestTests(unittest.TestCase):
                             self.assertTrue(all(0 <= v <= 500 for v in values), key)
                     self.assertIsInstance(border_image.get("fill", True), bool, "fill")
                     self._check_border_image_repeat(border_image)
-                    # 竖排覆盖表只写与横排不同的键。
-                    vertical = border_image.get("vertical", {})
-                    if "source" in vertical:
-                        assets["candidate_window.border_image.vertical.source"] = vertical["source"]
-                        v2_images.append(vertical["source"])
-                    if "light_source" in vertical:
-                        assets["candidate_window.border_image.vertical.light_source"] = vertical["light_source"]
-                        v2_images.append(vertical["light_source"])
-                    for key in ("slice_dip", "stretch_dip", "width_dip"):
-                        if key in vertical:
-                            values = vertical[key]
-                            self.assertIn(len(values), (1, 2, 4), key)
-                            self.assertTrue(all(0 <= v <= 500 for v in values), key)
-                    if "fill" in vertical:
-                        self.assertIsInstance(vertical["fill"], bool, "border_image.vertical.fill")
-                    self._check_border_image_repeat(vertical)
+                    # 横排、竖排覆盖表只写与共用那份不同的键。
+                    for layout in ("horizontal", "vertical"):
+                        override = border_image.get(layout, {})
+                        prefix = f"candidate_window.border_image.{layout}"
+                        for key in ("source", "light_source"):
+                            if key in override:
+                                assets[f"{prefix}.{key}"] = override[key]
+                                v2_images.append(override[key])
+                        for key in ("slice_dip", "stretch_dip", "width_dip"):
+                            if key in override:
+                                values = override[key]
+                                self.assertIn(len(values), (1, 2, 4), f"{prefix}.{key}")
+                                self.assertTrue(all(0 <= v <= 500 for v in values), f"{prefix}.{key}")
+                        if "fill" in override:
+                            self.assertIsInstance(override["fill"], bool, f"{prefix}.fill")
+                        self._check_border_image_repeat(override)
+                if "layouts" in window.get("decoration", {}):
+                    self._check_layouts(window["decoration"]["layouts"], "candidate_window.decoration.layouts")
                 decorations = window.get("decorations", [])
                 self.assertLessEqual(len(decorations), 32, "decorations")
                 for i, dec in enumerate(decorations):
@@ -97,6 +122,8 @@ class ManifestTests(unittest.TestCase):
                     self.assertTrue(-1000 <= dec.get("z_index", 2) <= 1000, "z_index")
                     for key in ("offset_x_dip", "offset_y_dip"):
                         self.assertTrue(-2000 <= dec.get(key, 0) <= 2000, key)
+                    if "layouts" in dec:
+                        self._check_layouts(dec["layouts"], f"candidate_window.decorations[{i}].layouts")
                 # Mirrors the Server catalog: the toolbar's image mode needs a background image and its size; the
                 # images are checked only in that mode, as the catalog ignores them otherwise.
                 toolbar = data.get("toolbar", {})
@@ -176,6 +203,11 @@ class ManifestTests(unittest.TestCase):
                     for key in ("backdrop_opacity", "backdrop_luminosity"):
                         if key in colors:
                             self.assertTrue(0 <= colors[key] <= 1, f"candidate.{theme}.{key}")
+                for theme in ("dark", "light"):
+                    colors = data.get("toolbar", {}).get(theme, {})
+                    for key in ("backdrop_opacity", "backdrop_luminosity"):
+                        if key in colors:
+                            self.assertTrue(0 <= colors[key] <= 1, f"toolbar.{theme}.{key}")
                 for theme in data["supports"]["themes"]:
                     self.assertIn(theme, data["candidate"])
                     if "toolbar" in data:

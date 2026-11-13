@@ -251,21 +251,22 @@ std::shared_ptr<SkinCard> SkinPage::MakeCard(const std::string &id, const Json *
     header->Add(titles, 1.0f);
     header->Add(actions);
 
-    const bool decorated = external && external->contains("decorationTopDip") &&
-                           (*external)["decorationTopDip"].is_number() &&
-                           (*external)["decorationTopDip"].get<double>() > 0.0;
-    auto stage = [decorated](VisualPtr child, Thickness padding) {
+    // 装饰图可以只在横排或竖排里出现（decoration.layouts），每个预览按自己的排布决定要不要放开裁剪。
+    const bool decoratedHorizontal = skinpreview::HasDecorationInLayout(external, true);
+    const bool decoratedVertical = skinpreview::HasDecorationInLayout(external, false);
+    const bool decorated = decoratedHorizontal || decoratedVertical;
+    auto stage = [](VisualPtr child, Thickness padding, bool clip) {
         auto band = std::make_shared<Band>(std::move(child), padding);
-        band->SetClip(!decorated);
+        band->SetClip(clip);
         return band;
     };
     card->horizontal = std::make_shared<skinpreview::CandidatePreview>();
     card->vertical = std::make_shared<skinpreview::CandidatePreview>();
     card->toolbar = std::make_shared<skinpreview::ToolbarPreview>();
     auto previews = std::make_shared<Column>(0.0f);
-    previews->Add(stage(card->horizontal, {24.0f, 14.0f, 36.0f, 38.0f}));
-    previews->Add(stage(card->vertical, {24.0f, 14.0f, 36.0f, 38.0f}));
-    previews->Add(stage(card->toolbar, {24.0f, 9.0f, 24.0f, 9.0f}));
+    previews->Add(stage(card->horizontal, {24.0f, 14.0f, 36.0f, 38.0f}, !decoratedHorizontal));
+    previews->Add(stage(card->vertical, {24.0f, 14.0f, 36.0f, 38.0f}, !decoratedVertical));
+    previews->Add(stage(card->toolbar, {24.0f, 9.0f, 24.0f, 9.0f}, !decorated));
     auto list = std::make_shared<Band>(previews, Thickness{0.0f, 9.0f, 0.0f, 9.0f});
     list->SetBackground([]() { return CurrentPalette().skinPreviewStageBg; });
 

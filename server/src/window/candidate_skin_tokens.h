@@ -30,6 +30,8 @@ struct CandSkinTokens
     float radius = 6.0f;
     float borderWidth = 1.5f;
     float containerPad = 5.0f;
+    // 当前排布的最小宽度（0 为不限）；与 [candidate_window] 的 min_width_dip 取大值。
+    float minWidthDip = 0.0f;
     bool showSelectedBar = true;
     // 高亮圆角；outerItemRadius > 0 时，落在卡片四角上的那几个角改用它（跟卡片同圆角）。
     float itemRadius = 4.0f;

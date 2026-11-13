@@ -272,7 +272,6 @@ VisualPtr BuildHelpPage(PageContext &context)
             else
                 SetStatus(*locked->defaultStatus, DescribeDefaultIme(response), isDefault ? "success" : "idle");
         });
-        post("status");
     }
 
     // 游戏兼容
@@ -377,7 +376,6 @@ VisualPtr BuildHelpPage(PageContext &context)
                 SetStatus(*locked->compatStatus, DescribeGameCompat(response),
                           response.value("enabled", false) ? "success" : "idle");
         });
-        post("status", Json::object());
     }
 
     // 网络代理
@@ -460,40 +458,41 @@ VisualPtr BuildHelpPage(PageContext &context)
         RefreshProxyState(*state);
     }
 
-    auto root = std::make_shared<OwnerBox>(page.Build(), state);
-    // default-ime.ts / game-compat.ts: query again when the page shows or the window
-    // regains focus.
-    std::weak_ptr<msimeui::Visual> weakRoot = root;
+    // default-ime.ts / game-compat.ts: query when the page shows or the window regains focus.
+    // 索引器会在页面被打开之前就建好它，所以构建期一次都不发；首次显示由 root 的 Attach 补上。
     std::weak_ptr<HelpState> weakState = state;
+    const auto refresh_statuses = [model, weakState]() {
+        auto locked = weakState.lock();
+        if (!locked)
+            return;
+        bool busy = false;
+        for (const auto &entry : locked->defaultPending)
+            busy = busy || entry.second == "setDefault";
+        if (!busy)
+        {
+            const std::string id = model->NewRequestId("default-ime");
+            locked->defaultPending[id] = "status";
+            model->Post("defaultImeRequest", Json{{"requestId", id}, {"action", "status"}});
+        }
+        busy = false;
+        for (const auto &entry : locked->compatPending)
+            busy = busy || entry.second == "apply";
+        if (!busy)
+        {
+            const std::string id = model->NewRequestId("game-compat");
+            locked->compatPending[id] = "status";
+            model->Post("gameCompatRequest", Json{{"requestId", id}, {"action", "status"}});
+        }
+    };
+    auto root = std::make_shared<OwnerBox>(page.Build(), state, refresh_statuses);
+    std::weak_ptr<msimeui::Visual> weakRoot = root;
     state->watch = std::make_unique<VisibilityWatch>(
         context.host.Hwnd(),
         [weakRoot]() {
             auto locked = weakRoot.lock();
             return locked && locked->GetParentVisual() != nullptr;
         },
-        [model, weakState]() {
-            auto locked = weakState.lock();
-            if (!locked)
-                return;
-            bool busy = false;
-            for (const auto &entry : locked->defaultPending)
-                busy = busy || entry.second == "setDefault";
-            if (!busy)
-            {
-                const std::string id = model->NewRequestId("default-ime");
-                locked->defaultPending[id] = "status";
-                model->Post("defaultImeRequest", Json{{"requestId", id}, {"action", "status"}});
-            }
-            busy = false;
-            for (const auto &entry : locked->compatPending)
-                busy = busy || entry.second == "apply";
-            if (!busy)
-            {
-                const std::string id = model->NewRequestId("game-compat");
-                locked->compatPending[id] = "status";
-                model->Post("gameCompatRequest", Json{{"requestId", id}, {"action", "status"}});
-            }
-        });
+        refresh_statuses);
     return root;
 }
 } // namespace native_settings

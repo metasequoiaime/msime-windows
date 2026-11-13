@@ -113,20 +113,6 @@ float StickyCardExtent(float kept, float natural)
 // 候选窗 HWND 上的动图帧定时器。宿主自己的定时器编号见 ime_windows_internal.h（2–14），这里避开它们。
 constexpr UINT_PTR kCandidateAnimationTimerId = 0x0A11;
 
-// 系统「透明效果」（设置 → 个性化 → 颜色）。关掉时系统材质一律退回纯色，皮肤的亚克力也跟着退回不透明底色。
-// 读不到时按开启处理。
-bool SystemTransparencyEnabled()
-{
-    DWORD value = 1;
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                     L"EnableTransparency", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
-    {
-        return true;
-    }
-    return value != 0;
-}
-
 } // namespace
 
 struct CandidatePresenter::Impl
@@ -937,7 +923,7 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
         StopAnimationFrames();
         SetCandidateHostCloaked(true);
         ::is_global_wnd_cand_shown = true;
-        Global::SetCandidateWindowRenderedVisible(true);
+        FanyNamedPipe::NoteCandidatePageVisibility(true);
         CAND_DIAG_LOGF(L"candidate-d2d show deferred: no usable caret anchor ({},{})", caret.x, caret.y);
         return;
     }
@@ -1063,7 +1049,7 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     }
     PlaceAndShow(caret, widthDip, heightDip, cardLeftDip, cardTopDip, scale);
     ::is_global_wnd_cand_shown = true;
-    Global::SetCandidateWindowRenderedVisible(true);
+    FanyNamedPipe::NoteCandidatePageVisibility(true);
     // 后续候选不够填满一屏时，不用等滚动就再要一批。
     RequestMoreExpandedIfNearEnd();
     // PlaceAndShow presented while the host was still being placed; it is placed and shown only now.
@@ -1071,7 +1057,7 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // PlaceAndShow paints synchronously, so the page is on screen now. Echo the generation of the
     // snapshot that was actually rendered (not the latest published one) so a pending digit/space
     // selection can settle against the same page the user is looking at.
-    Global::PublishRenderedCandidatePageGeneration(renderedGeneration);
+    FanyNamedPipe::NoteCandidatePagePainted(renderedGeneration, true);
 }
 
 void CandidatePresenter::SetPinnedCardOrigin(const POINT *origin)
@@ -1091,7 +1077,7 @@ void CandidatePresenter::Hide()
     StopAnimationFrames();
     animationClockRunning_ = false;
     ::is_global_wnd_cand_shown = false;
-    Global::SetCandidateWindowRenderedVisible(false);
+    FanyNamedPipe::NoteCandidatePageVisibility(false);
     hoverArmed_ = false;
     wheelDeltaAccumulator_ = 0;
     SetExpanded(false);

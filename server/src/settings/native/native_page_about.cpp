@@ -3,6 +3,7 @@
 #include "msime_version.h"
 #include "settings/native/native_settings_update_download.h"
 #include "settings/update_channel.h"
+#include "utils/network_proxy.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
@@ -15,6 +16,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <regex>
+#include <thread>
 
 using Microsoft::WRL::ComPtr;
 
@@ -72,6 +74,19 @@ int CompareVersions(const Version &left, const Version &right)
     return 0;
 }
 
+// 清单字段类型不对时 value() 会抛 type_error，设置窗口的消息处理不能让它逃出去。
+std::string JsonStringOrEmpty(const nlohmann::json &object, const char *key)
+{
+    const auto it = object.find(key);
+    return it != object.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+bool JsonBoolOr(const nlohmann::json &object, const char *key, const bool fallback)
+{
+    const auto it = object.find(key);
+    return it != object.end() && it->is_boolean() ? it->get<bool>() : fallback;
+}
+
 // GET over WinHTTP; empty on any failure. Runs on a worker thread.
 std::string HttpGet(const std::string &url)
 {
@@ -86,8 +101,10 @@ std::string HttpGet(const std::string &url)
     if (!WinHttpCrackUrl(wide.c_str(), 0, 0, &parts))
         return {};
     std::string body;
-    HINTERNET session =
-        WinHttpOpen(L"MetasequoiaImeSettings", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+    // 和其它联网路径一致地走用户配置的代理。这里以前直接用 AUTOMATIC_PROXY，
+    // 只认系统代理，[network] 里填的自定义代理被整个跳过：清单走了直连，安装包
+    // 却走代理，两条路结果不同，表现为检查时好时坏。
+    HINTERNET session = NetworkProxy::OpenWinHttpSession(L"MetasequoiaImeSettings/1.0");
     if (!session)
         return {};
     WinHttpSetTimeouts(session, 10000, 10000, 10000, 10000);
@@ -97,6 +114,11 @@ std::string HttpGet(const std::string &url)
             ? WinHttpOpenRequest(connection, L"GET", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                  parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)
             : nullptr;
+    if (request)
+    {
+        DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+        WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
+    }
     DWORD status = 0;
     DWORD statusSize = sizeof(status);
     if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) &&
@@ -126,6 +148,9 @@ std::string HttpGet(const std::string &url)
 // `.about-link-row`: min-height 66px with a hairline under every row but the last.
 class AboutRow : public msimeui::Panel
 {
+    // 内容超出 66px 时上下各留的空白（DIP），和行内文字到分割线的视觉距离相当。
+    static constexpr float kRowPaddingY = 12.0f;
+
   public:
     AboutRow(VisualPtr left, VisualPtr right, bool last) : left_(std::move(left)), right_(std::move(right)), last_(last)
     {
@@ -146,7 +171,10 @@ class AboutRow : public msimeui::Panel
         leftSize_ = left_->MeasureInLayout(
             {std::max(availableSize.width - (right_ ? rightSize_.width + 20.0f : 0.0f), 0.0f), availableSize.height});
         const float border = last_ ? 0.0f : CssBorder();
-        return {availableSize.width, std::max(66.0f, std::max(leftSize_.height, rightSize_.height) + border)};
+        // 单行内容在 66px 里垂直居中；内容一多（状态文字、「立即安装」按钮）就按内容撑高，
+        // 但上下各留 kRowPaddingY，不能贴着上一条分割线或压到下一条上。
+        const float content = std::max(leftSize_.height, rightSize_.height) + kRowPaddingY * 2.0f;
+        return {availableSize.width, std::max(66.0f, content + border)};
     }
 
     void Arrange(const RectF &finalRect) override
@@ -165,7 +193,19 @@ class AboutRow : public msimeui::Panel
     void Render(msimeui::DeviceResources &dr) override
     {
         if (title_)
-            title_->SetColor(hovered_ ? CurrentPalette().accentStrong : CurrentPalette().text);
+        {
+            // 颜色在这里取，换主题时也跟得上；但只在真的变了才设。Label::SetColor 每次都会
+            // InvalidateVisual，在 Render 里无条件调用会让窗口刚画完又被标脏，陷入每秒上千帧
+            // 的重绘循环——WM_PAINT 优先于 WM_TIMER，整个设置窗口的计时器都会因此饿死。
+            const D2D1_COLOR_F color = hovered_ ? CurrentPalette().accentStrong : CurrentPalette().text;
+            if (!titleColorSet_ || color.r != titleColor_.r || color.g != titleColor_.g || color.b != titleColor_.b ||
+                color.a != titleColor_.a)
+            {
+                titleColor_ = color;
+                titleColorSet_ = true;
+                title_->SetColor(color);
+            }
+        }
         left_->Render(dr);
         if (right_)
             right_->Render(dr);
@@ -230,6 +270,9 @@ class AboutRow : public msimeui::Panel
     SizeF rightSize_ = {};
     std::function<void()> onClick_;
     std::shared_ptr<Label> title_;
+    // 上一次给标题设的颜色，见 Render。
+    D2D1_COLOR_F titleColor_ = {};
+    bool titleColorSet_ = false;
     bool hovered_ = false;
     bool pressed_ = false;
 };
@@ -281,6 +324,12 @@ struct AboutBackupState
 struct AboutState
 {
     std::shared_ptr<CssButton> check;
+    // 后台已下载好安装包时出现在「自动下载更新」一行的「立即安装」。只有正式版才有。
+    std::shared_ptr<CssButton> install;
+    // 每秒读一次后台进度。放在这里是为了让它跟页面同生共死：页面根节点（OwnerBox）持有
+    // AboutState，页面销毁时定时器随之析构并 KillTimer。放在局部变量里会在建页结束时就被
+    // 析构，进度只在打开页面那一刻读一次。
+    std::unique_ptr<UiTimer> progressTimer;
     std::shared_ptr<Label> status;
     std::shared_ptr<Hideable> statusBox;
     // Set once the user-data backup section exists. Kept here so the page owns the
@@ -350,33 +399,91 @@ inline void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const
 {
     state->check->SetDisabled(false);
     state->check->SetText(L"检查更新");
+    if (state->install)
+        state->install->SetDisabled(false);
     state->status->SetText(message);
     state->status->SetRole(ok ? TextRole::Accent : TextRole::Danger);
     state->statusBox->SetVisible(true);
 }
 
-// 下载结束后恢复按钮并给出结果。成功时先用清单摘要重新核对一遍磁盘上的文件，
-// 再交给系统打开：它已经校验过，接下来是 UAC 和 Inno Setup 自己的界面，每一步仍由
-// 用户确认。重核对是为了堵住「校验完成」到「用户点 UAC」之间被替换的窗口。
-void FinishUpdateDownload(const std::shared_ptr<AboutState> &state, const std::string &installer_path,
-                          const std::string &expected_digest, const std::string &message)
+// 当前构建的版本号，按 update_channel 的规则解析。和 Server 判断「比本机新」用的是同一套。
+bool CurrentChannelVersion(update_channel::Version &current)
 {
-    if (installer_path.empty())
+    return update_channel::Parse(MSIME_PRODUCT_VERSION, current) && current.valid;
+}
+
+// 进度文件里的版本是否真比本机新。装完新版本后 Server 要等下一轮轮询才会把进度收回
+// Idle，这段时间里不能再显示「等待安装」。
+bool IsNewerThanCurrent(const std::string &version)
+{
+    update_channel::Version current;
+    update_channel::Version recorded;
+    return CurrentChannelVersion(current) && update_channel::Parse(version, recorded) && recorded.valid &&
+           recorded.kind == current.kind && update_channel::Compare(recorded, current) > 0;
+}
+
+// 后台进度是不是「正在下载」且还新鲜。Server 每收一块就刷新 updated_at；超过两分钟没动
+// 说明那一轮已经死了（进程被杀、机器睡眠），不能拿它挡住用户手动下载。
+bool BackgroundIsDownloading(const update_channel::DownloadProgress &progress, const std::string &version)
+{
+    if (progress.state != update_channel::DownloadProgress::State::Downloading || progress.version != version)
+        return false;
+    const auto now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    return progress.updated_at <= now && now - progress.updated_at < 120;
+}
+
+// 下载线程上的收尾：先用清单摘要重新核对一遍磁盘上的文件，并在启动前验证签名，
+// 再拉起安装程序。整段都在后台线程上跑：100 MB 的摘要加一遍 WinVerifyTrust（杀毒
+// 软件还会跟着扫）放在窗口线程上会让设置窗口卡住好几秒。只读句柄一直拿到安装程序
+// 退出，向导回读 setup.exe 期间别人改不了也删不掉。接下来是 UAC 和 Inno Setup 自己
+// 的界面，每一步仍由用户确认。
+//
+// 返回「状态\n说明」：状态是 ok / err / cancel，交给窗口线程显示。
+std::string VerifyAndLaunchInstaller(const std::filesystem::path &path, const std::string &expected_digest,
+                                     const bool require_signature)
+{
+    HANDLE file = INVALID_HANDLE_VALUE;
+    if (!update_download::OpenVerifiedInstaller(path, expected_digest, file))
+        return "err\n安装包在打开前核对失败，请重试";
+    const update_download::SignatureCheck signature =
+        require_signature ? update_download::VerifyAuthenticode(path) : update_download::SignatureCheck::Valid;
+    if (signature == update_download::SignatureCheck::Invalid)
     {
-        FinishUpdateDownload(state, false, Widen(message.empty() ? "下载失败" : message));
-        return;
+        CloseHandle(file);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        return "err\n安装包签名校验失败，请从发布页手动下载";
     }
-    const std::filesystem::path path = std::filesystem::u8path(installer_path);
-    if (!update_download::FileMatchesDigest(path, expected_digest))
+    if (signature == update_download::SignatureCheck::Unverifiable)
     {
-        FinishUpdateDownload(state, false, L"安装包在打开前核对失败，请重试");
-        return;
+        // 本机暂时建不起信任链，不是文件的问题；文件留着，下次点「检查更新」直接复用。
+        CloseHandle(file);
+        return "err\n暂时无法验证安装包签名（可能是网络或系统证书问题），请稍后重试";
     }
-    const HINSTANCE opened = ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    if (reinterpret_cast<INT_PTR>(opened) <= 32)
-        FinishUpdateDownload(state, false, L"安装包已下载，但无法自动打开，请重试");
-    else
-        FinishUpdateDownload(state, true, L"安装包已下载并通过校验，已打开安装程序");
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    SHELLEXECUTEINFOW info{};
+    info.cbSize = sizeof(info);
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
+    info.lpVerb = L"open";
+    info.lpFile = path.c_str();
+    const std::filesystem::path working_directory = path.parent_path();
+    info.lpDirectory = working_directory.c_str();
+    info.nShow = SW_SHOWNORMAL;
+    const bool opened = ShellExecuteExW(&info) != FALSE;
+    const DWORD launch_error = opened ? ERROR_SUCCESS : GetLastError();
+    if (SUCCEEDED(com))
+        CoUninitialize();
+    if (!opened)
+    {
+        CloseHandle(file);
+        // 用户在 UAC 里点了「否」：是用户的选择，不当成错误。
+        if (launch_error == ERROR_CANCELLED)
+            return "cancel\n已取消安装，需要时可再次点击「检查更新」";
+        return "err\n安装包已下载，但无法自动打开，请重试";
+    }
+    update_download::HoldInstallerUntilExit(file, info.hProcess);
+    return "ok\n安装包已下载并通过校验，已打开安装程序";
 }
 
 void ShowUpdateDialog(PageContext &context, const Version &latest, const std::string &releaseUrl,
@@ -394,8 +501,8 @@ void ShowUpdateDialog(PageContext &context, const Version &latest, const std::st
     // describeInstallerTrust
     static const std::regex installerName(R"(^MetasequoiaIME_Setup_v[\w.-]+\.exe$)", std::regex::icase);
     static const std::regex sha256(R"(^[0-9a-f]{64}$)");
-    const std::string name = manifest.value("installerName", std::string());
-    const std::string digest = manifest.value("installerSha256", std::string());
+    const std::string name = JsonStringOrEmpty(manifest, "installerName");
+    const std::string digest = JsonStringOrEmpty(manifest, "installerSha256");
     const bool nameValid = std::regex_match(name, installerName);
     if (manifest.contains("signed") && manifest["signed"].is_boolean() && !manifest["signed"].get<bool>())
     {
@@ -498,7 +605,7 @@ void CheckForUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
             static const std::regex tag(R"(^https://github\.com/metasequoiaime/([\w.-]+)/releases/tag/([\w.+-]+)$)");
             static const std::regex installer(R"(^MetasequoiaIME_Setup_v[\w.-]+\.exe$)", std::regex::icase);
             std::smatch match;
-            const std::string name = manifest.value("installerName", std::string());
+            const std::string name = JsonStringOrEmpty(manifest, "installerName");
             if (std::regex_match(releaseUrl, match, tag) && std::regex_match(name, installer))
                 mirror = std::string(kDownloadMirrorPrefix) + "https://github.com/metasequoiaime/" + match[1].str() +
                          "/releases/download/" + match[2].str() + "/" + name;
@@ -528,6 +635,8 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
     }
     state->check->SetDisabled(true);
     state->check->SetText(L"正在检查…");
+    if (state->install)
+        state->install->SetDisabled(true);
     state->status->SetText(L"正在检查更新");
     state->status->SetRole(TextRole::Muted);
     state->statusBox->SetVisible(true);
@@ -562,8 +671,9 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                 return;
             }
 
-            const std::string name = manifest.value("installerName", std::string());
-            const std::string digest = manifest.value("installerSha256", std::string());
+            const std::string name = JsonStringOrEmpty(manifest, "installerName");
+            const std::string digest = JsonStringOrEmpty(manifest, "installerSha256");
+            const bool signed_installer = JsonBoolOr(manifest, "signed", false);
             if (!update_download::IsInstallerName(name) || !update_download::IsSha256Hex(digest))
             {
                 // 清单没给可用的包装与摘要，退回到原来那条路：让用户自己去下载页。
@@ -576,8 +686,30 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
                 return;
             }
 
-            state->check->SetText(L"正在下载…");
-            state->status->SetText(L"正在下载 v" + Widen(latest.display) + L"，稍等几分钟");
+            // Server 的后台下载把安装包放在数据目录的 updates/<版本>/ 下，目录名用的是
+            // update_channel 规范化后的版本号。同一版本已经下好就直接复用，不重复下载；
+            // 后台正在下就别再并行下一份，等它下完在「立即安装」那里装。
+            update_channel::Version normalized;
+            std::filesystem::path prepared;
+            if (update_channel::Parse(manifest["version"].get<std::string>(), normalized) && normalized.valid)
+            {
+                if (BackgroundIsDownloading(update_channel::ReadProgress(), normalized.text))
+                {
+                    FinishUpdateDownload(state, true,
+                                         L"发现新版本 v" + Widen(latest.display) +
+                                             L"，后台正在下载，完成后可点击下方「立即安装」");
+                    state->status->SetRole(TextRole::Muted);
+                    return;
+                }
+                const std::filesystem::path directory = update_channel::InstallerDirectory(normalized.text);
+                if (!directory.empty())
+                    prepared = directory / std::filesystem::u8path(name);
+            }
+            std::error_code exists_error;
+            const bool reuse = !prepared.empty() && std::filesystem::is_regular_file(prepared, exists_error);
+            state->check->SetText(reuse ? L"正在核对…" : L"正在下载…");
+            state->status->SetText(reuse ? L"v" + Widen(latest.display) + L" 已在后台下载好，正在核对安装包"
+                                         : L"正在下载 v" + Widen(latest.display) + L"，稍等几分钟");
             state->status->SetRole(TextRole::Muted);
 
             update_download::Request request;
@@ -586,42 +718,36 @@ void DownloadUpdate(PageContext &context, const std::shared_ptr<AboutState> &sta
             request.installer_name = name;
             request.installer_sha256 = digest;
             request.directory = update_download::DefaultDirectory();
-            // 下载本身在后台线程上跑，进度只能靠结束后一次性回报，所以把整个下载
-            // 放进 RunInBackground 的 work 里；返回一个编码过的结果串交给窗口线程。
+            // 下载、核对与拉起安装程序都在后台线程上跑，进度只能靠结束后一次性回报；
+            // 返回一个编码过的结果串（状态\n说明）交给窗口线程。
             RunInBackground(
                 ctx->host.Hwnd(),
-                [request]() {
+                [request, signed_installer, prepared]() {
+                    // 后台下好的那份摘要对得上就直接用；对不上（没下完、被换掉）就照常下载
+                    // 到临时目录，不去动 Server 的文件。
+                    if (!prepared.empty() && update_download::FileMatchesDigest(prepared, request.installer_sha256))
+                        return VerifyAndLaunchInstaller(prepared, request.installer_sha256, signed_installer);
                     const update_download::Result result = update_download::Download(request);
-                    if (result.outcome == update_download::Outcome::Ok)
-                    {
-                        update_download::PruneOldInstallers(request.directory, request.installer_name);
-                        // 四段结果：状态、路径、摘要、说明，用换行分隔。
-                        return std::string("ok\n") + result.path.u8string() + "\n" + request.installer_sha256 + "\n";
-                    }
-                    return std::string("err\n\n\n") + result.message;
+                    if (result.outcome != update_download::Outcome::Ok)
+                        return std::string("err\n") +
+                               (result.message.empty() ? std::string("下载失败") : result.message);
+                    update_download::PruneOldInstallers(request.directory, request.installer_name);
+                    return VerifyAndLaunchInstaller(result.path, request.installer_sha256, signed_installer);
                 },
                 [weak](const std::string &encoded) {
                     const std::shared_ptr<AboutState> locked = weak.lock();
                     if (!locked)
                         return;
-                    // 四段：状态、路径、摘要、说明。状态不是 ok 时按失败收尾。
-                    const auto next = [&encoded](size_t &start) {
-                        const size_t end = encoded.find('\n', start);
-                        const std::string field =
-                            encoded.substr(start, end == std::string::npos ? std::string::npos : end - start);
-                        start = end == std::string::npos ? encoded.size() : end + 1;
-                        return field;
-                    };
-                    size_t cursor = 0;
-                    const std::string status = next(cursor);
-                    const std::string path = next(cursor);
-                    const std::string digest = next(cursor);
-                    const std::string note = cursor < encoded.size() ? encoded.substr(cursor) : std::string();
-                    if (status == "ok")
-                        FinishUpdateDownload(locked, path, digest, note);
-                    else
-                        FinishUpdateDownload(locked, std::string(), std::string(),
-                                             note.empty() ? std::string("下载失败") : note);
+                    const size_t split = encoded.find('\n');
+                    const std::string status = encoded.substr(0, split);
+                    const std::string note = split == std::string::npos ? std::string() : encoded.substr(split + 1);
+                    if (status == "cancel")
+                    {
+                        FinishUpdateDownload(locked, true, Widen(note));
+                        locked->status->SetRole(TextRole::Muted);
+                        return;
+                    }
+                    FinishUpdateDownload(locked, status == "ok", Widen(note.empty() ? std::string("下载失败") : note));
                 });
         });
 }
@@ -680,8 +806,8 @@ VisualPtr BuildAboutPage(PageContext &context)
     {
         auto left = std::make_shared<Column>(0.0f);
         left->Add(MakeLabel(L"自动下载更新", DocStyle(13.0f, DWRITE_FONT_WEIGHT_MEDIUM), TextRole::Primary));
-        auto detail =
-            MakeLabel(L"发现新版本时由输入法后台下载并校验，下载完成后询问是否安装", DocStyle(12.0f), TextRole::Muted);
+        auto detail = MakeLabel(L"发现新版本时由输入法后台下载并校验，下载完成后在这里提示安装，不会弹窗打扰",
+                                DocStyle(12.0f), TextRole::Muted);
         detail->SetMargin({0.0f, 5.0f, 0.0f, 0.0f});
         left->Add(detail);
         // 后台进度：Server 每收到一块数据就更新一次 progress.txt，这里定时读。
@@ -690,15 +816,54 @@ VisualPtr BuildAboutPage(PageContext &context)
         auto progressBox = std::make_shared<Hideable>(progressLabel, false);
         progressBox->SetMargin({0.0f, 3.0f, 0.0f, 0.0f});
         left->Add(progressBox);
+        // 下载好之后的「立即安装」。走和「检查更新」同一条路：重新取清单拿摘要，发现
+        // 数据目录里已有这一版就直接核对、拉起安装程序，不会再下一遍。清单在这期间换成
+        // 了更新的版本时，它会去下那个更新的版本，这正是想要的结果。
+        CssButton::Style installStyle;
+        installStyle.look = CssButton::Look::Accent;
+        // 比「检查更新」小一号：它挂在说明文字下面，是行内的次级动作。
+        installStyle.paddingX = 10.0f;
+        installStyle.paddingY = 3.0f;
+        installStyle.radius = 99.0f;
+        installStyle.fontSize = 11.0f;
+        installStyle.transitionMs = 150.0;
+        installStyle.pressShift = true;
+        installStyle.disabledOpacity = 0.65f;
+        state->install = std::make_shared<CssButton>(L"立即安装", installStyle);
+        {
+            PageContext *ctx = &context;
+            std::weak_ptr<AboutState> weakState = state;
+            state->install->SetOnClick([ctx, weakState]() {
+                const std::shared_ptr<AboutState> locked = weakState.lock();
+                if (locked && !locked->install->IsDisabled())
+                    DownloadUpdate(*ctx, locked);
+            });
+        }
+        auto installBox = std::make_shared<Hideable>(state->install, false);
+        installBox->SetMargin({0.0f, 6.0f, 0.0f, 0.0f});
+        auto installRow = std::make_shared<Row>(0.0f);
+        installRow->Add(installBox);
+        left->Add(installRow);
         // 只持有弱引用：timer 每跑一次就拿一次标签，页面没了就不再碰它，也不会拖住页面。
         std::weak_ptr<Label> weakLabel = progressLabel;
         std::weak_ptr<Hideable> weakBox = progressBox;
-        const auto refresh = [weakLabel, weakBox]() {
+        std::weak_ptr<Hideable> weakInstallBox = installBox;
+        const auto refresh = [model, weakLabel, weakBox, weakInstallBox]() {
             const std::shared_ptr<Label> label = weakLabel.lock();
             const std::shared_ptr<Hideable> box = weakBox.lock();
-            if (!label || !box)
+            const std::shared_ptr<Hideable> install = weakInstallBox.lock();
+            if (!label || !box || !install)
                 return false;
-            const update_channel::DownloadProgress progress = update_channel::ReadProgress();
+            update_channel::DownloadProgress progress = update_channel::ReadProgress();
+            // 进度里的版本已经不比本机新（刚装完，Server 还没轮到收尾），按没有处理。
+            if (progress.state != update_channel::DownloadProgress::State::Idle &&
+                !IsNewerThanCurrent(progress.version))
+                progress.state = update_channel::DownloadProgress::State::Idle;
+            // 自动下载关着时这一行不再提示任何更新状态：进度、失败原因和「立即安装」都收起。
+            // 已经下好的安装包留在数据目录，「检查更新」发现同一版本时仍会直接复用它。
+            if (!model->GetBool("appearance.auto_download_update", false))
+                progress.state = update_channel::DownloadProgress::State::Idle;
+            install->SetVisible(progress.state == update_channel::DownloadProgress::State::Ready);
             std::wstring text;
             TextRole role = TextRole::Muted;
             switch (progress.state)
@@ -717,7 +882,7 @@ VisualPtr BuildAboutPage(PageContext &context)
                 break;
             }
             case update_channel::DownloadProgress::State::Ready:
-                text = L"v" + Widen(progress.version) + L" 已下载并通过校验，等待安装";
+                text = L"新版本 v" + Widen(progress.version) + L" 已下载并通过校验，点击「立即安装」开始更新";
                 role = TextRole::Accent;
                 break;
             case update_channel::DownloadProgress::State::Failed:
@@ -734,16 +899,14 @@ VisualPtr BuildAboutPage(PageContext &context)
             return true;
         };
         refresh();
-        // 每秒读一次进度。tick 里只拿弱引用，页面销毁后下一次触发就自我重置，顺带 KillTimer。
-        auto timer = std::make_shared<std::unique_ptr<UiTimer>>();
-        std::weak_ptr<std::unique_ptr<UiTimer>> weakTimer = timer;
-        *timer = std::make_unique<UiTimer>(context.host.Hwnd(), 1000, [refresh, weakTimer]() {
-            if (refresh())
-                return;
-            if (const auto held = weakTimer.lock())
-                held->reset();
-        });
-        links->Add(std::make_shared<AboutRow>(left, BindToggle(context, "appearance.auto_download_update"), false));
+        // 每秒读一次进度：后台下载的百分比、下载完成后出现「立即安装」都靠它。tick 里只拿
+        // 弱引用，不会反过来拖住页面。
+        state->progressTimer = std::make_unique<UiTimer>(context.host.Hwnd(), 1000, [refresh]() { refresh(); });
+        // 建页时配置快照可能还没到，开关读到的是默认值；快照到了、或用户拨了开关，立刻重算
+        // 一次，不必等下一秒。
+        context.OnConfig([refresh]() { refresh(); });
+        links->Add(std::make_shared<AboutRow>(
+            left, BindToggle(context, "appearance.auto_download_update", [refresh](bool) { refresh(); }), false));
     }
     struct Link
     {
@@ -859,22 +1022,24 @@ VisualPtr BuildAboutPage(PageContext &context)
                                                       {"path", destination.u8string()},
                                                       {"includeModels", include_models->IsChecked()}});
         });
-        import_button->SetOnClick([model, owner, weak_backup]() {
+        import_button->SetOnClick([model, owner, weak_backup, host = &context.host]() {
             const std::shared_ptr<AboutBackupState> current = weak_backup.lock();
             if (!current || current->busy)
                 return;
             const std::filesystem::path source = PickBackupSource(owner);
             if (source.empty())
                 return;
-            const int answer =
-                MessageBoxW(owner,
-                            L"导入会先停止输入法后台进程，并把将被覆盖的配置、统计、皮肤和模型备份到数据目录的 "
-                            L".backup-before-import。词库只合并条目，不会替换现有数据库。\n\n继续导入吗？",
-                            L"导入用户数据", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
-            if (answer != IDOK)
-                return;
-            SetBackupBusy(current, true);
-            model->Post("userDataBackupRequest", Json{{"action", "import"}, {"path", source.u8string()}});
+            host->Confirm(
+                L"导入会先停止输入法后台进程，并把将被覆盖的配置、统计、皮肤和模型备份到数据目录的 "
+                L".backup-before-import。词库只合并条目，不会替换现有数据库。",
+                [model, weak_backup, source](bool confirmed) {
+                    const std::shared_ptr<AboutBackupState> current = weak_backup.lock();
+                    if (!confirmed || !current || current->busy)
+                        return;
+                    SetBackupBusy(current, true);
+                    model->Post("userDataBackupRequest", Json{{"action", "import"}, {"path", source.u8string()}});
+                },
+                L"导入用户数据", L"继续导入", L"取消");
         });
         context.OnMessage("userDataBackupDone", [weak_backup, host = &context.host](const Json &message) {
             const std::shared_ptr<AboutBackupState> current = weak_backup.lock();

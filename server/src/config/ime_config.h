@@ -22,8 +22,10 @@ struct VoiceInputConfig
     bool hotkey_ctrl_win = false;
     bool hotkey_rctrl_ralt = false;
     bool hotkey_hold_space_lock = true;
-    // doubao | openai | siliconflow | groq
-    std::string asr_provider = "doubao";
+    // doubao | openai | siliconflow | groq | local
+    std::string asr_provider = "local";
+    // asr_provider == "local" 时使用的本地模型 id（voice-input/local_asr_catalog.h）；空 = 未选择。
+    std::string local_asr_model = "x-asr-zh-en-streaming";
     // Doubao console generation: api_key (new console, single API Key) | legacy (App ID + Access Token).
     // Empty means "infer from asr_app_key", which keeps configs written before this setting working.
     std::string doubao_auth_mode = "api_key";

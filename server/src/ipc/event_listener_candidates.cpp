@@ -13,6 +13,7 @@
 #include "ipc/candidate_expansion_policy.h"
 #include "ipc/queried_candidate_arrangement_policy.h"
 #include "ipc/candidate_ui_owner.h"
+#include "ipc/candidate_mixed_english_preservation.h"
 #include "ipc/input_key_policy.h"
 #include "utils/common_utils.h"
 #include "utils/hanzi_pinyin.h"
@@ -191,11 +192,18 @@ bool IsRadicalInput(const std::string &raw)
     return IsRadicalCompositionActive(raw) && raw.size() > 1;
 }
 
+// Shift+T 后面那一串按当前方案归一：双拼的整拼唤醒词（小鹤 uijm）换成全拼 shijian，其余原样。
+std::string DateTimeQueryInput(const std::string &raw)
+{
+    return metasequoia::local_modes::date_time_query_input(raw.substr(1), g_inputSession->current_scheme_type(),
+                                                           ConfiguredShuangpinProfile());
+}
+
 bool IsDateTimeInput(const std::string &raw)
 {
     if (!IsDateTimeCompositionActive(raw) || raw.size() <= 1)
         return false;
-    return metasequoia::local_modes::is_date_time_query(raw.substr(1));
+    return metasequoia::local_modes::is_date_time_query(DateTimeQueryInput(raw));
 }
 
 bool IsEmojiInput(const std::string &raw)
@@ -472,10 +480,10 @@ void PrepareCandidateTranslationRequest()
     EnglishIme::RequestTranslations(std::move(queries), GetConfiguredTencentTmt().target_language == "en");
 }
 
-// Copy the page the worker just finished into an immutable snapshot for the UI thread. This is the single publish
-// point: set_items() and clear_page() are only intermediate steps of a rebuild, so publishing there would hand the UI a
-// half-built page.
-void PublishBuiltCandidatePage(const std::wstring &candidate_string)
+// Copy the page the worker just finished into an immutable value for the CandidatePages module. This is the single
+// build point: set_items() and clear_page() are only intermediate steps of a rebuild, so publishing there would hand
+// the UI a half-built page.
+FanyImeIpc::CandidatePage BuildCandidatePageValue(const std::wstring &candidate_string)
 {
     const auto &ui = Global::candidate_ui;
     auto snapshot = std::make_shared<Global::CandidatePageSnapshot>();
@@ -499,9 +507,26 @@ void PublishBuiltCandidatePage(const std::wstring &candidate_string)
             snapshot->expanded_words.push_back(
                 string_to_wstring(FanyImeIpc::QuickPhraseDisplayText(CandidateOutputText(ui.items[i]))));
     }
-    // Stamp before publishing so the UI thread can echo back exactly which page it painted.
-    snapshot->generation = ++Global::candidate_page_generation;
-    Global::PublishCandidatePageSnapshot(std::move(snapshot));
+
+    FanyImeIpc::CandidatePage page;
+    page.input = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
+    // 页大小变化会重排整个列表；旧布局的绘制回显不得盖到新页上。
+    const int page_size = ui.page_size > 0 ? ui.page_size : GetConfiguredCandidatePageSize();
+    page.layout_epoch = static_cast<std::uint64_t>(page_size);
+    page.page_size = page_size;
+    page.snapshot = std::move(snapshot);
+    page.items = std::make_shared<const std::vector<WordItem>>(ui.items);
+    return page;
+}
+
+FanyImeIpc::CandidatePage BuildPublishableCandidatePage()
+{
+    RefreshJevSelection();
+    PrepareCandidateTranslationRequest();
+    const std::string candidate_string = BuildCurrentCandidatePage();
+    // Host-drawn UI wants plain words (Microsoft IME style), not helpcodes.
+    const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
+    return BuildCandidatePageValue(published);
 }
 } // namespace
 
@@ -509,22 +534,49 @@ namespace event_listener_detail
 {
 void RefreshCandidatePageUi(bool show_window)
 {
-    RefreshJevSelection();
-    PrepareCandidateTranslationRequest();
-    const std::string candidate_string = BuildCurrentCandidatePage();
-    // Host-drawn UI wants plain words (Microsoft IME style), not helpcodes.
-    const std::wstring published = IsUiLessMode() ? BuildUiLessCandidatePageW() : string_to_wstring(candidate_string);
-    ::WriteDataToSharedMemory(published, true);
-    PublishBuiltCandidatePage(published);
+    auto page = BuildPublishableCandidatePage();
     CAND_DIAG_LOGF(L"candidate UI refreshed show={} uiless={} items={} page_words={} selected={} page={} "
                    L"serialized_units={}",
                    show_window, IsUiLessMode(), Global::candidate_ui.items.size(),
                    Global::candidate_ui.page_words.size(), Global::candidate_ui.selected_index_in_page,
-                   Global::candidate_ui.page_index, candidate_string.size());
+                   Global::candidate_ui.page_index, page.snapshot ? page.snapshot->candidate_string.size() : 0);
     if (show_window)
+        ShowCandidatePage(std::move(page));
+    else
+        PublishCandidatePage(std::move(page));
+}
+
+void RefreshCandidatePageUiCoalesced()
+{
+    auto page = BuildPublishableCandidatePage();
+    if (IsUiLessMode())
     {
-        RequestShowCandidateWindow();
+        PublishCandidatePage(std::move(page));
+        return;
     }
+    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Fast);
+}
+
+void RefreshCandidatePageUiLate()
+{
+    auto page = BuildPublishableCandidatePage();
+    if (IsUiLessMode())
+    {
+        PublishCandidatePage(std::move(page));
+        return;
+    }
+    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Late);
+}
+
+void RefreshCandidatePageUiImmediate()
+{
+    auto page = BuildPublishableCandidatePage();
+    if (IsUiLessMode())
+    {
+        PublishCandidatePage(std::move(page));
+        return;
+    }
+    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Immediate);
 }
 } // namespace event_listener_detail
 
@@ -588,6 +640,8 @@ FanyImeIpc::EnglishPlacement CurrentEnglishPlacement(const std::vector<WordItem>
         return placement;
     placement.input = EnglishInputKey();
     placement.require_exact = g_inputSession->reads_as_pinyin();
+    // 完整拼音输入的整句是正常候选，只有简拼/不完整输入才把猜出来的整句藏掉。
+    placement.hide_guessed_sentences = !g_inputSession->is_all_complete_pure_pinyin();
     // 调频关闭时不用学到的槽位，英文回到默认位置。
     if (GetConfiguredFrequencyAdjustment().mode != "disabled")
     {
@@ -761,6 +815,16 @@ class CandidateBuildTimer
     std::chrono::steady_clock::time_point last_ = start_;
 };
 
+std::vector<WordItem> PreservedMixedEnglishForInput(const std::vector<WordItem> &current, const std::string &input)
+{
+    if (input.empty() || !GetConfiguredMixedCandidatesEnabled() || !GetConfiguredEnglishCandidatesEnabled())
+        return {};
+    const SchemeType scheme = g_inputSession->current_scheme_type();
+    if (scheme != SchemeType::Quanpin && scheme != SchemeType::Shuangpin)
+        return {};
+    return FanyImeIpc::PreservedMixedEnglish(current, input);
+}
+
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
 {
     CandidateBuildTimer segment;
@@ -782,6 +846,10 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     }
     std::string pinyin = wstring_to_string(Global::PinyinString);
     const std::string current_input = g_inputSession->get_pinyin_sequence_with_cases();
+    // 混输英文只活在 ui.items 里，引擎候选里没有。同一次输入的异步重排会把整页重建，英文行先原样带过
+    // 重建，混输线程下一次回包仍会按最新规则替换它。只对普通拼音分支生效，Y/Emoji/日期等页面不动。
+    std::vector<WordItem> preserved_english;
+    bool preserve_mixed_english = false;
     std::vector<WordItem> items;
     if (g_english_input_mode)
     {
@@ -790,8 +858,9 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     }
     else if (IsRadicalInput(current_input))
     {
-        // 串里混进了 a-z 以外的字符（撇号、大写字母等）时查不到任何字，候选为空。
-        items = g_inputSession->query_radical(current_input.substr(1));
+        // 串里混进了 a-z 以外的字符（撇号、大写字母等；双拼的 ; 韵母除外）时查不到任何字，候选为空。
+        items = g_inputSession->query_radical(current_input.substr(1), g_inputSession->current_scheme_type(),
+                                              ConfiguredShuangpinProfile());
     }
     else if (IsQuickPhraseInput(current_input))
     {
@@ -799,7 +868,7 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     }
     else if (IsDateTimeInput(current_input))
     {
-        items = OrderedDateTimeCandidates(current_input.substr(1));
+        items = OrderedDateTimeCandidates(DateTimeQueryInput(current_input));
     }
     else if (IsEmojiInput(current_input))
     {
@@ -816,7 +885,10 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     else if (IsSymbolInput(current_input))
     {
         // 一个分组可以有上百个符号（jt 箭头 148 个），整组都放进列表，靠翻页看全。
-        items = metasequoia::local_modes::query_symbols(current_input.substr(1)).candidates;
+        // 双拼下分组码原样查在前，按双拼读成的全拼（小鹤 sj → san 的 三③）排在后面。
+        items = metasequoia::local_modes::query_symbols(current_input.substr(1), g_inputSession->current_scheme_type(),
+                                                        ConfiguredShuangpinProfile())
+                    .candidates;
     }
     else if (IsJianpinInput(current_input))
     {
@@ -854,6 +926,11 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     else
     {
         items = g_inputSession->get_candidates();
+        if (!IsCandidateSubPageActive() && !GlobalIme::composition.creating_word.active)
+        {
+            preserved_english = PreservedMixedEnglishForInput(ui.items, EnglishInputKey());
+            preserve_mixed_english = !preserved_english.empty();
+        }
         queryMs = segment.Split();
         user_dictionary::apply_fixed_positions(
             user_dictionary::default_user_db_path(), CurrentRankingContextKey(), items,
@@ -896,6 +973,28 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     g_candidate_list_character_set = character_set;
     g_candidate_list_spelled_by_character_set = spelled_by_character_set;
     ui.set_items(std::move(items));
+    if (preserve_mixed_english && !preserved_english.empty())
+    {
+        auto &rebuilt = ui.items;
+        std::vector<WordItem> additions;
+        for (WordItem &item : preserved_english)
+        {
+            const bool duplicate = std::any_of(rebuilt.begin(), rebuilt.end(),
+                                               [&](const WordItem &existing) { return existing.word == item.word; });
+            if (!duplicate)
+                additions.push_back(std::move(item));
+        }
+        if (!additions.empty())
+        {
+            const size_t insert_at = (std::min)(static_cast<size_t>(1), rebuilt.size());
+            rebuilt.insert(rebuilt.begin() + static_cast<std::ptrdiff_t>(insert_at),
+                           std::make_move_iterator(additions.begin()), std::make_move_iterator(additions.end()));
+            FanyImeIpc::NormalizeMixedCandidateOrder(rebuilt, 1, CurrentEnglishPlacement(rebuilt));
+            ui.item_total_count = static_cast<int>(rebuilt.size());
+            CAND_DIAG_LOGF(L"mixed english preserved count={} input_units={}", additions.size(),
+                           EnglishInputKey().size());
+        }
+    }
     RefreshCandidatePageUi(false);
     PublishCandidateUiOwner(client_id, activation_epoch);
     const double uiMs = segment.Split();

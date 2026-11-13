@@ -12,6 +12,10 @@ export type ClientMessage =
   | { "type": "collocationModelDelete"; "protocolVersion"?: 1; "data": { "modelId": string } }
   | { "type": "collocationModelImport"; "protocolVersion"?: 1; "data": { "modelId": string } }
   | { "type": "collocationModelStatusRequest"; "protocolVersion"?: 1 }
+  | { "type": "localAsrModelDownload"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelDelete"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelImport"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDownload"; "protocolVersion"?: 1 }
   | { "type": "neuralModelImport"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDelete"; "protocolVersion"?: 1 }
@@ -36,7 +40,7 @@ export type ClientMessage =
   | { "type": "apiCredentialTest"; "protocolVersion"?: 1; "data": { "requestId": string; "service": "translation.tencent" | "translation.aliyun" | "translation.niutrans" | "translation.custom" | "translation.ai" | "voice.asr" | "voice.polish" | "ai.assistant"; "config": { [key: string]: unknown } } }
   | { "type": "apiModelList"; "protocolVersion"?: 1; "data": { "requestId": string; "service": "ai.assistant" | "voice.asr" | "voice.polish"; "config": { [key: string]: unknown } } }
   | { "type": "aiProviderSync"; "protocolVersion"?: 1; "data": { "requestId": string; "entries": Array<{ "id": string; "name": string; "endpoint": string; "token": string; "model": string }> } }
-  | { "type": "dictionaryRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "dictionary": "quanpin" | "wubi" | "english" | "quick" | "latin"; "action": "query" | "create" | "update" | "delete" | "import" | "importHans" | "export"; "word"?: string; "code"?: string; "content"?: string; "weight"?: number; "oldWord"?: string; "oldCode"?: string; "display"?: string; "oldDisplay"?: string; "offset"?: number; "limit"?: number } }
+  | { "type": "dictionaryRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "dictionary": "quanpin" | "wubi" | "english" | "quick" | "latin"; "action": "query" | "create" | "update" | "delete" | "import" | "importHans" | "export"; "word"?: string; "code"?: string; "scope"?: "user"; "content"?: string; "weight"?: number; "oldWord"?: string; "oldCode"?: string; "display"?: string; "oldDisplay"?: string; "offset"?: number; "limit"?: number } }
   | { "type": "statsRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "overview" | "clearAll" | "openDirectory" } }
   | { "type": "defaultImeRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "setDefault" | "openSystemSettings" } }
   | { "type": "gameCompatRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "apply"; "enabled"?: boolean; "name"?: string } }
@@ -97,6 +101,10 @@ export type SettingsMessage =
   | { "type": "collocationModelDelete"; "protocolVersion"?: 1; "data": { "modelId": string } }
   | { "type": "collocationModelImport"; "protocolVersion"?: 1; "data": { "modelId": string } }
   | { "type": "collocationModelStatusRequest"; "protocolVersion"?: 1 }
+  | { "type": "localAsrModelDownload"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelDelete"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelImport"; "protocolVersion"?: 1; "data": { "modelId": string } }
+  | { "type": "localAsrModelStatusRequest"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDownload"; "protocolVersion"?: 1 }
   | { "type": "neuralModelImport"; "protocolVersion"?: 1 }
   | { "type": "neuralModelDelete"; "protocolVersion"?: 1 }
@@ -121,7 +129,7 @@ export type SettingsMessage =
   | { "type": "apiCredentialTest"; "protocolVersion"?: 1; "data": { "requestId": string; "service": "translation.tencent" | "translation.aliyun" | "translation.niutrans" | "translation.custom" | "translation.ai" | "voice.asr" | "voice.polish" | "ai.assistant"; "config": { [key: string]: unknown } } }
   | { "type": "apiModelList"; "protocolVersion"?: 1; "data": { "requestId": string; "service": "ai.assistant" | "voice.asr" | "voice.polish"; "config": { [key: string]: unknown } } }
   | { "type": "aiProviderSync"; "protocolVersion"?: 1; "data": { "requestId": string; "entries": Array<{ "id": string; "name": string; "endpoint": string; "token": string; "model": string }> } }
-  | { "type": "dictionaryRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "dictionary": "quanpin" | "wubi" | "english" | "quick" | "latin"; "action": "query" | "create" | "update" | "delete" | "import" | "importHans" | "export"; "word"?: string; "code"?: string; "content"?: string; "weight"?: number; "oldWord"?: string; "oldCode"?: string; "display"?: string; "oldDisplay"?: string; "offset"?: number; "limit"?: number } }
+  | { "type": "dictionaryRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "dictionary": "quanpin" | "wubi" | "english" | "quick" | "latin"; "action": "query" | "create" | "update" | "delete" | "import" | "importHans" | "export"; "word"?: string; "code"?: string; "scope"?: "user"; "content"?: string; "weight"?: number; "oldWord"?: string; "oldCode"?: string; "display"?: string; "oldDisplay"?: string; "offset"?: number; "limit"?: number } }
   | { "type": "statsRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "overview" | "clearAll" | "openDirectory" } }
   | { "type": "defaultImeRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "setDefault" | "openSystemSettings" } }
   | { "type": "gameCompatRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "apply"; "enabled"?: boolean; "name"?: string } }

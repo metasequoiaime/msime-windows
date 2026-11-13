@@ -87,6 +87,62 @@
         "settings"
       ]
     },
+    "localAsrModelDownload": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "localAsrModelDelete": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "localAsrModelImport": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "localAsrModelStatusRequest": {
+      "surfaces": [
+        "settings"
+      ]
+    },
     "neuralModelDownload": {
       "surfaces": [
         "settings"
@@ -498,6 +554,12 @@
           },
           "code": {
             "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "user"
+            ]
           },
           "content": {
             "type": "string"

@@ -1,6 +1,7 @@
 #include "radical_query.h"
 
 #include "../core/data_path.h"
+#include "../shuangpin/shuangpin_query.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -154,11 +155,39 @@ std::shared_ptr<const Table> cached_table(const std::filesystem::path &path)
     cache.emplace(key, table);
     return table;
 }
-} // namespace
 
-std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code, int limit)
+struct Matches
 {
-    if (limit <= 0 || code.empty() || !is_lower_ascii_code(code))
+    std::vector<std::size_t> exact;
+    std::vector<std::size_t> prefix;
+};
+
+// 拆字码以 code 开头的行：全码命中与仅前缀命中分开，各自按下标（文件顺序即字频降序）排好。
+Matches collect_matches(const Table &table, std::string_view code)
+{
+    Matches matches;
+    const auto lower =
+        std::lower_bound(table.by_code.begin(), table.by_code.end(), code,
+                         [&](std::uint32_t index, std::string_view value) { return table.code(index) < value; });
+    for (auto it = lower; it != table.by_code.end(); ++it)
+    {
+        const std::string_view entry_code = table.code(*it);
+        if (entry_code.size() < code.size() || entry_code.compare(0, code.size(), code) != 0)
+        {
+            // 同一前缀的行在排序视图里连续，越过前缀范围即可停。
+            break;
+        }
+        (entry_code.size() == code.size() ? matches.exact : matches.prefix).push_back(*it);
+    }
+    std::sort(matches.exact.begin(), matches.exact.end());
+    std::sort(matches.prefix.begin(), matches.prefix.end());
+    return matches;
+}
+
+std::vector<WordItem> query_codes(const std::filesystem::path &decomposition_path,
+                                  const std::vector<std::string> &codes, int limit)
+{
+    if (limit <= 0 || codes.empty())
     {
         return {};
     }
@@ -168,34 +197,30 @@ std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_p
         return {};
     }
 
-    const auto lower =
-        std::lower_bound(table->by_code.begin(), table->by_code.end(), std::string_view(code),
-                         [&](std::uint32_t index, std::string_view value) { return table->code(index) < value; });
-
     // 全码命中在前、仅前缀命中在后，各自按字频：打全了某个生僻字的拆法，它不能被一串更高频的
-    // 长码挤出 limit。
-    std::vector<std::size_t> exact_matches;
-    std::vector<std::size_t> prefix_matches;
-    for (auto it = lower; it != table->by_code.end(); ++it)
+    // 长码挤出 limit。有几种读法时（双拼的码与按全拼读的原串）各层里按读法的先后排。
+    std::vector<Matches> per_code;
+    per_code.reserve(codes.size());
+    for (const std::string &code : codes)
     {
-        const std::string_view entry_code = table->code(*it);
-        if (entry_code.size() < code.size() || entry_code.compare(0, code.size(), code) != 0)
-        {
-            // 同一前缀的行在排序视图里连续，越过前缀范围即可停。
-            break;
-        }
-        (entry_code.size() == code.size() ? exact_matches : prefix_matches).push_back(*it);
+        per_code.push_back(collect_matches(*table, code));
     }
-    // 下标就是文件顺序（字频降序），排序后即高频优先。
-    std::sort(exact_matches.begin(), exact_matches.end());
-    std::sort(prefix_matches.begin(), prefix_matches.end());
 
     const auto count = static_cast<std::size_t>(limit);
     std::vector<WordItem> result;
     // 一个字常有几种拆法（駉 = majiong / majiongkou / matongkou），共享同一前缀时只出一次，
     // 位置取它排得最前的那条。
     std::unordered_set<std::string_view> seen;
-    for (const auto *matches : {&exact_matches, &prefix_matches})
+    std::vector<const std::vector<std::size_t> *> tiers;
+    for (const Matches &matches : per_code)
+    {
+        tiers.push_back(&matches.exact);
+    }
+    for (const Matches &matches : per_code)
+    {
+        tiers.push_back(&matches.prefix);
+    }
+    for (const auto *matches : tiers)
     {
         for (const std::size_t index : *matches)
         {
@@ -214,6 +239,39 @@ std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_p
         }
     }
     return result;
+}
+} // namespace
+
+std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code, int limit)
+{
+    if (code.empty() || !is_lower_ascii_code(code))
+    {
+        return {};
+    }
+    return query_codes(decomposition_path, {code}, limit);
+}
+
+std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code,
+                                    SchemeType scheme, const ShuangpinProfile &profile, int limit)
+{
+    if (scheme != SchemeType::Shuangpin)
+    {
+        return query_radical(decomposition_path, code, limit);
+    }
+    // 用 ; 当 ing 韵母的方案（微软、搜狗、紫光），; 只会出现在一对的第二键上，解不出音节时整串作罢。
+    const bool semicolon_final = ShuangpinProfileUsesSemicolonFinal(profile);
+    if (code.empty() || !std::all_of(code.begin(), code.end(), [&](unsigned char character) {
+            return (character >= 'a' && character <= 'z') || (semicolon_final && character == ';');
+        }))
+    {
+        return {};
+    }
+    std::vector<std::string> codes = shuangpin::decode_syllable_pairs(code, profile);
+    if (is_lower_ascii_code(code) && std::find(codes.begin(), codes.end(), code) == codes.end())
+    {
+        codes.push_back(code);
+    }
+    return query_codes(decomposition_path, codes, limit);
 }
 
 void preload_radical_table(const std::filesystem::path &decomposition_path)

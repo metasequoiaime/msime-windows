@@ -14,6 +14,7 @@ constexpr wchar_t kHandwritingPanelWindowClass[] = L"msimeui.HandwritingDemo";
 constexpr UINT kActivateSettings = WM_APP + 1;
 constexpr UINT kOpenSettingsAbout = WM_APP + 2;
 constexpr UINT kQuitSettings = WM_APP + 5;
+constexpr UINT kOpenSettingsVoice = WM_APP + 7;
 
 bool OpenSiblingApplication(const wchar_t *executable_name, const wchar_t *window_class)
 {
@@ -65,10 +66,11 @@ bool OpenSettingsApplication()
     return OpenSiblingApplication(L"MetasequoiaImeSettings.exe", nullptr);
 }
 
-bool OpenSettingsAboutApplication()
+// 打开设置并停在某一页：已在运行就投对应消息，否则带参数启动（参数与消息由 settings_app.cpp 解释）。
+static bool OpenSettingsSection(UINT message, const wchar_t *argument)
 {
     if (const HWND existing_window = FindWindowW(kSettingsWindowClass, nullptr))
-        return ActivateSettingsWindow(existing_window, kOpenSettingsAbout);
+        return ActivateSettingsWindow(existing_window, message);
 
     std::wstring module_path(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, module_path.data(), static_cast<DWORD>(module_path.size()));
@@ -78,9 +80,19 @@ bool OpenSettingsAboutApplication()
 
     const std::filesystem::path application_path =
         std::filesystem::path(module_path).parent_path() / L"MetasequoiaImeSettings.exe";
-    const HINSTANCE result = ShellExecuteW(nullptr, L"open", application_path.c_str(), L"--about",
+    const HINSTANCE result = ShellExecuteW(nullptr, L"open", application_path.c_str(), argument,
                                            application_path.parent_path().c_str(), SW_SHOWNORMAL);
     return reinterpret_cast<INT_PTR>(result) > 32;
+}
+
+bool OpenSettingsAboutApplication()
+{
+    return OpenSettingsSection(kOpenSettingsAbout, L"--about");
+}
+
+bool OpenSettingsVoiceApplication()
+{
+    return OpenSettingsSection(kOpenSettingsVoice, L"--voice");
 }
 
 // 这是真正要求退出的通道（Server 自己也要终止），所以发 kQuitSettings 而不是 WM_CLOSE

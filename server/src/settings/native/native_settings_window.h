@@ -37,6 +37,8 @@ class SettingsWindow
     // is covered by a brief plain fill instead, without the gear and the fade.
     void SetLaunchAnimation(bool enabled);
     void ShowPage(const std::string &pageId);
+    // The in-window toast pages use, for host-side results such as a failed config write.
+    void ShowToast(const std::wstring &message, bool success);
     // Drops hover and pressed states before the window is hidden, so the frame kept
     // for the next show does not flash a highlighted caption button.
     void ResetTransientState();

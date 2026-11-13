@@ -396,6 +396,14 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         return true;
     }
 
+    // Home / End: TSF moves its own caret to the same edge, as it does for plain Left / Right.
+    if (keycode == VK_HOME || keycode == VK_END)
+    {
+        composition.caret_position = keycode == VK_HOME ? 0 : raw.size();
+        resegment_by_caret();
+        return true;
+    }
+
     // A spelling emptied by a segment Backspace below keeps the creating-word
     // state alive with the word alone (PRD R3), so the empty-raw cleanup has to
     // know this key produced that state on purpose.
@@ -957,6 +965,8 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
     if (FanyImeIpc::ShouldEscapeKeepSelectedWord(GetConfiguredEscapeKeepsSelectedWord(), input_before_key.size(),
                                                  g_r_mode_triggered))
     {
+        ResetRescoreRequeryBudget();
+        CancelCandidatePageFrames();
         g_inputSession->set_pinyin_sequence("");
         g_inputSession->set_pinyin_sequence_with_cases("");
         g_inputSession->recompute_candidates();
@@ -1111,6 +1121,8 @@ void HandleToolbarLanguageToggle(bool from_ime_enabled)
 void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
 {
     const ScopedServerKeyLatency latency{client_id, activation_epoch, request_id};
+    // 新的一键就是新的一段输入：上一段还没发布的异步定稿帧不该再抢在新首帧前面。
+    ResetCandidatePageFrames();
     /* 先清理一下状态 */
     Global::MsgTypeToTsf = Global::DataFromServerMsgType::Normal;
     ScopedKeyStage read_packet{client_id, activation_epoch, request_id, L"handle-read-packet"};
@@ -1369,10 +1381,12 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
          !is_v_mode_input_key && !is_v_mode_shift_digit_selection &&
          IsCommitWithHighlightedCandidatePunctuationInCandidateMode(Global::Keycode, Global::Wch));
     const bool is_selection_key = IsSelectionKey(Global::Keycode);
-    // 移高亮的左右键不碰组合，交给下面的候选导航分支。
-    const bool is_composition_edit_key =
+    // 移高亮的左右键不碰组合，交给下面的候选导航分支。Home / End 把光标移到串首 / 串尾。
+    const bool is_caret_move_key =
         ((Global::Keycode == VK_LEFT || Global::Keycode == VK_RIGHT) && !arrow_moves_selection) ||
-        Global::Keycode == VK_BACK || Global::Keycode == VK_DELETE ||
+        Global::Keycode == VK_HOME || Global::Keycode == VK_END;
+    const bool is_composition_edit_key =
+        is_caret_move_key || Global::Keycode == VK_BACK || Global::Keycode == VK_DELETE ||
         (Global::Keycode >= 'A' && Global::Keycode <= 'Z') || is_manual_pinyin_separator ||
         is_microsoft_shuangpin_ing_key || is_mid_sentence_helpcode_marker || is_direct_helpcode_slash ||
         is_direct_helpcode_end_trigger || is_japanese_long_vowel || is_date_time_input_key || is_v_mode_input_key;
@@ -1575,7 +1589,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         Global::candidate_ui.select_first_on_page();
         ScopedKeyStage select_auto_commit{client_id, activation_epoch, request_id, L"handle-selection"};
         ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0,
-                            /*count_first_word=*/false);
+                            /*count_first_word=*/false, /*resolve_live_page=*/true);
         select_auto_commit.Stop();
         ScopedKeyStage push_auto_commit{client_id, activation_epoch, request_id, L"handle-worker-push"};
         if (Global::MsgTypeToTsf == Global::DataFromServerMsgType::Normal)
@@ -1623,7 +1637,8 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         prepare_top_commit.Stop();
         Global::candidate_ui.select_first_on_page();
         ScopedKeyStage select_top_commit{client_id, activation_epoch, request_id, L"handle-selection"};
-        ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0);
+        ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0,
+                            /*count_first_word=*/true, /*resolve_live_page=*/true);
         select_top_commit.Stop();
         const std::wstring committed_text = Global::candidate_ui.selected_text;
 
@@ -1809,8 +1824,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             }
         }
     }
-    else if (IsUiLessMode() && is_composition_edit_key && Global::Keycode != VK_LEFT && Global::Keycode != VK_RIGHT &&
-             Global::Keycode != VK_BACK)
+    else if (IsUiLessMode() && is_composition_edit_key && !is_caret_move_key && Global::Keycode != VK_BACK)
     {
         ScopedKeyStage prepare_edit_uiless{client_id, activation_epoch, request_id, L"handle-candidates"};
         PrepareCandidateList(client_id, activation_epoch);
@@ -1835,7 +1849,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         select_space_digit.Stop();
         SendCurrentDataToClient(client_id, activation_epoch, request_id);
     }
-    else if ((Global::Keycode == VK_LEFT || Global::Keycode == VK_RIGHT) && !arrow_moves_selection)
+    else if (is_caret_move_key)
     {
         if (IsUiLessMode())
         {

@@ -971,10 +971,13 @@ KeyResult InputSession::handle_local_character(char character)
         local_preedit_.push_back(character);
         return {true, std::nullopt, update_local_candidates()};
     }
-    // 快捷短语码与 U 模式的部件拼音连写都只收小写 a-z：其它键吞掉、预编辑不变。
+    // 快捷短语码与 U 模式的部件拼音连写都只收小写 a-z：其它键吞掉、预编辑不变。双拼下 U 模式打的是
+    // 部件的双拼码，用 ; 当 ing 韵母的方案还收 ;。
     if (local_input_mode_ == LocalInputMode::QuickPhrase || local_input_mode_ == LocalInputMode::Radical)
     {
-        if (character < 'a' || character > 'z')
+        const bool radical_semicolon = local_input_mode_ == LocalInputMode::Radical && character == ';' &&
+                                       accepts_local_mode_semicolon_at(local_preedit_, local_preedit_.size());
+        if ((character < 'a' || character > 'z') && !radical_semicolon)
         {
             return {true, std::nullopt, std::nullopt};
         }
@@ -983,13 +986,16 @@ KeyResult InputSession::handle_local_character(char character)
     }
     if (local_input_mode_ == LocalInputMode::DateTime)
     {
-        // 唤醒词只收小写字母；数字开头的指定日期时间收数字、/ 和 :，形状与 TSF、Server 共用
-        // contracts/date_time_input.h。
-        const bool keyword_letter = character >= 'a' && character <= 'z' &&
-                                    std::all_of(local_preedit_.begin() + 1, local_preedit_.end(),
-                                                [](char ch) { return ch >= 'a' && ch <= 'z'; });
-        if (!keyword_letter && !FanyImeDateTimeInput::AcceptsAt(local_preedit_.data(), local_preedit_.size(),
-                                                                local_preedit_.size(), character))
+        // 唤醒词只收小写字母（双拼的整拼还收 ing 韵母 ;，微软 xingqi 打成 x;qi）；数字开头的指定日期时间
+        // 收数字、/ 和 :，形状与 TSF、Server 共用 contracts/date_time_input.h。
+        const bool keyword_so_far = std::all_of(local_preedit_.begin() + 1, local_preedit_.end(),
+                                                [](char ch) { return (ch >= 'a' && ch <= 'z') || ch == ';'; });
+        const bool keyword_key =
+            keyword_so_far &&
+            ((character >= 'a' && character <= 'z') ||
+             (character == ';' && accepts_local_mode_semicolon_at(local_preedit_, local_preedit_.size())));
+        if (!keyword_key && !FanyImeDateTimeInput::AcceptsAt(local_preedit_.data(), local_preedit_.size(),
+                                                             local_preedit_.size(), character))
         {
             return {true, std::nullopt, std::nullopt};
         }

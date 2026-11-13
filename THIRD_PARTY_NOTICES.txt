@@ -35,6 +35,7 @@ dependencies are installed beside it as DLLs rather than linked into it.
   SQLite                  public domain https://www.sqlite.org/
   Boost                   BSL-1.0       https://www.boost.org/
   miniaudio               MIT-0         https://github.com/mackron/miniaudio
+  sherpa-onnx (C API)     Apache-2.0    https://github.com/k2-fsa/sherpa-onnx
 
 Interface resources
 -------------------
@@ -61,20 +62,25 @@ Sources:
   engine/, ui/ and server/assets/settings/ in this repository
 
 ------------------------------------------------------------------------------
-2. googlepinyinime-rev, OpenCC and cpp-pinyin - Apache License 2.0
+2. googlepinyinime-rev, OpenCC, cpp-pinyin and sherpa-onnx - Apache License 2.0
 ------------------------------------------------------------------------------
 
 googlepinyinime-rev is a continuation of the Google Pinyin IME sources; the files
 under googlepinyinime-rev/src/share are compiled into the engine. OpenCC provides
 the Simplified and Traditional Chinese conversion the Server performs on output.
-cpp-pinyin provides Han-to-pinyin conversion used by the Server.
+cpp-pinyin provides Han-to-pinyin conversion used by the Server. The sherpa-onnx
+C API header (engine/voice/third_party/sherpa-onnx/c-api.h, version 1.13.8)
+supplies the structure definitions the Server's on-device speech recognition
+uses; the sherpa-onnx and ONNX Runtime libraries themselves are not in the
+installer (see "Downloaded on request" below).
 
-All three are distributed under the Apache License 2.0, reproduced once below.
+All four are distributed under the Apache License 2.0, reproduced once below.
 
 Sources:
   https://github.com/metasequoiaime/Google-PinyinIME-Rev
   https://github.com/byvoid/opencc
   https://github.com/wolfgitpr/cpp-pinyin
+  https://github.com/k2-fsa/sherpa-onnx
 
                                  Apache License
                            Version 2.0, January 2004
@@ -1091,6 +1097,26 @@ necessary.  Here is a sample; alter the names:
 That's all there is to it!
 
 ------------------------------------------------------------------------------
+Downloaded on request
+------------------------------------------------------------------------------
+
+On-device speech recognition (voice input, provider "local") uses components
+that the installer does not carry. The settings window downloads them only when
+the user asks, verifies each against a pinned SHA-256, and installs them under
+the application data directory in models\voice-asr\, writing a NOTICE.md with
+the source and license beside each one:
+
+  sherpa-onnx 1.13.8 runtime  Apache-2.0  https://github.com/k2-fsa/sherpa-onnx
+  ONNX Runtime (in it)        MIT         https://github.com/microsoft/onnxruntime
+  Silero VAD                  MIT         https://github.com/snakers4/silero-vad
+  X-ASR zh-en models          Apache-2.0  https://github.com/Gilgamesh-J/X-ASR
+  SenseVoice-Small            FunASR Model License 1.1
+                                          https://github.com/FunAudioLLM/SenseVoice
+  Fun-ASR-Nano-2512           Apache-2.0  https://github.com/FunAudioLLM/Fun-ASR
+
+The models are the ONNX conversions published by the k2-fsa/sherpa-onnx project.
+
+------------------------------------------------------------------------------
 Bundled data files
 ------------------------------------------------------------------------------
 
@@ -1150,10 +1176,12 @@ Sources of helpcodes/*.txt, via MSIME-HelpCode:
   shouyou2_0_helpcode.txt         shouyou2_0   首右 2.0 helpcode scheme
   shouyouplus_helpcode.txt        shouyouplus  首右 plus helpcode scheme
   xiaohe_helpcode.txt             xiaohe       小鹤 shape-code scheme
-  jiajia_helpcode.txt             jiajia       加加辅助码, aligned with the helpcode table
-                                               embedded in the commercial 拼音加加 5.x
-                                               installer (fzm.bin); not an official
-                                               拼音加加 table
+  jiajia_helpcode.txt             jiajia       加加辅助码, common characters aligned with
+                                               the helpcode table embedded in the
+                                               commercial 拼音加加 5.x installer (fzm.bin);
+                                               the rest generated from the rime-radical-pinyin
+                                               decomposition data by the same rule; not an
+                                               official 拼音加加 table
 
 Sources of radical/decomposition.txt, the U-mode radical-reverse-lookup table:
 

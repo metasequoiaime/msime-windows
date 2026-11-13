@@ -25,6 +25,12 @@ inline constexpr char kMarker = '`';
 inline constexpr char kSemicolonTrigger = ';';
 // 末尾辅助码（间接）一段的开头。不是任何会进组合的按键字符，与反引号段、; 韵母都不会混淆。
 inline constexpr char kEndMarker = '|';
+// 编码按双拼音节读的本地模式的唤醒键：U 拆字、S 符号、T 日期时间。组合串以它开头时它不是双拼键，
+// 见 AcceptsSemicolonFinalAt。快捷短语、超级简拼等只收字母的模式不在内：那里的 ; 仍是标点。
+template <typename Char> constexpr bool IsSyllableModeKey(Char ch)
+{
+    return ch == Char('U') || ch == Char('S') || ch == Char('T');
+}
 
 // 哪种段由大写字母开头：句中辅助码的大写触发，或末尾辅助码（间接）的大写触发。两者互斥，都给时
 // 按句中辅助码。由 bool 隐式构造时只表示句中辅助码的大写触发，与这一项出现之前的调用一致。
@@ -210,7 +216,9 @@ constexpr bool AcceptsSecondCodeAt(const Char *text, std::size_t size, std::size
 
 // 微软/搜狗/紫光双拼的 ; 是 ing 韵母，光标前这一节是奇数键时它是编码键。大写触发开着、或串里有末尾段时，
 // 段不算这一节的键（ulpbXi; 里 i; 才是一个音节，ulpb|xy 后面的 ; 不是韵母）；都没有时保持原来只看最后
-// 一个 ' 之后的规则。
+// 一个 ' 之后的规则。按音节打码的本地模式（见 IsSyllableModeKey）开头的唤醒键不是双拼键，不算进第一节：
+// Ud; 里 d; 才是一个音节，Tx;qi 是 xingqi。TSF 看不到这些模式开没开，和 FanyImeDateTimeInput 认开头的 T
+// 一样只按开头的字符判断，三处才不会分叉；开头的大写字母前面没有音节，本来也不会是辅助码段。
 template <typename Char>
 constexpr bool AcceptsSemicolonFinalAt(const Char *text, std::size_t size, std::size_t caret,
                                        UppercaseTriggers triggers)
@@ -239,6 +247,10 @@ constexpr bool AcceptsSemicolonFinalAt(const Char *text, std::size_t size, std::
                 break;
             }
         }
+    }
+    if (chunk_start == 0 && caret > 0 && IsSyllableModeKey(text[0]))
+    {
+        chunk_start = 1;
     }
     return (caret - chunk_start) % 2 == 1;
 }

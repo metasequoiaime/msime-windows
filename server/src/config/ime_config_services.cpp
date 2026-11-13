@@ -93,6 +93,8 @@ bool SetConfiguredVoiceInputString(const std::string &key, const std::string &va
         target = &VoiceInputConfig::doubao_boosting_table_id;
     else if (key == "asr_model")
         target = &VoiceInputConfig::asr_model;
+    else if (key == "local_asr_model")
+        target = &VoiceInputConfig::local_asr_model;
     else if (key == "polish_provider")
         target = &VoiceInputConfig::polish_provider;
     else if (key == "polish_token")

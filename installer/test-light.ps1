@@ -4,10 +4,16 @@
 # %LOCALAPPDATA%\metasequoiaime）。不要用这个脚本做首次安装。
 #
 # 完整流程（含词库）仍用 .\test.ps1；需要包内带 PDB 时用 .\test-symbols.ps1。
+# 只构建不安装时加 -NoInstall；版本默认从 version.txt 派生，可用 -TargetVersion 覆盖。
 #
 # 编译是增量的，实现见 Invoke-LocalTest.ps1。
 
 [CmdletBinding()]
-param([switch]$Reconfigure)
+param(
+    [switch]$Reconfigure,
+    [switch]$NoInstall,
+    [string]$TargetVersion
+)
 $ErrorActionPreference = 'Stop'
-& (Join-Path $PSScriptRoot 'Invoke-LocalTest.ps1') -Light -Reconfigure:$Reconfigure
+& (Join-Path $PSScriptRoot 'Invoke-LocalTest.ps1') -Light -Reconfigure:$Reconfigure -NoInstall:$NoInstall `
+    -TargetVersion $TargetVersion

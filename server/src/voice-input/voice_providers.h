@@ -28,6 +28,8 @@ inline constexpr std::string_view kDoubaoEndpointNostream =
 inline constexpr std::string_view kDoubaoEndpointAsync = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async";
 
 bool IsDoubaoAsrProvider(std::string_view provider);
+// 本机离线识别（sherpa-onnx），不联网、不需要 Token；模型 id 在 voice_input.local_asr_model。
+bool IsLocalAsrProvider(std::string_view provider);
 std::string NormalizeProviderId(std::string_view provider);
 // DeepSeek thinking levels: disabled | low | high | max (the latter three are sent as reasoning_effort).
 bool IsValidThinkingLevel(std::string_view level);

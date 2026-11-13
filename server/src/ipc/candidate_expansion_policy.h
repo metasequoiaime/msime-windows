@@ -37,6 +37,12 @@ inline bool IsUiOnlyCandidateSource(CandidateSource source)
 inline bool SetExpandedCandidatesKeepingPagePosition(Global::CandidateUiState &ui, std::vector<WordItem> expanded,
                                                      const EnglishPlacement &english_placement = {})
 {
+    // 精确英文命中且有简拼/不完整输入时整句猜测已从列表里隐藏；选词中只追加不重排的分支不会走归一化，
+    // 扩展重查出来的整句在这里一并挡掉，否则翻到后面又会看到它们。完整拼音输入的整句是正常候选，不挡。
+    // 英文（异步候选）只在 ui.items 里，判据从那里取。
+    if (english_placement.hide_guessed_sentences && HasExactEnglishCandidate(ui.items, english_placement))
+        HideGuessedSentences(expanded);
+
     if (ui.selection_started)
     {
         // 翻页扩展只追加尚未显示的候选。引擎可能已经有新的重排结果，不能挪动用户正在选的项。
@@ -48,8 +54,10 @@ inline bool SetExpandedCandidatesKeepingPagePosition(Global::CandidateUiState &u
         // 前面的「台」收回「臺」。已显示的项不撤，所以新项的写法已经属于列表里另一个底词时丢掉新项，
         // 每种写法在列表里只属于一个底词。追加的项按组从 0 起重新编号（组以展开结果里 variant_rank 为 0 的项
         // 开头），被抵掉或丢掉的项不占序号，组首是这一组剩下的第一种写法。
-        // 一组不会前半已显示、后半是新项：已显示项的写法只看它自己的底词、来源与地区，与列表里还有谁无关，
-        // 选词期间也不并入异步候选，所以它在追加批里多出的写法一定已显示在别的底词下，会被丢掉。
+        // 一组通常不会前半已显示、后半是新项：已显示项的写法只看它自己的底词、来源、地区与写法记录，与列表里
+        // 还有谁无关，选词期间也不并入异步候选，所以它在追加批里多出的写法一定已显示在别的底词下，会被丢掉。
+        // 例外是写法记录在两批展开之间变了（选词的写入在写线程上排队，一次展开的查询预算也可能用尽）：
+        // 记住的写法作为新的一组追加到列表末尾，下一次组页整份重建时恢复。
         const auto identity = [](const WordItem &item) {
             return item.word + '\x1f' + item.pinyin + '\x1f' + std::to_string(static_cast<int>(item.source)) + '\x1f' +
                    item.output_text;

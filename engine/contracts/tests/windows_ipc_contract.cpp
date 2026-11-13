@@ -386,6 +386,17 @@ int main()
     // 关着时与原来的规则一致（只看最后一个 '）；开着时大写段不算键：nihkXb 里 b 后面接 ; 是 b; 音节。
     CHECK(semicolon_at(L"nihkb", false) && !semicolon_at(L"nihkXb", false) && semicolon_at(L"nihkXb", true));
     CHECK(semicolon_at(L"ni'b", false) && !semicolon_at(L"nihk", true));
+    // U 模式开头的 U 是唤醒键，不算进第一节：Ud; 是 d; 音节，Udk 后面不收，紧跟 U 也不收。
+    CHECK(semicolon_at(L"Ud", false) && semicolon_at(L"Ud", true) && semicolon_at(L"Ud;kbd", false));
+    CHECK(!semicolon_at(L"U", false) && !semicolon_at(L"Udk", false) && !semicolon_at(L"Udk", true));
+    CHECK(FanyImeDirectHelpcode::AcceptsSemicolonFinalAt("Ud", 2, 2) &&
+          !FanyImeDirectHelpcode::AcceptsSemicolonFinalAt("U", 1, 1));
+    // S 符号、T 日期时间同理（Tx;qi 是 xingqi）；只收字母的 K、J 等模式不在内，仍按原来的奇偶。
+    CHECK(semicolon_at(L"Tx", false) && semicolon_at(L"Sl", false) && !semicolon_at(L"Txi", false));
+    CHECK(!semicolon_at(L"T", false) && !semicolon_at(L"S", false) && !semicolon_at(L"Kd", false));
+    CHECK(!FanyImeDirectHelpcode::AcceptsSemicolonFinalAt("T", 1, 1) &&
+          !FanyImeDirectHelpcode::AcceptsSemicolonFinalAt("S", 1, 1) &&
+          FanyImeDirectHelpcode::AcceptsSemicolonFinalAt("K", 1, 1));
     // 末尾辅助码（间接）：触发键记成 |，后面至多两码、大小写都算；只在输入串末尾、完整音节之后能开段。
     using FanyImeMidSentenceHelpcode::UppercaseTriggers;
     const auto end_at = [](const std::wstring &text, std::size_t caret, UppercaseTriggers triggers) {

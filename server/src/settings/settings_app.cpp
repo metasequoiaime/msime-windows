@@ -7,7 +7,9 @@
 #include "settings/api_credential_test.h"
 #include "settings/collocation_model.h"
 #include "settings/lattice_model.h"
+#include "settings/local_asr_download.h"
 #include "settings/neural_model.h"
+#include "voice-input/local_asr_catalog.h"
 #include "settings/default_input_method.h"
 #include "settings/game_compat_name.h"
 #include "settings/input_method_install.h"
@@ -68,6 +70,8 @@ constexpr UINT kWorkerCompleted = WM_APP + 4;
 constexpr UINT kQuitSettings = WM_APP + 5;
 // 模型更新探测线程完成：UI 线程重新取一份快照，探测线程不碰 g_worker。
 constexpr UINT kModelUpdateChecked = WM_APP + 6;
+// Server 的语音提示框点了「打开设置」：激活并停在语音输入页。与 settings_launcher.cpp 同值。
+constexpr UINT kOpenVoiceSection = WM_APP + 7;
 // Timer 1 is msimeui's caret blink in the Direct2D window, so ours start elsewhere.
 constexpr UINT_PTR kConfigReloadTimer = 0x5301;
 constexpr UINT_PTR kLingerTimer = 0x5302;
@@ -79,7 +83,8 @@ constexpr int kRestartRefreshTicks = 10; // 500ms × 10 = 5s，覆盖 Watchdog �
 std::unique_ptr<native_settings::SettingsWindow> g_native;
 
 bool g_window_minimized = false;
-bool g_open_about_on_ready = false;
+// 启动参数指定的首页（--about / --voice），空串表示默认页。窗口建好后清空。
+std::string g_initial_page;
 HWND g_settings_hwnd = nullptr;
 std::optional<CandidateSkinCatalog::ScanResult> g_candidate_skin_catalog;
 uint64_t g_candidate_skin_catalog_revision = 0;
@@ -119,6 +124,14 @@ bool PostToPage(const std::wstring &message)
         return false;
     g_native->OnHostMessage(message);
     return true;
+}
+
+// 宿主侧的失败提示走窗口内的 toast，不弹系统 MessageBox：后者的字体随系统界面语言，
+// 英文系统上中文渲染很差，也和设置窗口的外观对不上。只在 UI 线程调用。
+void ShowSettingsFailure(const std::wstring &message)
+{
+    if (g_native)
+        g_native->ShowToast(message, false);
 }
 
 // 给页面回一条只在宿主侧产生的消息。契约里的 server 段是穷举的，新类型必须同时写进
@@ -215,11 +228,11 @@ void TraceStartup(const char *stage)
     }
 }
 
-void ShowAboutSection()
+void ShowSection(const char *page)
 {
     if (g_native)
     {
-        g_native->ShowPage("about-settings");
+        g_native->ShowPage(page);
     }
 }
 
@@ -375,6 +388,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
                  {"layouts", skin.layouts},
                  {"themes", skin.themes},
                  {"decorationTopDip", skin.decorationTopDip},
+                 {"decorationLayouts", skin.decorationLayouts},
                  {"compatible", CandidateSkinCatalog::Supports(skin, skin_layout, skin_theme)}});
         }
     }
@@ -618,6 +632,35 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"doubao_enable_ddc", voice.doubao_enable_ddc},
             {"doubao_boosting_table_id", voice.doubao_boosting_table_id},
             {"asr_model", voice.asr_model},
+            {"local_asr_model", voice.local_asr_model},
+            {"local_asr_status", [] {
+                 nlohmann::json statuses = nlohmann::json::object();
+                 for (const auto &[model_id, status] : local_asr_download::GetStatuses())
+                     statuses[model_id] = nlohmann::json{{"state", status.state},
+                                                         {"progress", status.progress},
+                                                         {"error", status.error},
+                                                         {"detail", status.detail},
+                                                         {"modelInstalled", status.model_installed}};
+                 return statuses;
+             }()},
+            {"local_asr_catalog", [] {
+                 // 页面不自持目录副本：id、下载地址与校验和留在宿主，只下发展示字段。
+                 nlohmann::json catalog = nlohmann::json::array();
+                 for (const auto &entry : local_asr::Catalog())
+                 {
+                     catalog.push_back(nlohmann::json{{"id", entry.id},
+                                                      {"title", entry.title},
+                                                      {"description", entry.description},
+                                                      {"sizeHint", entry.size_hint},
+                                                      {"memoryHint", entry.memory_hint},
+                                                      {"license", entry.license},
+                                                      {"url", local_asr::SourceUrl(entry.archive)},
+                                                      {"needsVad", local_asr::NeedsVad(entry)}});
+                 }
+                 return catalog;
+             }()},
+            {"local_asr_runtime_url", local_asr::SourceUrl(local_asr::RuntimeArchive())},
+            {"local_asr_vad_url", local_asr::SourceUrl(local_asr::VadModel())},
             {"polish_provider", voice.polish_provider},
             {"polish_token", voice.polish_token},
             {"polish_tokens", voice.polish_tokens},
@@ -1488,6 +1531,29 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
         {
             PostConfig(false);
         }
+        else if (type == "localAsrModelDownload")
+        {
+            // 本地语音模型：缺什么补什么（运行库、VAD、模型），进度随快照回放，页面在忙碌态轮询。
+            local_asr_download::StartDownload(json::value_to<std::string>(value.at("data").at("modelId")));
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelImport")
+        {
+            const std::string model_id = json::value_to<std::string>(value.at("data").at("modelId"));
+            const std::filesystem::path source = local_asr_download::PromptForFile(hwnd);
+            if (!source.empty())
+                local_asr_download::Import(model_id, source);
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelDelete")
+        {
+            local_asr_download::Delete(json::value_to<std::string>(value.at("data").at("modelId")));
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelStatusRequest")
+        {
+            PostConfig(false);
+        }
         else if (type == "neuralModelDownload")
         {
             // 与八股文模型同一套：后台下载，进度随快照回放，页面在下载态轮询。
@@ -1545,7 +1611,7 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                 return [saved, completion = std::move(completion)] {
                     completion();
                     if (!saved)
-                        MessageBoxW(g_settings_hwnd, L"设置保存失败，请重试。", L"水杉输入法", MB_OK | MB_ICONWARNING);
+                        ShowSettingsFailure(L"设置保存失败，请重试");
                 };
             });
         }
@@ -1664,8 +1730,7 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             const bool ok = NotifyImeServerRestart();
             if (!ok)
             {
-                MessageBoxW(g_settings_hwnd, L"未能重启输入法进程，请稍后重试。", L"水杉输入法",
-                            MB_OK | MB_ICONWARNING);
+                ShowSettingsFailure(L"未能重启输入法进程，请稍后重试");
             }
             else
             {
@@ -2193,7 +2258,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
         return 0;
     case kOpenAboutSection:
         ActivateWindow(hwnd);
-        ShowAboutSection();
+        ShowSection("about-settings");
+        return 0;
+    case kOpenVoiceSection:
+        ActivateWindow(hwnd);
+        ShowSection("voice");
         return 0;
     case kScanSkinCatalog:
         PostConfig(true);
@@ -2356,7 +2425,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     if (const int elevated_result = game_compat_name::RunElevatedApplyIfRequested(command_line); elevated_result >= 0)
         return elevated_result;
     const std::wstring arguments = command_line ? command_line : L"";
-    g_open_about_on_ready = arguments.find(L"--about") != std::wstring::npos;
+    UINT open_section_message = kActivateExistingWindow;
+    if (arguments.find(L"--about") != std::wstring::npos)
+    {
+        g_initial_page = "about-settings";
+        open_section_message = kOpenAboutSection;
+    }
+    else if (arguments.find(L"--voice") != std::wstring::npos)
+    {
+        g_initial_page = "voice";
+        open_section_message = kOpenVoiceSection;
+    }
     // Older shortcuts may still pass --d2d / --webview2, which used to pick the renderer
     // for one run. There is only the Direct2D window now; both are ignored.
     // The Direct2D window's first frame spends ~200ms bringing up the GPU driver. Start
@@ -2381,7 +2460,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
         HWND existing = FindWindowW(kWindowClass, nullptr);
         if (existing)
         {
-            PostMessageW(existing, g_open_about_on_ready ? kOpenAboutSection : kActivateExistingWindow, 0, 0);
+            PostMessageW(existing, open_section_message, 0, 0);
             SetForegroundWindow(existing);
         }
         return 0;
@@ -2409,13 +2488,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     if (!hwnd)
         return 1;
     g_settings_hwnd = hwnd;
-    g_worker = std::make_unique<SerialTaskQueue>(
-        [hwnd] { PostMessageW(hwnd, kWorkerCompleted, 0, 0); },
-        [] { MessageBoxW(g_settings_hwnd, L"设置操作失败，请重试。", L"水杉输入法", MB_OK | MB_ICONWARNING); },
-        [] {
-            if (g_worker_com_initialized)
-                CoUninitialize();
-        });
+    g_worker = std::make_unique<SerialTaskQueue>([hwnd] { PostMessageW(hwnd, kWorkerCompleted, 0, 0); },
+                                                 [] { ShowSettingsFailure(L"设置操作失败，请重试"); },
+                                                 [] {
+                                                     if (g_worker_com_initialized)
+                                                         CoUninitialize();
+                                                 });
     auto initial_config = std::make_shared<std::promise<bool>>();
     std::future<bool> initial_light = initial_config->get_future();
     g_worker->Submit([initial_config] {
@@ -2461,12 +2539,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     // The Direct2D window draws its first frame at once, so there is no splash.
     native_settings::SettingsWindow::Callbacks callbacks;
     callbacks.postToHost = [hwnd](const std::string &message) { HandleClientMessage(hwnd, message); };
-    g_native = std::make_unique<native_settings::SettingsWindow>(hwnd, std::move(callbacks),
-                                                                 g_open_about_on_ready ? "about-settings" : "");
+    g_native = std::make_unique<native_settings::SettingsWindow>(hwnd, std::move(callbacks), g_initial_page);
     g_native->SetLightTheme(g_settings_light);
     g_native->SetLaunchAnimation(launch_animation);
     TraceStartup("ui: native window built");
-    g_open_about_on_ready = false;
+    g_initial_page.clear();
     // Cloaked until the first frame is drawn, so the compositor never shows the
     // surface before it is painted (white, whatever the theme).
     BOOL cloak = TRUE;

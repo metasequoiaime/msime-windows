@@ -5,24 +5,30 @@
 #include <Windows.h>
 #include <bcrypt.h>
 #include <winhttp.h>
+#include <wintrust.h>
+#include <softpub.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cwctype>
 #include <fstream>
+#include <limits>
 #include <regex>
+#include <thread>
 #include <vector>
 
 namespace native_settings::update_download
 {
 namespace
 {
-// 首段测速的窗口与门槛。窗口长度取得比「一眼看上去」长：真实的家庭宽带在头一两秒
-// 还在慢启动，3 秒的样本会把一条正常的连接误判成不顶用。
-constexpr std::uint64_t kProbeSeconds = 10;
-constexpr std::uint64_t kProbeMinBytes = 1024 * 1024;
-constexpr std::uint64_t kProbeFloorBytesPerSecond = 50 * 1024;
+// 首段测速的窗口与门槛。窗口取 30 秒、门槛取 8 KB/s：真实的家庭宽带和代理在头
+// 十几秒还在慢启动，10 秒 50 KB/s 会把「先卡半分钟再飙」的线路判死，而它其实能下。
+// 真正死掉的连接由 kStallSeconds 的停滞判定兜住。
+constexpr std::uint64_t kProbeSeconds = 30;
+constexpr std::uint64_t kProbeMinBytes = 2 * 1024 * 1024;
+constexpr std::uint64_t kProbeFloorBytesPerSecond = 8 * 1024;
 // 通过测速之后，连续这么久收不到任何字节就算这次尝试失败。
 constexpr std::uint64_t kStallSeconds = 20;
 // 安装包上限。当前安装包约 100 MB，留十倍余量；超过就当作清单或重定向出了问题。
@@ -84,8 +90,86 @@ std::string HexDigest(const unsigned char raw[32])
     return digest;
 }
 
-// 一次尝试。测速阶段失败会把 outcome 标成 Failed 并带上原因；测速通过后
-// 就一直下到流结束。
+std::uint64_t FileSizeOrZero(const std::filesystem::path &path)
+{
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(path, ec);
+    return ec ? 0 : static_cast<std::uint64_t>(size);
+}
+
+// 打开文件并在句柄上算 SHA-256。share_mode 由调用方决定：周期性核对用宽松共享，
+// 避免杀毒软件之类的临时写句柄让校验假失败；启动安装程序前用只共享读，锁住文件。
+bool OpenAndHash(const std::filesystem::path &path, const std::string &expected_hex, DWORD share_mode, HANDLE &file)
+{
+    file = INVALID_HANDLE_VALUE;
+    if (!IsSha256Hex(expected_hex))
+        return false;
+    HANDLE handle =
+        CreateFileW(path.c_str(), GENERIC_READ, share_mode, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return false;
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0 ||
+        BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) != 0)
+    {
+        if (hash)
+            BCryptDestroyHash(hash);
+        if (algorithm)
+            BCryptCloseAlgorithmProvider(algorithm, 0);
+        CloseHandle(handle);
+        return false;
+    }
+    std::vector<char> buffer(64 * 1024);
+    bool ok = true;
+    for (;;)
+    {
+        DWORD read = 0;
+        if (!ReadFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr))
+        {
+            ok = false;
+            break;
+        }
+        if (read == 0)
+            break;
+        if (BCryptHashData(hash, reinterpret_cast<PUCHAR>(buffer.data()), read, 0) != 0)
+        {
+            ok = false;
+            break;
+        }
+    }
+    unsigned char digest[32]{};
+    if (ok)
+        ok = BCryptFinishHash(hash, digest, sizeof(digest), 0) == 0;
+    BCryptDestroyHash(hash);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (!ok || HexDigest(digest) != expected_hex)
+    {
+        CloseHandle(handle);
+        return false;
+    }
+    file = handle;
+    return true;
+}
+
+// Content-Range 里的十进制段。溢出直接判失败，不让一条坏头把长度算歪。
+bool ReadUnsigned(const std::wstring &text, size_t &pos, std::uint64_t &value)
+{
+    const size_t begin = pos;
+    value = 0;
+    while (pos < text.size() && text[pos] >= L'0' && text[pos] <= L'9')
+    {
+        if (value > (std::numeric_limits<std::uint64_t>::max() - 9) / 10)
+            return false;
+        value = value * 10 + static_cast<std::uint64_t>(text[pos] - L'0');
+        ++pos;
+    }
+    return pos > begin;
+}
+
+// 一次尝试。临时文件里已有的字节当作续传前缀，用 Range 从那里接着要；服务器不认
+// Range 返回 200 时清空重下。完整性由调用方对整份文件统一核对，这里只管把字节
+// 写到磁盘上。
 Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, Clock::time_point deadline,
                   const std::function<void(std::uint64_t, std::uint64_t)> &progress)
 {
@@ -115,11 +199,32 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
     HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
                                                         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
                                    : nullptr;
+
+    // 断点续传的前缀。只认普通的临时文件；比上限还大说明文件已经不可信，直接丢弃。
+    // 已经下完的文件也走这里：Range 会得到 416，按失败处理，调用方核对摘要后要么
+    // 直接采用，要么删掉重下。
+    std::error_code ec;
+    std::uint64_t resume_from = 0;
+    if (std::filesystem::is_regular_file(target, ec))
+        resume_from = FileSizeOrZero(target);
+    if (resume_from > kMaxInstallerBytes)
+    {
+        std::filesystem::remove(target, ec);
+        resume_from = 0;
+    }
+    attempt.bytes = resume_from;
+
     if (request)
     {
         // GitHub 的 release 资产会 302 到 CDN，镜像也会跳转，显式放开重定向。
         DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
         WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
+        if (resume_from > 0)
+        {
+            const std::wstring range = L"Range: bytes=" + std::to_wstring(resume_from) + L"-";
+            WinHttpAddRequestHeaders(request, range.c_str(), static_cast<DWORD>(-1),
+                                     WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+        }
     }
 
     const auto close_all = [&] {
@@ -154,7 +259,20 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
         close_all();
         return attempt;
     }
-    if (status != HTTP_STATUS_OK)
+    // 416 说明本地前缀已经不小于服务器的整包。上次可能已经把全部字节写完，只是尾部
+    // 查询报错；这里不急着删，交给调用方对整文件算摘要，匹配就直接用，不匹配再重下。
+    if (status == 416)
+    {
+        attempt.outcome = Outcome::Ok;
+        attempt.bytes = resume_from;
+        attempt.total = 0;
+        // 字节全来自以前的连接，摘要不符时还值得从零再下一次。
+        attempt.resumed = resume_from > 0;
+        attempt.seconds = ElapsedSeconds(started);
+        close_all();
+        return attempt;
+    }
+    if (status != HTTP_STATUS_OK && status != HTTP_STATUS_PARTIAL_CONTENT)
     {
         attempt.message = "下载服务器返回了 " + std::to_string(status);
         attempt.seconds = ElapsedSeconds(started);
@@ -163,45 +281,97 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
     }
 
     std::uint64_t total = 0;
+    bool total_unknown = false;
+    if (status == HTTP_STATUS_PARTIAL_CONTENT)
+    {
+        // 206 必须给出 Content-Range，而且起点要正好接上本地文件；对不上就说明
+        // 服务器给的是另一段内容，继续写只会把文件拼坏。WinHTTP 取自定义头要先
+        // 问一次长度，再按长度分配缓冲区。
+        DWORD range_bytes = 0;
+        std::wstring content_range;
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CUSTOM, L"Content-Range", WINHTTP_NO_OUTPUT_BUFFER, &range_bytes,
+                                WINHTTP_NO_HEADER_INDEX) ||
+            GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+        {
+            if (range_bytes > 0)
+            {
+                content_range.assign(range_bytes / sizeof(wchar_t), L'\0');
+                if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CUSTOM, L"Content-Range", content_range.data(),
+                                        &range_bytes, WINHTTP_NO_HEADER_INDEX))
+                    content_range.resize(range_bytes / sizeof(wchar_t));
+                else
+                    content_range.clear();
+            }
+        }
+        while (!content_range.empty() && content_range.back() == L'\0')
+            content_range.pop_back();
+        std::uint64_t range_start = 0;
+        if (content_range.empty() || !ParseContentRange(content_range, range_start, total) ||
+            range_start != resume_from)
+        {
+            std::filesystem::remove(target, ec);
+            attempt.message = "续传响应与本地文件对不上";
+            attempt.seconds = ElapsedSeconds(started);
+            close_all();
+            return attempt;
+        }
+        // `Content-Range: bytes a-b/*` 表示总长未知。这时 Content-Length 只是剩余
+        // 字节数，不能拿它加前缀当整包长度，否则会把一个正常的前缀判成超长。
+        total_unknown = total == 0;
+        attempt.resumed = resume_from > 0;
+    }
+    else
+    {
+        // 服务器没认 Range，返回的是整包：丢掉前缀从头写。
+        resume_from = 0;
+    }
+
     DWORD length = 0;
     DWORD length_size = sizeof(length);
     if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
                             WINHTTP_HEADER_NAME_BY_INDEX, &length, &length_size, WINHTTP_NO_HEADER_INDEX))
     {
-        total = length;
+        if (total == 0 && !total_unknown)
+            total = resume_from + length;
     }
     if (total > kMaxInstallerBytes)
     {
+        std::filesystem::remove(target, ec);
         attempt.message = "安装包超过允许的大小";
         attempt.seconds = ElapsedSeconds(started);
         close_all();
         return attempt;
     }
+    if (total != 0 && resume_from > total)
+    {
+        // 服务器这次报的整包比本地前缀还短，说明上游换了文件或响应有问题，
+        // 不能拿旧前缀继续拼。
+        std::filesystem::remove(target, ec);
+        attempt.message = "续传文件与服务器长度对不上";
+        attempt.seconds = ElapsedSeconds(started);
+        close_all();
+        return attempt;
+    }
 
-    std::error_code ec;
-    std::filesystem::remove(target, ec);
-    std::ofstream file(target, std::ios::binary | std::ios::trunc);
-    BCRYPT_ALG_HANDLE algorithm = nullptr;
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    const bool hash_ready = file && BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0 &&
-                            BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) == 0;
-    if (!hash_ready)
+    std::ofstream file(target, std::ios::binary | (resume_from > 0 ? std::ios::app : std::ios::trunc));
+    if (!file)
     {
         attempt.message = "无法写入下载文件";
-        if (hash)
-            BCryptDestroyHash(hash);
-        if (algorithm)
-            BCryptCloseAlgorithmProvider(algorithm, 0);
+        attempt.seconds = ElapsedSeconds(started);
         close_all();
-        std::filesystem::remove(target, ec);
         return attempt;
     }
 
     std::vector<char> buffer(64 * 1024);
-    unsigned char digest[32]{};
     const Clock::time_point probe_started = Clock::now();
-    bool probing = true;
+    std::uint64_t received = 0;
+    // 只剩一个尾巴时不再测速：不到 2 MB 的剩余量永远凑不够样本，30 秒后按
+    // 8 KB/s 判会把一段正常但偏慢的收尾误杀。
+    const bool tail_only = total != 0 && resume_from < total && total - resume_from < kProbeMinBytes;
+    bool probing = !tail_only;
     bool ok = true;
+    // 失败时临时文件里的内容是否已经不可信（超长、写盘失败）。网络类失败保留前缀续传。
+    bool discard_part = false;
 
     for (;;)
     {
@@ -213,7 +383,7 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
         }
         DWORD available = 0;
         // 停滞判定放在等数据之前：WinHttpQueryDataAvailable 会一直阻塞到有数据或
-        // 接收超时（30 秒），靠循环之间的时间差看不出空转。
+        // 接收超时，靠循环之间的时间差看不出空转。
         const Clock::time_point wait_started = Clock::now();
         const BOOL available_ok = WinHttpQueryDataAvailable(request, &available);
         if (!available_ok)
@@ -242,10 +412,11 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
             ok = false;
             break;
         }
-        if (attempt.bytes + read > kMaxInstallerBytes)
+        if (resume_from + received + read > kMaxInstallerBytes)
         {
             attempt.message = "安装包超过允许的大小";
             ok = false;
+            discard_part = true;
             break;
         }
         file.write(buffer.data(), static_cast<std::streamsize>(read));
@@ -253,33 +424,26 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
         {
             attempt.message = "写入下载文件失败";
             ok = false;
+            discard_part = true;
             break;
         }
-        if (BCryptHashData(hash, reinterpret_cast<PUCHAR>(buffer.data()), read, 0) != 0)
-        {
-            attempt.message = "无法计算校验值";
-            ok = false;
-            break;
-        }
-        attempt.bytes += read;
+        received += read;
         if (progress)
-            progress(attempt.bytes, total);
+            progress(resume_from + received, total);
 
-        // 首段测速。收到足够样本或窗口结束就下判决，测速期间的数据不丢，继续使用。
-        // 用毫秒算，不用整数秒：按秒取整会让门槛随样本量漂移，一条恰好卡在 50 KB/s
-        // 附近的连接可能因为取整被判成慢。
+        // 首段测速只统计这次尝试收到的字节，不把续传前缀算进去，否则一个很大的
+        // 前缀会让测速还没开始就“样本足够”。
         if (probing)
         {
             const auto probe_ms =
                 (std::max)(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - probe_started).count(),
                            std::int64_t{500});
-            const bool enough_sample = attempt.bytes >= kProbeMinBytes;
+            const bool enough_sample = received >= kProbeMinBytes;
             if (enough_sample || probe_ms >= static_cast<std::int64_t>(kProbeSeconds * 1000))
             {
-                const std::uint64_t bytes = attempt.bytes;
-                if (bytes * 1000 < kProbeFloorBytesPerSecond * static_cast<std::uint64_t>(probe_ms))
+                if (received * 1000 < kProbeFloorBytesPerSecond * static_cast<std::uint64_t>(probe_ms))
                 {
-                    attempt.message = "下载速度低于 50 KB/s";
+                    attempt.message = "下载速度低于 8 KB/s";
                     ok = false;
                     break;
                 }
@@ -290,29 +454,31 @@ Attempt FetchOnce(const std::string &url, const std::filesystem::path &target, C
     file.close();
     close_all();
 
-    if (ok && BCryptFinishHash(hash, digest, sizeof(digest), 0) != 0)
-    {
-        attempt.message = "无法计算校验值";
-        ok = false;
-    }
-    BCryptDestroyHash(hash);
-    BCryptCloseAlgorithmProvider(algorithm, 0);
-
-    if (ok && total != 0 && attempt.bytes != total)
-    {
-        // 服务端声明了长度却没给全，不能当完整文件用。
-        attempt.message = "下载不完整";
-        ok = false;
-    }
+    attempt.bytes = resume_from + received;
+    attempt.total = total;
     attempt.seconds = ElapsedSeconds(started);
     if (!ok)
     {
+        // 网络断了但字节是真的，留在原地给下一次续传；文件超过上限或写盘失败时
+        // 内容已经不可信，删掉重来。
+        if (discard_part)
+            std::filesystem::remove(target, ec);
+        return attempt;
+    }
+    if (total != 0 && attempt.bytes > total)
+    {
         std::filesystem::remove(target, ec);
+        attempt.message = "下载内容超过声明长度";
         attempt.bytes = 0;
         return attempt;
     }
+    if (total != 0 && attempt.bytes < total)
+    {
+        // 连接正常结束但没给全。留着前缀，下一次 Range 接着要。
+        attempt.message = "下载不完整";
+        return attempt;
+    }
     attempt.outcome = Outcome::Ok;
-    attempt.digest = HexDigest(digest);
     return attempt;
 }
 } // namespace
@@ -325,6 +491,45 @@ bool IsSha256Hex(const std::string &text)
         if (!std::isdigit(ch) && !(ch >= 'a' && ch <= 'f'))
             return false;
     return true;
+}
+
+bool ParseContentRange(const std::wstring &value, std::uint64_t &start, std::uint64_t &total)
+{
+    start = 0;
+    total = 0;
+    size_t pos = 0;
+    const auto skip_space = [&] {
+        while (pos < value.size() && (value[pos] == L' ' || value[pos] == L'\t'))
+            ++pos;
+    };
+    const auto literal = [&](const wchar_t *word) {
+        for (const wchar_t *ch = word; *ch != L'\0'; ++ch)
+        {
+            if (pos >= value.size() || std::towlower(value[pos]) != *ch)
+                return false;
+            ++pos;
+        }
+        return true;
+    };
+    skip_space();
+    if (!literal(L"bytes"))
+        return false;
+    skip_space();
+    std::uint64_t end = 0;
+    if (!ReadUnsigned(value, pos, start) || pos >= value.size() || value[pos] != L'-')
+        return false;
+    ++pos;
+    if (!ReadUnsigned(value, pos, end) || pos >= value.size() || value[pos] != L'/')
+        return false;
+    ++pos;
+    skip_space();
+    if (pos < value.size() && value[pos] == L'*')
+        ++pos;
+    else if (!ReadUnsigned(value, pos, total))
+        return false;
+    skip_space();
+    // 起点不能大于终点；`*` 表示总长未知，total 保持 0。
+    return pos == value.size() && end >= start;
 }
 
 bool IsInstallerName(const std::string &name)
@@ -399,44 +604,88 @@ std::string PartFileName(const std::string &installer_name)
     return installer_name + kPartSuffix + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(ticket);
 }
 
+bool OpenVerifiedInstaller(const std::filesystem::path &path, const std::string &expected_hex, HANDLE &file)
+{
+    // 只共享读：从校验完成到安装程序真正打开文件之间，其他进程拿不到写权限，
+    // 改不了内容也删不掉。句柄要由调用方在启动之后再关闭。
+    return OpenAndHash(path, expected_hex, FILE_SHARE_READ, file);
+}
+
 bool FileMatchesDigest(const std::filesystem::path &path, const std::string &expected_hex)
 {
-    if (!IsSha256Hex(expected_hex))
-        return false;
-    std::ifstream file(path, std::ios::binary);
-    if (!file)
-        return false;
-    BCRYPT_ALG_HANDLE algorithm = nullptr;
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0 ||
-        BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) != 0)
+    // 这一份只做判断，不拿去启动程序，共享模式放宽，别让一个临时的写句柄
+    // 或者杀毒扫描把正常文件判成坏的。
+    HANDLE file = INVALID_HANDLE_VALUE;
+    const bool ok = OpenAndHash(path, expected_hex, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, file);
+    if (file != INVALID_HANDLE_VALUE)
+        CloseHandle(file);
+    return ok;
+}
+
+void HoldInstallerUntilExit(HANDLE file, HANDLE process)
+{
+    const auto close_both = [](HANDLE file_handle, HANDLE process_handle) {
+        if (process_handle != nullptr)
+            CloseHandle(process_handle);
+        if (file_handle != INVALID_HANDLE_VALUE && file_handle != nullptr)
+            CloseHandle(file_handle);
+    };
+    if (process == nullptr)
     {
-        if (hash)
-            BCryptDestroyHash(hash);
-        if (algorithm)
-            BCryptCloseAlgorithmProvider(algorithm, 0);
-        return false;
+        close_both(file, process);
+        return;
     }
-    std::vector<char> buffer(64 * 1024);
-    bool ok = true;
-    while (file)
+    try
     {
-        file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const std::streamsize got = file.gcount();
-        if (got <= 0)
-            break;
-        if (BCryptHashData(hash, reinterpret_cast<PUCHAR>(buffer.data()), static_cast<ULONG>(got), 0) != 0)
-        {
-            ok = false;
-            break;
-        }
+        // WaitForInputIdle 对 Inno 的引导程序（没有消息队列）会立刻返回，句柄放得
+        // 太早；setup.tmp 在整个向导期间都会回读 setup.exe，所以等引导进程退出。
+        std::thread([file, process, close_both] {
+            WaitForSingleObject(process, INFINITE);
+            close_both(file, process);
+        }).detach();
     }
-    unsigned char digest[32]{};
-    if (ok)
-        ok = BCryptFinishHash(hash, digest, sizeof(digest), 0) == 0;
-    BCryptDestroyHash(hash);
-    BCryptCloseAlgorithmProvider(algorithm, 0);
-    return ok && HexDigest(digest) == expected_hex;
+    catch (...)
+    {
+        close_both(file, process);
+    }
+}
+
+SignatureCheck VerifyAuthenticode(const std::filesystem::path &path)
+{
+    WINTRUST_FILE_INFO file_info{};
+    file_info.cbStruct = sizeof(file_info);
+    file_info.pcwszFilePath = path.c_str();
+    WINTRUST_DATA data{};
+    data.cbStruct = sizeof(data);
+    data.dwUIChoice = WTD_UI_NONE;
+    // 不查吊销：离线机器上吊销服务器不可达会让整次校验失败。
+    data.fdwRevocationChecks = WTD_REVOKE_NONE;
+    data.dwUnionChoice = WTD_CHOICE_FILE;
+    data.pFile = &file_info;
+    // 允许信任链构建按需联网取根证书和中间证书。Windows 的根证书是按需下载的，
+    // 新装或少用的系统本地根存储里可能还没有签名 CA 的根；只用缓存会把签名正确的
+    // 安装包判成不可信。
+    data.dwProvFlags = WTD_REVOCATION_CHECK_NONE;
+    data.dwStateAction = WTD_STATEACTION_VERIFY;
+    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    const LONG status = WinVerifyTrust(nullptr, &action, &data);
+    data.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust(nullptr, &action, &data);
+    if (status == ERROR_SUCCESS)
+        return SignatureCheck::Valid;
+    // 这几种是文件本身的问题：没有签名、签名与内容不符、签名格式坏了、证书被明确
+    // 标为不可信。其余（信任链建不起来、根证书缺失、联网失败等）归到环境问题。
+    switch (status)
+    {
+    case TRUST_E_NOSIGNATURE:
+    case TRUST_E_SUBJECT_FORM_UNKNOWN:
+    case TRUST_E_BAD_DIGEST:
+    case TRUST_E_EXPLICIT_DISTRUST:
+    case CERT_E_REVOKED:
+        return SignatureCheck::Invalid;
+    default:
+        return SignatureCheck::Unverifiable;
+    }
 }
 
 Result Download(const Request &request)
@@ -483,70 +732,137 @@ Result Download(const Request &request)
     std::filesystem::path part_path = request.directory / PartFileName(request.installer_name);
     const Clock::time_point deadline =
         Clock::now() + std::chrono::seconds((std::max)(request.deadline_seconds, std::uint64_t{60}));
+    const auto minimum_channel_budget = std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(60));
 
-    bool saw_not_found = false;
-    for (const std::string &channel : channels)
-    {
-        for (int attempt_index = 0; attempt_index < kAttemptsPerChannel; ++attempt_index)
+    // 第一轮按剩余可用通道数分配预算；如果主通道只是慢、镜像又暂时 404，第二轮
+    // 用剩下的预算回到同一个 part 文件继续续传，别把本来能下完的连接切死。
+    std::vector<bool> channel_exhausted(channels.size(), false);
+    const auto usable_channel_count = [&channel_exhausted] {
+        size_t count = 0;
+        for (const bool exhausted : channel_exhausted)
         {
-            if (Clock::now() > deadline)
+            if (!exhausted)
+                ++count;
+        }
+        return count;
+    };
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        if (Clock::now() >= deadline)
+            break;
+        for (size_t channel_index = 0; channel_index < channels.size(); ++channel_index)
+        {
+            if (channel_exhausted[channel_index])
+                continue;
+            const size_t remaining_channels = usable_channel_count();
+            if (remaining_channels == 0)
+                break;
+            const std::string &channel = channels[channel_index];
+            const Clock::time_point channel_started = Clock::now();
+            if (channel_started >= deadline)
             {
+                std::filesystem::remove(part_path, ec);
                 result.outcome = Outcome::Failed;
                 result.message = "下载超时";
                 return result;
             }
-            Attempt attempt = FetchOnce(channel, part_path, deadline, request.on_progress);
-            attempt.url = channel;
-            result.attempts.push_back(attempt);
-            if (attempt.outcome == Outcome::Ok)
+            // 按剩余可用通道数分配预算。第一条通道再慢也不能把全局预算吃光，
+            // 否则镜像永远等不到机会；已经 404 的通道不再占份额。
+            const auto remaining = deadline - channel_started;
+            const auto share = remaining / static_cast<long long>(remaining_channels);
+            const Clock::time_point channel_deadline =
+                (std::min)(deadline, channel_started + (std::max)(share, minimum_channel_budget));
+            for (int attempt_index = 0; attempt_index < kAttemptsPerChannel; ++attempt_index)
             {
-                // 摘要对不上是明确的失败：字节已经收全但内容不对，换通道重试没意义，
-                // 换来的只会是同一份被篡改或被截断的包。摘要由 FetchOnce 边下边算，
-                // 这里不重读一遍文件：103 MB 的包重读一次要几秒，且会多占一份内存。
-                if (attempt.digest == request.installer_sha256)
+                if (Clock::now() >= channel_deadline)
+                    break;
+                Attempt attempt = FetchOnce(channel, part_path, channel_deadline, request.on_progress);
+                attempt.url = channel;
+                result.attempts.push_back(attempt);
+                if (attempt.outcome == Outcome::Ok)
                 {
-                    // 正式名字可能已经被另一个先完成的实例写好，且内容相同。这时不再
-                    // 覆盖：MoveFileEx 会把旧文件顶掉，而用户可能正读到它。
-                    if (FileMatchesDigest(final_path, request.installer_sha256))
+                    // 完整性只认整份文件的 SHA256。续传把多次连接的字节拼在同一个临时
+                    // 文件里，边下边算的哈希跨不过重连，所以这里统一读一遍再决定。
+                    if (FileMatchesDigest(part_path, request.installer_sha256))
                     {
+                        // 正式名字可能已经被另一个先完成的实例写好，且内容相同。这时不再
+                        // 覆盖：MoveFileEx 会把旧文件顶掉，而用户可能正读到它。
+                        if (FileMatchesDigest(final_path, request.installer_sha256))
+                        {
+                            std::filesystem::remove(part_path, ec);
+                            result.outcome = Outcome::Ok;
+                            result.message.clear();
+                            result.path = final_path;
+                            return result;
+                        }
+                        std::filesystem::remove(final_path, ec);
+                        if (MoveFileExW(part_path.c_str(), final_path.c_str(),
+                                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                        {
+                            result.outcome = Outcome::Ok;
+                            result.message.clear();
+                            result.path = final_path;
+                            return result;
+                        }
                         std::filesystem::remove(part_path, ec);
-                        result.outcome = Outcome::Ok;
-                        result.message.clear();
-                        result.path = final_path;
+                        result.outcome = Outcome::Failed;
+                        result.message = "无法保存安装包";
                         return result;
                     }
-                    std::filesystem::remove(final_path, ec);
-                    if (MoveFileExW(part_path.c_str(), final_path.c_str(),
-                                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-                    {
-                        result.outcome = Outcome::Ok;
-                        result.message.clear();
-                        result.path = final_path;
-                        return result;
-                    }
+                    // 摘要不对。字节里有续传拼出来的前缀时，可能是某条坏连接留下的，
+                    // 丢掉临时文件从零再来一次；这一次本来就是从零下的整包，说明清单
+                    // 或上游内容不对，再下多少遍都一样，直接判校验失败。
                     std::filesystem::remove(part_path, ec);
-                    result.outcome = Outcome::Failed;
-                    result.message = "无法保存安装包";
-                    return result;
+                    result.attempts.back().outcome = Outcome::Checksum;
+                    result.attempts.back().message = "SHA256 与清单不符";
+                    if (!attempt.resumed)
+                    {
+                        result.outcome = Outcome::Checksum;
+                        result.message = "安装包校验失败";
+                        return result;
+                    }
+                    continue;
                 }
-                std::filesystem::remove(part_path, ec);
-                result.outcome = Outcome::Checksum;
-                result.message = "安装包校验失败";
-                result.attempts.back().message = "SHA256 与清单不符";
-                return result;
+                if (attempt.outcome == Outcome::NotFound)
+                {
+                    // 这一条没有就没有，重试三次也一样。标记淘汰，换下一条通道。
+                    channel_exhausted[channel_index] = true;
+                    break;
+                }
+                // 其它失败：同一条通道还有重试机会。临时文件留着，下一次用 Range 续传。
             }
-            if (attempt.outcome == Outcome::NotFound)
-            {
-                saw_not_found = true;
-                // 这一条没有就没有，重试三次也一样。换下一条通道。
-                break;
-            }
-            // 其它失败：同一条通道还有重试机会。静默重试，不打扰用户。
         }
-    }
+    } // pass
     std::filesystem::remove(part_path, ec);
-    result.outcome = Outcome::Failed;
-    result.message = saw_not_found ? "下载通道上都没有这个安装包" : "所有下载通道都失败了";
+    // 只按最后一次尝试的结局下结论。之前出现过一次摘要不符、后面只是断网时，
+    // 不能把网络问题报成「安装包校验失败」这种安全结论。
+    const bool last_checksum = !result.attempts.empty() && result.attempts.back().outcome == Outcome::Checksum;
+    const bool all_not_found = !result.attempts.empty() &&
+                               std::all_of(result.attempts.begin(), result.attempts.end(),
+                                           [](const Attempt &attempt) { return attempt.outcome == Outcome::NotFound; });
+    // 失败原因取进度最多的那次尝试，而不是最后一次。慢通道超时、镜像 404 时，
+    // 最后一次是「没有这个包」，真正的原因是前面那条通道太慢。
+    const Attempt *best_attempt = nullptr;
+    for (const Attempt &attempt : result.attempts)
+    {
+        // 摘要不符已经是结论，不再拿它当「通道失败」的原因；否则最终文案会变成
+        // 网络失败却挂着一句 SHA256 不符。
+        if (attempt.outcome == Outcome::Checksum)
+            continue;
+        if (best_attempt == nullptr || attempt.bytes > best_attempt->bytes)
+            best_attempt = &attempt;
+    }
+    result.outcome = last_checksum ? Outcome::Checksum : Outcome::Failed;
+    if (last_checksum)
+        result.message = "安装包校验失败";
+    else if (all_not_found)
+        result.message = "下载通道上都没有这个安装包";
+    else
+    {
+        result.message = "所有下载通道都失败了";
+        if (best_attempt != nullptr && !best_attempt->message.empty())
+            result.message += "：" + best_attempt->message;
+    }
     return result;
 }
 } // namespace native_settings::update_download

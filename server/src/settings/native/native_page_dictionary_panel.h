@@ -62,6 +62,7 @@ class DictInput : public msimeui::Container
     std::shared_ptr<msimeui::TextBox> box_;
     int appliedState_ = -1;
     float height_ = 42.0f;
+    bool multiline_ = false;
 };
 
 // `display: grid; gap: 7px; margin-top: 14px` label above an input in `.dict-dialog`.
@@ -140,6 +141,8 @@ class DictTableScroll : public msimeui::Visual
     DictTableScroll(std::shared_ptr<DictTableBody> body, HostServices &host);
     bool HasScrollbar() const;
     void ScrollToTop();
+    // Runs once per attach, i.e. when the page it belongs to is actually shown.
+    void SetOnAttach(std::function<void()> handler);
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
@@ -156,6 +159,7 @@ class DictTableScroll : public msimeui::Visual
     HostServices &host_;
     float contentHeight_ = 0.0f;
     int appliedLight_ = -1;
+    std::function<void()> onAttach_;
 };
 
 // `.dict-export-row`: 16px label, 导出 button (min-width 68px), divider on top.
@@ -167,9 +171,18 @@ std::optional<std::wstring> PickAndReadTextFile(HWND owner, bool allowYaml, bool
 // Saves `content` as UTF-8 with a BOM, like the page's download. False when cancelled or failed.
 bool SaveTextFile(HWND owner, const std::wstring &filename, const std::string &content);
 
+// The order the visible list is sorted in. It decides where a successful write should leave the
+// pager: only a list ordered by updated_at moves the written row to the front.
+enum class ListOrder
+{
+    ByUpdatedAt,
+    ByWeight,
+};
+size_t OffsetAfterWrite(const std::string &action, size_t offset, ListOrder order);
+
 // Toolbar + hint + table + pagination of a `.dict-card`, with the dictionaryRequest client
 // behind it (modules/dict.ts and the quick-phrase half of modules/tools-settings.ts).
-class DictionaryPanel
+class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
 {
   public:
     enum class Kind
@@ -212,12 +225,16 @@ class DictionaryPanel
     void Post(const std::string &action, Json data);
     void Query(size_t offset, bool fromInput);
     void PostQuery(size_t offset);
-    void RefreshQuery();
+    void RefreshQuery(const std::string &action);
+    // Loads the default view the first time the page is shown. The page builder must not query:
+    // the settings indexer builds every page up front (native_settings_window.cpp).
+    void EnsureLoaded();
     void OpenDialog(const Entry *row);
     void SaveDialog();
     void OnResponse(const Json &message);
     void RenderRows();
     void SyncPager();
+    std::wstring EmptyText() const;
     std::array<std::wstring, 4> HeaderLabels() const;
 
     PageContext &context_;
@@ -234,6 +251,7 @@ class DictionaryPanel
     size_t offset_ = 0;
     bool hasMore_ = false;
     bool loading_ = false;
+    bool loaded_ = false;
 
     // Dialog state.
     std::optional<Entry> editing_;

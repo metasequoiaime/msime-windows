@@ -23,6 +23,12 @@ namespace
 constexpr size_t kNone = static_cast<size_t>(-1);
 constexpr size_t kPageSize = 100; // DICTIONARY_PAGE_SIZE
 
+// 上一页的起点；第一页停在 0。
+size_t PreviousPageOffset(size_t offset)
+{
+    return offset >= kPageSize ? offset - kPageSize : 0;
+}
+
 // Table cells inherit the body's 16px.
 TextStyle CellStyle()
 {
@@ -244,8 +250,10 @@ void DictInput::SetOnSubmit(std::function<void()> handler)
 void DictInput::SetMultiline(bool multiline)
 {
     box_->SetMultiline(multiline);
+    multiline_ = multiline;
     height_ = multiline ? 96.0f : 42.0f;
     box_->SetPreferredHeight(height_);
+    appliedState_ = -1;
     InvalidateMeasure();
 }
 
@@ -259,9 +267,11 @@ void DictInput::ApplyAppearance(bool focused)
     msimeui::TextBox::Appearance appearance;
     appearance.cornerRadius = 8.0f;
     appearance.borderWidth = CssBorder();
-    // padding: 0 13px inside the 1px border
-    appearance.paddingX = 13.0f + CssBorder();
-    appearance.paddingY = 0.0f;
+    // Single line: padding 0 13px inside the 1px border, the line centered vertically.
+    // Multi-line: padding 10px 11px, so the first line sits where the single-line boxes'
+    // text does (about 10px under the border) instead of against the top border.
+    appearance.paddingX = (multiline_ ? 11.0f : 13.0f) + CssBorder();
+    appearance.paddingY = multiline_ ? 10.0f + CssBorder() : 0.0f;
     appearance.fill = focused ? p.controlBg : p.surfaceSunken;
     appearance.border = p.controlBorder;
     appearance.focusBorder = p.accent;
@@ -597,10 +607,17 @@ void DictTableScroll::Render(msimeui::DeviceResources &dr)
     scroll_->Render(dr);
 }
 
+void DictTableScroll::SetOnAttach(std::function<void()> handler)
+{
+    onAttach_ = std::move(handler);
+}
+
 void DictTableScroll::Attach(msimeui::Window *window)
 {
     msimeui::Visual::Attach(window);
     scroll_->Attach(window);
+    if (onAttach_)
+        onAttach_();
 }
 
 msimeui::Visual *DictTableScroll::FindVisualAt(const PointF &point)
@@ -687,6 +704,13 @@ bool SaveTextFile(HWND owner, const std::wstring &filename, const std::string &c
 // ---------------------------------------------------------------------------------
 // DictionaryPanel
 // ---------------------------------------------------------------------------------
+size_t OffsetAfterWrite(const std::string &action, size_t offset, ListOrder order)
+{
+    if (order == ListOrder::ByUpdatedAt && (action == "create" || action == "update"))
+        return 0;
+    return offset;
+}
+
 DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     : context_(context), kind_(kind), dictionary_(kind == Kind::Quick ? "quick" : "quanpin"),
       prefix_(kind == Kind::Quick ? "quick-" : "dict-")
@@ -696,6 +720,12 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
         columns.percents = {0.20f, 0.34f, 0.15f};
     search_ = std::make_shared<DictInput>(kFontDefault, kind_ == Kind::Quick ? L"输入编码前缀，留空可查看全部" : L"");
     search_->SetOnSubmit([this]() { Query(0, true); });
+    // 清空搜索框就回到默认视图。输入过程中不查，否则每敲一个键都要打一次库。
+    search_->Box()->SetOnTextChanged([this](const std::wstring &text) {
+        if (!loaded_ || !Trim(text).empty() || lastQuery_.empty())
+            return;
+        Query(0, true);
+    });
     TextStyle hint;
     hint.size = 13.0f;
     hint.wrap = true;
@@ -751,19 +781,17 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     next_ = std::make_shared<Button>(L"下一页", ButtonKind::Neutral);
     previous_->SetOnClick([this]() {
         scroll_->ScrollToTop();
-        Query(offset_ >= kPageSize ? offset_ - kPageSize : 0, false);
+        Query(PreviousPageOffset(offset_), false);
     });
     next_->SetOnClick([this]() {
         scroll_->ScrollToTop();
         Query(offset_ + kPageSize, false);
     });
 
-    context_.OnMessage("dictionaryResponse", [this](const Json &message) { OnResponse(message); });
-
     if (kind_ == Kind::Quick)
     {
         header_->SetLabels(HeaderLabels());
-        body_->SetEmpty(L"点击查询后查看快捷短语");
+        body_->SetEmpty(EmptyText());
         SyncPager();
     }
     else
@@ -774,6 +802,16 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
 
 void DictionaryPanel::AddTo(Column &column)
 {
+    // 监听器活到窗口销毁，页面却会随 DPI 变化重建：只拿弱引用，别碰已销毁的面板。
+    context_.OnMessage("dictionaryResponse", [weak = weak_from_this()](const Json &message) {
+        if (const auto panel = weak.lock())
+            panel->OnResponse(message);
+    });
+    // 页面被索引器提前建好、缓存着，只有真正显示时才 Attach：默认视图在这一刻才查。
+    scroll_->SetOnAttach([weak = weak_from_this()] {
+        if (const auto panel = weak.lock())
+            panel->EnsureLoaded();
+    });
     auto toolbar = std::make_shared<Row>(10.0f);
     // .dict-toolbar { padding: 20px 22px 10px }
     toolbar->SetPadding({22.0f, 20.0f, 22.0f, 10.0f});
@@ -800,6 +838,14 @@ void DictionaryPanel::AddTo(Column &column)
     pager->Add(previous_);
     pager->Add(next_);
     column.Add(pager);
+}
+
+void DictionaryPanel::EnsureLoaded()
+{
+    if (loaded_)
+        return;
+    loaded_ = true;
+    PostQuery(0);
 }
 
 std::array<std::wstring, 4> DictionaryPanel::HeaderLabels() const
@@ -841,7 +887,10 @@ void DictionaryPanel::SetDictionary(const std::string &dictionary)
                   L"dict.yaml）");
     header_->SetLabels(HeaderLabels());
     rows_.clear();
-    body_->SetEmpty(L"输入查询条件后查看词条");
+    body_->SetEmpty(EmptyText());
+    // 查询排在回调之前：那个回调可能销毁本面板，之后再碰 this 就是悬空。
+    if (loaded_)
+        PostQuery(0);
     if (onModeChanged_)
     {
         // A handler may tear down the panel that owns onModeChanged_ while it runs.
@@ -879,33 +928,31 @@ void DictionaryPanel::Query(size_t offset, bool fromInput)
 {
     if (fromInput || offset == 0)
         lastQuery_ = Trim(search_->GetText());
-    if (kind_ == Kind::Dictionary && lastQuery_.empty())
-    {
-        context_.host.ShowToast(L"请输入查询内容", false);
-        return;
-    }
+    // 词库留空不是没有查询，而是默认视图：列出用户自己新增或改过的词条。
     PostQuery(offset);
 }
 
 void DictionaryPanel::PostQuery(size_t offset)
 {
     Json data = {{"offset", offset}, {"limit", kPageSize}};
-    if (kind_ == Kind::Dictionary && dictionary_ == "english")
+    const bool user_entries = kind_ == Kind::Dictionary && lastQuery_.empty();
+    if (user_entries)
+        data["scope"] = "user";
+    else if (kind_ == Kind::Dictionary && dictionary_ == "english")
         data["word"] = Narrow(lastQuery_);
     else
         data["code"] = Narrow(lastQuery_);
     Post("query", std::move(data));
 }
 
-void DictionaryPanel::RefreshQuery()
+void DictionaryPanel::RefreshQuery(const std::string &action)
 {
-    if (kind_ == Kind::Quick)
-    {
-        PostQuery(offset_);
-        return;
-    }
-    if (!lastQuery_.empty())
-        PostQuery(offset_);
+    // 只有按 updated_at 排序的列表（拼音用户词库）会把写过的行顶到第一页。
+    const ListOrder order =
+        kind_ == Kind::Dictionary && lastQuery_.empty() ? ListOrder::ByUpdatedAt : ListOrder::ByWeight;
+    offset_ = OffsetAfterWrite(action, offset_, order);
+    scroll_->ScrollToTop();
+    PostQuery(offset_);
 }
 
 void DictionaryPanel::SyncPager()
@@ -1048,6 +1095,13 @@ void DictionaryPanel::SaveDialog()
     Post(action, std::move(data));
 }
 
+std::wstring DictionaryPanel::EmptyText() const
+{
+    if (!lastQuery_.empty())
+        return kind_ == Kind::Quick ? L"没有找到快捷短语" : L"没有找到词条";
+    return kind_ == Kind::Quick ? L"还没有快捷短语，可用「新增短语」添加" : L"还没有添加过词条，可用「新增词条」添加";
+}
+
 void DictionaryPanel::RenderRows()
 {
     std::vector<std::array<std::wstring, 3>> cells;
@@ -1064,7 +1118,7 @@ void DictionaryPanel::RenderRows()
             cells.push_back({Widen(row.code), Widen(row.word), weight});
     }
     if (cells.empty())
-        body_->SetEmpty(kind_ == Kind::Quick ? L"没有找到快捷短语" : L"没有找到词条");
+        body_->SetEmpty(EmptyText());
     else
         body_->SetRows(std::move(cells), offset_);
 }
@@ -1093,11 +1147,17 @@ void DictionaryPanel::OnResponse(const Json &message)
                                      ? message["offset"].get<size_t>()
                                      : 0;
             const size_t count = message.contains("rows") && message["rows"].is_array() ? message["rows"].size() : 0;
+            if (count == 0 && start > 0)
+            {
+                // 这一页已被删空：退一页再看，不要停在空页上误报「还没有添加过词条」。
+                PostQuery(PreviousPageOffset(start));
+                return;
+            }
             offset_ = start;
             hasMore_ = message.value("hasMore", false);
             status_->SetText(count ? L"第 " + std::to_wstring(start + 1) + L"–" + std::to_wstring(start + count) +
                                          L" 条" + (hasMore_ ? L"，后面还有结果" : L"")
-                                   : L"没有更多结果");
+                                   : L"没有结果");
         }
         else
         {
@@ -1115,16 +1175,21 @@ void DictionaryPanel::OnResponse(const Json &message)
         SaveTextFile(context_.host.Hwnd(), Widen(message["filename"].get<std::string>()),
                      message["content"].get<std::string>());
     }
-    std::wstring text = message.contains("message") && message["message"].is_string()
-                            ? Widen(message["message"].get<std::string>())
-                            : (ok ? L"操作成功" : L"操作失败");
-    if (kind_ == Kind::Dictionary && context.action != "query" && context.dictionary != dictionary_)
+    // 打开页面和切换词库都会自动查询，查询成功的结果由状态栏说明，不要再弹一次 toast；
+    // 失败的原因（如全拼不合法）只有这里能告诉用户，照旧弹出来。
+    if (context.action != "query" || !ok)
     {
-        const std::wstring label = DictionaryLabel(context.dictionary);
-        if (!label.empty())
-            text = label + L"：" + text;
+        std::wstring text = message.contains("message") && message["message"].is_string()
+                                ? Widen(message["message"].get<std::string>())
+                                : (ok ? L"操作成功" : L"操作失败");
+        if (kind_ == Kind::Dictionary && context.action != "query" && context.dictionary != dictionary_)
+        {
+            const std::wstring label = DictionaryLabel(context.dictionary);
+            if (!label.empty())
+                text = label + L"：" + text;
+        }
+        context_.host.ShowToast(text, ok);
     }
-    context_.host.ShowToast(text, ok);
 
     if (context.action == "query" && ok)
     {
@@ -1156,7 +1221,7 @@ void DictionaryPanel::OnResponse(const Json &message)
                 dialogOpen_ = false;
                 context_.host.CloseModal();
             }
-            PostQuery(offset_);
+            RefreshQuery(context.action);
             return;
         }
         const bool fromDialog = context.action == "create" || context.action == "update";
@@ -1166,7 +1231,7 @@ void DictionaryPanel::OnResponse(const Json &message)
             context_.host.CloseModal();
         }
         if (context.dictionary == dictionary_)
-            RefreshQuery();
+            RefreshQuery(context.action);
     }
 }
 } // namespace native_settings

@@ -23,12 +23,13 @@ local_modes::LocalQueryResult CandidateQueries::local(LocalInputMode mode, const
     {
     case LocalInputMode::Radical:
         // 拆字表是会话级资源：按会话的 RuntimePaths 解析，和 other_dictionary、translations 一致。
-        result.candidates =
-            local_modes::query_radical(paths_.resource(assets::radical_decomposition), preedit.substr(1));
+        result.candidates = local_modes::query_radical(paths_.resource(assets::radical_decomposition),
+                                                       preedit.substr(1), scheme, shuangpin_profile_);
         return result;
     case LocalInputMode::DateTime: {
         const local_modes::LocalDateTime now = clock ? clock() : local_modes::current_local_date_time();
-        result.candidates = local_modes::query_date_time(preedit.substr(1), &now);
+        result.candidates = local_modes::query_date_time(
+            local_modes::date_time_query_input(preedit.substr(1), scheme, shuangpin_profile_), &now);
         return result;
     }
     case LocalInputMode::QuickPhrase: {

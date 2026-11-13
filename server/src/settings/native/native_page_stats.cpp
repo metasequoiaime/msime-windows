@@ -1844,10 +1844,11 @@ VisualPtr BuildStatsPage(PageContext &context)
         self->HandleResponse(message, action);
     });
 
-    auto root = std::make_shared<OwnerBox>(page.Build(), state);
+    // 统计只在这一页真正显示时才查：索引器会把还没访问过的页面也建出来，建页面就发请求
+    // 等于替用户打开了它。
+    auto root = std::make_shared<OwnerBox>(page.Build(), state, [state]() { state->Post("overview"); });
     state->root = root.get();
     state->timer = std::make_unique<UiTimer>(context.host.Hwnd(), 1000, [s]() { s->Tick(); });
-    state->Post("overview");
     return root;
 }
 } // namespace native_settings
