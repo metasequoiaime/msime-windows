@@ -1413,10 +1413,22 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
                     local_text.clear();
             }
             const std::string merged = MergeArchivedConfigImpl(context, local_text, text);
-            // 本地配置缺失或损坏时 MergeConfig 会原样返回它；那种情况直接用归档那份，
-            // 否则新机器（或配置刚被删）永远无法从云端恢复。
-            const std::string result =
-                merged.empty() || !ime_config_detail::TomlTextIsParseable(merged) ? text : merged;
+            // 合并结果可用就用它。不可用时分两种：
+            // - 本地配置是好的：合并本身出了问题（比如插入键时撞上格式特殊的节头）。保留本地
+            //   原样，不能退回归档原文——那份的凭据在上传前已被清空，退回去本机 token 全没了。
+            // - 本地配置缺失或损坏：新机器（或配置刚被删）只能用归档那份，否则永远无法从
+            //   云端恢复；仍尽量用本地残存的凭据补上空值。
+            const bool local_usable = !local_text.empty() && ime_config_detail::TomlTextIsParseable(local_text);
+            std::string result;
+            if (!merged.empty() && ime_config_detail::TomlTextIsParseable(merged))
+                result = merged;
+            else if (local_usable)
+                result = local_text;
+            else
+            {
+                const std::string patched = PreserveLocalCredentials(local_text, text);
+                result = patched.empty() ? text : patched;
+            }
             {
                 std::ofstream out(staged_config, std::ios::binary | std::ios::trunc);
                 if (!out)
@@ -1446,9 +1458,15 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
             const std::string patched = PreserveLocalCredentials(local_text, text);
             if (!patched.empty() && patched != text)
             {
+                // 写不进去就中止：继续往下会把剥过凭据的原文落位，本机 token 被清空。
                 std::ofstream out(staged_config, std::ios::binary | std::ios::trunc);
                 if (out)
                     out << patched;
+                if (!out)
+                {
+                    message = "无法写入保留本机凭据后的配置，导入已取消。";
+                    return false;
+                }
             }
         }
     }
@@ -1622,6 +1640,10 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
             // weight_edited 与删除墓碑会被静默丢掉。普通导入与同步恢复都一样。
             if (merge_user_dictionary && item.path == "msime_user.db")
                 continue;
+            // 同步恢复不动 stats.db：统计还没有按设备分账，整份替换就是用别的设备的统计
+            // 抹掉本机的。分账落地之前，统计只随普通导入（用户自己选的完整备份）恢复。
+            if (merge && item.path == "stats.db")
+                continue;
             const std::filesystem::path staged = staging.path / Utf8Path(item.path);
             const std::filesystem::path target = TargetPath(context, item.path);
             std::string apply_message;
@@ -1658,6 +1680,9 @@ bool ImportImpl(const Context &context, const std::filesystem::path &source, con
             {
                 report->dictionary_taken_from_remote = merge_report.taken_from_remote;
                 report->dictionary_kept_local = merge_report.kept_local;
+                report->dictionary_added = merge_report.added;
+                report->dictionary_conflicts = merge_report.conflicts;
+                report->latin_words = merge_report.latin_words;
             }
         }
         if (!merged_ok)

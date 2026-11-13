@@ -13,8 +13,9 @@
 // file it overwrites in <DataDir>/.backup-before-import.
 //
 // 普通导入按归档整包落位：词条通常走 SettingsDictionary 的导入请求，但归档里若带着
-// msime_user.db（同步包），会落位后回放一次。同步恢复走 ImportMerging：配置按键合并、
-// 凭据保留本机值、用户词库按日志合并并回放，归档里的 msime_user.db 是远端一侧，不是覆盖源。
+// msime_user.db（同步包），它不覆盖本地，而是按日志合并进本地那份再回放。同步恢复走
+// ImportMerging：配置按键合并（凭据与 [sync] / [network] 保留本机值）、用户词库按日志
+// 合并并回放、stats.db 不动，归档里的 msime_user.db 是远端一侧，不是覆盖源。
 namespace SettingsUserDataBackup
 {
 struct Context
@@ -88,6 +89,10 @@ struct MergeImportReport
     bool replay_skipped = false;
     int dictionary_taken_from_remote = 0;
     int dictionary_kept_local = 0;
+    // 只在远端有的条目。新机器首次恢复时几乎全落在这里，不带上它界面会报「采纳 0 条」。
+    int dictionary_added = 0;
+    int dictionary_conflicts = 0;
+    int latin_words = 0;
 };
 
 bool ImportMerging(const std::filesystem::path &source, const Hooks &hooks, MergeImportReport &report,

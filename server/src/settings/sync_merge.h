@@ -25,6 +25,7 @@ struct DictionaryMergeReport
     int kept_local = 0;        // 本地较新或相同，保留本地
     int added = 0;             // 只存在于远端的条目
     int conflicts = 0;         // updated_at 相同但内容不同，按本地胜出并计数
+    int latin_words = 0;       // 从远端补进或更新的字母词（user_latin_words，并集合并）
 };
 
 // 把 remote 里的用户词库日志合并进 local。两边都是 msime_user.db 的路径。
@@ -33,8 +34,11 @@ struct DictionaryMergeReport
 bool MergeUserDictionary(const std::filesystem::path &local_db, const std::filesystem::path &remote_db,
                          DictionaryMergeReport &report, std::string &message);
 
+// 只属于这台设备、不参与配置合并的段：[sync]（连云端的账号与密钥）与 [network]（代理）。
+bool IsDeviceLocalSection(const std::string &section);
+
 // 配置合并：以 local 为底，把 remote 里"与 template 不同"的键覆盖过来——也就是只采纳
-// 远端用户真正改过的值，远端还是出厂默认的键不动本地。凭据键一律保留本地值。
+// 远端用户真正改过的值，远端还是出厂默认的键不动本地。凭据键与设备本地段一律保留本地值。
 // 返回合并后的 TOML 文本。任一输入无法解析时原样返回 local_text。
 std::string MergeConfig(const std::string &local_text, const std::string &remote_text,
                         const std::string &template_text);

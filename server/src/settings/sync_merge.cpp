@@ -118,7 +118,8 @@ bool ReadOperations(sqlite3 *db, std::vector<OperationRow> &rows, std::string &m
         message = std::string("读取用户词库日志失败：") + sqlite3_errmsg(db);
         return false;
     }
-    while (sqlite3_step(statement) == SQLITE_ROW)
+    int step = SQLITE_ROW;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW)
     {
         const auto text = [&](int column) {
             const unsigned char *value = sqlite3_column_text(statement, column);
@@ -136,8 +137,78 @@ bool ReadOperations(sqlite3 *db, std::vector<OperationRow> &rows, std::string &m
         row.updated_at = sqlite3_column_int64(statement, 8);
         rows.push_back(std::move(row));
     }
+    // 读到一半出错（SQLITE_CORRUPT、IO 错误）时只拿到了部分行。拿它去合并，远端的旧行会
+    // 被当成"本地没有"而写进来，必须判失败。
+    const bool done = step == SQLITE_DONE;
+    if (!done)
+        message = std::string("读取用户词库日志失败：") + sqlite3_errmsg(db);
     sqlite3_finalize(statement);
-    return true;
+    return done;
+}
+
+// dictionary_state 里「日志上次回放到哪份出厂词库」那一行，与 engine 的 kReplayedDictionaryState 同名。
+constexpr const char *kReplayedDictionaryState = "replayed_dictionary_sha256";
+
+// 没有表或没有这一行都返回空串：对合并来说两者都等于"不知道这份日志是按哪份词库记的"。
+std::string ReplayedDictionaryIdentity(sqlite3 *db)
+{
+    if (!TableExists(db, "dictionary_state"))
+        return {};
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT value FROM dictionary_state WHERE name=?1", -1, &statement, nullptr) !=
+        SQLITE_OK)
+        return {};
+    std::string value;
+    if (sqlite3_bind_text(statement, 1, kReplayedDictionaryState, -1, SQLITE_STATIC) == SQLITE_OK &&
+        sqlite3_step(statement) == SQLITE_ROW)
+    {
+        const unsigned char *text = sqlite3_column_text(statement, 0);
+        if (text)
+            value = reinterpret_cast<const char *>(text);
+    }
+    sqlite3_finalize(statement);
+    return value;
+}
+
+// 用户在设置页加的字母词。主键 (key,value)，没有删除墓碑：删除就是删行。
+struct LatinWordRow
+{
+    std::string key;
+    std::string value;
+    std::int64_t weight = 0;
+    int exact_only = 0;
+    std::int64_t updated_at = 0;
+};
+
+bool ReadLatinWords(sqlite3 *db, std::vector<LatinWordRow> &rows, std::string &message)
+{
+    if (!TableExists(db, "user_latin_words"))
+        return true; // 旧日志还没有这张表，等于没有字母词
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT key,value,weight,exact_only,updated_at FROM user_latin_words", -1, &statement,
+                           nullptr) != SQLITE_OK)
+    {
+        message = std::string("读取用户字母词失败：") + sqlite3_errmsg(db);
+        return false;
+    }
+    int result = SQLITE_ROW;
+    while ((result = sqlite3_step(statement)) == SQLITE_ROW)
+    {
+        LatinWordRow row;
+        const unsigned char *key = sqlite3_column_text(statement, 0);
+        const unsigned char *value = sqlite3_column_text(statement, 1);
+        row.key = key ? reinterpret_cast<const char *>(key) : "";
+        row.value = value ? reinterpret_cast<const char *>(value) : "";
+        row.weight = sqlite3_column_int64(statement, 2);
+        row.exact_only = sqlite3_column_int(statement, 3);
+        row.updated_at = sqlite3_column_int64(statement, 4);
+        rows.push_back(std::move(row));
+    }
+    const bool done = result == SQLITE_DONE;
+    if (!done)
+        message = std::string("读取用户字母词失败：") + sqlite3_errmsg(db);
+    sqlite3_finalize(statement);
+    return done;
 }
 
 std::string OperationId(const OperationRow &row)
@@ -216,9 +287,18 @@ bool WriteDeviceId(const std::filesystem::path &path, const std::string &device_
     }
     // 不能先删目标再改名：MoveFileEx 失败时旧文件已经没了，下次启动会生成新设备标识，
     // 云端就会多出一台"新设备"。MOVEFILE_REPLACE_EXISTING 本身就是原子的替换。
-    return MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+    if (MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE)
+        return true;
+    std::error_code ignored;
+    std::filesystem::remove(temporary, ignored);
+    return false;
 }
 } // namespace
+
+bool IsDeviceLocalSection(const std::string &section)
+{
+    return section == "sync" || section == "network";
+}
 
 bool IsValidDeviceId(const std::string &device_id)
 {
@@ -285,6 +365,10 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     std::vector<OperationRow> remote_rows;
     if (!ReadOperations(remote.get(), remote_rows, message))
         return false;
+    std::vector<LatinWordRow> remote_latin;
+    if (!ReadLatinWords(remote.get(), remote_latin, message))
+        return false;
+    const std::string remote_identity = ReplayedDictionaryIdentity(remote.get());
     remote.reset();
 
     DbHandle local = OpenDatabase(local_db, SQLITE_OPEN_READWRITE, message);
@@ -303,10 +387,13 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     for (const OperationRow &row : local_rows)
         local_by_id.emplace(OperationId(row), &row);
 
-    // 只改 user_dictionary_operations 这一张表：其余调频状态表（固定位置、槽位、字母词）
-    // 是每台设备自己的使用习惯，跨机合并没有确定语义，这一版不动它们。
+    // 合并 user_dictionary_operations 与 user_latin_words。字母词是用户在设置页亲手加的词，
+    // 有日志时归档里的文本词库会被整批跳过，不在这里合并它就永远同步不过来。
+    // 其余调频状态表（固定位置、槽位、日期格式顺序）是每台设备自己的使用习惯，跨机合并
+    // 没有确定语义，这一版不动它们。
     if (!Exec(local.get(), "BEGIN IMMEDIATE", message))
         return false;
+    const std::string local_identity = ReplayedDictionaryIdentity(local.get());
     // 老版本的日志没有 user_inserted / weight_edited 两列；缺列时既不写也不读，
     // 保持那些行的默认值，不能因为缺列而合并失败。
     const bool has_user_inserted = HasColumn(local.get(), "user_dictionary_operations", "user_inserted");
@@ -327,11 +414,16 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     insert_sql +=
         " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation=excluded.operation,weight=excluded.weight,"
         "display=excluded.display";
+    // user_inserted 是粘性标记：engine 的 upsert / delete 都不清它。远端那一行是 0 只说明
+    // 那台机器没手动加过，不能拿它把本机"用户手动加的词"降级成自动调频（降级后带假名的词
+    // 会在回放时被跳过并删掉）。
     if (has_user_inserted)
-        insert_sql += ",user_inserted=excluded.user_inserted";
+        insert_sql += ",user_inserted=MAX(user_inserted,excluded.user_inserted)";
     if (has_weight_edited)
         insert_sql += ",weight_edited=excluded.weight_edited";
     insert_sql += ",updated_at=excluded.updated_at";
+    // RemoteWins 已经只放行更新的行，这里在数据库层再守一道，防止本地快照与表不一致时用旧行盖新行。
+    insert_sql += " WHERE excluded.updated_at>user_dictionary_operations.updated_at";
 
     sqlite3_stmt *statement = nullptr;
     if (sqlite3_prepare_v2(local.get(), insert_sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
@@ -377,6 +469,73 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     }
     sqlite3_finalize(statement);
 
+    // 字母词：没有墓碑，只能做并集——远端有、本地没有的补进来，两边都有的取较新的权重。
+    // 代价是本机删掉、远端还在的字母词会在恢复后回来；恢复是用户主动拉别的设备的数据，
+    // 这比"远端加的字母词永远过不来"好接受。
+    if (ok && !remote_latin.empty())
+    {
+        if (!Exec(local.get(),
+                  "CREATE TABLE IF NOT EXISTS user_latin_words("
+                  "key TEXT NOT NULL,value TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+                  "exact_only INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT(unixepoch()),"
+                  "PRIMARY KEY(key,value))",
+                  message))
+        {
+            ok = false;
+        }
+        sqlite3_stmt *latin = nullptr;
+        if (ok && sqlite3_prepare_v2(local.get(),
+                                     "INSERT INTO user_latin_words(key,value,weight,exact_only,updated_at) "
+                                     "VALUES(?1,?2,?3,?4,?5) ON CONFLICT(key,value) DO UPDATE SET "
+                                     "weight=excluded.weight,exact_only=excluded.exact_only,"
+                                     "updated_at=excluded.updated_at "
+                                     "WHERE excluded.updated_at>user_latin_words.updated_at",
+                                     -1, &latin, nullptr) != SQLITE_OK)
+        {
+            message = std::string("准备字母词合并语句失败：") + sqlite3_errmsg(local.get());
+            ok = false;
+        }
+        for (const LatinWordRow &row : remote_latin)
+        {
+            if (!ok)
+                break;
+            sqlite3_reset(latin);
+            sqlite3_clear_bindings(latin);
+            const bool bound = sqlite3_bind_text(latin, 1, row.key.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+                               sqlite3_bind_text(latin, 2, row.value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+                               sqlite3_bind_int64(latin, 3, row.weight) == SQLITE_OK &&
+                               sqlite3_bind_int(latin, 4, row.exact_only) == SQLITE_OK &&
+                               sqlite3_bind_int64(latin, 5, row.updated_at) == SQLITE_OK;
+            if (!bound || sqlite3_step(latin) != SQLITE_DONE)
+            {
+                message = std::string("写入字母词合并结果失败：") + sqlite3_errmsg(local.get());
+                ok = false;
+                break;
+            }
+            report.latin_words += sqlite3_changes(local.get()) > 0 ? 1 : 0;
+        }
+        if (latin)
+            sqlite3_finalize(latin);
+    }
+
+    // 远端的行是按远端回放过的那份出厂词库的量级记的。两边词库不是同一份（或远端没记）时，
+    // 这些绝对权重原样回放会把新词库的词频压下去（「了 le」被压到旧值就是这么来的）。
+    // 删掉本地"已回放到哪份词库"的记录，下次回放就会走 engine 的 rebase：自动调频行只在
+    // 高过出厂权重时写回，用户手动加的词与亲手改的权重不受影响。
+    const bool took_remote_rows = report.added > 0 || report.taken_from_remote > 0;
+    if (ok && took_remote_rows && remote_identity != local_identity && TableExists(local.get(), "dictionary_state"))
+    {
+        sqlite3_stmt *state = nullptr;
+        ok = sqlite3_prepare_v2(local.get(), "DELETE FROM dictionary_state WHERE name=?1", -1, &state, nullptr) ==
+                 SQLITE_OK &&
+             sqlite3_bind_text(state, 1, kReplayedDictionaryState, -1, SQLITE_STATIC) == SQLITE_OK &&
+             sqlite3_step(state) == SQLITE_DONE;
+        if (!ok)
+            message = std::string("重置词库回放状态失败：") + sqlite3_errmsg(local.get());
+        if (state)
+            sqlite3_finalize(state);
+    }
+
     if (!ok || !Exec(local.get(), "COMMIT", message))
     {
         std::string ignored;
@@ -412,6 +571,11 @@ std::string MergeConfig(const std::string &local_text, const std::string &remote
         const std::string key = id.substr(separator + 1);
         // 凭据永不跨机：远端那份是别的账户的 DPAPI 密文，抄过来也解不开。
         if (ime_config_detail::IsCredentialKey(key))
+            continue;
+        // 设备本地的段整段不合并。[sync] 是这台机器连云端的方式：各机常用各自的 IAM 密钥或
+        // WebDAV 账号，只换 access_key / 用户名而 secret 还是本机的，签名就全错了。
+        // [network] 的代理随所在网络而定，公司电脑的代理抄到家里电脑上只会让它连不上。
+        if (IsDeviceLocalSection(section))
             continue;
         const auto template_value = template_values.find(id);
         // 远端还是出厂默认值，说明对方没动过这一项，不该拿它盖掉本地的选择。
