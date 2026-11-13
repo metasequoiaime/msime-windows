@@ -44,14 +44,16 @@ try {
     $procedure = [regex]::Match($iss, '(?s)procedure AdoptRetiredModel\(.*?\r?\nend;').Value
     if (-not $procedure) { throw 'msime_setup.iss is missing AdoptRetiredModel' }
 
-    # 两处调用都必须在轻量/完整包分叉之前，哈希必须是 lock.json 里那份发布文件的。
+    # 两处调用都必须在轻量/完整包分叉之前，哈希必须是 lock.json 里记录的那份发布文件的。
     $calls = [regex]::Match($iss, '(?s)BackupChangedBundledSkins;(.*?)\r?\n#ifdef LightPackage')
     if (-not $calls.Success) { throw 'AdoptRetiredModel must run before the light/full cleanup split' }
     $repoRoot = Join-Path $PSScriptRoot '../..'
     $neuralLock = Get-Content (Join-Path $repoRoot 'neural-model/lock.json') -Raw | ConvertFrom-Json
     $latticeLock = Get-Content (Join-Path $repoRoot 'language-model/lock.json') -Raw | ConvertFrom-Json
     $expectedCalls = @(
-        @{ File = $desktop; Dir = 'neural-desktop'; Notice = ''; Sha = ($neuralLock.models | Where-Object file -eq $desktop).sha256 },
+        # 根下那份只可能是 model-v1 的效果档（之后就改成按需下载了），所以认 retired 里的哈希。挪过去的
+        # v1 仍能用，设置页据此提示有新版本，见 server/src/settings/neural_model.h。
+        @{ File = $desktop; Dir = 'neural-desktop'; Notice = ''; Sha = ($neuralLock.retired | Where-Object { $_.file -eq $desktop -and $_.release_tag -eq 'model-v1' }).sha256 },
         @{ File = $lattice; Dir = 'language-model'; Notice = 'libime-lm-NOTICE.md'; Sha = $latticeLock.output.sha256 }
     )
     foreach ($call in $expectedCalls) {

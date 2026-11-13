@@ -1,18 +1,28 @@
 {
-  "source": "https://github.com/metasequoiaime/chinese-ime-lm/releases/tag/model-v1",
-  "release_tag": "model-v1",
+  "source": "https://github.com/metasequoiaime/chinese-ime-lm/releases/tag/rerank-v2-safetensors",
+  "release_tag": "rerank-v2-safetensors",
   "license": "Apache-2.0",
   "models": [
     {
       "file": "sentence-model.safetensors",
       "preset": "keyboard",
-      "url": "https://github.com/metasequoiaime/chinese-ime-lm/releases/download/model-v1/sentence-model.safetensors",
-      "sha256": "86ac529510cb3b4968a5e6ade83ec8080f5b34a0a681e75c362accbbd387d1c1",
-      "size": 4486280
+      "url": "https://github.com/metasequoiaime/chinese-ime-lm/releases/download/rerank-v2-safetensors/rerank-6x256.safetensors",
+      "sha256": "6582643f0aa6f28d07717d752b20adf09f92ae240c6813bc48e35c016df64dfe",
+      "size": 8420392
     },
     {
       "file": "sentence-model-desktop.safetensors",
       "preset": "desktop",
+      "url": "https://github.com/metasequoiaime/chinese-ime-lm/releases/download/rerank-v2-safetensors/rerank-8x448.safetensors",
+      "sha256": "94f76e88f8a3fca46c8b1e704f189ce32fedd24d1ea281508733ee3cab986b84",
+      "size": 25710000
+    }
+  ],
+  "retired": [
+    {
+      "file": "sentence-model-desktop.safetensors",
+      "preset": "desktop",
+      "release_tag": "model-v1",
       "url": "https://github.com/metasequoiaime/chinese-ime-lm/releases/download/model-v1/sentence-model-desktop.safetensors",
       "sha256": "0a6ecba69bf1d39c7eb49549c716477dd6c03fdf05757773e1f50435262fb469",
       "size": 25480184

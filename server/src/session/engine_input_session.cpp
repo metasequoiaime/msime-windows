@@ -37,13 +37,10 @@ std::string ResolveCollocationModelPath(const std::string &model_id)
 
 std::string ResolveNeuralDesktopModelPath()
 {
-    const std::filesystem::path file = neural_model::ModelFile();
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(file, error) || error)
-    {
-        return {};
-    }
-    return metasequoia::path_to_utf8(file);
+    // 新版没下载时用旧版 model-v1：老用户升级后不会凭空少一个模型。路径变了引擎就换模型
+    // （LazySentenceModel 按路径缓存），所以新版下载落位后下一次按键即用上，不必重启。
+    const std::filesystem::path file = neural_model::ResolveUsableModelFile();
+    return file.empty() ? std::string() : metasequoia::path_to_utf8(file);
 }
 
 std::string ResolveLatticeLanguageModelPath()
