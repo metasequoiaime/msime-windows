@@ -203,6 +203,13 @@ void ApplyDeferredKeyState(DeferredShadowState &shadow, const _KEYSTROKE_STATE &
             ++shadow.caret;
         }
         break;
+    case FUNCTION_MOVE_HOME:
+        shadow.caret = FanyImeTemporaryJapanese::MinimumCaret(shadow.japaneseMode, shadow.temporaryJapanesePolicy,
+                                                              shadow.rawInput.data(), shadow.rawInput.size());
+        break;
+    case FUNCTION_MOVE_END:
+        shadow.caret = shadow.rawInput.size();
+        break;
     case FUNCTION_FINALIZE_TEXTSTORE:
     case FUNCTION_FINALIZE_CANDIDATELIST:
     case FUNCTION_FINALIZE_CANDIDATELISTForVKReturn:
@@ -682,9 +689,9 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
                                                        ? FUNCTION_MOVE_RIGHT_CANDIDATE
                                                        : FUNCTION_MOVE_RIGHT);
         case VK_HOME:
-            return setKeyState(CATEGORY_CANDIDATE, FUNCTION_MOVE_PAGE_TOP);
+            return setKeyState(CATEGORY_COMPOSING, FUNCTION_MOVE_HOME);
         case VK_END:
-            return setKeyState(CATEGORY_CANDIDATE, FUNCTION_MOVE_PAGE_BOTTOM);
+            return setKeyState(CATEGORY_COMPOSING, FUNCTION_MOVE_END);
         case VK_OEM_MINUS:
         case VK_OEM_PLUS:
             if (japaneseKeyMode)

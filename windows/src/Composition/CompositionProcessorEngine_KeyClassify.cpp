@@ -380,6 +380,17 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
         return TRUE;
     }
 
+    // Home / End jump the caret to the edges of the spelling, same as Left / Right in every candidate mode.
+    if ((fComposing || candidateMode != CANDIDATE_NONE) && (uCode == VK_HOME || uCode == VK_END))
+    {
+        if (pKeyState)
+        {
+            pKeyState->Category = CATEGORY_COMPOSING;
+            pKeyState->Function = uCode == VK_HOME ? FUNCTION_MOVE_HOME : FUNCTION_MOVE_END;
+        }
+        return TRUE;
+    }
+
     if (IsMicrosoftShuangpinIngKeyAt(uCode, pwch ? *pwch : 0, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength(),
                                      _caretPosition))
     {
