@@ -83,7 +83,10 @@ class SyncService
   private:
     bool WriteDeviceInfo(const DeviceInfo &info, std::string &message);
     bool ReadDeviceInfo(const std::string &device_id, DeviceInfo &info, std::string &message);
-    void PruneSnapshots(const std::string &device_id);
+    // 这台设备目录下实际存在的快照 revision，新的在前（按数值比，不按字符串）。
+    std::vector<std::string> ListSnapshotRevisions(const std::string &device_id, std::string &message);
+    // 保留最近 keep_snapshots 份；current_revision 是刚上传、设备信息正指向的那份，无条件保留。
+    void PruneSnapshots(const std::string &device_id, const std::string &current_revision);
 
     std::unique_ptr<RemoteStore> store_;
     std::filesystem::path data_dir_;

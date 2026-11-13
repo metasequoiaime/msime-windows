@@ -92,7 +92,7 @@ bool SetConfiguredSyncString(const std::string &key, const std::string &value)
     else if (key == "s3_endpoint")
         g_sync.s3_endpoint = value;
     else if (key == "s3_region")
-        g_sync.s3_region = value;
+        g_sync.s3_region = value.empty() ? "us-east-1" : value; // 与加载时的归一化一致，空 region 签不出名
     else if (key == "s3_bucket")
         g_sync.s3_bucket = value;
     else if (key == "s3_prefix")
