@@ -1134,6 +1134,38 @@ bool LoadImeConfig()
             std::lock_guard<std::mutex> proxy_lock(g_network_proxy_mutex);
             g_network_proxy = std::move(proxy);
         }
+        {
+            SyncConfig sync;
+            sync.enabled = tbl["sync"]["enabled"].value_or(false);
+            sync.backend = tbl["sync"]["backend"].value_or(std::string("off"));
+            if (sync.backend != "off" && sync.backend != "webdav" && sync.backend != "s3")
+                sync.backend = "off";
+            sync.auto_upload_minutes = static_cast<int>(tbl["sync"]["auto_upload_minutes"].value_or(0));
+            if (sync.auto_upload_minutes < 0)
+                sync.auto_upload_minutes = 0;
+            if (sync.auto_upload_minutes > 1440)
+                sync.auto_upload_minutes = 1440;
+            sync.keep_snapshots = static_cast<int>(tbl["sync"]["keep_snapshots"].value_or(5));
+            if (sync.keep_snapshots < 1)
+                sync.keep_snapshots = 1;
+            if (sync.keep_snapshots > 20)
+                sync.keep_snapshots = 20;
+            sync.include_models = tbl["sync"]["include_models"].value_or(false);
+            sync.webdav_url = tbl["sync"]["webdav_url"].value_or(std::string());
+            sync.webdav_username = tbl["sync"]["webdav_username"].value_or(std::string());
+            sync.webdav_password = tbl["sync"]["webdav_password"].value_or(std::string());
+            sync.s3_endpoint = tbl["sync"]["s3_endpoint"].value_or(std::string());
+            sync.s3_region = tbl["sync"]["s3_region"].value_or(std::string("us-east-1"));
+            if (sync.s3_region.empty())
+                sync.s3_region = "us-east-1";
+            sync.s3_bucket = tbl["sync"]["s3_bucket"].value_or(std::string());
+            sync.s3_path_style = tbl["sync"]["s3_path_style"].value_or(true);
+            sync.s3_prefix = tbl["sync"]["s3_prefix"].value_or(std::string("msime"));
+            sync.s3_access_key = tbl["sync"]["s3_access_key"].value_or(std::string());
+            sync.s3_secret_key = tbl["sync"]["s3_secret_key"].value_or(std::string());
+            std::lock_guard<std::mutex> sync_lock(g_sync_mutex);
+            g_sync = std::move(sync);
+        }
         RememberConfigWriteTime();
         return true;
     }
