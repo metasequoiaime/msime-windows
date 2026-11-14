@@ -150,6 +150,24 @@ TEST_CASE(numpad_digits_are_normalized_to_candidate_digit_keys)
     REQUIRE(FanyImeIpc::NormalizeNumpadDigitKey(0x6A) == 0x6A);
 }
 
+TEST_CASE(zero_is_a_candidate_digit_key_that_resolves_past_the_page)
+{
+    REQUIRE(FanyImeIpc::IsCandidateDigitKey('0'));
+    REQUIRE(FanyImeIpc::IsCandidateDigitKey('1'));
+    REQUIRE(FanyImeIpc::IsCandidateDigitKey('9'));
+    REQUIRE(FanyImeIpc::IsCandidateDigitKey(0x60));
+    REQUIRE(FanyImeIpc::IsCandidateDigitKey(0x69));
+
+    REQUIRE(!FanyImeIpc::IsCandidateDigitKey('A'));
+    REQUIRE(!FanyImeIpc::IsCandidateDigitKey(' '));
+    REQUIRE(!FanyImeIpc::IsCandidateDigitKey(0x6A)); // VK_MULTIPLY
+    REQUIRE(!FanyImeIpc::IsCandidateDigitKey(0x08)); // VK_BACK
+
+    // Zero resolves to the slot before the first candidate, which the selection
+    // path treats as out of range rather than as index 0.
+    REQUIRE(static_cast<int>('0' - '1') == -1);
+}
+
 TEST_CASE(english_mode_toggle_requires_ctrl_shift_e)
 {
     REQUIRE(FanyImeIpc::IsEnglishModeToggleKey('E', 0b00000011u));

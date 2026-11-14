@@ -10,6 +10,7 @@
 #include "KeyFocusRecovery.h"
 #include "KeyRepeatGuard.h"
 #include "CapsLockInputPolicy.h"
+#include "Composition/CandidateDigitPolicy.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -714,7 +715,7 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
             break;
         }
 
-        if (*classifiedCode >= L'1' && *classifiedCode <= L'9')
+        if (IsCandidateDigitKey(*classifiedCode))
         {
             return setKeyState(CATEGORY_CANDIDATE, FUNCTION_SELECT_BY_NUMBER);
         }

@@ -98,6 +98,15 @@ constexpr uint32_t NormalizeNumpadDigitKey(uint32_t keycode)
                : keycode;
 }
 
+// Digits pick a candidate. Zero belongs to the family: it resolves to an index
+// past the page, so the Server answers OutofRange and nothing is committed or
+// cancelled. The TSF side used to finalize the text store on zero instead.
+constexpr bool IsCandidateDigitKey(uint32_t keycode)
+{
+    return (keycode >= static_cast<uint32_t>('0') && keycode <= static_cast<uint32_t>('9')) ||
+           (keycode >= kVirtualKeyNumpad0 && keycode <= kVirtualKeyNumpad9);
+}
+
 // TSF locally consumes these keys and completes/cancels its composition. The
 // Server must reset every backend without producing a reply.
 constexpr bool IsBackendIndependentCompositionResetKey(uint32_t keycode)

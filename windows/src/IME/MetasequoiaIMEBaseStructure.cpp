@@ -7,6 +7,7 @@
 #endif // !UNICODE
 
 #include "Globals.h"
+#include "Composition/CandidateDigitPolicy.h"
 
 //---------------------------------------------------------------------
 //
@@ -243,11 +244,14 @@ CCandidateRange::~CCandidateRange(void)
 
 BOOL CCandidateRange::IsRange(UINT vKey)
 {
-    DWORD value = vKey - L'0';
-    if (value > 0 && value < 10) // Start from 1
+    // Zero is a candidate key too: the Server answers it as out of range, which
+    // selects nothing instead of cancelling the composition.
+    if (IsCandidateDigitKey(vKey))
     {
         return TRUE;
     }
+
+    DWORD value = vKey - L'0';
 
     for (UINT i = 0; i < _CandidateListIndexRange.Count(); i++)
     {
