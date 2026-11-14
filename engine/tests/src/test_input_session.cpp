@@ -426,16 +426,28 @@ void run_microsoft_umlaut_session_tests(const std::filesystem::path &data_direct
             "Microsoft shuangpin 'lt' must decode to lve.");
     require(ShuangpinUtil::cvt_single_sp_to_pinyin("nt", microsoft) == "nve",
             "Microsoft shuangpin 'nt' must decode to nve.");
-    require(ShuangpinUtil::cvt_single_sp_to_pinyin("qt", microsoft) == "que" &&
-                ShuangpinUtil::cvt_single_sp_to_pinyin("xt", microsoft) == "xue",
-            "Microsoft shuangpin 'qt'/'xt' must keep their ue spelling.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("qt", microsoft) == "que",
+            "Microsoft shuangpin 'qt' must keep its ue spelling.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("xt", microsoft) == "xue",
+            "Microsoft shuangpin 'xt' must keep its ue spelling.");
     require(ShuangpinUtil::cvt_single_sp_to_pinyin("lv", microsoft) == "lve",
             "Microsoft shuangpin 'lv' must keep decoding to lve.");
     require(ShuangpinUtil::cvt_single_sp_to_pinyin("lt", GetXiaoheShuangpinProfile()) == "lve",
             "The Xiaohe layout must keep decoding 'lt' as lve.");
-    require(ShuangpinUtil::cvt_single_sp_to_pinyin("ll", GetShoudaoShuangpinProfile()) == "lai" &&
-                ShuangpinUtil::cvt_single_sp_to_pinyin("nl", GetShoudaoShuangpinProfile()) == "nai",
-            "A competing final on the same key (Shoudao 'l' = ai/ue) must win over the üe fallback.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("ll", GetShoudaoShuangpinProfile()) == "lai",
+            "A competing final on the same key (Shoudao 'l' = ai/ue) must win over the üe fallback for 'll'.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("nl", GetShoudaoShuangpinProfile()) == "nai",
+            "A competing final on the same key (Shoudao 'l' = ai/ue) must win over the üe fallback for 'nl'.");
+    // lt 成为完整音节后，正向贪心切分先取 lt，后面的键照常切分。
+    require(ShuangpinUtil::pinyin_segmentation("ltia", microsoft) == "lt'ia",
+            "Microsoft 'ltia' must segment as lt'ia.");
+    require(ShuangpinUtil::pinyin_segmentation("ltian", microsoft) == "lt'ia'n",
+            "Microsoft 'ltian' must segment as lt'ia'n.");
+    require(ShuangpinUtil::pinyin_segmentation("nthc", microsoft) == "nt'h'c",
+            "Microsoft 'nthc' must segment as nt'h'c.");
+    // 末尾的分隔符不能留在切分结果里，更不能叠成两个。
+    require(ShuangpinUtil::pinyin_segmentation("lt'", microsoft) == "lt",
+            "A trailing separator must be stripped from the segmentation.");
 
     const std::filesystem::path directory = data_directory / "microsoft-umlaut";
     std::filesystem::create_directories(directory);
@@ -481,9 +493,9 @@ void run_microsoft_umlaut_session_tests(const std::filesystem::path &data_direct
         session.set_shuangpin_helpcode_enabled(false);
         session.set_candidate_learning_enabled(false);
         type(session, "qt");
-        require(find_candidate_index(session, "确") < session.candidates().size() &&
-                    session.normalized_segmentation() == "que",
-                "Microsoft 'qt' must stay a jqxy üe syllable.");
+        require(session.normalized_segmentation() == "que", "Microsoft 'qt' must normalize to 'que'.");
+        require(find_candidate_index(session, "确") < session.candidates().size(),
+                "Microsoft 'qt' must offer 确 as a jqxy üe syllable.");
     }
 
     std::filesystem::remove_all(directory);
