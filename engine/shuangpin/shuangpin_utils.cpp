@@ -92,6 +92,9 @@ string ShuangpinUtil::cvt_single_sp_to_pinyin(string sp_str, const ShuangpinProf
     {
         return "";
     }
+    // profile.finals 是 unordered_map，遍历顺序不确定；排序后同一键上有多个合法读法时
+    // 结果才与标准库实现无关。
+    std::sort(ym_list.begin(), ym_list.end());
     for (const auto &ym : ym_list)
     {
         std::string normalized_ym = ym;
@@ -101,7 +104,15 @@ string ShuangpinUtil::cvt_single_sp_to_pinyin(string sp_str, const ShuangpinProf
         }
         if (shuangpin_pinyin_set().count(sm + normalized_ym) > 0)
         {
-            res = sm + normalized_ym;
+            return sm + normalized_ym;
+        }
+        // üe 的 ue 拼法：jqxy 后写 ue，l/n 后的字典拼法是 ve。方案把 ue 放在哪个键上，
+        // l/n 加这个键就读 lve/nve——自定义方案的构建同样把 ue 与 ve 视为同一个韵母。
+        // 微软双拼的 ve 在 V 上、ue 在 T 上，不这样归一 lt/nt 解出的 lue/nue 不是合法
+        // 音节。同一键上直接拼出合法音节的韵母优先（首道的 l 键也是 ai），所以只记为后备。
+        if (res.empty() && ym == "ue" && (sm == "l" || sm == "n"))
+        {
+            res = sm + "ve";
         }
     }
     return res;
@@ -158,7 +169,7 @@ string ShuangpinUtil::pinyin_segmentation(string sp_str, const ShuangpinProfile 
     {
         res.erase(0, 1);
     }
-    while (!res.empty() && res[res.size()] == '\'')
+    while (!res.empty() && res.back() == '\'')
     {
         res.erase(res.size() - 1, 1);
     }

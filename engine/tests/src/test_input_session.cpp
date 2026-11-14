@@ -9,6 +9,7 @@
 #include "../../quanpin/quanpin_dictionary.h"
 #include "../../schemes/quanpin_scheme.h"
 #include "../../shuangpin/shuangpin_profile.h"
+#include "../../shuangpin/shuangpin_utils.h"
 
 #include <sqlite3.h>
 
@@ -410,6 +411,91 @@ void run_umlaut_alias_session_tests(const std::filesystem::path &data_directory)
                 "Selecting 虐 from 'nue' must update the canonical 'nve' row.");
         require(database.query_integer("SELECT COUNT(*) FROM tbl_1_n WHERE key='nue'") == 0,
                 "No user data may accumulate under the alias key 'nue'.");
+    }
+
+    std::filesystem::remove_all(directory);
+}
+
+// 微软双拼的 üe 在 T 键上记作 ue（jue/que/xue），l/n 后的字典拼法是 ve。方案表只登记
+// {"ue","t"} 时，l/n + t 解出的 lue/nue 不在可接受音节集合里，lt/nt 会退成 l't/n't
+// 两段简拼。这里同时盯住转换函数与会话候选。
+void run_microsoft_umlaut_session_tests(const std::filesystem::path &data_directory)
+{
+    const auto &microsoft = GetMicrosoftShuangpinProfile();
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("lt", microsoft) == "lve",
+            "Microsoft shuangpin 'lt' must decode to lve.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("nt", microsoft) == "nve",
+            "Microsoft shuangpin 'nt' must decode to nve.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("qt", microsoft) == "que",
+            "Microsoft shuangpin 'qt' must keep its ue spelling.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("xt", microsoft) == "xue",
+            "Microsoft shuangpin 'xt' must keep its ue spelling.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("lv", microsoft) == "lve",
+            "Microsoft shuangpin 'lv' must keep decoding to lve.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("lt", GetXiaoheShuangpinProfile()) == "lve",
+            "The Xiaohe layout must keep decoding 'lt' as lve.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("ll", GetShoudaoShuangpinProfile()) == "lai",
+            "A competing final on the same key (Shoudao 'l' = ai/ue) must win over the üe fallback for 'll'.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("nl", GetShoudaoShuangpinProfile()) == "nai",
+            "A competing final on the same key (Shoudao 'l' = ai/ue) must win over the üe fallback for 'nl'.");
+    // lt 成为完整音节后，正向贪心切分先取 lt，后面的键照常切分。
+    require(ShuangpinUtil::pinyin_segmentation("ltia", microsoft) == "lt'ia",
+            "Microsoft 'ltia' must segment as lt'ia.");
+    require(ShuangpinUtil::pinyin_segmentation("ltian", microsoft) == "lt'ia'n",
+            "Microsoft 'ltian' must segment as lt'ia'n.");
+    require(ShuangpinUtil::pinyin_segmentation("nthc", microsoft) == "nt'h'c",
+            "Microsoft 'nthc' must segment as nt'h'c.");
+    // 末尾的分隔符不能留在切分结果里，更不能叠成两个。
+    require(ShuangpinUtil::pinyin_segmentation("lt'", microsoft) == "lt",
+            "A trailing separator must be stripped from the segmentation.");
+
+    const std::filesystem::path directory = data_directory / "microsoft-umlaut";
+    std::filesystem::create_directories(directory);
+    {
+        Database database(directory / "msime.db");
+        database.execute("CREATE TABLE tbl_1_l(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_l VALUES('lve', 'l', '略', 100);"
+                         "CREATE TABLE tbl_1_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_n VALUES('nve', 'n', '虐', 100);"
+                         "CREATE TABLE tbl_1_q(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_q VALUES('que', 'q', '确', 100);"
+                         "CREATE TABLE tbl_1_x(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_x VALUES('xue', 'x', '学', 100);");
+    }
+
+    metasequoia::RuntimePaths paths;
+    paths.resources = directory;
+    paths.user_data = directory;
+    paths.cache = directory;
+    paths.dictionaries = directory;
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, microsoft, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        session.set_candidate_learning_enabled(false);
+        type(session, "lt");
+        require(session.get_pinyin_segmentation_with_cases() == "lt",
+                "The Microsoft preedit for 'lt' must keep the typed letters.");
+        require(session.normalized_segmentation() == "lve", "Microsoft 'lt' must normalize to 'lve'.");
+        require(find_candidate_index(session, "略") < session.candidates().size(),
+                "Microsoft 'lt' must offer 略 like the other üe layouts.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, microsoft, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        session.set_candidate_learning_enabled(false);
+        type(session, "nt");
+        require(session.normalized_segmentation() == "nve", "Microsoft 'nt' must normalize to 'nve'.");
+        require(find_candidate_index(session, "虐") < session.candidates().size(),
+                "Microsoft 'nt' must offer 虐 like the other üe layouts.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, microsoft, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        session.set_candidate_learning_enabled(false);
+        type(session, "qt");
+        require(session.normalized_segmentation() == "que", "Microsoft 'qt' must normalize to 'que'.");
+        require(find_candidate_index(session, "确") < session.candidates().size(),
+                "Microsoft 'qt' must offer 确 as a jqxy üe syllable.");
     }
 
     std::filesystem::remove_all(directory);
@@ -3312,6 +3398,7 @@ int run_test()
     }
 
     run_umlaut_alias_session_tests(data_directory);
+    run_microsoft_umlaut_session_tests(data_directory);
     run_word_final_helpcode_lifecycle_tests(data_directory);
     run_caret_prefix_session_tests(data_directory);
     run_autocorrect_mixed_jianpin_tests(data_directory);
