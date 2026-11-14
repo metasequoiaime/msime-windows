@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "engine/contracts/candidate_digit_key.h"
 #include "engine/contracts/temporary_japanese_input.h"
 
 namespace FanyImeIpc
@@ -97,6 +98,11 @@ constexpr uint32_t NormalizeNumpadDigitKey(uint32_t keycode)
                ? static_cast<uint32_t>('0') + (keycode - kVirtualKeyNumpad0)
                : keycode;
 }
+
+// The TSF side classifies candidate digits with the same contract. Numpad
+// digits are already normalized by NormalizeNumpadDigitKey before the Server
+// asks, but the contract still accepts them so both sides share one definition.
+using FanyImeCandidateDigitKey::IsCandidateDigitKey;
 
 // TSF locally consumes these keys and completes/cancels its composition. The
 // Server must reset every backend without producing a reply.

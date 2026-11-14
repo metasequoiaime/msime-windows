@@ -10,6 +10,7 @@
 #include "KeyFocusRecovery.h"
 #include "KeyRepeatGuard.h"
 #include "CapsLockInputPolicy.h"
+#include "Composition/CandidateDigitPolicy.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -714,7 +715,20 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
             break;
         }
 
-        if (*classifiedCode >= L'1' && *classifiedCode <= L'9')
+        // Same order as the sync classifier: V-mode Shift+1..9 selects, then a
+        // highlighted-candidate punctuation such as Shift+0 ')' commits with
+        // punctuation, and only then does the digit key code select. Checking the
+        // key code first would turn Shift+digit punctuation into number selection.
+        const bool vModeShiftDigitSelection =
+            (capturedModifiers & 0b00000001) != 0 && *classifiedCode >= L'1' && *classifiedCode <= L'9' &&
+            FanyImeVModeInput::IsComposition(shadow.rawInput.data(), shadow.rawInput.size(),
+                                             Global::VModeTrigger.load(std::memory_order_relaxed));
+        if (!vModeShiftDigitSelection && shadow.candidateActive && *classifiedWch != L'\0' &&
+            Global::CommitWithHighlightedCandPunc.count(*classifiedWch) > 0)
+        {
+            return setKeyState(CATEGORY_COMPOSING, FUNCTION_PUNCTUATION);
+        }
+        if (IsCandidateDigitKey(*classifiedCode))
         {
             return setKeyState(CATEGORY_CANDIDATE, FUNCTION_SELECT_BY_NUMBER);
         }

@@ -295,7 +295,7 @@ bool IsSelectionKey(UINT keycode)
 {
     if (keycode == VK_SPACE)
         return true;
-    if (keycode >= '0' && keycode <= '9')
+    if (FanyImeIpc::IsCandidateDigitKey(keycode))
     {
         const std::string raw = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
         // T 模式指定日期时间：接得上的数字是编码键；V 模式里的数字也是。
@@ -1842,7 +1842,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     //
     /* VK_SPACE, Digits (T-mode digits that extend a date/time are input) */
     if (Global::Keycode == VK_SPACE ||
-        (!is_date_time_input_key && !is_v_mode_input_key && Global::Keycode > '0' && Global::Keycode <= '9'))
+        (!is_date_time_input_key && !is_v_mode_input_key && FanyImeIpc::IsCandidateDigitKey(Global::Keycode)))
     {
         ScopedKeyStage select_space_digit{client_id, activation_epoch, request_id, L"handle-selection"};
         ProcessSelectionKey(Global::Keycode, client_id, activation_epoch);
