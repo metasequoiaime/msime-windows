@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -58,9 +58,23 @@ jobs:
           - name: x64
             architecture: x64
             triplet: x64-windows-static
+            build_dir: windows/build
+            machine: x64
           - name: Win32
             architecture: Win32
             triplet: x86-windows-static
+            build_dir: windows/build
+            machine: x86
+          - name: arm64
+            # 原生 Arm64 宿主与 x64 仿真宿主读同一份 InProcServer32，只能由一个 Arm64X 文件
+            # 覆盖：buildarm64-release 那一遍准备链接输入，buildarm64x-release 这一遍链接出最终 DLL。
+            architecture: ARM64EC
+            triplet: arm64ec-windows
+            build_dir: windows/buildarm64x-release
+            arm64x_pass: ARM64EC
+            machine: arm64
+            # 证明第二半真的合并进去了：Arm64X 内嵌完整的 Arm64 镜像，必须比只编 Arm64 的那份大。
+            native_dll: windows/buildarm64-release/Release/MetasequoiaImeTsf.dll
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,26 +89,46 @@ jobs:
         shell: pwsh
         working-directory: windows
         run: vcpkg install --triplet ${{ matrix.triplet }}
+      - name: Install the Arm64 dependency headers
+        if: ${{ matrix.name == 'arm64' }}
+        shell: pwsh
+        working-directory: windows
+        run: vcpkg install --triplet arm64-windows-static-md
       - name: Save dependency binaries before compiling
         if: steps.vcpkg-cache.outputs.matched-key != format('{0}-complete', steps.vcpkg-cache.outputs.key)
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.vcpkg-cache.outputs.path }}
           key: ${{ steps.vcpkg-cache.outputs.key }}-complete
+      - name: Configure the Arm64 linker-input pass
+        if: ${{ matrix.name == 'arm64' }}
+        shell: pwsh
+        run: >
+          cmake -S windows -B windows/buildarm64-release -A ARM64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=arm64-windows-static-md
+          -DBUILD_AS_ARM64X=ARM64
+      - name: Build the Arm64 linker-input pass
+        if: ${{ matrix.name == 'arm64' }}
+        shell: pwsh
+        run: cmake --build windows/buildarm64-release --config Release --parallel
       - name: Configure
         shell: pwsh
         run: >
-          cmake -S windows -B windows/build -A ${{ matrix.architecture }}
+          cmake -S windows -B ${{ matrix.build_dir }} -A ${{ matrix.architecture }}
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+          -DBUILD_AS_ARM64X=${{ matrix.arm64x_pass }}
       - name: Build
         shell: pwsh
-        run: cmake --build windows/build --config Release --parallel
+        run: cmake --build ${{ matrix.build_dir }} --config Release --parallel
       - name: Check the Release binary and symbols
         shell: pwsh
-        run: ./scripts/ci/check-tsf-dll.ps1 -BuildDir 'windows/build'
+        run: ./scripts/ci/check-tsf-dll.ps1 -BuildDir '${{ matrix.build_dir }}' -Machine '${{ matrix.machine }}' -NativeArm64Dll '${{ matrix.native_dll }}'
+      # 托管运行器是 x64，跑不了 Arm64 测试二进制；Arm64 侧 ABI 断言是编译期 static_assert。
       - name: Test the wire contract on this architecture
-        run: ctest --no-tests=error --test-dir windows/build -C Release --output-on-failure
+        if: ${{ matrix.name != 'arm64' }}
+        run: ctest --no-tests=error --test-dir ${{ matrix.build_dir }} -C Release --output-on-failure
 
       # Architecture-independent, so it runs once rather than on both matrix legs.
       - name: Check the installer language file lands where ISCC looks
