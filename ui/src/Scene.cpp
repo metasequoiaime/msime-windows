@@ -97,7 +97,11 @@ void Scene::SetRootOffset(const PointF &offset)
         return;
     }
     rootOffset_ = offset;
+    // The root gets the viewport minus the offset, so its available size changes
+    // too and it has to be measured again, not only re-arranged.
+    measureDirty_ = true;
     arrangeDirty_ = true;
+    measureDirtySource_ = root_.get();
     arrangeDirtyRoot_ = root_.get();
     InvalidateVisual();
 }
@@ -146,7 +150,10 @@ void Scene::Layout(const SizeF &size)
         return;
     }
 
-    const SizeF innerSize = size;
+    // The offset moves the root's origin; the root keeps to the viewport, so it
+    // gets what is left past the offset instead of running off the far edges.
+    const SizeF innerSize = {(std::max)(0.0f, size.width - rootOffset_.x),
+                             (std::max)(0.0f, size.height - rootOffset_.y)};
     if (needsMeasure)
     {
         const bool canUseDirtyPath = !sizeChanged && measureDirtySource_ && measureDirtySource_ != root_.get();

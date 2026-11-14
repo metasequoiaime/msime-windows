@@ -20,9 +20,11 @@ class Scene
     };
 
     void SetRoot(std::shared_ptr<Visual> root);
-    // Moves the root inside the viewport without resizing it. Hosts use this when
-    // they grow the window around fixed content (a popup needs room off the card)
-    // and the content must keep its position on screen.
+    // Moves the root inside the viewport. The root is laid out in the space left
+    // past the offset, so it never extends beyond the viewport's right or bottom
+    // edge. Hosts use this when they grow the window left/up around fixed content
+    // (a popup needs room off the card) and the content must keep its position on
+    // screen.
     void SetRootOffset(const PointF &offset);
     void Attach(Window *window);
     void EnsureLayout(const SizeF &size);

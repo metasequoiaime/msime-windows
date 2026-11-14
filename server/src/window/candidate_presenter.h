@@ -2,13 +2,16 @@
 
 #include "utils/window_utils.h"
 
-#include "msimeui/Types.h"
-
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 #include <windows.h>
+
+namespace FanyImeUi
+{
+struct CandidateMenuMetrics;
+}
 
 class CandidatePresenter
 {
@@ -59,8 +62,9 @@ class CandidatePresenter
     void CloseContextMenu(bool restoreHost);
     void OpenFixSubmenu();
     void CloseFixSubmenu();
-    void ExpandHostForMenu(POINT clientPoint, const msimeui::SizeF &menuSize, const msimeui::SizeF &submenuSize);
-    void RestoreHostAfterMenu();
+    void ExpandHostForMenu(POINT clickScreen, const FanyImeUi::CandidateMenuMetrics &metrics);
+    // Returns whether the host was grown and has been moved back.
+    bool RestoreHostAfterMenu();
     // 动图的帧时钟：Present 之后按场景给出的下一次换帧时刻排一个一次性定时器，到点再 Present。
     // 只在候选窗显示时排；隐藏、换皮肤、窗口销毁时停。
     void ScheduleAnimationFrame();
