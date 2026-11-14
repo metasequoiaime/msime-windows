@@ -17,13 +17,15 @@ namespace metasequoia::local_modes
 {
 namespace
 {
-// 一行拆字数据。code 是部件拼音连写、word 是汉字、weight 是字频。两段文字首尾相接存在
-// Table::text 里：十几万行各带两个 std::string 要占十多 MB 常驻内存，压成一块文本池后只剩几 MB。
+// 一行拆字数据。code 是部件拼音连写、word 是汉字、weight 是字频，reading 是可选读音。几段
+// 文字首尾相接存在 Table::text 里：十几万行各带几个 std::string 要占十多 MB 常驻内存，压成
+// 一块文本池后只剩几 MB。
 struct Entry
 {
     std::uint32_t offset = 0;
     std::uint16_t code_size = 0;
     std::uint16_t word_size = 0;
+    std::uint16_t reading_size = 0;
     std::int64_t weight = 0;
 };
 
@@ -45,6 +47,12 @@ struct Table
     {
         const Entry &entry = entries[index];
         return std::string_view(text).substr(entry.offset + entry.code_size, entry.word_size);
+    }
+
+    std::string_view reading(std::size_t index) const
+    {
+        const Entry &entry = entries[index];
+        return std::string_view(text).substr(entry.offset + entry.code_size + entry.word_size, entry.reading_size);
     }
 };
 
@@ -96,21 +104,28 @@ std::shared_ptr<const Table> load_table(const std::filesystem::path &path)
         }
         const std::string_view code = std::string_view(line).substr(0, first_tab);
         const std::string_view word = std::string_view(line).substr(first_tab + 1, second_tab - first_tab - 1);
+        // 第四列读音是可选的（旧表、测试用的最小表都只有三列）。
+        const auto third_tab = line.find('\t', second_tab + 1);
+        const std::string_view weight_text =
+            third_tab == std::string::npos ? std::string_view(line).substr(second_tab + 1)
+                                           : std::string_view(line).substr(second_tab + 1, third_tab - second_tab - 1);
+        const std::string_view reading =
+            third_tab == std::string::npos ? std::string_view{} : std::string_view(line).substr(third_tab + 1);
         // 拆字输入只可能是 a-z，码字域之外的码（繁体、注音、含撇号未归一）没有查询语义。
         if (code.empty() || word.empty() || !is_lower_ascii_code(code))
         {
             continue;
         }
         // 条目里的长度和偏移是定宽整数；真实数据的一行只有几十字节，超出的行不可能是合法拆字。
-        if (code.size() > UINT16_MAX || word.size() > UINT16_MAX ||
-            table->text.size() + code.size() + word.size() > UINT32_MAX)
+        if (code.size() > UINT16_MAX || word.size() > UINT16_MAX || reading.size() > UINT16_MAX ||
+            table->text.size() + code.size() + word.size() + reading.size() > UINT32_MAX)
         {
             continue;
         }
         std::int64_t weight = 0;
         try
         {
-            weight = std::stoll(line.substr(second_tab + 1));
+            weight = std::stoll(std::string(weight_text));
         }
         catch (...)
         {
@@ -120,9 +135,11 @@ std::shared_ptr<const Table> load_table(const std::filesystem::path &path)
         entry.offset = static_cast<std::uint32_t>(table->text.size());
         entry.code_size = static_cast<std::uint16_t>(code.size());
         entry.word_size = static_cast<std::uint16_t>(word.size());
+        entry.reading_size = static_cast<std::uint16_t>(reading.size());
         entry.weight = weight;
         table->text.append(code);
         table->text.append(word);
+        table->text.append(reading);
         table->entries.push_back(entry);
     }
     table->text.shrink_to_fit();
@@ -233,9 +250,10 @@ std::vector<WordItem> query_codes(const std::filesystem::path &decomposition_pat
             {
                 continue;
             }
-            // 注音不在这里填：引擎没有汉字→拼音能力，由 Server 组装候选时补。
             result.emplace_back(std::string{}, std::string(word), table->entries[index].weight,
                                 CandidateSource::Generated);
+            // 读音随表烘进来：表里的字远多于运行时拼音词典，候选反显才不会成片空白。
+            result.back().reading = std::string(table->reading(index));
         }
     }
     return result;

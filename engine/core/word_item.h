@@ -76,6 +76,11 @@ struct WordItem
     // 整串输入），canonical_pinyin 是它自己的完整读音。调频只按自己的键加权，不参与按排位挪位置，见
     // InputSession::learn_candidate。
     bool prefix_completion = false;
+    // 候选汉字的读音（拼音，轻声音节没有调号），多个读音用逗号分隔（U 模式拆字表最多带两个）。需要
+    // 反显注音的模式由查询方直接填：U 模式拆字表里带了读音列，读到就填在这里；空表示这个字
+    // 在上游数据里没有读音。它不参与上屏、组合推进和调频——拼音候选的输入码仍只看
+    // pinyin / canonical_pinyin。
+    std::string reading;
     // 繁体模式下这一项显示与上屏的写法，由 server 展开候选列表时填（见
     // server/src/ipc/traditional_variant_expansion_policy.h），组页与上屏读它。空表示这一项没有
     // 展开，输出文字由 server 按当前字形从 word 得到（简体模式、日语方案、U 模式拆字列表下就是 word）。

@@ -14,6 +14,7 @@ namespace metasequoia::local_modes
 // 部件拼音连写串，例如 晶 = 日+日+日 → "ririri"。按 code 前缀匹配：全码命中排在仅前缀
 // 命中之前，各自按字频降序；同一个字的几种拆法只出一次。最多 limit 条；空 code、非小写
 // 字母或表缺失都返回空集合。拆字表是会话级资源，调用方按自己的 RuntimePaths 解析路径。
+// 每个候选的读音（第 4 列，可能为空，多音字用逗号分隔）填在 WordItem::reading 里，供候选窗反显。
 std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code,
                                     int limit = 50);
 // 按输入方案查：全拼同上。双拼下 code 是部件的双拼码连写（小鹤 口 = kz，微软双拼的 ; 韵母也算），
