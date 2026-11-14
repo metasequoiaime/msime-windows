@@ -79,7 +79,9 @@ struct WordItem
     // 候选汉字的读音（拼音，轻声音节没有调号），多个读音用逗号分隔（U 模式拆字表最多带两个）。需要
     // 反显注音的模式由查询方直接填：U 模式拆字表里带了读音列，读到就填在这里；空表示这个字
     // 在上游数据里没有读音。它不参与上屏、组合推进和调频——拼音候选的输入码仍只看
-    // pinyin / canonical_pinyin。
+    // pinyin / canonical_pinyin。读音跟着候选走过排序、去重和繁体展开，放到查询结果的侧表里
+    // 对不上位置，所以和 corrected_from / output_text 一样留在通用类型上；多出的一个
+    // std::string 只随候选向量存在，不进词库。
     std::string reading;
     // 繁体模式下这一项显示与上屏的写法，由 server 展开候选列表时填（见
     // server/src/ipc/traditional_variant_expansion_policy.h），组页与上屏读它。空表示这一项没有

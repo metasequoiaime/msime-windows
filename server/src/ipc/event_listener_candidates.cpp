@@ -333,14 +333,10 @@ std::string BuildCurrentCandidatePage()
         {
             // U 模式：候选上反显该字的读音（多音字最多两个，逗号分隔的原文由表带来）。读音随
             // 拆字表烘进来（见 engine/radical/NOTICE.md），表里查不到的极生僻字留空，属可接受降级。
-            if (!item.reading.empty())
+            // 只有逗号的脏数据会让 ReadingAnnotation 返回空串，别再拼出一个空白注解。
+            if (const std::string annotation = FanyImeIpc::ReadingAnnotation(item.reading); !annotation.empty())
             {
-                // 读音列只有逗号时 ReadingAnnotation 会返回空串，别再拼出一个空白注解。
-                const std::string annotation = FanyImeIpc::ReadingAnnotation(item.reading);
-                if (!annotation.empty())
-                {
-                    view.annotation = " " + annotation;
-                }
+                view.annotation = " " + annotation;
             }
         }
         else if (item.source == CandidateSource::Generated && show_helpcodes)

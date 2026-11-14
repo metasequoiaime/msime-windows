@@ -8,7 +8,7 @@
 | 文件 | 内容 | 来源与权利归属 |
 | --- | --- | --- |
 | `decomposition.txt` | `<部件拼音连写>\t<汉字>\t<字频>\t<读音>`，整表按字频降序 | 拆字部分由 [mirtlecn/rime-radical-pinyin](https://github.com/mirtlecn/rime-radical-pinyin) 的 `radical_pinyin.dict.yaml` 转换。上游为 **GPL-3.0**，其拆字数据又聚合自 [chaizi](https://github.com/kfcd/chaizi)（CC-BY-3.0）、[CHISE](https://www.chise.org/)（GPL-2.0-or-later）、[yi-bai/ids](https://github.com/yi-bai/ids)（MIT）。本项目按 GPL-3.0 分发，转换后的表沿用同一许可。 |
-| 同上，第 4 列读音 | 最多**两个**读音（拼音，轻声无调号，如 `jīng`、`de`、`zhǎng,cháng`） | 来自 [mozillazg/pinyin-data](https://github.com/mozillazg/pinyin-data)（**MIT**）：首选取 `pinyin.txt` 第一项（上游合并出的常用读音）；第二读音取 `kHanyuPinlu.txt`（现代汉语频率词典）、`kXHC1983.txt`（现代汉语词典）、`kTGHZ2013.txt`（通用规范汉字字典）里**至少被两本共同收录**的另一读法，规范字典未收录的生僻字才退回 `pinyin.txt` 第二项。 |
+| 同上，第 4 列读音 | 最多**两个**读音（拼音，轻声无调号，如 `jīng`、`de`、`zhǎng,cháng`） | 来自 [mozillazg/pinyin-data](https://github.com/mozillazg/pinyin-data)（**MIT**）：首选取 `pinyin.txt` 第一项（上游合并出的常用读音）；第二读音取 `kHanyuPinlu.txt`（现代汉语频率词典）、`kXHC1983.txt`（现代汉语词典）、`kTGHZ2013.txt`（通用规范汉字字典）里**至少被两本共同收录**的另一读法（只被一本收录的字按实际收录数把门槛降到一本），规范字典未收录的生僻字才退回 `pinyin.txt` 第二项。 |
 
 `engine/helpcode/` 里的 `jiajia` 表也用到了同一份 rime-radical-pinyin 拆字数据来重建，
 那边的登记见 `engine/helpcode/NOTICE.md`。
@@ -23,10 +23,12 @@
 读音最多两个：候选窗的空间只够排两种读法，更多数目的读法多是异体、通假或极生僻读音，标出来
 反而误导。第二读音不直接取 `pinyin.txt` 的第二项——那里是《汉语大字典》的全集，会给出
 `而 ér/néng`、`餐 cān/sūn` 这类古音；只在现代规范字典里选被两本以上共同收录的读音，才得到
-`长 zhǎng/cháng`、`好 hǎo/hào` 这类真正常用的读法。只出现在一本字典里的 `市 fú`、`广 ān`、
-`鸟 diǎo` 多是又音、古读或方言，不作为第二读音。第二读音跳过轻声音节（无调号）；首选仍按上游
-常用读法保留轻声（「的 de」）。上游没有读音的字（大量扩展区生僻字）第 4 列留空，候选上也不
-显示注音——这是数据本身的边界，不是转换遗漏。
+`长 zhǎng/cháng`、`好 hǎo/hào` 这类真正常用的读法。一个字本身出现在两本以上字典里、但某个读音
+只出现在其中一本时（`市 fú`、`广 ān`、`鸟 diǎo`），该读音多是又音、古读或方言，不作为第二读音。
+只被一本规范字典收录的字是另一回事：按实际收录数把门槛降到一本，第二读音取自那本字典，否则
+这类字反而比三本都没收的字少一个读音。第二读音跳过轻声音节（无调号）；首选仍
+按上游常用读法保留轻声（「的 de」），轻声本身就是这些字的常用读法。上游没有读音的字（大量
+扩展区生僻字）第 4 列留空，候选上也不显示注音——这是数据本身的边界，不是转换遗漏。
 
 ## 下游影响
 

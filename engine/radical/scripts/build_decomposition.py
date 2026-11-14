@@ -12,8 +12,10 @@
 - 第二读音取现代规范字典里的另一读法：`kHanyuPinlu.txt`（现代汉语频率词典）、
   `kXHC1983.txt`（现代汉语词典）、`kTGHZ2013.txt`（通用规范汉字字典）。常用字要求这个
   读音**至少被两本字典共同收录**，票数高的排前面，票数相同时按上面的顺序取——只出现在
-  一本里的多是又音、古读或方言（市 fú、广 ān、鸟 diǎo），标出来反而误导。这些字表之外的
-  生僻字才退回 `pinyin.txt` 的第二个读音。轻声音节（无调号）不算独立读音，第二读音跳过。
+  一本里的多是又音、古读或方言（市 fú、广 ān、鸟 diǎo），标出来反而误导。只被一本规范
+  字典收录的字，投票门槛跟着降到一本，否则这类字反而比三本都没收的字少一个读音。这些字
+  表之外的生僻字才退回 `pinyin.txt` 的第二个读音。轻声音节（无调号）不算独立读音，第二读
+  音跳过；首选读音仍按上游常用读法，轻声是「的、了、着」的常用读法，不因为没调号就往后排。
 - 最多两个：候选窗只排得下两种读法，更多读法几乎都是异体或极生僻读音。
 
 多音字在候选上标出两种读法；只取一个又会让「长 zhǎng/cháng」这类字丢掉常用读法。
@@ -46,7 +48,8 @@ READINGS_STANDARD = ("kHanyuPinlu.txt", "kXHC1983.txt", "kTGHZ2013.txt")
 MAX_READINGS = 2
 
 # 常用字的第二读音至少要被两本规范字典收录。只出现在一本里的多是又音、古读或方言
-# （市 fú、广 ān、鸟 diǎo），标出来对「这个字怎么读」没有帮助。
+# （市 fú、广 ān、鸟 diǎo），标出来对「这个字怎么读」没有帮助。只被一本字典收录的字
+# 按实际收录数降门槛，见 readings_for。
 MIN_STANDARD_VOTES = 2
 
 # 声调符号（组合附加符）：用来区分真正的读音和轻声。ü 的两点不算声调。
@@ -253,11 +256,15 @@ def main() -> int:
         first = values[0]
         # 常用字只在现代规范字典里找第二读音，且要求至少两本字典共同收录；
         # 规范字典没收录的生僻字才退回 pinyin-data 的第二项（那里没有票数可依）。
-        if any(char in table for table in standard):
+        coverage = sum(char in table for table in standard)
+        if coverage:
+            # 只被一本规范字典收录的字，票数上限就是 1；门槛跟着可投票的字典数降，
+            # 否则这类字反而比三本都没收、退回 pinyin.txt 的字少一个读音。
+            threshold = min(MIN_STANDARD_VOTES, coverage)
             candidates = [
                 (reading, votes)
                 for reading, votes in collected_readings(standard, char)
-                if votes >= MIN_STANDARD_VOTES
+                if votes >= threshold
             ]
         else:
             candidates = [(reading, 1) for reading in values[1:]]

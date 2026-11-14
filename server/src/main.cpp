@@ -1,4 +1,5 @@
 #include "ipc/event_listener.h"
+#include "log/candidate_diag_log.h"
 #include "log/fanylog.h"
 #include "window/ime_windows.h"
 #include <commctrl.h>
@@ -224,8 +225,15 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     if (GetConfiguredRadicalModeEnabled())
     {
         radical_warmup = std::thread([] {
-            metasequoia::local_modes::preload_radical_table(
+            const auto stats = metasequoia::local_modes::preload_radical_table(
                 metasequoia::RuntimePaths::legacy().resource(metasequoia::assets::radical_decomposition));
+            // 旧的三列拆字表加载也成功，只是没有读音；U 模式仍能出字，但候选上不会显示注音，
+            // 记一条诊断日志，便于排查数据目录没刷新。
+            if (stats.entries > 0 && stats.entries_with_reading == 0)
+            {
+                DIAG_LOGF(L"radical decomposition table has no reading column; U mode candidates will not show "
+                          L"readings; update the data directory or reinstall");
+            }
         });
     }
 

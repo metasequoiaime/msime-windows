@@ -573,8 +573,9 @@ int run_test()
         // 都要能过，且被丢弃的行不能变成候选。
         stream << "\xEF\xBB\xBFheng\t一\t18584\tyī\r\n"
                   "hengheng\t丁\t900\r\n"
-                  "ac\t乙\t500\tyǐ\r\n"
-                  "ab\t甲\t400\tjiǎ\r\n"
+                  // 行尾空格与多出来的第 5 列都不该混进读音。
+                  "ac\t乙\t500\tyǐ \r\n"
+                  "ab\t甲\t400\tjiǎ\textra\r\n"
                   "chang\t长\t20\tzhǎng,cháng\r\n"
                   "ririri\t晶\t106\tjīng\r\n"
                   "ririri\t晿\t1\tchēng\r\n"
@@ -607,9 +608,28 @@ int run_test()
     const auto radical_limit = metasequoia::local_modes::query_radical(decomposition, "heng", 1);
     require(radical_limit.size() == 1 && radical_limit[0].word == "一",
             "Radical lookup ignored its limit or ranked a shorter match below a longer one.");
+    const auto radical_stats = metasequoia::local_modes::preload_radical_table(decomposition);
+    require(radical_stats.entries == 18 && radical_stats.entries_with_reading == 15,
+            "Radical table stats did not count the entries carrying a reading.");
+    const std::filesystem::path old_decomposition = quick_phrase_directory / "decomposition-old.txt";
+    {
+        std::ofstream stream(old_decomposition, std::ios::binary);
+        stream << "heng\t一\t18584\n";
+    }
+    const auto old_radical_stats = metasequoia::local_modes::preload_radical_table(old_decomposition);
+    require(old_radical_stats.entries == 1 && old_radical_stats.entries_with_reading == 0,
+            "A three-column radical table was not detected as missing its reading column.");
+    const auto missing_radical_stats =
+        metasequoia::local_modes::preload_radical_table(quick_phrase_directory / "private-missing.txt");
+    require(missing_radical_stats.entries == 0 && missing_radical_stats.entries_with_reading == 0,
+            "A missing radical table did not report empty statistics.");
+    // 第 4 列遇到空白或下一个 tab 就结束：行尾空格与多出来的列不能变成注音。
     const auto radical_file_order = metasequoia::local_modes::query_radical(decomposition, "a", 50);
-    require(radical_file_order.size() == 2 && radical_file_order[0].word == "乙" && radical_file_order[1].word == "甲",
-            "Radical lookup ranked by spelling instead of the table's frequency order.");
+    require(radical_file_order.size() == 2 && radical_file_order[0].word == "乙" &&
+                radical_file_order[1].word == "甲" && radical_file_order[0].reading == "yǐ" &&
+                radical_file_order[1].reading == "jiǎ",
+            "Radical lookup ranked by spelling instead of the table's frequency order, or kept whitespace/extra "
+            "columns in the reading.");
     // 多音字的两条读音原样随候选带回，分隔与展示格式由调用方决定。
     const auto radical_multi_reading = metasequoia::local_modes::query_radical(decomposition, "chang", 50);
     require(radical_multi_reading.size() == 1 && radical_multi_reading[0].word == "长" &&
@@ -623,10 +643,12 @@ int run_test()
             "Radical lookup ranked a complete decomposition below longer, more frequent prefix matches.");
     // 一个字的几种拆法共享前缀时只出一次。
     const auto radical_deduplicated = metasequoia::local_modes::query_radical(decomposition, "ma", 50);
+    const auto radical_shared_reading = metasequoia::local_modes::query_radical(decomposition, "majiong", 50);
     require(radical_deduplicated.size() == 2 && radical_deduplicated[0].word == "马" &&
-                radical_deduplicated[1].word == "駉" &&
-                metasequoia::local_modes::query_radical(decomposition, "majiong", 50).size() == 1,
-            "Radical lookup listed one character once per decomposition sharing the typed prefix.");
+                radical_deduplicated[1].word == "駉" && radical_shared_reading.size() == 1 &&
+                radical_shared_reading[0].reading == "jiōng",
+            "Radical lookup listed one character once per decomposition sharing the typed prefix, or lost a "
+            "reading shared by several rows.");
     require(
         metasequoia::local_modes::query_radical(decomposition, "", 50).empty() &&
             metasequoia::local_modes::query_radical(decomposition, "Ri", 50).empty() &&

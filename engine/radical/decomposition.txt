@@ -6178,13 +6178,13 @@ bingzilun	瘪	5	biě,biē
 bipu	敝	5	bì
 biwen	敝	5	bì
 buyong	甭	5	béng
-caibian	拚	5	pàn
+caibian	拚	5	pàn,pīn
 cailv	捋	5	lǚ,luō
 cailve	捋	5	lǚ,luō
 cainai	捺	5	nà
 caiquan	拴	5	shuān
-caisigong	拚	5	pàn
-caisinong	拚	5	pàn
+caisigong	拚	5	pàn,pīn
+caisinong	拚	5	pàn,pīn
 caiyou	拗	5	ǎo,ào
 caizhaocun	捋	5	lǚ,luō
 caizhuacun	捋	5	lǚ,luō
@@ -6235,8 +6235,8 @@ jiongermian	冕	5	miǎn
 jiuniao	鹫	5	jiù
 jiushuyou	叟	5	sǒu
 kouba	邑	5	yì
-kouda	哒	5	dá
-kouluo	啰	5	luō
+kouda	哒	5	dá,dā
+kouluo	啰	5	luō,luó
 kounong	哝	5	nóng
 koupeng	嘭	5	pēng
 koupi	噼	5	pī
@@ -6294,14 +6294,14 @@ shishishi	卉	5	huì
 shisi	祠	5	cí
 shixian	馅	5	xiàn
 shixiang	饷	5	xiǎng
-shoubian	拚	5	pàn
+shoubian	拚	5	pàn,pīn
 shoufenshou	掰	5	bāi
 shoulv	捋	5	lǚ,luō
 shoulve	捋	5	lǚ,luō
 shounai	捺	5	nà
 shouquan	拴	5	shuān
-shousigong	拚	5	pàn
-shousinong	拚	5	pàn
+shousigong	拚	5	pàn,pīn
+shousinong	拚	5	pàn,pīn
 shouyou	拗	5	ǎo,ào
 shouzhaocun	捋	5	lǚ,luō
 shouzhuacun	捋	5	lǚ,luō
@@ -6644,7 +6644,7 @@ yangmin	盎	4	àng
 yangui	魇	4	yǎn
 yanmei	诲	4	huì
 yanmi	谧	4	mì
-yanyi	诶	4	éi
+yanyi	诶	4	éi,ěi
 yanyu	诩	4	xǔ
 yanzhi	诣	4	yì
 yibao	褒	4	bāo
@@ -7426,7 +7426,7 @@ shouye	揶	2	yé
 shouyouyouyouyou	掇	2	duō
 shouyu	揄	2	yú
 shouzhuo	掇	2	duō
-shuibaoyou	沒	2	méi
+shuibaoyou	沒	2	méi,mò
 shuibian	汴	2	biàn
 shuibo	渤	2	bó
 shuicen	涔	2	cén
@@ -7773,7 +7773,7 @@ bafuhe	䅈	1	yuàn
 bafuhui	韏	1	quàn,juàn
 bafuji	巻	1	juàn
 bafujiao	觠	1	quán
-bafujin	帣	1	juǎn
+bafujin	帣	1	juǎn,juàn
 bafuli	劵	1	juàn
 bafuliang	飬	1	juàn,yǒng
 bafuma	駦	1	téng
@@ -7897,7 +7897,7 @@ baidadao	𫦍	1
 baidan	𤾠	1	dì
 baidang	㿩	1	tǎng
 baidao	㓦	1	bāi
-baidao	別	1	bié
+baidao	別	1	bié,biè
 baidasan	𢒣	1	
 baidashan	𢒣	1	
 baidayou	𤽻	1	
@@ -7944,7 +7944,7 @@ baigao	𤽟	1
 baigao	𪡬	1	
 baige	𤽥	1	luò
 baigongshu	𣪞	1	
-baigou	癿	1	qié
+baigou	癿	1	qié,bié
 baigou	𤼾	1	
 baigouer	𭽇	1	
 baigua	𤽡	1	
@@ -8154,7 +8154,7 @@ baiyaowu	皢	1	xiǎo
 baiye	𤾧	1	
 baiye	𩑻	1	bì,pó
 baiye	𩓑	1	
-baiyi	癿	1	qié
+baiyi	癿	1	qié,bié
 baiyi	𠀼	1	qián,xià
 baiyi	𤾰	1	
 baiyi	𭽛	1	
@@ -8536,7 +8536,7 @@ baobu	𰌶	1
 baobubi	𱚆	1	
 baobucong	𠣠	1	kuì
 baobuyue	𦙎	1	
-baocai	寀	1	cǎi
+baocai	寀	1	cǎi,cài
 baocai	𲜉	1	
 baocaobaocao	芻	1	chú
 baocaobaocaoche	𨎆	1	
@@ -9624,7 +9624,7 @@ baozhuaye	𫴉	1
 baozhudinggong	𱚜	1	
 baozhudingnong	𱚜	1	
 baozhui	寉	1	hè
-baozhui	隺	1	hú
+baozhui	隺	1	hú,hè
 baozhui	𩁠	1	
 baozhuiniao	鶴	1	hè
 baozhuo	𠖎	1	
@@ -10284,7 +10284,7 @@ beiye	貤	1	yí,yì
 beiye	𧸢	1	
 beiye	𩓐	1	bó
 beiye	𭅤	1	
-beiye	𰷠	1	yì
+beiye	𰷠	1	yì,yí
 beiye	𱂮	1	pǐ
 beiyebi	𧸅	1	zhǐ
 beiyi	䝯	1	yì
@@ -11414,12 +11414,12 @@ bingcan	𱐈	1
 bingcang	凔	1	chuàng
 bingcang	瘡	1	chuāng
 bingcang	𠖸	1	
-bingcang	𰃷	1	cāng
+bingcang	𰃷	1	cāng,chuàng
 bingceng	𤺧	1	
 bingceng	𭂡	1	
 bingceng	𭙇	1	
 bingcha	瘥	1	chài
-bingchan	癉	1	dān
+bingchan	癉	1	dān,dàn
 bingchan	𠘈	1	
 bingchang	痮	1	zhàng
 bingchang	𭂝	1	
@@ -11454,7 +11454,7 @@ bingdabarixiao	療	1	liáo
 bingdadian	痷	1	ān,yè
 bingdan	疸	1	dǎn
 bingdan	瘅	1	dān,dàn
-bingdan	癉	1	dān
+bingdan	癉	1	dān,dàn
 bingdan	𠘐	1	
 bingdang	𰄆	1	
 bingdanwu	瘍	1	yáng
@@ -11683,7 +11683,7 @@ bingliao	𠘙	1
 binglie	𠗹	1	
 binglin	凜	1	lǐn
 binglin	痲	1	má
-binglin	痳	1	lín
+binglin	痳	1	lín,má
 binglin	癛	1	lǐn,bǐng
 bingling	𪞮	1	
 bingling	𬾺	1	
@@ -11741,7 +11741,7 @@ bingmu	𠖻	1
 bingmu	𭂥	1	
 bingmuhuo	𤈀	1	
 bingmumu	痲	1	má
-bingmumu	痳	1	lín
+bingmumu	痳	1	lín,má
 bingmumuzhui	癯	1	qú
 bingna	𤶸	1	
 bingnai	疓	1	nǎi
@@ -11763,7 +11763,7 @@ bingnong	癑	1	nòng,nóng
 bingnong	𠘊	1	nòng
 bingnong	𫥌	1	
 bingnuo	癱	1	tān
-bingnve	瘧	1	nüè
+bingnve	瘧	1	nüè,yào
 bingpang	𠗵	1	pāng
 bingpeng	痭	1	bēng,péng
 bingpi	𰃺	1	
@@ -11778,7 +11778,7 @@ bingpou	𲧖	1
 bingpu	㪅	1	gèng,gēng
 bingpu	𢼩	1	pēng
 bingqi	凒	1	ái
-bingqi	瘈	1	chì
+bingqi	瘈	1	chì,zhì
 bingqi	癠	1	jì
 bingqi	𠖯	1	
 bingqi	𠗼	1	suò
@@ -11832,7 +11832,7 @@ bingse	艵	1	pīng
 bingsen	𠘆	1	shěn
 bingsha	痧	1	shā
 bingshan	疝	1	shàn
-bingshan	癉	1	dān
+bingshan	癉	1	dān,dàn
 bingshan	𭂈	1	
 bingshan	𰐨	1	
 bingshanbaoyou	㓎	1	qīn,qìn
@@ -11887,7 +11887,7 @@ bingsou	瘶	1	sòu
 bingsou	𠘂	1	sōu
 bingsu	𬩏	1	
 bingsuo	𰄅	1	
-bingtan	癉	1	dān
+bingtan	癉	1	dān,dàn
 bingtang	𠗶	1	táng
 bingtian	𪞛	1	
 bingting	𪞨	1	
@@ -12078,7 +12078,7 @@ bingzhai	癠	1	jì
 bingzhai	𭂞	1	
 bingzhai	𳑨	1	
 bingzhan	痁	1	shān
-bingzhan	癉	1	dān
+bingzhan	癉	1	dān,dàn
 bingzhan	癚	1	dàn
 bingzhan	𫥄	1	
 bingzhang	痮	1	zhàng
@@ -12867,7 +12867,7 @@ caibu	捗	1	bù,pú
 caibuheng	抷	1	pī,pēi
 caicai	採	1	cǎi
 caicai	攃	1	cā,sǎ
-caican	摻	1	càn
+caican	摻	1	càn,chān
 caican	撍	1	zǎn,zān
 caican	撡	1	cāo
 caicang	搶	1	qiǎng
@@ -12881,7 +12881,7 @@ caicha	扠	1	chā
 caicha	揸	1	zhā
 caicha	搽	1	chá
 caichan	摌	1	chǎn,sùn
-caichan	撣	1	dǎn
+caichan	撣	1	dǎn,shàn
 caichan	攙	1	chān
 caichang	掁	1	chéng
 caichanghu	搋	1	chuāi
@@ -12925,7 +12925,7 @@ caidagui	㨒	1	kuī
 caidai	摕	1	dì,tú
 caidai	𢰾	1	
 caidai	𢱜	1	
-caidan	撣	1	dǎn
+caidan	撣	1	dǎn,shàn
 caidang	擋	1	dǎng
 caidang	攩	1	dǎng
 caidanwu	揚	1	yáng
@@ -13042,8 +13042,8 @@ caigui	撌	1	guì
 caiguo	挝	1	wō
 caiguo	捰	1	wǒ,luò
 caiguo	掴	1	guāi
-caiguo	摑	1	guāi
-caiguo	撾	1	wō
+caiguo	摑	1	guāi,guó
+caiguo	撾	1	wō,zhuā
 caiguo	𢰸	1	
 caiguoer	𢰋	1	
 caihai	搳	1	huá
@@ -13075,7 +13075,7 @@ caihu	摢	1	hù,chū
 caihu	摦	1	huà
 caihu	𢮎	1	
 caihu	𢰮	1	
-caihuan	抝	1	ǎo
+caihuan	抝	1	ǎo,ào
 caihuan	換	1	huàn
 caihuan	攌	1	huǎn
 caihuang	揘	1	yóng,huáng
@@ -13086,7 +13086,7 @@ caihui	𢯷	1	wěi,huī
 caihun	㨉	1	mín,wěn
 caihun	捪	1	mín
 caihuo	掝	1	huò,xù
-caihuo	撾	1	wō
+caihuo	撾	1	wō,zhuā
 caihuo	擭	1	wò,huò
 caihuo	攉	1	huō
 caihuo	𰝸	1	
@@ -13386,13 +13386,13 @@ cairui	㨅	1	nèi,ruì
 cairun	撋	1	ruán,ruí
 cairuo	掿	1	nuò
 cairuo	搦	1	nuò
-caisa	摋	1	sà
+caisa	摋	1	sà,shā
 caisa	𢱛	1	
-caisha	挱	1	sā
-caisha	摋	1	sà
-caishai	摋	1	sà
+caisha	挱	1	sā,shā
+caisha	摋	1	sà,shā
+caishai	摋	1	sà,shā
 caishan	搧	1	shān
-caishan	撣	1	dǎn
+caishan	撣	1	dǎn,shàn
 caishanbaojin	掃	1	sǎo,sào
 caishang	𢮐	1	zhēng
 caishangxia	挊	1	nòng
@@ -13404,21 +13404,21 @@ caishe	撦	1	chě
 caishe	擛	1	yè
 caishen	抻	1	chēn
 caishen	揕	1	zhèn
-caishen	摻	1	càn
+caishen	摻	1	càn,chān
 caisheng	㨘	1	xǐng
 caisheng	抍	1	zhěng
 caishi	扺	1	zhǐ
 caishi	抴	1	yè
 caishi	抶	1	chì
 caishi	揓	1	shì
-caishi	摋	1	sà
+caishi	摋	1	sà,shā
 caishi	擿	1	tī
 caishi	𢯶	1	zhì
 caishibaozi	挬	1	bó
 caishierzhehengyou	𢱈	1	jià
 caishiji	𩛥	1	zài
 caishimizi	挬	1	bó
-caishimu	揲	1	dié
+caishimu	揲	1	dié,shé
 caishimu	𢮇	1	měi
 caishou	擣	1	dǎo
 caishou	𢰢	1	
@@ -13426,13 +13426,13 @@ caishu	捒	1	shù,sōu
 caishu	掓	1	shū
 caishu	摭	1	zhí
 caishu	擉	1	chuò
-caishu	擻	1	sǒu
+caishu	擻	1	sǒu,sòu
 caishuan	摶	1	tuán
 caishuang	摤	1	chuǎng
 caishuiri	㧺	1	tà
 caishunxi	拶	1	zā,zǎn
 caishuo	搠	1	shuò
-caishuo	擻	1	sǒu
+caishuo	擻	1	sǒu,sòu
 caisi	払	1	fǎn
 caisi	揌	1	sāi
 caisi	搋	1	chuāi
@@ -13453,7 +13453,7 @@ caitai	𢰥	1
 caitaixin	𢰾	1	
 caitan	㨏	1	tān
 caitan	撢	1	dǎn
-caitan	撣	1	dǎn
+caitan	撣	1	dǎn,shàn
 caitan	擹	1	tān
 caitang	摚	1	chēng
 caitang	攩	1	dǎng
@@ -13474,7 +13474,7 @@ caituan	掾	1	yuàn
 caituan	摶	1	tuán
 caitubawen	掕	1	líng
 caitun	扽	1	dèn
-caituo	挼	1	ruá
+caituo	挼	1	ruá,ruó
 caitututuwu	撓	1	náo
 caiwa	搲	1	wā,wǎ
 caiwai	𢰸	1	
@@ -13526,7 +13526,7 @@ caixie	拹	1	xié
 caixie	挾	1	xié
 caixie	捓	1	yé,yú
 caixie	搚	1	lā,xié
-caixie	摋	1	sà
+caixie	摋	1	sà,shā
 caixie	擷	1	xié
 caixin	抋	1	qìn
 caixin	撏	1	xián
@@ -13571,7 +13571,7 @@ caiyao	𢰹	1
 caiyao	𢱐	1	
 caiyaowu	撓	1	náo
 caiye	扡	1	tuō,yǐ
-caiye	揲	1	dié
+caiye	揲	1	dié,shé
 caiye	擈	1	pū
 caiye	擛	1	yè
 caiye	擨	1	yé
@@ -13647,7 +13647,7 @@ caizhai	搾	1	zhà
 caizhai	擠	1	jǐ
 caizhan	搌	1	zhǎn
 caizhan	摲	1	chàn,cán
-caizhan	撣	1	dǎn
+caizhan	撣	1	dǎn,shàn
 caizhan	擔	1	dān,dàn
 caizhang	扙	1	zhàng
 caizhang	掁	1	chéng
@@ -13660,7 +13660,7 @@ caizhe	擿	1	tī
 caizhe	𤔁	1	
 caizhen	揁	1	zhēng,kēng
 caizhen	搷	1	tián,shēn
-caizheng	掙	1	zhēng
+caizheng	掙	1	zhēng,zhèng
 caizheng	揁	1	zhēng,kēng
 caizheng	擲	1	zhì
 caizhezhehengshi	掾	1	yuàn
@@ -13698,7 +13698,7 @@ canbei	𢤕	1
 canbei	𧶤	1	
 canchongchong	蠶	1	cán
 candao	㔆	1	zàn
-candao	剗	1	chǎn
+candao	剗	1	chǎn,chàn
 candao	剼	1	shān
 candao	𱐠	1	
 caner	䣟	1	cán,cǎn
@@ -13711,7 +13711,7 @@ cangdao	𠛛	1
 cangdao	𠠈	1	
 canger	𨜾	1	chuàng
 cangge	戗	1	qiāng,qiàng
-cangge	戧	1	qiāng
+cangge	戧	1	qiāng,qiàng
 cangling	𠏧	1	chēng
 cangmimin	𠑜	1	
 cangniao	鶬	1	cāng
@@ -13788,7 +13788,7 @@ caoai	𮐉	1
 caoaiba	蔉	1	gǔn
 caoan	荌	1	àn
 caoan	蓭	1	ān
-caoan	蔭	1	yīn
+caoan	蔭	1	yīn,yìn
 caoan	𦴴	1	
 caoan	𦺼	1	
 caoan	𦺽	1	ǎn
@@ -13927,7 +13927,7 @@ caoben	𰱟	1	fén
 caobeng	𱿅	1	bòng
 caobenyun	𡴞	1	
 caobi	䕗	1	bì
-caobi	芘	1	pí
+caobi	芘	1	pí,bǐ
 caobi	苾	1	bì
 caobi	荜	1	bì
 caobi	葍	1	fú
@@ -14258,7 +14258,7 @@ caochuan	𫇨	1
 caochuang	𦼃	1	
 caochuang	𮶢	1	
 caochuangong	𦮨	1	
-caochuantian	菑	1	zāi
+caochuantian	菑	1	zāi,zī
 caochuantianheng	葘	1	zī
 caochui	菙	1	chuí
 caochui	𦸙	1	yóu
@@ -14376,7 +14376,7 @@ caodengshi	𦷦	1	qiàng
 caodengsui	𤼱	1	
 caodengtu	𦱬	1	
 caodi	苐	1	tí,dì
-caodi	茋	1	zhǐ
+caodi	茋	1	zhǐ,dǐ
 caodi	菧	1	dǐ
 caodi	葯	1	yào
 caodi	蔐	1	dí
@@ -14877,7 +14877,7 @@ caohan	䓍	1	hǎn
 caohan	䓿	1	hàn
 caohan	莟	1	hàn
 caohan	蓒	1	xuān
-caohan	蔊	1	hǎn
+caohan	蔊	1	hǎn,hàn
 caohan	蘝	1	liǎn
 caohan	𦫺	1	
 caohan	𦯼	1	
@@ -14904,7 +14904,7 @@ caohao	𮒑	1
 caohao	𲼞	1	
 caohe	䒩	1	hé
 caohe	䕣	1	hé
-caohe	荅	1	dā
+caohe	荅	1	dā,dá
 caohe	菏	1	hé
 caohe	萂	1	hé
 caohe	萵	1	wō
@@ -15107,7 +15107,7 @@ caoji	蔇	1	jì,xì
 caoji	蕀	1	jí
 caoji	蕺	1	jí
 caoji	薊	1	jì
-caoji	薺	1	jì
+caoji	薺	1	jì,qí
 caoji	蘮	1	jì
 caoji	蘻	1	jì
 caoji	虀	1	jī
@@ -15165,7 +15165,7 @@ caojian	蒹	1	jiān
 caojian	蓒	1	xuān
 caojian	蕑	1	jiān
 caojian	蕳	1	jiān
-caojian	薺	1	jì
+caojian	薺	1	jì,qí
 caojian	藍	1	lán
 caojian	蘫	1	hàn,làn
 caojian	虃	1	jiān
@@ -15386,7 +15386,7 @@ caojuegouding	𮐥	1
 caojueshan	𦹙	1	
 caojun	荺	1	yǔn,yún
 caojun	莙	1	jūn
-caojun	葰	1	suī
+caojun	葰	1	suī,jùn
 caojun	葷	1	hūn,xūn
 caojun	𦵼	1	jùn
 caojun	𦶬	1	
@@ -15952,7 +15952,7 @@ caomizao	𦻩	1
 caomizhui	蒮	1	yù
 caomizishu	𦴎	1	kòu
 caomo	蕪	1	wú
-caomo	藦	1	mò
+caomo	藦	1	mò,mó
 caomo	𧀋	1	
 caomo	𧁵	1	
 caomo	𧄲	1	
@@ -15990,7 +15990,7 @@ caomuxu	𧄨	1
 caona	蒘	1	rú,ná
 caona	蒳	1	nà
 caona	𦮾	1	nì
-caona	𦰡	1	nà
+caona	𦰡	1	nà,nuó
 caona	𰱌	1	nà
 caonai	艿	1	nǎi
 caonai	萘	1	nài
@@ -16000,7 +16000,7 @@ caonai	𫇵	1
 caonaizhengjin	𧁅	1	
 caonan	䕼	1	rán
 caonan	莮	1	nán
-caonan	萳	1	nǎn
+caonan	萳	1	nǎn,nán
 caonan	𦮗	1	
 caonan	𬝴	1	rán
 caonan	𬞑	1	
@@ -16240,7 +16240,7 @@ caopianbian	𦽃	1	miàn
 caopianfu	𮑻	1	
 caopianwang	𰱄	1	
 caopiao	䕯	1	piáo
-caopiao	蔈	1	biāo
+caopiao	蔈	1	biāo,piào
 caopiao	薸	1	piáo
 caopiao	藨	1	biāo
 caopiao	𦹡	1	
@@ -16295,7 +16295,7 @@ caoqi	萕	1	qí
 caoqi	葜	1	qiā
 caoqi	葺	1	qì
 caoqi	蓍	1	shī
-caoqi	薺	1	jì
+caoqi	薺	1	jì,qí
 caoqi	藄	1	qí
 caoqi	𦬟	1	
 caoqi	𦮳	1	
@@ -16687,7 +16687,7 @@ caoshi	茌	1	chí
 caoshi	莳	1	shí,shì
 caoshi	葹	1	shī
 caoshi	蒒	1	shī
-caoshi	蒔	1	shí
+caoshi	蒔	1	shí,shì
 caoshi	蓺	1	yì
 caoshi	蔐	1	dí
 caoshi	蔱	1	shā
@@ -16721,7 +16721,7 @@ caoshicaobei	蕡	1	fén,fèi
 caoshicaohe	𦶫	1	
 caoshichangyan	𦸻	1	
 caoshidao	𬜱	1	
-caoshidian	茋	1	zhǐ
+caoshidian	茋	1	zhǐ,dǐ
 caoshierzhehengyou	葭	1	jiā
 caoshihe	𧅔	1	
 caoshihuo	𫊆	1	
@@ -16731,7 +16731,7 @@ caoshilv	𮓍	1
 caoshimitiansizou	𧀶	1	dì
 caoshimizi	荸	1	bí
 caoshimu	葉	1	yè
-caoshina	茋	1	zhǐ
+caoshina	茋	1	zhǐ,dǐ
 caoshiniao	𪂛	1	qí
 caoshiqian	𮐁	1	
 caoshiran	𦱲	1	jiū
@@ -16833,7 +16833,7 @@ caoshumusui	𦴲	1
 caoshun	蕣	1	shùn
 caoshun	𧂌	1	
 caoshungong	𦮨	1	
-caoshuntian	菑	1	zāi
+caoshuntian	菑	1	zāi,zī
 caoshuntianheng	葘	1	zī
 caoshuo	蒴	1	shuò
 caoshuo	蔌	1	sù
@@ -17749,7 +17749,7 @@ caoyin	荶	1	yín
 caoyin	萻	1	ān
 caoyin	蒑	1	yīn
 caoyin	蔩	1	yín
-caoyin	蔭	1	yīn
+caoyin	蔭	1	yīn,yìn
 caoyin	蘟	1	yǐn
 caoyin	𦮬	1	
 caoyin	𦲖	1	
@@ -17834,7 +17834,7 @@ caoyu	䒓	1	kǎi
 caoyu	䔡	1	yú
 caoyu	䕆	1	dòu
 caoyu	䖇	1	yù
-caoyu	芧	1	xù
+caoyu	芧	1	xù,zhù
 caoyu	茟	1	yù,wěi
 caoyu	茣	1	wú
 caoyu	荢	1	zì
@@ -17945,7 +17945,7 @@ caoza	𦻅	1	sà
 caoza	𦼩	1	
 caoza	𰰶	1	zá
 caozai	䔂	1	zǐ,zǎi
-caozai	菑	1	zāi
+caozai	菑	1	zāi,zī
 caozai	𦳦	1	zāi
 caozai	𫇱	1	
 caozai	𫇶	1	
@@ -17981,7 +17981,7 @@ caozha	𬟅	1
 caozha	𱾳	1	
 caozhai	蔐	1	dí
 caozhai	蔶	1	zé
-caozhai	薺	1	jì
+caozhai	薺	1	jì,qí
 caozhai	蘀	1	tuò
 caozhai	𬜭	1	
 caozhai	𮑫	1	
@@ -18194,7 +18194,7 @@ caozi	茲	1	zī
 caozi	葘	1	zī
 caozi	蒓	1	chún
 caozi	薋	1	cí,zī
-caozi	薺	1	jì
+caozi	薺	1	jì,qí
 caozi	𦤄	1	
 caozi	𦤅	1	
 caozi	𦬷	1	
@@ -19312,7 +19312,7 @@ chaohu	𧈊	1
 chaohujin	𢀋	1	sè
 chaohuo	𰟉	1	
 chaohuren	𢀊	1	xī
-chaoli	勦	1	chāo
+chaoli	勦	1	chāo,jiǎo
 chaoniao	𪅕	1	
 chaoniao	𪆘	1	
 chaorou	𦠶	1	
@@ -20267,7 +20267,7 @@ cheqing	輤	1	qiàn
 cheqing	𰺉	1	qiàn
 cheqiong	轘	1	huán,huàn
 cheqiong	𨏙	1	
-cheqiong	𮝹	1	huàn
+cheqiong	𮝹	1	huàn,huán
 cheqiu	䡱	1	zhuǎn
 cheqiu	輶	1	yóu
 cheqiu	𨍊	1	qiū
@@ -20706,7 +20706,7 @@ chiang	𢓋	1	àng
 chiao	𢕟	1	ào
 chiba	䶕	1	bà,bā
 chiba	𪗔	1	pà
-chiba	𫜨	1	bā
+chiba	𫜨	1	bā,bà
 chibahengboren	従	1	cóng
 chibahengburen	従	1	cóng
 chibahengshudianren	従	1	cóng
@@ -20802,7 +20802,7 @@ chichong	䶚	1	qǔ
 chichong	赨	1	tóng,xióng
 chichong	𧌝	1	tóng
 chichong	𮔳	1	
-chichongchu	衝	1	chōng
+chichongchu	衝	1	chōng,chòng
 chichongwen	𢔼	1	
 chichou	𢖊	1	pīng
 chichouchou	𪘴	1	
@@ -21121,7 +21121,7 @@ chikang	𪗜	1	háng
 chikang	𬹽	1	háng
 chike	䶗	1	kè,qiā
 chike	𪘺	1	qià
-chike	𮯙	1	kè
+chike	𮯙	1	kè,qiā
 chikenv	𡤫	1	qiā
 chikou	𢕓	1	chǔ
 chikou	𣤌	1	chuài,chǐ
@@ -21139,7 +21139,7 @@ chikun	齫	1	yǔn
 chikuo	徻	1	huì
 chila	𢔯	1	
 chilai	徕	1	lái
-chilai	徠	1	lái
+chilai	徠	1	lái,lài
 chilai	斄	1	lí,tái
 chilai	𪘨	1	zhāi
 chilai	𪙺	1	lì
@@ -21821,7 +21821,7 @@ chizhikou	𫹔	1
 chizhikouzhi	𪫘	1	
 chizhong	㣡	1	
 chizhong	㣫	1	zhǒng,dòng
-chizhongchu	衝	1	chōng
+chizhongchu	衝	1	chōng,chòng
 chizhongsui	𪫏	1	
 chizhou	徟	1	zhōu
 chizhou	𢓟	1	zhòu
@@ -22216,7 +22216,7 @@ chongfu	𲾹	1
 chongga	蛺	1	jiá
 chonggai	𧉝	1	
 chonggai	𰳙	1	
-chonggan	虷	1	hán
+chonggan	虷	1	hán,gān
 chonggan	蚶	1	hān
 chonggan	𲿭	1	
 chonggang	𧈿	1	wǎng
@@ -24211,7 +24211,7 @@ chuoyan	遃	1	yǎn,àn
 chuoyang	逿	1	dàng,táng
 chuoyao	遶	1	rào
 chuoyaowu	遶	1	rào
-chuoye	迆	1	yí
+chuoye	迆	1	yí,yǐ
 chuoyi	逘	1	yǐ,sì
 chuoyi	逷	1	tì
 chuoyi	𬛨	1	
@@ -24600,14 +24600,14 @@ cunxin	𲟸	1
 cuochi	𲎥	1	
 cuoer	䣜	1	cuó
 cuoer	𨝨	1	zuò
-cuojian	覰	1	qū
+cuojian	覰	1	qū,qù
 cuojian	𰴜	1	qū
 cuoliu	𰽉	1	
 cuopi	皻	1	zhā
 cuopu	㪥	1	zhā
 cuoqie	𧇣	1	
 cuosui	蓌	1	cuò
-cuoxian	覰	1	qū
+cuoxian	覰	1	qū,qù
 cuoyou	𠭯	1	zhā
 cuqian	𣤶	1	zú,zā
 cutu	𡔙	1	
@@ -24823,7 +24823,7 @@ daiguai	𣧎	1	guì
 daiguan	𣨭	1	
 daiguan	𣩔	1	guàn
 daiguang	𭮋	1	
-daigui	㱮	1	kuài
+daigui	㱮	1	kuài,huì
 daigui	㱱	1	huì
 daigui	殨	1	huì,kuì
 daiguo	𣨪	1	luǒ
@@ -25234,7 +25234,7 @@ dama	𩡱	1
 damao	奅	1	pào
 damao	𣯈	1	
 dameng	𬹞	1	
-damian	奤	1	hǎ
+damian	奤	1	hǎ,tǎi
 damian	𬹞	1	
 damin	𡘃	1	
 damin	𥂜	1	
@@ -27744,13 +27744,13 @@ erruan	陾	1	réng,ér
 erruan	𨻢	1	
 errui	𳈳	1	
 ersai	𳈲	1	
-ersan	耏	1	nài
+ersan	耏	1	nài,ér
 ersan	𦓘	1	
 ersang	𨻗	1	dié
 ersang	𲉗	1	
 erse	𦗮	1	nǎo
 erse	𨹔	1	tuó
-ershan	耏	1	nài
+ershan	耏	1	nài,ér
 ershan	陝	1	shǎn
 ershan	𡴸	1	
 ershan	𡴺	1	
@@ -31096,7 +31096,7 @@ gege	𩍰	1
 gege	𩰭	1	guō
 gege	𩱇	1	lì
 gege	𳊡	1	
-gegedao	剗	1	chǎn
+gegedao	剗	1	chǎn,chàn
 gegege	𠁭	1	qí
 gegege	𠓪	1	qí
 gegehu	虦	1	zhàn
@@ -31958,7 +31958,7 @@ gongheng	㢧	1	juàn
 gongheng	弖	1	hù
 gonghengbashuyue	𭚶	1	
 gonghengpiesi	㢬	1	hóng
-gonghengtianhengtianheng	彊	1	jiàng
+gonghengtianhengtianheng	彊	1	jiàng,qiáng
 gonghong	㢬	1	hóng
 gonghong	𭚴	1	
 gonghong	𰏊	1	
@@ -31989,7 +31989,7 @@ gongjian	彅	1	jiǎn
 gongjian	𢀢	1	
 gongjian	𢐎	1	zhuàn
 gongjian	𧠩	1	hū
-gongjiang	彊	1	jiàng
+gongjiang	彊	1	jiàng,qiáng
 gongjiang	𢏠	1	
 gongjiao	𢏧	1	xuān
 gongjiao	𢐟	1	qiāo
@@ -32524,7 +32524,7 @@ guachong	𧎏	1
 guacun	𡭀	1	
 guada	𪼳	1	
 guadai	𤬎	1	
-guadao	別	1	bié
+guadao	別	1	bié,biè
 guadao	剮	1	guǎ
 guadao	𠛒	1	guā
 guadao	𠛰	1	
@@ -33224,7 +33224,7 @@ guangsui	𲑴	1
 guangsuikou	噟	1	yìng
 guangsuiniao	鷹	1	yīng
 guangsuixin	應	1	yīng,yìng
-guangsuiyan	譍	1	yīng
+guangsuiyan	譍	1	yīng,yìng
 guangsun	㢑	1	tuí
 guangsuo	𢋼	1	xī
 guangtan	𠓊	1	huī,dān
@@ -34718,12 +34718,12 @@ guozhong	𡈡	1
 guozhu	𡈥	1	
 guozhuan	團	1	tuán
 guozhuan	𡈬	1	
-guozi	囝	1	jiǎn
+guozi	囝	1	jiǎn,nān
 guozi	𡇝	1	sòng
 guozi	𡇟	1	jī
 guozu	𡇻	1	
 gupan	𪔵	1	
-gupang	髈	1	bǎng
+gupang	髈	1	bǎng,pǎng
 gupang	𪔞	1	
 gupeng	𭩀	1	
 gupi	骳	1	bèi
@@ -35971,7 +35971,7 @@ helie	䅀	1	liè
 helie	䅄	1	lì
 helikou	稖	1	bàng
 heling	秢	1	líng
-heling	稜	1	léng
+heling	稜	1	léng,líng
 heling	𥢴	1	
 heling	𥤜	1	líng
 heling	𥤞	1	líng
@@ -36734,7 +36734,7 @@ hetuan	𥡵	1
 hetuan	𫀿	1	
 hetubahui	穑	1	sè
 hetubatu	稑	1	lù
-hetubawen	稜	1	léng
+hetubawen	稜	1	léng,líng
 hetukoukouhui	穯	1	sè
 hetundao	㴝	1	lí
 hetuo	䅑	1	ruí
@@ -37149,7 +37149,7 @@ huabei	𧴦	1
 huacao	𬟠	1	
 huachi	蒊	1	huā
 huadao	㓰	1	huà
-huadao	劃	1	huà
+huadao	劃	1	huà,huá
 huadao	𠝐	1	huā
 huadao	𱐤	1	
 huaer	𰻥	1	
@@ -37370,7 +37370,7 @@ huanyou	𬞓	1
 huanyouqian	𣤾	1	
 huanyu	𦒬	1	
 huanzhui	𮦃	1	
-huapu	斅	1	xiào
+huapu	斅	1	xiào,xué
 huapu	斆	1	xiào
 huaqian	𣢉	1	wā
 huaqian	𭭗	1	
@@ -37422,7 +37422,7 @@ huchu	處	1	chù,chǔ
 huchuan	𬼔	1	
 huchudou	𭤜	1	
 huchun	𧇶	1	chūn
-hucong	䖏	1	chǔ
+hucong	䖏	1	chǔ,chù
 huda	戻	1	tì
 huda	𬟧	1	
 hudao	䖌	1	yì
@@ -37436,8 +37436,8 @@ hudongsi	𦂟	1
 hudou	䖒	1	xī
 hudou	戽	1	hù
 hudouge	戲	1	xì
-hudoujian	覻	1	qū
-hudouxian	覻	1	qū
+hudoujian	覻	1	qū,qù
+hudouxian	覻	1	qū,qù
 hudui	𧇓	1	yuè
 huduo	扅	1	yí
 hue	𢩔	1	
@@ -38467,7 +38467,7 @@ huohuobaonv	嫈	1	yīng,xīng
 huohuobaorou	膋	1	liáo
 huohuobaoshan	嵤	1	róng,yíng
 huohuobaoshi	禜	1	yǒng,yíng
-huohuobaoshui	滎	1	xíng
+huohuobaoshui	滎	1	xíng,yíng
 huohuobaosi	縈	1	yíng
 huohuobaotu	塋	1	yíng
 huohuobaowa	甇	1	yīng
@@ -38482,7 +38482,7 @@ huohuobaoyue	膋	1	liáo
 huohuohuo	㷋	1	tán
 huohuohuohuo	燚	1	yì
 huohuohuomu	燊	1	shēn
-huohuohuoqian	歘	1	chuā
+huohuohuoqian	歘	1	chuā,xū
 huohuojiao	𲁟	1	
 huohuojiaopu	𣀾	1	fú
 huohuokan	嵤	1	róng,yíng
@@ -38504,7 +38504,7 @@ huohuominv	嫈	1	yīng,xīng
 huohuomirou	膋	1	liáo
 huohuomishan	嵤	1	róng,yíng
 huohuomishi	禜	1	yǒng,yíng
-huohuomishui	滎	1	xíng
+huohuomishui	滎	1	xíng,yíng
 huohuomisi	縈	1	yíng
 huohuomitu	塋	1	yíng
 huohuomiwa	甇	1	yīng
@@ -39002,7 +39002,7 @@ huoqu	煀	1	qū
 huoqu	熰	1	ōu,òu
 huoqu	爠	1	qú
 huoqu	𪸘	1	
-huoqu	𬉼	1	ōu
+huoqu	𬉼	1	ōu,ǒu
 huoqu	𭴻	1	
 huoquan	烇	1	quǎn
 huoquan	𤣅	1	què
@@ -39416,7 +39416,7 @@ huoya	𤆹	1
 huoya	𤉁	1	
 huoyan	㷈	1	è
 huoyan	㷋	1	tán
-huoyan	烻	1	yàn
+huoyan	烻	1	yàn,shān
 huoyan	爓	1	yàn,xún
 huoyan	𤉘	1	
 huoyan	𤊤	1	
@@ -39572,7 +39572,7 @@ huoyu	𰞳	1
 huoyu	𰟦	1	
 huoyuan	㷧	1	
 huoyuan	焆	1	juān
-huoyuan	煖	1	nuǎn
+huoyuan	煖	1	nuǎn,xuān
 huoyuan	熉	1	yún
 huoyuan	𤈶	1	yún
 huoyuan	𪸑	1	
@@ -39638,7 +39638,7 @@ huozhao	烑	1	yáo
 huozhao	燳	1	zhào
 huozhao	𪸳	1	
 huozhao	𲫲	1	
-huozhaohengyou	煖	1	nuǎn
+huozhaohengyou	煖	1	nuǎn,xuān
 huozhaosi	𤋠	1	
 huozhaosilang	𪺆	1	
 huozhaowang	𤋠	1	
@@ -39693,7 +39693,7 @@ huozhu	𭵽	1
 huozhu	𮳢	1	zhǔ
 huozhu	𱬜	1	
 huozhu	𲫿	1	
-huozhuahengyou	煖	1	nuǎn
+huozhuahengyou	煖	1	nuǎn,xuān
 huozhuan	𤍿	1	
 huozhuang	𪸱	1	
 huozhuasi	𤋠	1	
@@ -39752,9 +39752,9 @@ huqie	䖕	1	zǔ
 huqie	虘	1	cuó
 huqie	𢨷	1	
 huqiebi	𪖸	1	
-huqiejian	覰	1	qū
+huqiejian	覰	1	qū,qù
 huqiepi	皻	1	zhā
-huqiexian	覰	1	qū
+huqiexian	覰	1	qū,qù
 huqieyou	𰲡	1	
 huqiong	𢩠	1	shuān
 huqiu	虗	1	xū
@@ -40044,7 +40044,7 @@ jiamin	𭽿	1
 jiamu	𣘟	1	qiā
 jianba	𭨼	1	
 jianba	𱨐	1	
-jianbai	廹	1	pǎi
+jianbai	廹	1	pǎi,pò
 jianban	𫡁	1	
 jianban	𫡂	1	
 jianbang	𫡁	1	
@@ -40079,7 +40079,7 @@ jiandai	𪗈	1
 jiandao	㔆	1	zàn
 jiandao	㔋	1	jiān,lán
 jiandao	刬	1	chǎn,chàn
-jiandao	剗	1	chǎn
+jiandao	剗	1	chǎn,chàn
 jiandao	劑	1	jì
 jiandao	𠛬	1	
 jiandao	𠠀	1	
@@ -40712,7 +40712,7 @@ jiaopiesier	𧤬	1
 jiaopo	𧢿	1	
 jiaopu	敽	1	jiǎo
 jiaopu	敿	1	jiǎo
-jiaopu	斅	1	xiào
+jiaopu	斅	1	xiào,xué
 jiaopu	斆	1	xiào
 jiaopu	𧣀	1	
 jiaoqi	觭	1	jī
@@ -40833,7 +40833,7 @@ jiaoyan	譥	1	jiào
 jiaoyan	𧣹	1	tán
 jiaoyan	𧤨	1	jiān
 jiaoyan	𧧿	1	
-jiaoyang	觧	1	jiě
+jiaoyang	觧	1	jiě,jiè
 jiaoyang	𧥐	1	
 jiaoyang	𫌰	1	
 jiaoyang	𮗪	1	
@@ -41904,7 +41904,7 @@ jiner	鉩	1	xǐ,niè
 jiner	鉺	1	èr,kēng
 jiner	鑈	1	niè,nǐ
 jiner	铒	1	ěr
-jiner	鿭	1	nǐ
+jiner	鿭	1	nǐ,xǐ
 jiner	𢄽	1	èr
 jiner	𨙽	1	qín
 jiner	𨟕	1	
@@ -41984,7 +41984,7 @@ jinfeng	𮷻	1	liú
 jinfengdaoshi	𨫛	1	
 jinfengfengshan	鏏	1	wèi
 jinfengfengshan	𢄣	1	huì
-jinfengfengshan	𬭬	1	wèi
+jinfengfengshan	𬭬	1	wèi,huì
 jinfo	𮡫	1	
 jinfou	𨧆	1	
 jinfou	𫒘	1	
@@ -41993,7 +41993,7 @@ jinfu	鈇	1	fū,fǔ
 jinfu	鉘	1	fú
 jinfu	鉜	1	fú
 jinfu	鋢	1	lüè
-jinfu	鋪	1	pù
+jinfu	鋪	1	pù,pū
 jinfu	鍑	1	fù
 jinfu	鍢	1	fù
 jinfu	鎛	1	bó
@@ -42476,7 +42476,7 @@ jinhui	𨦗	1	huī
 jinhui	𨫍	1	
 jinhui	𨭗	1	guó
 jinhui	𬭇	1	guó
-jinhui	𬭬	1	wèi
+jinhui	𬭬	1	wèi,huì
 jinhui	𭘛	1	
 jinhui	𰾶	1	huì
 jinhui	𱜵	1	
@@ -42678,7 +42678,7 @@ jinjie	𨱕	1	gǎi
 jinjie	𫒌	1	
 jinjie	𫒞	1	
 jinjie	𬭋	1	
-jinjie	𬭴	1	jié
+jinjie	𬭴	1	jié,jiē
 jinjie	𰾛	1	jiè
 jinjie	𳇩	1	
 jinjiedaochi	䥹	1	
@@ -43513,7 +43513,7 @@ jinqie	𢂈	1
 jinqie	𢃫	1	
 jinqie	𢅰	1	hè
 jinqie	𨨧	1	
-jinqie	𬬺	1	chú
+jinqie	𬬺	1	chú,jǔ
 jinqieniao	𫛾	1	chú
 jinqimi	鎎	1	kài
 jinqin	𨦄	1	qiān
@@ -43830,7 +43830,7 @@ jinshirigong	𨩑	1
 jinshirinong	𨩑	1	
 jinshizheheng	鈻	1	sì
 jinshou	帱	1	chóu,dào
-jinshou	幬	1	chóu
+jinshou	幬	1	chóu,dào
 jinshou	鋳	1	zhù
 jinshou	鑄	1	zhù
 jinshou	𢅂	1	
@@ -44852,7 +44852,7 @@ jinzhao	銚	1	yáo,diào
 jinzhao	铫	1	diào,yáo
 jinzhao	𢁬	1	zhǎo
 jinzhao	𢁾	1	chāo
-jinzhao	𬬲	1	zhāo
+jinzhao	𬬲	1	zhāo,pì
 jinzhao	𬬿	1	zhāo
 jinzhao	𳇉	1	
 jinzhaochong	𨪊	1	sāo
@@ -45118,7 +45118,7 @@ jionggouli	𠃾	1
 jionggu	𪞎	1	
 jionggua	𠕕	1	jiōng
 jiongheng	囗	1	wéi,guó
-jiongheng	黽	1	miǎn
+jiongheng	黽	1	miǎn,mǐn
 jiongheng	𠔼	1	mǎo
 jionghengshushu	冊	1	cè
 jionghuo	燛	1	jiǒng
@@ -45373,7 +45373,7 @@ jitian	𬹲	1
 jitianhengchuan	𠙗	1	
 jitianhengshun	𠙗	1	
 jitousimu	𥶺	1	dié
-jitu	堲	1	cí
+jitu	堲	1	cí,jí
 jitu	塈	1	jì
 jitu	墍	1	xì
 jitu	墼	1	jī
@@ -45816,7 +45816,7 @@ juanjian	𧢧	1	wéi
 juanjian	𲁏	1	
 juanjiang	𭛌	1	
 juanjiao	觠	1	quán
-juanjin	帣	1	juǎn
+juanjin	帣	1	juǎn,juàn
 juanjiu	𣇃	1	
 juanjiu	𮍨	1	
 juankun	𧕣	1	
@@ -47464,7 +47464,7 @@ kechi	𭇷	1
 kechong	𠽚	1	
 kechong	𧎗	1	kē
 kechong	𫋉	1	
-kecun	尅	1	kè
+kecun	尅	1	kè,kēi
 keda	𡘀	1	
 keda	𱘯	1	
 kedao	剋	1	kè,kēi
@@ -47668,7 +47668,7 @@ koua	𲖸	1
 kouai	㗒	1	ài
 kouai	啀	1	ái
 kouai	嗳	1	āi,ǎi
-kouai	噯	1	āi
+kouai	噯	1	āi,ǎi
 kouai	𠵨	1	de
 kouai	𠺡	1	
 kouai	𠿴	1	
@@ -47789,7 +47789,7 @@ koubeng	𲖝	1
 koubi	㖢	1	qí
 koubi	㘠	1	bì
 koubi	吡	1	bǐ
-koubi	咇	1	bié
+koubi	咇	1	bié,bì
 koubi	哔	1	bì
 koubi	嗶	1	bì
 koubi	噴	1	pēn
@@ -47905,7 +47905,7 @@ koucan	𡄄	1
 koucan	𭋁	1	
 koucan	𰇼	1	shān
 koucan	𱔑	1	
-koucang	嗆	1	qiāng
+koucang	嗆	1	qiāng,qiàng
 koucang	𡅆	1	zāng
 koucang	𭍜	1	
 koucang	𲗊	1	
@@ -47937,7 +47937,7 @@ koucha	𠿂	1
 koucha	𫩗	1	
 kouchai	喍	1	chái
 kouchai	囆	1	chài
-kouchan	嘽	1	chǎn
+kouchan	嘽	1	chǎn,tān
 kouchan	嚵	1	chán,chān
 kouchan	𠻿	1	
 kouchan	𡃐	1	
@@ -47989,7 +47989,7 @@ koucheng	𲖔	1
 kouchenge	𡈑	1	
 kouchenkoutu	𰊩	1	
 kouchenyue	𠼉	1	
-kouchi	呎	1	chǐ
+kouchi	呎	1	chǐ,yīng
 kouchi	啮	1	niè
 kouchi	噛	1	niè
 kouchi	嚙	1	niè
@@ -48090,7 +48090,7 @@ koucui	𠽶	1	chuài,cuì
 koucui	𡀰	1	
 koucui	𲖞	1	
 koucui	𲗔	1	
-koucun	吋	1	cùn
+koucun	吋	1	cùn,yīng
 koucun	団	1	tuán
 koucun	𠱜	1	zùn
 koucun	𠴘	1	
@@ -48128,7 +48128,7 @@ koudaiyangmin	𡂍	1
 koudakou	𠱑	1	dōu
 koudan	呾	1	dá,yà
 koudan	啴	1	chǎn
-koudan	嘽	1	chǎn
+koudan	嘽	1	chǎn,tān
 koudan	𠵆	1	
 koudan	𠹆	1	dān
 koudan	𠻪	1	tán
@@ -48156,7 +48156,7 @@ koudao	𠴼	1	dào
 koudao	𠿱	1	
 koudao	𫬦	1	
 koudaobai	𭈋	1	
-koudaodao	別	1	bié
+koudaodao	別	1	bié,biè
 koudaodianmu	𠳸	1	
 koudaoershuhengbaershu	𪡽	1	
 koudaonamu	𠳸	1	
@@ -48295,7 +48295,7 @@ koue	𠿸	1
 koue	𡅅	1	é,éi
 koue	𡈀	1	qūn
 koue	𡈆	1	ōu
-koue	𫫇	1	ě
+koue	𫫇	1	ě,è
 koue	𫫖	1	
 koue	𰈬	1	
 koue	𱒉	1	
@@ -48466,7 +48466,7 @@ kougeda	嘆	1	tàn
 kougegongba	𠸴	1	xiè
 kougehenghuo	𠷧	1	
 kougei	𱔲	1	
-kougen	咺	1	xuǎn
+kougen	咺	1	xuǎn,xuān
 kougen	哏	1	gén
 kougeng	𠶺	1	
 kougeng	𠼰	1	
@@ -48931,7 +48931,7 @@ koujijiri	噆	1	zǎn
 koujijiu	𠾌	1	pò
 koujijiyue	噆	1	zǎn
 koujin	唚	1	qìn
-koujin	唫	1	jìn
+koujin	唫	1	jìn,yín
 koujin	嚍	1	jìn
 koujin	𠶌	1	
 koujin	𠸐	1	
@@ -49187,7 +49187,7 @@ koulang	𠺘	1	làng
 koulang	𠻴	1	lǎng
 koulao	咾	1	lǎo
 koulao	哰	1	láo
-koulao	嘮	1	láo
+koulao	嘮	1	láo,lào
 koulao	𠺜	1	
 koulao	𫬓	1	
 koulao	𭊽	1	
@@ -49259,13 +49259,13 @@ koulian	𱓽	1
 koulian	𱕗	1	
 koulian	𲘩	1	
 kouliang	哴	1	liàng,láng
-kouliang	唡	1	liǎng
-kouliang	啢	1	liǎng
+kouliang	唡	1	liǎng,yīng
+kouliang	啢	1	liǎng,yīng
 kouliang	喨	1	liàng
 kouliang	𡃁	1	
 kouliang	𲘫	1	
 kouliao	㗦	1	láo
-kouliao	嘮	1	láo
+kouliao	嘮	1	láo,lào
 kouliao	嘹	1	liáo
 kouliao	嚛	1	hù
 kouliao	𠺫	1	
@@ -49374,7 +49374,7 @@ koulun	𡃝	1	lùn
 koulun	𪠵	1	lún
 koulun	𭋳	1	
 kouluo	嚛	1	hù
-kouluo	囉	1	luō
+kouluo	囉	1	luō,luó
 kouluo	囖	1	luō
 kouluo	𠸪	1	
 kouluo	𠺴	1	
@@ -49403,7 +49403,7 @@ koulv	𲕲	1
 koulv	𲘊	1	
 koulv	𲘭	1	
 koulve	哷	1	liè,lǜ
-kouma	嗎	1	ma
+kouma	嗎	1	ma,má
 kouma	𠲚	1	yì
 kouma	𡂼	1	
 kouma	𡄃	1	
@@ -49411,7 +49411,7 @@ kouma	𡈊	1	zhí
 kouma	𱓚	1	
 kouma	𲗇	1	
 kouma	𲗠	1	
-koumai	唛	1	mà
+koumai	唛	1	mà,mài
 koumai	嘜	1	mà
 koumai	嘪	1	mǎi
 koumai	𠹺	1	
@@ -49522,7 +49522,7 @@ koumiyanmi	圝	1	luán
 koumiyansi	圝	1	luán
 koumiyuan	𭋀	1	
 koumo	嗼	1	mò
-koumo	嘸	1	fǔ
+koumo	嘸	1	fǔ,ḿ
 koumo	嚜	1	me
 koumo	嚤	1	mó
 koumo	嚰	1	mó
@@ -49534,10 +49534,10 @@ koumo	𭋫	1
 koumo	𱕬	1	
 koumou	㖼	1	duǒ
 koumou	哞	1	mōu
-koumou	𠺖	1	mǔ
+koumou	𠺖	1	mǔ,yīng
 koumu	㕲	1	huá,yíng
 koumu	呣	1	ḿ,m̀
-koumu	𠺖	1	mǔ
+koumu	𠺖	1	mǔ,yīng
 koumu	𡇌	1	
 koumu	𫪰	1	
 koumu	𭈈	1	mǔ
@@ -49710,7 +49710,7 @@ koupiao	𲘒	1
 koupiekou	呂	1	lǚ
 koupiewu	𠴯	1	shè
 koupiexi	𠰗	1	
-koupiezhedao	別	1	bié
+koupiezhedao	別	1	bié,biè
 koupin	嚬	1	pín
 koupin	𫫺	1	
 koupin	𫫾	1	pín
@@ -50020,7 +50020,7 @@ koushai	嗮	1	sài
 koushai	𠺽	1	
 koushai	𫬧	1	
 koushai	𲖢	1	
-koushan	嘽	1	chǎn
+koushan	嘽	1	chǎn,tān
 koushan	𠮿	1	sa
 koushan	𠸞	1	
 koushan	𠾺	1	
@@ -50194,7 +50194,7 @@ koushou	𡈣	1	xuān
 koushou	𱒦	1	
 koushu	吺	1	dōu,rú
 koushu	喩	1	yù
-koushu	嗻	1	zhē
+koushu	嗻	1	zhē,zhè
 koushu	噣	1	zhòu,zhuó
 koushu	囑	1	zhǔ
 koushu	圕	1	tú
@@ -50321,7 +50321,7 @@ kousuan	𭍫	1
 kousuan	𭍵	1	
 kousuan	𱕋	1	
 kousui	哕	1	huì,yuě
-kousui	噦	1	yuě
+kousui	噦	1	yuě,huì
 kousui	𠷣	1	
 kousui	𠸌	1	
 kousui	𠾕	1	
@@ -50335,7 +50335,7 @@ kousuixin	𭜪	1
 kousun	𠹀	1	xùn
 kousuo	唢	1	suǒ
 kousuo	嗩	1	suǒ
-kousuo	噦	1	yuě
+kousuo	噦	1	yuě,huì
 kousuo	嚱	1	xì
 kousuo	囐	1	zá,niè
 kousuo	𰇵	1	
@@ -50352,7 +50352,7 @@ koutai	呔	1	dāi
 koutai	咍	1	hāi
 koutai	囼	1	tāi
 koutan	嗿	1	tǎn
-koutan	嘽	1	chǎn
+koutan	嘽	1	chǎn,tān
 koutan	嘾	1	dàn,tán
 koutan	𠽄	1	
 koutan	𡁚	1	
@@ -50558,18 +50558,18 @@ kouwo	𠼈	1
 kouwo	𡁮	1	wō
 kouwo	𪢅	1	
 kouwo	𭈌	1	
-kouwu	㕶	1	ň
+kouwu	㕶	1	ň,ňg
 kouwu	㖴	1	
 kouwu	吘	1	ǒu
 kouwu	呒	1	wǔ,ḿ
 kouwu	嗚	1	wū
-kouwu	嘸	1	fǔ
+kouwu	嘸	1	fǔ,ḿ
 kouwu	噁	1	ě
 kouwu	囫	1	hú
 kouwu	圄	1	yǔ
 kouwu	龱	1	
 kouwu	𠥹	1	
-kouwu	𠮾	1	ǹ
+kouwu	𠮾	1	ǹ,ǹg
 kouwu	𠱐	1	yǔ
 kouwu	𡀴	1	
 kouwu	𡆶	1	
@@ -50745,7 +50745,7 @@ kouxin	𱓞	1
 kouxinbaojiudian	𱓓	1	
 kouxinbaojiuna	𱓓	1	
 kouxing	哘	1	xíng
-kouxing	啈	1	hēng
+kouxing	啈	1	hēng,hèng
 kouxing	圉	1	yǔ
 kouxing	𠲮	1	jìng
 kouxing	𠵃	1	
@@ -50813,7 +50813,7 @@ kouxun	𭌧	1
 kouxun	𲗖	1	
 kouxunheng	𠳉	1	
 kouxuxiao	𠷼	1	
-kouya	吖	1	yā
+kouya	吖	1	yā,ā
 kouya	唖	1	yǎ
 kouya	啀	1	ái
 kouya	啞	1	yǎ
@@ -51165,7 +51165,7 @@ kouza	𭈵	1
 kouzai	𠱻	1	
 kouzai	𠱽	1	
 kouzai	𠹼	1	
-kouzan	喒	1	zá
+kouzan	喒	1	zá,zán
 kouzan	囋	1	zá,zàn
 kouzan	𠽈	1	
 kouzan	𡂐	1	
@@ -51209,7 +51209,7 @@ kouzhai	𭍐	1
 kouzhai	𭍬	1	
 kouzhai	𲖽	1	
 kouzhan	呫	1	tiè,chè
-kouzhan	嘽	1	chǎn
+kouzhan	嘽	1	chǎn,tān
 kouzhan	噡	1	zhān,dān
 kouzhan	嚸	1	diǎn
 kouzhan	𠹖	1	chǎn
@@ -51401,7 +51401,7 @@ kouzi	㗪	1
 kouzi	吇	1	zǐ,jí
 kouzi	嗞	1	zī
 kouzi	嚌	1	jì
-kouzi	囝	1	jiǎn
+kouzi	囝	1	jiǎn,nān
 kouzi	𠯂	1	cí
 kouzi	𠽷	1	zā
 kouzi	𡇝	1	sòng
@@ -52289,7 +52289,7 @@ leimao	氀	1	lǘ,shū
 leimao	𣰭	1	
 leimei	𱁤	1	
 leimi	絫	1	lěi
-leimi	纍	1	léi
+leimi	纍	1	léi,lěi
 leimi	鿨	1	
 leimi	𦔭	1	mò
 leimie	𰟝	1	
@@ -52386,7 +52386,7 @@ leishi	𦔂	1	shí
 leishizheheng	耜	1	sì
 leishu	𰚆	1	
 leisi	絫	1	lěi
-leisi	纍	1	léi
+leisi	纍	1	léi,lěi
 leisi	𢁐	1	
 leisi	𦓨	1	
 leisiqu	䎬	1	bà
@@ -54204,7 +54204,7 @@ luguo	𪋊	1	guǒ
 luguo	𳐭	1	
 luguo	𳑁	1	
 luguobari	𡐑	1	
-luguohe	麕	1	jūn
+luguohe	麕	1	jūn,qún
 luguojin	𪊼	1	
 luhe	麇	1	jūn,qún
 luhe	𳐪	1	
@@ -54271,7 +54271,7 @@ lukang	䴚	1	gǎng
 lukang	𮭰	1	gǎng
 lukou	𮭲	1	
 lukoubari	𡐑	1	
-lukouhe	麕	1	jūn
+lukouhe	麕	1	jūn,qún
 lukoujin	𪊼	1	
 lukoukoushi	𪉫	1	
 lukoushi	𪉞	1	
@@ -54488,7 +54488,7 @@ luqu	𱪄	1
 luquan	𪊏	1	
 luquan	𲯐	1	
 luquan	𳐗	1	
-luqun	麕	1	jūn
+luqun	麕	1	jūn,qún
 luqun	𪊴	1	
 luqun	𮭬	1	
 lurenchi	𲎤	1	
@@ -54548,7 +54548,7 @@ luwei	䴧	1	wēi
 luwei	𪉭	1	wāi
 luwei	𪊃	1	
 luweibari	𡐑	1	
-luweihe	麕	1	jūn
+luweihe	麕	1	jūn,qún
 luweijin	𪊼	1	
 luwen	夌	1	líng
 luwen	𪉸	1	wēn
@@ -55810,7 +55810,7 @@ manxin	𢟮	1
 manxin	𢡛	1	
 manxin	𢤘	1	méng
 manya	𱾷	1	
-manye	顢	1	mán
+manye	顢	1	mán,mān
 manyi	鄤	1	màn,wàn
 manzu	𨆻	1	
 maoai	𰚟	1	
@@ -57268,7 +57268,7 @@ menhe	闔	1	hé
 menhe	𨵅	1	
 menhe	𨵧	1	kuā
 menhe	𨵵	1	
-menhe	𬮤	1	gé
+menhe	𬮤	1	gé,hé
 menhe	𰿴	1	yà
 menhei	𨶯	1	é
 menhei	𮤸	1	é
@@ -57466,7 +57466,7 @@ mennv	𰿧	1
 mennvqian	𨵇	1	
 menpan	𨴖	1	
 menpeng	𰿱	1	
-menpi	闢	1	pì
+menpi	闢	1	pì,pī
 menpi	𨴈	1	
 menpi	𰿾	1	pì
 menpian	𨳭	1	
@@ -57526,7 +57526,7 @@ menrenni	𨷬	1	mǐ
 menrenrenren	閦	1	chù
 menrenrenren	𨴟	1	
 menrenrenrenren	𫔧	1	
-menri	間	1	jiān
+menri	間	1	jiān,jiàn
 menriwen	閺	1	wén
 menriyu	闒	1	tà
 menriyu	阘	1	dá,tà
@@ -57706,7 +57706,7 @@ menxiaxiaxia	𨵰	1	bì
 menxidao	𰿞	1	
 menxidao	𲈩	1	
 menxie	𬮊	1	
-menxin	悶	1	mèn
+menxin	悶	1	mèn,mēn
 menxin	懣	1	mèn
 menxin	𢛩	1	
 menxin	𢠶	1	
@@ -57791,7 +57791,7 @@ menyuan	䦎	1	guǎn,kàng
 menyuan	闧	1	tā
 menyuan	𨶎	1	
 menyuan	𰿨	1	guǎn
-menyue	閒	1	xián
+menyue	閒	1	xián,jiān
 menyue	𨷲	1	yuè
 menyue	𨸎	1	yuè
 menyue	𫔮	1	
@@ -57913,7 +57913,7 @@ mianhu	𱿑	1
 mianhuo	𤎂	1	
 mianhuo	𮳪	1	
 mianji	𩈑	1	nǎn
-mianjian	䩄	1	miǎn
+mianjian	䩄	1	miǎn,tiǎn
 mianjian	靦	1	tiǎn,miǎn
 mianjiao	䩌	1	qiáo
 mianjie	𩈋	1	ài
@@ -58197,7 +58197,7 @@ micai	𦅞	1
 micai	𬗹	1	
 micai	𮉁	1	
 mican	糁	1	sǎn,shēn
-mican	糝	1	sǎn
+mican	糝	1	sǎn,shēn
 mican	糣	1	sǎn
 mican	綫	1	xiàn
 mican	縿	1	shān,xiān
@@ -58568,7 +58568,7 @@ mifen	𬗼	1
 mifeng	䋽	1	běng
 mifeng	䌡	1	tǐ
 mifeng	綘	1	féng
-mifeng	縫	1	fèng
+mifeng	縫	1	fèng,féng
 mifeng	𥹾	1	
 mifeng	𥽈	1	fēng,lǐ
 mifeng	𥾫	1	
@@ -58747,7 +58747,7 @@ mihanwangturuchong	𠖧	1
 mihao	𰫟	1	
 mihe	䋵	1	yì,yè
 mihe	粭	1	hé
-mihe	給	1	gěi
+mihe	給	1	gěi,jǐ
 mihe	緺	1	guā
 mihe	𢇋	1	
 mihe	𥻉	1	hé
@@ -58853,7 +58853,7 @@ miji	冟	1	shì
 miji	籶	1	shēn
 miji	紀	1	jì
 miji	級	1	jí
-miji	結	1	jié
+miji	結	1	jié,jiē
 miji	縩	1	cài
 miji	繼	1	jì
 miji	纃	1	qí
@@ -59159,7 +59159,7 @@ mili	糼	1	gōng
 mili	綟	1	lì,liè
 mili	緾	1	chán
 mili	縭	1	lí
-mili	纚	1	lí
+mili	纚	1	lí,xǐ
 mili	𠖃	1	
 mili	𥻿	1	lí
 mili	𥼕	1	
@@ -59939,7 +59939,7 @@ mishe	絬	1	xiè
 mishe	𦅁	1	
 mishe	𲸛	1	
 mishen	糂	1	sǎn
-mishen	糝	1	sǎn
+mishen	糝	1	sǎn,shēn
 mishen	紳	1	shēn
 mishen	縿	1	shān,xiān
 mishen	𦂼	1	
@@ -60045,7 +60045,7 @@ mishushuheng	罒	1	wǎng
 mishuyue	𥺵	1	jī
 misi	絲	1	sī
 misi	緦	1	sī
-misi	纚	1	lí
+misi	纚	1	lí,xǐ
 misi	𠖓	1	sī
 misi	𥹊	1	sì
 misi	𥹩	1	zhì
@@ -60943,7 +60943,7 @@ mizhui	䊒	1
 mizhui	䊚	1	
 mizhui	維	1	wéi
 mizhui	縋	1	zhuì
-mizhui	隺	1	hú
+mizhui	隺	1	hú,hè
 mizhui	𦅭	1	
 mizhui	𩁖	1	
 mizhuiniao	鶴	1	hè
@@ -61325,13 +61325,13 @@ mubie	𥇂	1
 mubimin	榓	1	mì
 mubin	㯽	1	bīn
 mubin	㰋	1	pín
-mubin	檳	1	bīn
+mubin	檳	1	bīn,bīng
 mubin	矉	1	pín
 mubin	𪾸	1	pín
 mubin	𭿬	1	
 mubing	栟	1	bēn
 mubing	栤	1	bìng
-mubing	梹	1	bīn
+mubing	梹	1	bīn,bīng
 mubing	棅	1	bǐng
 mubing	椪	1	pèng
 mubing	檁	1	lǐn
@@ -61428,10 +61428,10 @@ mucaoxian	𬂦	1
 mucaozhewuer	𭿆	1	
 mucaozou	𭪒	1	
 muce	㮨	1	jì
-muce	柵	1	shān
+muce	柵	1	shān,zhà
 muce	𣛂	1	
 muce	𭬂	1	
-mucen	梣	1	cén
+mucen	梣	1	cén,chén
 mucen	𣟹	1	sēn
 mucen	𥆱	1	
 muceng	䁬	1	céng
@@ -61626,7 +61626,7 @@ mucizhui	𣜁	1	cī
 mucong	枞	1	cōng,zōng
 mucong	棇	1	cōng,sōng
 mucong	楤	1	sǒng,cōng
-mucong	樅	1	cōng
+mucong	樅	1	cōng,zōng
 mucong	樬	1	cōng
 mucong	檧	1	sōng
 mucong	欉	1	cóng
@@ -61678,7 +61678,7 @@ muda	𰗱	1
 muda	𰥍	1	
 muda	𰥗	1	
 muda	𱤍	1	
-mudabarixiao	橑	1	lǎo
+mudabarixiao	橑	1	lǎo,liáo
 mudabarixiao	瞭	1	liǎo,liào
 mudache	䡞	1	jú
 mudachong	𧌪	1	
@@ -61751,7 +61751,7 @@ mudi	䁤	1	chè,zhé
 mudi	柢	1	dǐ
 mudi	梑	1	dí
 mudi	楴	1	tì,dǐ
-mudi	樀	1	dí
+mudi	樀	1	dí,dī
 mudi	櫂	1	zhào
 mudi	眡	1	shì
 mudi	睇	1	dì
@@ -62352,7 +62352,7 @@ muhui	椲	1	wěi,huī
 muhui	槥	1	huì
 muhui	橞	1	huì
 muhui	檓	1	huǐ
-muhui	檜	1	guì
+muhui	檜	1	guì,huì
 muhui	櫘	1	huì
 muhui	瞺	1	huì
 muhui	𣑩	1	
@@ -62493,7 +62493,7 @@ mujian	𥈵	1
 mujian	𥉸	1	kēng
 mujian	𥌈	1	jiān
 mujian	𪾢	1	xiàn
-mujian	𬑗	1	xián
+mujian	𬑗	1	xián,jiàn
 mujian	𮲶	1	jiàn
 mujian	𰥣	1	kēng
 mujian	𱣤	1	
@@ -62764,14 +62764,14 @@ mukoushi	𭪵	1
 mukouyang	𬃃	1	
 mukouyue	梋	1	xuān,juān
 mukouyue	睊	1	juàn
-muku	楛	1	hù
+muku	楛	1	hù,kǔ
 muku	𣘍	1	
 mukua	桍	1	kū
 mukua	樺	1	huà
 mukua	瞱	1	yè
 mukua	𥅚	1	
 mukua	𲧋	1	
-mukuai	檜	1	guì
+mukuai	檜	1	guì,huì
 mukuai	瞺	1	huì
 mukuan	㯘	1	kuǎn
 mukuan	𣟂	1	
@@ -62798,7 +62798,7 @@ mukun	螙	1	dù
 mukun	𣙍	1	
 mukun	𥇊	1	
 mukun	𰙀	1	
-mukuo	檜	1	guì
+mukuo	檜	1	guì,huì
 mukuo	瞺	1	huì
 mukuo	𱳒	1	
 mula	楋	1	là
@@ -62854,7 +62854,7 @@ mule	䀥	1	shuò
 mule	䁻	1	shuò,lì
 mule	栎	1	lì,yuè
 mule	檪	1	lì
-mule	櫟	1	lì
+mule	櫟	1	lì,yuè
 mule	𣎸	1	liǎo
 mule	𭾙	1	
 mulei	㰁	1	luǒ
@@ -62960,10 +62960,10 @@ muliang	𪳄	1
 muliang	𭿏	1	
 muliang	𭿝	1	
 muliao	䁻	1	shuò,lì
-muliao	橑	1	lǎo
+muliao	橑	1	lǎo,liáo
 muliao	橯	1	lào
 muliao	檪	1	lì
-muliao	櫟	1	lì
+muliao	櫟	1	lì,yuè
 muliao	瞭	1	liǎo,liào
 muliao	𣘪	1	láo
 muliao	𣟆	1	liáo
@@ -63079,7 +63079,7 @@ mulun	𰗖	1	lún
 muluo	䁻	1	shuò,lì
 muluo	椤	1	luó
 muluo	檪	1	lì
-muluo	櫟	1	lì
+muluo	櫟	1	lì,yuè
 muluo	欏	1	luó
 muluo	𣛗	1	luò
 muluo	𥋷	1	
@@ -63193,7 +63193,7 @@ mumen	𭩛	1	mēn
 mumen	𭪓	1	
 mumeng	䁅	1	měng,mèng
 mumeng	橗	1	méng
-mumeng	矇	1	méng
+mumeng	矇	1	méng,mēng
 mumeng	矒	1	méng
 mumeng	𣓶	1	
 mumeng	𣞑	1	méng
@@ -63950,7 +63950,7 @@ musheng	𥊱	1
 musheng	𪾱	1	
 musheng	𲧚	1	
 mushenri	𥌳	1	
-mushenxiao	橑	1	lǎo
+mushenxiao	橑	1	lǎo,liáo
 mushenxiao	瞭	1	liǎo,liào
 mushi	㭬	1	zhuó
 mushi	㮛	1	chí,yí
@@ -63967,7 +63967,7 @@ mushi	榁	1	shǐ
 mushi	榝	1	shā,xiè
 mushi	榯	1	shí
 mushi	槸	1	yì
-mushi	樀	1	dí
+mushi	樀	1	dí,dī
 mushi	眂	1	shì
 mushi	眎	1	shì
 mushi	眣	1	dié,chōu
@@ -64006,7 +64006,7 @@ mushikanshi	𥇵	1
 mushikou	桰	1	kuò
 mushili	隸	1	lì
 mushimizi	桲	1	po
-mushimu	楪	1	yè
+mushimu	楪	1	yè,dié
 mushimu	𰗾	1	
 mushina	柢	1	dǐ
 mushina	樧	1	shā
@@ -64268,8 +64268,8 @@ mutongyitong	𣐶	1
 mutongyou	𥄞	1	
 mutongzhejiongkou	楇	1	huò,guō
 mutongzhetongkou	楇	1	huò,guō
-mutoubajionggu	樀	1	dí
-mutoubatonggu	樀	1	dí
+mutoubajionggu	樀	1	dí,dī
+mutoubatonggu	樀	1	dí,dī
 mutoudan	𪲌	1	
 mutoudi	𣟐	1	tiáo
 mutouhuihe	檁	1	lǐn
@@ -64823,7 +64823,7 @@ muyao	楆	1	yāo
 muyao	槄	1	tāo
 muyao	橈	1	ráo
 muyao	檪	1	lì
-muyao	櫟	1	lì
+muyao	櫟	1	lì,yuè
 muyao	櫾	1	yóu,yòu
 muyao	𣏠	1	xiáo
 muyao	𣓤	1	
@@ -64857,7 +64857,7 @@ muye	䁋	1	xiè,zhé
 muye	杝	1	lí
 muye	栧	1	yì
 muye	棭	1	yì
-muye	楪	1	yè
+muye	楪	1	yè,dié
 muye	檏	1	pǔ
 muye	毑	1	jiě
 muye	瞸	1	yè
@@ -64934,8 +64934,8 @@ muyi	𱣗	1
 muyi	𱣝	1	
 muyi	𱤄	1	
 muyi	𱲮	1	
-muyibajionggu	樀	1	dí
-muyibatonggu	樀	1	dí
+muyibajionggu	樀	1	dí,dī
+muyibatonggu	樀	1	dí,dī
 muyibei	𣖿	1	zhí
 muyidan	𪲌	1	
 muyidao	𣖊	1	liè,lì
@@ -65108,7 +65108,7 @@ muyue	䁻	1	shuò,lì
 muyue	枂	1	wò,yuè
 muyue	樾	1	yuè
 muyue	檪	1	lì
-muyue	櫟	1	lì
+muyue	櫟	1	lì,yuè
 muyue	眀	1	míng
 muyue	眓	1	huò
 muyue	𣐋	1	yuè
@@ -65196,7 +65196,7 @@ muzha	𣜊	1
 muzha	𥅁	1	zuò
 muzhai	㭦	1	
 muzhai	䁤	1	chè,zhé
-muzhai	樀	1	dí
+muzhai	樀	1	dí,dī
 muzhai	樍	1	zé
 muzhai	櫅	1	jī,jì
 muzhai	瞔	1	zé
@@ -65443,7 +65443,7 @@ muzitao	𣘶	1
 muzong	㯶	1	zōng
 muzong	䁓	1	zōng,zǒng
 muzong	椶	1	zōng
-muzong	樅	1	cōng
+muzong	樅	1	cōng,zōng
 muzong	瞛	1	cōng
 muzong	𣞡	1	
 muzong	𥊙	1	
@@ -65873,7 +65873,7 @@ necha	㾴	1	zhā
 necha	瘥	1	chài
 nechai	㾹	1	chái
 nechai	𤼚	1	lì
-nechan	癉	1	dān
+nechan	癉	1	dān,dàn
 nechang	痮	1	zhàng
 nechang	𤹰	1	
 nechang	𤺲	1	
@@ -65934,7 +65934,7 @@ nedai	𪽨	1
 nedaimao	𤷋	1	
 nedan	疸	1	dǎn
 nedan	瘅	1	dān,dàn
-nedan	癉	1	dān
+nedan	癉	1	dān,dàn
 nedan	𤺺	1	dǎn,dàn
 nedan	𤻾	1	
 nedan	𰣤	1	
@@ -66322,7 +66322,7 @@ nelie	𤹐	1
 nelie	𬏩	1	
 nelikou	㾦	1	pèi,pēi
 nelin	痲	1	má
-nelin	痳	1	lín
+nelin	痳	1	lín,má
 nelin	癛	1	lǐn,bǐng
 nelin	𠘡	1	
 nelin	𤶾	1	
@@ -66411,7 +66411,7 @@ nemu	𤴷	1
 nemu	𤵝	1	mǔ
 nemulun	𤻋	1	
 nemumu	痲	1	má
-nemumu	痳	1	lín
+nemumu	痳	1	lín,má
 nemumuzhui	癯	1	qú
 nena	𤶸	1	
 nena	𤸻	1	nà
@@ -66499,7 +66499,7 @@ nenu	𰣪	1
 nenu	𲱩	1	
 nenuo	癱	1	tān
 nenuo	𤸂	1	
-nenve	瘧	1	nüè
+nenve	瘧	1	nüè,yào
 nenxin	𫻓	1	
 neou	𤹪	1	yǔ
 nepai	痲	1	má
@@ -66527,7 +66527,7 @@ nepoubingwen	𤼄	1
 nepoujin	𬏹	1	
 nepu	𲱰	1	
 neqi	㾨	1	yī,qǐ
-neqi	瘈	1	chì
+neqi	瘈	1	chì,zhì
 neqi	癠	1	jì
 neqi	𤴸	1	
 neqi	𤷍	1	qí
@@ -66614,7 +66614,7 @@ nese	𭼷	1
 nesen	𤺢	1	
 nesha	痧	1	shā
 neshan	疝	1	shàn
-neshan	癉	1	dān
+neshan	癉	1	dān,dàn
 neshan	𤸹	1	yǎn
 neshan	𤺪	1	shàn
 neshan	𭼮	1	
@@ -66703,7 +66703,7 @@ neta	𤹀	1
 netai	㾂	1	hāi
 netai	𤵉	1	
 netai	𤻡	1	
-netan	癉	1	dān
+netan	癉	1	dān,dàn
 netan	𤻾	1	
 netao	𤵟	1	táo
 nete	𤼕	1	
@@ -66977,7 +66977,7 @@ nezhai	𤵾	1	chā
 nezhai	𤹞	1	chè
 nezhai	𤹠	1	
 nezhan	痁	1	shān
-nezhan	癉	1	dān
+nezhan	癉	1	dān,dàn
 nezhan	癚	1	dàn
 nezhang	㽴	1	zhàng
 nezhang	痮	1	zhàng
@@ -67080,7 +67080,7 @@ nianhuojian	𧡙	1	lián
 nianhuoxian	𧡙	1	lián
 nianjian	𮗐	1	
 nianjinlong	𫜱	1	
-nianjiongshururuye	顢	1	mán
+nianjiongshururuye	顢	1	mán,mān
 nianju	𨏲	1	
 niankoushizhi	𫖆	1	
 nianma	𪫶	1	
@@ -67105,7 +67105,7 @@ nianqian	𣣈	1	diàn
 nianshu	丗	1	shì
 niansui	𢆫	1	
 niantianliu	𭁔	1	
-niantongshururuye	顢	1	mán
+niantongshururuye	顢	1	mán,mān
 nianwa	𤁦	1	xiàn
 nianwa	𤭥	1	
 nianwen	敜	1	niè
@@ -69392,7 +69392,7 @@ nvtuo	奼	1	chà
 nvtuo	娞	1	něi,suī
 nvtuo	𡣛	1	
 nvtututu	𡤹	1	
-nvtututuwu	嬈	1	ráo
+nvtututuwu	嬈	1	ráo,rǎo
 nvwai	媧	1	wā
 nvwai	𡢓	1	
 nvwan	㛡	1	
@@ -69480,7 +69480,7 @@ nvxian	娊	1	xiàn,dān
 nvxian	娹	1	xián
 nvxian	嫺	1	xián
 nvxian	嫻	1	xián
-nvxian	孅	1	qiān
+nvxian	孅	1	qiān,xiān
 nvxian	𡣳	1	
 nvxian	𪦬	1	
 nvxian	𭒃	1	
@@ -69589,13 +69589,13 @@ nvyangwo	嬟	1	yì,yǐ
 nvyao	㜰	1	yuè
 nvyao	婹	1	yǎo
 nvyao	嫍	1	tāo
-nvyao	嬈	1	ráo
+nvyao	嬈	1	ráo,rǎo
 nvyao	𡟅	1	
 nvyao	𡤤	1	
 nvyao	𫱀	1	
 nvyao	𮱋	1	
 nvyaohuo	𡞊	1	
-nvyaowu	嬈	1	ráo
+nvyaowu	嬈	1	ráo,rǎo
 nvye	㛲	1	fà
 nvye	媟	1	xiè
 nvye	𡜄	1	
@@ -69609,7 +69609,7 @@ nvyi	㛕	1	yì,è
 nvyi	㛫	1	xī
 nvyi	㜋	1	yì
 nvyi	姒	1	sì
-nvyi	娭	1	āi
+nvyi	娭	1	āi,xī
 nvyi	嫕	1	yì
 nvyi	嬄	1	yī
 nvyi	嬑	1	yì
@@ -69704,7 +69704,7 @@ nvyu	𱙓	1
 nvyu	𱙚	1	
 nvyuan	㛣	1	yún
 nvyuan	㜏	1	yún
-nvyuan	妧	1	wàn
+nvyuan	妧	1	wàn,yuán
 nvyuan	姢	1	juān
 nvyuan	媴	1	yuán
 nvyuan	嫄	1	yuán
@@ -69807,7 +69807,7 @@ nvzhiwu	𡡸	1
 nvzhiyue	𡠔	1	
 nvzhong	妕	1	zhòng
 nvzhong	媑	1	zhòng
-nvzhou	婤	1	chōu
+nvzhou	婤	1	chōu,zhōu
 nvzhou	婦	1	fù
 nvzhourou	𫲑	1	
 nvzhu	㛸	1	shù
@@ -72590,7 +72590,7 @@ qiqi	𪗍	1	qí
 qiqi	𬼠	1	
 qiqi	𭋷	1	
 qiqian	㰟	1	jì,qì
-qiqian	欹	1	yī
+qiqian	欹	1	yī,qī
 qiqian	𣢆	1	
 qiqian	𣣱	1	
 qiqian	𣤢	1	xì
@@ -73490,7 +73490,7 @@ quanlv	𤣃	1	lǔ
 quanlv	𪻃	1	
 quanlv	𲯓	1	
 quanlve	𤞙	1	
-quanma	犸	1	mà
+quanma	犸	1	mà,mǎ
 quanma	獁	1	mà,mǎ
 quanma	𩡷	1	fēn,fèi
 quanma	𬍄	1	
@@ -74659,7 +74659,7 @@ renchong	𠑙	1	chòng
 renchong	𫢹	1	chòng
 renchong	𬾓	1	
 renchong	𮓵	1	
-renchongchu	衝	1	chōng
+renchongchu	衝	1	chōng,chòng
 renchongwen	𢔼	1	
 renchou	僽	1	zhòu
 renchou	𠍻	1	
@@ -74825,7 +74825,7 @@ rendu	𲐿	1
 rendu	𲑕	1	
 renduan	偳	1	duān
 renduan	𪝒	1	
-rendui	侻	1	tuì
+rendui	侻	1	tuì,tuō
 rendui	𠈆	1	
 rendui	𠏮	1	duì
 rendui	𫢘	1	duì
@@ -75547,7 +75547,7 @@ renla	𭑒	1
 renlai	俫	1	lái
 renlai	倈	1	lái
 renlai	徕	1	lái
-renlai	徠	1	lái
+renlai	徠	1	lái,lài
 renlai	𫣻	1	
 renlai	𱏔	1	
 renlan	僆	1	liàn,lián
@@ -75566,7 +75566,7 @@ renlei	㑍	1	lèi
 renlei	㒍	1	léi
 renlei	㒦	1	lěi,lèi
 renlei	傫	1	lěi
-renlei	僂	1	lóu
+renlei	僂	1	lóu,lǚ
 renlei	儽	1	léi
 renlei	𠐞	1	
 renlei	𠐳	1	
@@ -75661,7 +75661,7 @@ renlong	𫢒	1	lǒng
 renlong	𫣏	1	
 renlong	𲑑	1	
 renlou	偻	1	lóu,lǚ
-renlou	僂	1	lóu
+renlou	僂	1	lóu,lǚ
 renlu	僇	1	lù
 renlu	僨	1	fèn
 renlu	𠐔	1	
@@ -75680,7 +75680,7 @@ renluo	儸	1	luó
 renluo	𭀅	1	
 renlv	㒦	1	lěi,lèi
 renlv	侶	1	lǚ
-renlv	僂	1	lóu
+renlv	僂	1	lóu,lǚ
 renlv	儢	1	lǚ
 renlv	𠌭	1	shuài
 renlv	𠎪	1	
@@ -75741,7 +75741,7 @@ renmi	𠏷	1
 renmi	𢖥	1	
 renmi	𥹭	1	
 renmian	㒙	1	mián
-renmian	俛	1	fǔ
+renmian	俛	1	fǔ,miǎn
 renmian	偭	1	miǎn
 renmian	僶	1	mǐn
 renmian	𠐈	1	biān,pián
@@ -76008,7 +76008,7 @@ renqiong	𠐛	1
 renqiong	𢕼	1	
 renqiqian	𲧮	1	
 renqiu	俅	1	qiú
-renqiu	偢	1	chǒu
+renqiu	偢	1	chǒu,qiào
 renqiu	偤	1	yóu
 renqiu	傴	1	yǔ
 renqiu	𠇯	1	qù
@@ -76538,7 +76538,7 @@ rentuo	俀	1	tuǐ
 rentuo	𢓰	1	tuǒ
 rentuo	𲟠	1	
 rentutu	徍	1	wǎng,wā
-rentututuwu	僥	1	jiǎo
+rentututuwu	僥	1	jiǎo,yáo
 rentututuwu	徺	1	jiǎo
 renwa	佤	1	wǎ
 renwai	𠊰	1	guǎ
@@ -76881,7 +76881,7 @@ renyao	㒡	1	yóu
 renyao	仸	1	yǎo,fó
 renyao	倄	1	yáo
 renyao	偠	1	yǎo
-renyao	僥	1	jiǎo
+renyao	僥	1	jiǎo,yáo
 renyao	徺	1	jiǎo
 renyao	𠊐	1	
 renyao	𠋯	1	bì
@@ -76894,7 +76894,7 @@ renyaochu	𲀜	1
 renyaofei	㒎	1	sà
 renyaomao	𬾝	1	
 renyaowenzhi	𰐶	1	
-renyaowu	僥	1	jiǎo
+renyaowu	僥	1	jiǎo,yáo
 renyaowu	徺	1	jiǎo
 renyaozhi	𢔗	1	
 renyaqu	𪝫	1	
@@ -77126,7 +77126,7 @@ renzai	傤	1	zài
 renzai	儎	1	zài
 renzai	𠈚	1	
 renzainei	𠋮	1	
-renzan	偺	1	zá
+renzan	偺	1	zá,zán
 renzan	儧	1	zǎn
 renzan	儹	1	zǎn
 renzan	𢖑	1	cuán
@@ -77259,7 +77259,7 @@ renzhong	𠈹	1
 renzhong	𠊞	1	
 renzhong	𬾀	1	
 renzhong	𮙠	1	
-renzhongchu	衝	1	chōng
+renzhongchu	衝	1	chōng,chòng
 renzhongsui	𪫏	1	
 renzhou	侜	1	zhōu
 renzhou	徟	1	zhōu
@@ -77469,7 +77469,7 @@ rida	𰖔	1
 rida	𱢩	1	
 rida	𲤯	1	
 ridabarixiao	暸	1	liáo
-ridadian	晻	1	àn
+ridadian	晻	1	àn,yǎn
 ridai	曃	1	dài
 ridai	𰖺	1	
 ridai	𲤨	1	
@@ -77590,7 +77590,7 @@ rigang	𲤶	1
 riganzhi	𣊋	1	
 rigao	昦	1	hào
 rigao	晧	1	hào
-rigao	暠	1	gǎo
+rigao	暠	1	gǎo,hào
 rigao	暤	1	hào
 rigao	暭	1	hào
 rigao	曍	1	hào
@@ -78283,7 +78283,7 @@ rixi	㬛	1	xī
 rixi	㬢	1	
 rixi	晞	1	xī
 rixi	暣	1	qì
-rixi	暿	1	xǐ
+rixi	暿	1	xǐ,xī
 rixi	𣈏	1	
 rixi	𭥑	1	
 rixi	𭧎	1	
@@ -78367,7 +78367,7 @@ riya	𪰥	1
 riya	𰖐	1	
 riyan	㫟	1	yán
 riyan	晱	1	shǎn
-riyan	晻	1	àn
+riyan	晻	1	àn,yǎn
 riyan	暥	1	yàn
 riyan	曣	1	yàn
 riyan	曮	1	yǎn
@@ -78657,7 +78657,7 @@ roubi	腗	1	pí
 roubi	腷	1	bì
 roubi	膹	1	fèn
 roubi	𦡛	1	
-roubiao	脿	1	biāo
+roubiao	脿	1	biāo,biǎo
 roubiao	臕	1	biāo
 roubin	膑	1	bìn
 roubin	臏	1	bìn
@@ -78838,7 +78838,7 @@ roulin	膦	1	lìn
 rouling	𮌜	1	
 rouliu	膠	1	jiāo
 roulou	膢	1	lǘ
-roulou	𦝼	1	lǘ
+roulou	𦝼	1	lǘ,lóu
 roulu	胪	1	lú
 roulu	膔	1	lù,biāo
 roulu	膠	1	jiāo
@@ -78864,7 +78864,7 @@ roumi	脒	1	mǐ
 roumi	𫆭	1	
 roumian	脕	1	wàn,wèn
 roumichuan	膦	1	lìn
-rouminv	𦝼	1	lǘ
+rouminv	𦝼	1	lǘ,lóu
 roumixifangshu	膦	1	lìn
 roumixikuangshu	膦	1	lìn
 roumo	膴	1	hū,wǔ
@@ -78922,7 +78922,7 @@ rouquanhuo	𤌔	1	nán
 rouquchen	膿	1	nóng
 rouque	腳	1	jiǎo
 rouque	𦛶	1	
-rouqun	脧	1	juān
+rouqun	脧	1	juān,zuī
 rouren	肕	1	rèn
 rourendanwu	膓	1	cháng
 rourenrihengwu	膓	1	cháng
@@ -78963,7 +78963,7 @@ roushuan	膞	1	zhuān
 roushuangshuang	腏	1	chuò,zhuì
 roushunxin	腦	1	nǎo
 rousi	𰮆	1	
-rousibawen	脧	1	juān
+rousibawen	脧	1	juān,zuī
 rousou	膄	1	shòu
 rousu	膆	1	sù
 rousui	膸	1	suǐ,wěi
@@ -80676,7 +80676,7 @@ shanji	㠍	1	jí
 shanji	㠎	1	jí,jié
 shanji	屺	1	qǐ
 shanji	岋	1	è,jí
-shanji	嵴	1	jǐ
+shanji	嵴	1	jǐ,jí
 shanji	嶯	1	jí
 shanji	髠	1	kūn
 shanji	𡷞	1	qǐ
@@ -80752,7 +80752,7 @@ shanjiao	㠐	1	jiào
 shanjiao	峧	1	jiāo
 shanjiao	崅	1	què
 shanjiao	嶕	1	jiāo
-shanjiao	嶠	1	jiào
+shanjiao	嶠	1	jiào,qiáo
 shanjiao	嶣	1	jiāo
 shanjiao	𡽄	1	
 shanjiao	𩭛	1	
@@ -81038,7 +81038,7 @@ shanliao	𡽟	1
 shanliao	𡽦	1	
 shanliao	𡾒	1	lì
 shanliao	𩯊	1	liáo
-shanlie	峛	1	lǐ
+shanlie	峛	1	lǐ,liè
 shanlie	峢	1	lǐ
 shanlie	鬣	1	liè
 shanlikou	㟝	1	péi
@@ -81391,12 +81391,12 @@ shanqiang	𡸤	1	qiáng
 shanqiang	𡾪	1	
 shanqiao	㠐	1	jiào
 shanqiao	峤	1	jiào,qiáo
-shanqiao	嶠	1	jiào
+shanqiao	嶠	1	jiào,qiáo
 shanqiao	巐	1	chǎo
 shanqiao	𩯘	1	jiào
 shanqiao	𩯟	1	
 shanqie	䯶	1	mán,mián
-shanqie	岨	1	qū
+shanqie	岨	1	qū,jū
 shanqie	崨	1	jié
 shanqie	𡹈	1	
 shanqie	𢒉	1	shǎn
@@ -81844,7 +81844,7 @@ shanwo	𩮑	1	wǒ
 shanwu	㞰	1	xǔ
 shanwu	屼	1	wù
 shanwu	岉	1	wù
-shanwu	峿	1	yǔ
+shanwu	峿	1	yǔ,wú
 shanwu	嵨	1	wù
 shanwu	髡	1	kūn
 shanwu	𡵉	1	wù
@@ -82058,7 +82058,7 @@ shanyangwo	嶬	1	yí,yǐ
 shanyao	岆	1	yǎo
 shanyao	峣	1	yáo
 shanyao	崤	1	xiáo
-shanyao	崾	1	yǎo
+shanyao	崾	1	yǎo,yào
 shanyao	嶢	1	yáo
 shanyao	嶤	1	yáo
 shanyao	𡵏	1	
@@ -82306,7 +82306,7 @@ shanzhan	岾	1	hàn
 shanzhan	嶃	1	zhǎn
 shanzhan	嶄	1	zhǎn
 shanzhan	嶘	1	zhàn
-shanzhan	嶦	1	zhān
+shanzhan	嶦	1	zhān,shàn
 shanzhan	𡼤	1	
 shanzhan	𩬑	1	diān,chān
 shanzhang	嶂	1	zhàng
@@ -83855,7 +83855,7 @@ shichai	𥓽	1
 shichai	𪪀	1	
 shichai	𳋟	1	
 shichan	磾	1	dī
-shichan	禪	1	chán
+shichan	禪	1	chán,shàn
 shichan	饞	1	chán
 shichan	𥒔	1	
 shichan	𪿴	1	
@@ -84064,7 +84064,7 @@ shicuo	𥗞	1
 shicuo	𥛜	1	zǔ
 shida	䂿	1	tà
 shida	䃮	1	dá
-shida	鿎	1	tǎ
+shida	鿎	1	tǎ,dá
 shida	𡗿	1	
 shida	𥔽	1	kè
 shida	𩞰	1	
@@ -84098,7 +84098,7 @@ shidan	䃪	1	tán
 shidan	䄠	1	shàn
 shidan	砃	1	dān
 shidan	磾	1	dī
-shidan	禪	1	chán
+shidan	禪	1	chán,shàn
 shidan	饘	1	zhān
 shidan	𥑲	1	
 shidan	𥘘	1	
@@ -84114,7 +84114,7 @@ shidanv	𩛌	1	shì
 shidanv	𫗤	1	shì
 shidanwu	碭	1	dàng
 shidanwu	禓	1	yáng,shāng
-shidanwu	餳	1	táng
+shidanwu	餳	1	táng,xíng
 shidao	㓳	1	dī
 shidao	䬢	1	
 shidao	剚	1	zì
@@ -84299,7 +84299,7 @@ shier	䂙	1	duī
 shier	䂧	1	zhěn
 shier	䶿	1	
 shier	壭	1	san
-shier	禰	1	mí
+shier	禰	1	mí,nǐ
 shier	餌	1	ěr
 shier	𡰥	1	rén,yí
 shier	𡱡	1	
@@ -84339,7 +84339,7 @@ shierri	𡱔	1	zhǐ,qì
 shiershuershu	屬	1	shǔ
 shierwang	𥜬	1	nǐ,xiǎn
 shierwen	𮒈	1	
-shierzhehengyou	叚	1	jiǎ
+shierzhehengyou	叚	1	jiǎ,xiá
 shifa	㞏	1	zhé,jié
 shifa	砭	1	biān
 shifa	𩚮	1	jī,nì
@@ -84500,7 +84500,7 @@ shige	𱃬	1
 shige	𱳣	1	
 shige	𲫦	1	
 shige	𳊢	1	
-shigeche	載	1	zài
+shigeche	載	1	zài,zǎi
 shigechong	蛓	1	cì
 shigege	碊	1	jiān,zhàn
 shigege	餞	1	jiàn
@@ -84508,10 +84508,10 @@ shigeheng	饯	1	jiàn
 shigehengyao	𥓛	1	
 shigehuo	烖	1	zāi
 shigejiu	韯	1	xiān
-shigeju	載	1	zài
+shigeju	載	1	zài,zǎi
 shigekou	𠷠	1	
 shigen	䬶	1	èn
-shigen	硍	1	xiàn
+shigen	硍	1	xiàn,yín
 shigen	豤	1	kěn,kūn
 shigen	𡱌	1	huán
 shigen	𥓀	1	
@@ -84531,7 +84531,7 @@ shigeyou	酨	1	zài,zuì
 shigezhi	臷	1	dié,zhí
 shigong	䃔	1	hóng,qióng
 shigong	矼	1	gāng
-shigong	硔	1	hóng
+shigong	硔	1	hóng,gǒng
 shigong	碽	1	gōng
 shigong	𡰬	1	
 shigong	𡰱	1	
@@ -84821,7 +84821,7 @@ shihui	𲴃	1
 shihuishi	𥓈	1	è
 shihun	䃉	1	mín
 shihun	䄑	1	huó
-shihun	碈	1	mín
+shihun	碈	1	mín,hūn
 shihun	𱴹	1	
 shihuna	𥑗	1	
 shihuo	䂸	1	guó
@@ -84927,7 +84927,7 @@ shijian	䭈	1	jiàn
 shijian	䭑	1	lián,qiàn
 shijian	䭙	1	jǐn,jiàn
 shijian	䭣	1	cí
-shijian	硏	1	yán
+shijian	硏	1	yán,yàn
 shijian	硯	1	yàn
 shijian	碊	1	jiān,zhàn
 shijian	磏	1	lián,qiān
@@ -84977,7 +84977,7 @@ shijiangye	𡳙	1
 shijianshou	𮀶	1	
 shijiao	䂭	1	qiāo
 shijiao	䃝	1	qiào
-shijiao	矯	1	jiǎo
+shijiao	矯	1	jiǎo,jiáo
 shijiao	礄	1	qiáo
 shijiao	礉	1	hé,qiāo
 shijiao	餃	1	jiǎo
@@ -85182,7 +85182,7 @@ shike	𬇌	1
 shike	𮀚	1	
 shike	𲜵	1	
 shiken	𬒔	1	gěng
-shikong	硿	1	kōng
+shikong	硿	1	kōng,kòng
 shikong	𡰼	1	
 shikong	𡲀	1	qǐng
 shikong	𥔇	1	kōng
@@ -85591,7 +85591,7 @@ shimenyikoucao	𡕌	1
 shimi	䃺	1	mó
 shimi	䭧	1	mǐ
 shimi	䭩	1	mó
-shimi	禰	1	mí
+shimi	禰	1	mí,nǐ
 shimi	𡱏	1	
 shimi	𥒄	1	
 shimi	𥛗	1	
@@ -85843,7 +85843,7 @@ shinei	𫀃	1
 shinei	𫵓	1	
 shini	孱	1	càn,chán
 shini	磀	1	é
-shini	禰	1	mí
+shini	禰	1	mí,nǐ
 shini	𡱞	1	
 shini	𥑺	1	ē
 shini	𥓋	1	
@@ -86068,7 +86068,7 @@ shiqian	䃡	1	jīn,qín
 shiqian	䭙	1	jǐn,jiàn
 shiqian	䭤	1	qiǎn
 shiqian	歒	1	tì,xiāo
-shiqian	硏	1	yán
+shiqian	硏	1	yán,yàn
 shiqian	硷	1	jiǎn
 shiqian	礆	1	jiǎn
 shiqian	豣	1	jiān,yàn
@@ -86102,7 +86102,7 @@ shiqiang	𫗳	1	qiǎng
 shiqiang	𮂏	1	
 shiqiangye	𡳙	1	
 shiqianshou	𮀶	1	
-shiqiao	矯	1	jiǎo
+shiqiao	矯	1	jiǎo,jiáo
 shiqiao	硚	1	qiáo
 shiqiao	礄	1	qiáo
 shiqiao	𡳯	1	
@@ -86291,7 +86291,7 @@ shirigai	餲	1	ài,hé
 shiriganqi	亁	1	gān
 shirihengwu	碭	1	dàng
 shirihengwu	禓	1	yáng,shāng
-shirihengwu	餳	1	táng
+shirihengwu	餳	1	táng,xíng
 shirijin	𬓁	1	
 shirimin	豱	1	wēn
 shirimin	饂	1	wēn
@@ -86412,7 +86412,7 @@ shishai	𮂎	1
 shishai	𰧖	1	
 shishan	磰	1	shàn
 shishan	磾	1	dī
-shishan	禪	1	chán
+shishan	禪	1	chán,shàn
 shishan	羼	1	chàn
 shishan	饍	1	shàn
 shishan	𡰩	1	
@@ -86774,7 +86774,7 @@ shitai	𪿘	1
 shitai	𱳪	1	dài
 shitan	磹	1	tán
 shitan	磾	1	dī
-shitan	禪	1	chán
+shitan	禪	1	chán,shàn
 shitan	禫	1	dàn
 shitan	𮩐	1	
 shitang	磄	1	táng
@@ -86933,7 +86933,7 @@ shiwei	㞜	1	tuī
 shiwei	䃣	1	huǐ
 shiwei	䃬	1	wěi,kuǐ
 shiwei	䬿	1	wěi,wèi
-shiwei	硊	1	wěi
+shiwei	硊	1	wěi,huì
 shiwei	碨	1	wèi
 shiwei	祙	1	mèi
 shiwei	祪	1	guǐ
@@ -87035,7 +87035,7 @@ shixi	䄍	1	zhà
 shixi	䭒	1	xī
 shixi	䭨	1	shuì
 shixi	屣	1	xǐ
-shixi	矽	1	xì
+shixi	矽	1	xì,xī
 shixi	硒	1	xī
 shixi	碏	1	què
 shixi	磎	1	xī
@@ -87316,7 +87316,7 @@ shiyang	砀	1	dàng
 shiyang	碭	1	dàng
 shiyang	礢	1	yǎng
 shiyang	禓	1	yáng,shāng
-shiyang	餳	1	táng
+shiyang	餳	1	táng,xíng
 shiyang	饧	1	táng,xíng
 shiyang	𡱝	1	
 shiyang	𥏫	1	shāng
@@ -87638,7 +87638,7 @@ shiyue	𱃻	1
 shiyue	𱳮	1	
 shiyuehengwu	碭	1	dàng
 shiyuehengwu	禓	1	yáng,shāng
-shiyuehengwu	餳	1	táng
+shiyuehengwu	餳	1	táng,xíng
 shiyuejinyou	𧱯	1	
 shiyuemin	豱	1	wēn
 shiyuemin	饂	1	wēn
@@ -87778,7 +87778,7 @@ shizhan	䄡	1	dān
 shizhan	䬯	1	nián,tiǎn
 shizhan	砧	1	zhēn
 shizhan	磾	1	dī
-shizhan	禪	1	chán
+shizhan	禪	1	chán,shàn
 shizhan	𡱇	1	diān
 shizhan	𥕌	1	
 shizhan	𥖔	1	
@@ -88257,7 +88257,7 @@ shoucai	𢩱	1
 shoucai	𢴘	1	
 shoucai	𢵛	1	
 shoucai	𭢚	1	
-shoucan	摻	1	càn
+shoucan	摻	1	càn,chān
 shoucan	撍	1	zǎn,zān
 shoucan	撡	1	cāo
 shoucan	𢮥	1	
@@ -88298,7 +88298,7 @@ shoucha	𱠆	1
 shoucha	𲣞	1	
 shouchai	𢺉	1	tà
 shouchan	摌	1	chǎn,sùn
-shouchan	撣	1	dǎn
+shouchan	撣	1	dǎn,shàn
 shouchan	攙	1	chān
 shouchan	𢵔	1	
 shouchan	𢷹	1	chǎn
@@ -88463,7 +88463,7 @@ shoudai	𭢡	1
 shoudai	𰔇	1	dì
 shoudaidun	𭢣	1	
 shoudalong	𭡢	1	
-shoudan	撣	1	dǎn
+shoudan	撣	1	dǎn,shàn
 shoudan	𠿲	1	
 shoudan	𢭱	1	
 shoudan	𢲠	1	
@@ -88827,8 +88827,8 @@ shouguo	㨯	1	huò
 shouguo	挝	1	wō
 shouguo	捰	1	wǒ,luò
 shouguo	掴	1	guāi
-shouguo	摑	1	guāi
-shouguo	撾	1	wō
+shouguo	摑	1	guāi,guó
+shouguo	撾	1	wō,zhuā
 shouguo	𢰸	1	
 shouguo	𢵵	1	
 shouguo	𢸗	1	guó
@@ -88931,7 +88931,7 @@ shouhua	𰔀	1
 shouhuai	𢸬	1	
 shouhuan	㨡	1	hún
 shouhuan	㩲	1	kǔn
-shouhuan	抝	1	ǎo
+shouhuan	抝	1	ǎo,ào
 shouhuan	換	1	huàn
 shouhuan	攌	1	huǎn
 shouhuan	𢸃	1	
@@ -88968,10 +88968,10 @@ shouhun	㨡	1	hún
 shouhun	捪	1	mín
 shouhuo	㨦	1	sǒng
 shouhuo	掝	1	huò,xù
-shouhuo	撾	1	wō
+shouhuo	撾	1	wō,zhuā
 shouhuo	擭	1	wò,huò
 shouhuo	攉	1	huō
-shouhuo	燾	1	dào
+shouhuo	燾	1	dào,tāo
 shouhuo	馘	1	guó
 shouhuo	𤆎	1	
 shouhuo	𤎧	1	zhù
@@ -89940,7 +89940,7 @@ shouruo	搦	1	nuò
 shouruo	𢬏	1	
 shouruo	𰔌	1	
 shourutu	𢬝	1	
-shousa	摋	1	sà
+shousa	摋	1	sà,shā
 shousa	𢱛	1	
 shousa	𢹵	1	
 shousai	㩙	1	sāi
@@ -89957,16 +89957,16 @@ shouse	𭢲	1
 shouse	𲢐	1	
 shousen	𢵳	1	
 shousen	𲣐	1	
-shousha	挱	1	sā
-shousha	摋	1	sà
-shousha	𢫬	1	sà
+shousha	挱	1	sā,shā
+shousha	摋	1	sà,shā
+shousha	𢫬	1	sà,shā
 shousha	𢶞	1	
 shousha	𲢘	1	
-shoushai	摋	1	sà
+shoushai	摋	1	sà,shā
 shoushai	𲢊	1	
 shoushan	㨛	1	shǎn,shàn
 shoushan	搧	1	shān
-shoushan	撣	1	dǎn
+shoushan	撣	1	dǎn,shàn
 shoushan	𢩳	1	
 shoushan	𢲒	1	
 shoushan	𢵈	1	jiǎn,zhǎn
@@ -90003,7 +90003,7 @@ shoushe	𢲳	1
 shoushen	㧶	1	kēng
 shoushen	抻	1	chēn
 shoushen	揕	1	zhèn
-shoushen	摻	1	càn
+shoushen	摻	1	càn,chān
 shoushen	𢭽	1	
 shoushen	𢲘	1	
 shoushen	𢸙	1	shěn
@@ -90027,7 +90027,7 @@ shoushi	扺	1	zhǐ
 shoushi	抴	1	yè
 shoushi	抶	1	chì
 shoushi	揓	1	shì
-shoushi	摋	1	sà
+shoushi	摋	1	sà,shā
 shoushi	擿	1	tī
 shoushi	𢩿	1	
 shoushi	𢫟	1	
@@ -90050,7 +90050,7 @@ shoushibo	𢳲	1
 shoushierzhehengyou	𢱈	1	jià
 shoushijing	𢰎	1	
 shoushimizi	挬	1	bó
-shoushimu	揲	1	dié
+shoushimu	揲	1	dié,shé
 shoushimu	𢮇	1	měi
 shoushirishiniu	𢵕	1	
 shoushiwan	𪯁	1	
@@ -90078,7 +90078,7 @@ shoushu	捒	1	shù,sōu
 shoushu	掓	1	shū
 shoushu	摭	1	zhí
 shoushu	擉	1	chuò
-shoushu	擻	1	sǒu
+shoushu	擻	1	sǒu,sòu
 shoushu	𢫖	1	
 shoushu	𢲬	1	
 shoushu	𢵽	1	
@@ -90116,7 +90116,7 @@ shoushunxi	拶	1	zā,zǎn
 shoushunyue	𢭓	1	
 shoushuo	搠	1	shuò
 shoushuo	摗	1	sōu,sǒng
-shoushuo	擻	1	sǒu
+shoushuo	擻	1	sǒu,sòu
 shousi	払	1	fǎn
 shousi	揌	1	sāi
 shousi	搋	1	chuāi
@@ -90188,7 +90188,7 @@ shoutai	𢰥	1
 shoutaixin	𢰾	1	
 shoutan	㨏	1	tān
 shoutan	撢	1	dǎn
-shoutan	撣	1	dǎn
+shoutan	撣	1	dǎn,shàn
 shoutan	擹	1	tān
 shoutan	𢯟	1	
 shoutan	𫾘	1	
@@ -90263,7 +90263,7 @@ shoutui	𢱸	1
 shoutui	𢹉	1	
 shoutun	㧷	1	tùn
 shoutun	扽	1	dèn
-shoutuo	挼	1	ruá
+shoutuo	挼	1	ruá,ruó
 shoutuo	𢩷	1	tuō
 shoutuo	𢴎	1	
 shoutuo	𢷌	1	
@@ -90456,7 +90456,7 @@ shouxie	拹	1	xié
 shouxie	挾	1	xié
 shouxie	捓	1	yé,yú
 shouxie	搚	1	lā,xié
-shouxie	摋	1	sà
+shouxie	摋	1	sà,shā
 shouxie	擷	1	xié
 shouxie	𢶆	1	
 shouxie	𢹆	1	
@@ -90611,7 +90611,7 @@ shouyaoshui	𰔎	1
 shouyaowu	撓	1	náo
 shouye	䭭	1	shǒu
 shouye	扡	1	tuō,yǐ
-shouye	揲	1	dié
+shouye	揲	1	dié,shé
 shouye	擈	1	pū
 shouye	擛	1	yè
 shouye	擨	1	yé
@@ -90834,7 +90834,7 @@ shouzhai	𲢕	1
 shouzhai	𲢠	1	
 shouzhan	搌	1	zhǎn
 shouzhan	摲	1	chàn,cán
-shouzhan	撣	1	dǎn
+shouzhan	撣	1	dǎn,shàn
 shouzhan	擔	1	dān,dàn
 shouzhan	𢵺	1	
 shouzhan	𫼜	1	
@@ -90885,7 +90885,7 @@ shouzhen	𢸍	1
 shouzhen	𢸩	1	
 shouzhen	𱟸	1	
 shouzhen	𲣔	1	
-shouzheng	掙	1	zhēng
+shouzheng	掙	1	zhēng,zhèng
 shouzheng	揁	1	zhēng,kēng
 shouzheng	擲	1	zhì
 shouzheng	𢪭	1	
@@ -91148,7 +91148,7 @@ shudan	𮮯	1
 shudanwu	𪕫	1	yáng
 shudao	㔉	1	zhǔ
 shudao	劅	1	zhuó
-shudao	劚	1	zhú
+shudao	劚	1	zhú,zhǔ
 shudao	𠚹	1	shàn
 shudao	𪔹	1	
 shudao	𭄉	1	
@@ -91401,7 +91401,7 @@ shuibei	浡	1	bó
 shuibei	浿	1	pèi
 shuibei	渒	1	pài
 shuibei	𣻃	1	
-shuibei	𬇙	1	pèi
+shuibei	𬇙	1	pèi,bèi
 shuibei	𬈺	1	
 shuibei	𰛗	1	
 shuibei	𲪢	1	
@@ -91659,7 +91659,7 @@ shuichong	㳘	1	chōng
 shuichong	㵁	1	
 shuichong	浺	1	chōng
 shuichong	湩	1	dòng,dǒng
-shuichong	漴	1	zhuàng
+shuichong	漴	1	zhuàng,chóng
 shuichong	𣻛	1	zhuāng
 shuichong	𲿇	1	
 shuichongchong	𰝆	1	
@@ -91679,7 +91679,7 @@ shuichoumu	𱧂	1
 shuichu	㶆	1	zhū,chú
 shuichu	泏	1	zhú,kū
 shuichu	涿	1	zhuō
-shuichu	滀	1	chù
+shuichu	滀	1	chù,xù
 shuichu	滁	1	chú
 shuichu	濋	1	chǔ
 shuichu	𣺥	1	
@@ -91714,7 +91714,7 @@ shuichun	𭱴	1
 shuichun	𭳚	1	
 shuichuo	𤄑	1	fàn
 shuici	泚	1	cǐ
-shuici	洓	1	sè
+shuici	洓	1	sè,qì
 shuici	濨	1	cí
 shuici	瀃	1	sì
 shuici	𣳩	1	zī
@@ -92061,7 +92061,7 @@ shuigeng	𤄂	1
 shuigeng	𤄾	1	
 shuigeng	𬇛	1	
 shuigezhe	泧	1	sà,xuè
-shuigong	㳂	1	yán
+shuigong	㳂	1	yán,yàn
 shuigong	㴦	1	guàn
 shuigong	汯	1	hóng
 shuigong	灨	1	gàn
@@ -92086,7 +92086,7 @@ shuigongye	頮	1	huì
 shuigongye	颒	1	huì
 shuigongzhonghengba	𭲑	1	
 shuigou	溝	1	gōu
-shuigou	漚	1	ōu
+shuigou	漚	1	ōu,òu
 shuigou	𬈉	1	
 shuigou	𲩣	1	
 shuigouchong	𣷋	1	
@@ -92315,7 +92315,7 @@ shuihui	洄	1	huí
 shuihui	浍	1	huì
 shuihui	湋	1	wéi
 shuihui	潓	1	huì
-shuihui	澮	1	huì
+shuihui	澮	1	huì,kuài
 shuihui	瀈	1	huī
 shuihui	𣲸	1	
 shuihui	𣶣	1	tuán
@@ -92365,7 +92365,7 @@ shuihuyi	滬	1	hù
 shuihuyu	𣾡	1	
 shuiji	㲹	1	guǐ
 shuiji	㳵	1	jì
-shuiji	㴔	1	yì
+shuiji	㴔	1	yì,jí
 shuiji	㶉	1	xī
 shuiji	溉	1	gài
 shuiji	溭	1	zé
@@ -92643,9 +92643,9 @@ shuiken	𤀊	1	kěn
 shuiken	𰜀	1	
 shuikeng	𣻽	1	
 shuikong	涳	1	kōng,náng
-shuikou	呇	1	qǐ
+shuikou	呇	1	qǐ,mèn
 shuikou	滱	1	kòu
-shuikou	漚	1	ōu
+shuikou	漚	1	ōu,òu
 shuikou	𣸦	1	
 shuikou	𬇖	1	
 shuikouchuan	𬇡	1	
@@ -92672,7 +92672,7 @@ shuikua	洿	1	wū
 shuikua	澕	1	hé
 shuikua	濶	1	kuò
 shuikua	𣴰	1	
-shuikuai	澮	1	huì
+shuikuai	澮	1	huì,kuài
 shuikuai	𣸎	1	huài
 shuikuai	𱪈	1	
 shuikuan	𣽟	1	kuǎn
@@ -92705,7 +92705,7 @@ shuikun	𬈮	1
 shuikun	𬠤	1	
 shuikun	𰜁	1	
 shuikunhuo	𣽙	1	
-shuikuo	澮	1	huì
+shuikuo	澮	1	huì,kuài
 shuikuo	𣸅	1	
 shuikuo	𤄃	1	
 shuikuo	𱨸	1	kuò
@@ -92769,7 +92769,7 @@ shuileier	㴉	1	jǐ
 shuiletanshan	𱨊	1	
 shuili	氻	1	lè
 shuili	浬	1	lǐ
-shuili	浰	1	liàn
+shuili	浰	1	liàn,lì
 shuili	淚	1	lèi
 shuili	湹	1	chán
 shuili	溧	1	lì
@@ -92898,7 +92898,7 @@ shuilong	泷	1	lóng,shuāng
 shuilong	湰	1	lóng
 shuilong	滝	1	lóng
 shuilong	漋	1	lóng
-shuilong	瀧	1	lóng
+shuilong	瀧	1	lóng,shuāng
 shuilong	𣽣	1	
 shuilong	𲪪	1	
 shuilou	溇	1	lóu
@@ -93017,7 +93017,7 @@ shuimen	𰛉	1
 shuimendi	𤄇	1	
 shuimeng	㵥	1	mì
 shuimeng	溕	1	méng
-shuimeng	澠	1	miǎn
+shuimeng	澠	1	miǎn,shéng
 shuimeng	濛	1	méng
 shuimeng	𣽁	1	
 shuimeng	𣾞	1	
@@ -93059,7 +93059,7 @@ shuimian	㴐	1	miàn,miǎn
 shuimian	沔	1	miǎn
 shuimian	浼	1	měi
 shuimian	湎	1	miǎn
-shuimian	澠	1	miǎn
+shuimian	澠	1	miǎn,shéng
 shuimian	𣴩	1	
 shuimian	𤁗	1	
 shuimian	𤁻	1	
@@ -93089,7 +93089,7 @@ shuimin	泴	1	guàn
 shuimin	渂	1	wèn,mín
 shuimin	渑	1	miǎn
 shuimin	潣	1	mǐn
-shuimin	澠	1	miǎn
+shuimin	澠	1	miǎn,shéng
 shuimin	𤁝	1	
 shuimin	𫞗	1	mǐn
 shuimin	𱧜	1	
@@ -93208,7 +93208,7 @@ shuinu	𰛝	1
 shuinuan	𤀣	1	huǎn
 shuinuo	渜	1	nuǎn,nuán
 shuinuo	灘	1	tān
-shuiou	漚	1	ōu
+shuiou	漚	1	ōu,òu
 shuiou	𣼱	1	
 shuiou	𣽕	1	òu
 shuiou	𤁮	1	òu
@@ -93235,7 +93235,7 @@ shuipei	𪶪	1
 shuipei	𪷳	1	
 shuipen	湓	1	pén
 shuipen	𤂫	1	
-shuipeng	淜	1	píng
+shuipeng	淜	1	píng,péng
 shuipeng	𤂧	1	
 shuipeng	𰜆	1	
 shuipeng	𰜴	1	
@@ -93430,14 +93430,14 @@ shuiqiu	泅	1	qiú
 shuiqiu	浗	1	qiú
 shuiqiu	湫	1	jiǎo,qiū
 shuiqiu	湭	1	qiú
-shuiqiu	漚	1	ōu
+shuiqiu	漚	1	ōu,òu
 shuiqiu	𤁮	1	òu
 shuiqiu	𪷾	1	
 shuiqu	㳒	1	biàn
 shuiqu	沤	1	ōu,òu
 shuiqu	浀	1	qū
 shuiqu	淈	1	gǔ,hù
-shuiqu	漚	1	ōu
+shuiqu	漚	1	ōu,òu
 shuiqu	灈	1	qú
 shuiqu	𣶝	1	jù
 shuiqu	𭰮	1	
@@ -93551,7 +93551,7 @@ shuirua	𬈗	1
 shuiruan	渜	1	nuǎn,nuán
 shuiruan	𣼴	1	
 shuiruan	𲩓	1	
-shuirui	濬	1	jùn
+shuirui	濬	1	jùn,xùn
 shuirui	𣽊	1	
 shuirui	𣾫	1	
 shuirui	𤃓	1	
@@ -93895,7 +93895,7 @@ shuisun	𣹯	1	xùn
 shuisun	𣺱	1	
 shuisun	𣻆	1	
 shuisuo	溑	1	suǒ
-shuisuo	溹	1	suò
+shuisuo	溹	1	suò,suǒ
 shuisuo	濊	1	huì,wèi
 shuisuo	𣷲	1	
 shuisuo	𣾫	1	
@@ -94260,7 +94260,7 @@ shuixianxianyue	濳	1	qián
 shuixianzhe	𤂩	1	
 shuixiao	㵿	1	xiào
 shuixiao	涍	1	xiào
-shuixiao	滧	1	yáo
+shuixiao	滧	1	yáo,xiào
 shuixiao	瀟	1	xiāo
 shuixiao	𣻏	1	
 shuixiao	𤄙	1	
@@ -95644,7 +95644,7 @@ sibi	𮈊	1
 sibi	𰬎	1	bì
 sibian	編	1	biān
 sibian	緶	1	biàn,pián
-sibian	缏	1	biàn
+sibian	缏	1	biàn,pián
 sibian	𥾽	1	
 sibian	𥿋	1	fán,biàn
 sibian	𦄒	1	
@@ -95992,7 +95992,7 @@ sifajin	𣂿	1
 sifan	繙	1	fān,fán
 sifan	𥾵	1	
 sifan	𬗄	1	
-sifan	𬙆	1	fān
+sifan	𬙆	1	fān,fán
 sifan	𰆭	1	
 sifang	紡	1	fǎng
 sifang	𬙙	1	
@@ -96010,7 +96010,7 @@ sifen	𱺺	1
 sifeng	䋽	1	běng
 sifeng	䌡	1	tǐ
 sifeng	綘	1	féng
-sifeng	縫	1	fèng
+sifeng	縫	1	fèng,féng
 sifeng	𥾫	1	
 sifeng	𦂱	1	
 sifeng	𫄍	1	
@@ -96185,7 +96185,7 @@ sihan	𫟂	1
 sihao	𰫟	1	
 sihao	𱺮	1	háo
 sihe	䋵	1	yì,yè
-sihe	給	1	gěi
+sihe	給	1	gěi,jǐ
 sihe	緺	1	guā
 sihe	𥿘	1	
 sihe	𦇸	1	hé
@@ -96292,7 +96292,7 @@ siji	䌖	1	jié
 siji	䍤	1	jǐ
 siji	紀	1	jì
 siji	級	1	jí
-siji	結	1	jié
+siji	結	1	jié,jiē
 siji	緕	1	zī
 siji	縩	1	cài
 siji	繼	1	jì
@@ -96576,7 +96576,7 @@ sili	糼	1	gōng
 sili	綟	1	lì,liè
 sili	緾	1	chán
 sili	縭	1	lí
-sili	纚	1	lí
+sili	纚	1	lí,xǐ
 sili	缡	1	lí
 sili	𠫶	1	tān
 sili	𦃊	1	lì
@@ -96585,7 +96585,7 @@ sili	𦇔	1	lì
 sili	𦊢	1	
 sili	𦌿	1	shī
 sili	𫃡	1	
-sili	𫄥	1	lí
+sili	𫄥	1	lí,xǐ
 sili	𫄫	1	lì
 sili	𮈡	1	
 sili	𮉞	1	
@@ -97276,7 +97276,7 @@ sisi	㕕	1	huàn
 sisi	厸	1	lín
 sisi	絲	1	sī
 sisi	緦	1	sī
-sisi	纚	1	lí
+sisi	纚	1	lí,xǐ
 sisi	缌	1	sī
 sisi	罳	1	sī
 sisi	𥿆	1	cí
@@ -97889,7 +97889,7 @@ siyong	𮈉	1
 siyongbeng	𦇜	1	
 siyongyong	𦇜	1	
 siyou	䌊	1	yáo
-siyou	䌷	1	chōu
+siyou	䌷	1	chōu,chóu
 siyou	紌	1	qiú
 siyou	紞	1	dǎn
 siyou	紬	1	chóu,chōu
@@ -99059,13 +99059,13 @@ tiantiantianbaoqie	疊	1	dié
 tiantiantianbaozhezheheng	疉	1	dié
 tiantiantianbaozhezhehengmao	氎	1	dié
 tiantiantianfou	罍	1	léi
-tiantiantianmi	纍	1	léi
+tiantiantianmi	纍	1	léi,lěi
 tiantiantianmiqie	疊	1	dié
 tiantiantianmu	櫐	1	lěi
 tiantiantianniao	鸓	1	lěi
 tiantiantianniaotiantian	𪉀	1	
 tiantiantianshi	礨	1	lěi
-tiantiantiansi	纍	1	léi
+tiantiantiansi	纍	1	léi,lěi
 tiantiantiantian	𡚌	1	hào
 tiantiantiantian	𤳳	1	léi,huǐ
 tiantiantiantiantu	壨	1	léi
@@ -99329,7 +99329,7 @@ tonggouli	𠃾	1
 tonggu	𪞎	1	
 tonggua	𠕕	1	jiōng
 tongheng	囗	1	wéi,guó
-tongheng	黽	1	miǎn
+tongheng	黽	1	miǎn,mǐn
 tongheng	𠔼	1	mǎo
 tongheng	𰣳	1	
 tonghengshushu	冊	1	cè
@@ -99552,7 +99552,7 @@ touchuanche	𨌤	1	chéng,chèng
 touchuangmi	𱹌	1	
 touchuanji	𠅞	1	
 touchuanju	𨌤	1	chéng,chèng
-touchuanmu	椉	1	chéng
+touchuanmu	椉	1	chéng,shèng
 toucong	𠅃	1	
 toucongshan	𬽋	1	
 touda	𰁞	1	
@@ -99611,7 +99611,7 @@ touhuomifen	𱬩	1
 touhuoyanghuohuo	𭶥	1	
 toujiang	𠅵	1	
 toujianpie	亷	1	lián
-toujie	椉	1	chéng
+toujie	椉	1	chéng,shèng
 toujieer	𨚃	1	
 toujier	邟	1	kàng,háng
 toujili	劥	1	kēng
@@ -99805,10 +99805,10 @@ touxianpu	𠅬	1	bāo
 touxianwen	𠅨	1	
 touxiao	𦚍	1	
 touxieyi	𲀯	1	xié
-touxifangshumu	椉	1	chéng
+touxifangshumu	椉	1	chéng,shèng
 touxihuo	𤍍	1	
 touxiji	𠅟	1	
-touxikuangshumu	椉	1	chéng
+touxikuangshumu	椉	1	chéng,shèng
 touxin	亹	1	wěi
 touxin	𢠚	1	
 touxiong	㐫	1	xiōng
@@ -100221,7 +100221,7 @@ tudun	𡎆	1
 tudun	𣏄	1	
 tudun	𱘇	1	
 tuduo	垑	1	chǐ
-tuduo	垜	1	duǒ
+tuduo	垜	1	duǒ,duò
 tuduo	𡊾	1	
 tuduo	𡏗	1	
 tuduo	𭏉	1	
@@ -100286,7 +100286,7 @@ tufu	㙛	1	bǔ
 tufu	坲	1	fó
 tufu	坿	1	fù
 tufu	垘	1	fú
-tufu	垺	1	fū
+tufu	垺	1	fū,fú
 tufu	埠	1	bù
 tufu	堛	1	bì
 tufu	𡐣	1	
@@ -100323,11 +100323,11 @@ tuge	壒	1	ài
 tuge	𡑪	1	
 tuge	𭟯	1	
 tuge	𱗋	1	gé
-tugeche	載	1	zài
+tugeche	載	1	zài,zǎi
 tugechong	蛓	1	cì
 tugehuo	烖	1	zāi
 tugejiu	韯	1	xiān
-tugeju	載	1	zài
+tugeju	載	1	zài,zǎi
 tugen	𡋳	1	
 tugen	𭎼	1	
 tugeng	埂	1	gěng
@@ -100360,7 +100360,7 @@ tugu	𡒡	1
 tugu	𪔌	1	
 tugu	𫮆	1	
 tugu	𱗞	1	kū
-tugua	坬	1	guà
+tugua	坬	1	guà,wā
 tugua	堝	1	guō
 tuguai	𡙖	1	
 tuguan	壦	1	xūn
@@ -100407,7 +100407,7 @@ tuhao	𡐒	1	háo,hào
 tuhao	𭐐	1	
 tuhe	垥	1	xié
 tuhe	堝	1	guō
-tuhe	堨	1	yè
+tuhe	堨	1	yè,è
 tuhe	𡎌	1	
 tuhe	𡏖	1	
 tuhe	𪤒	1	
@@ -100856,7 +100856,7 @@ tuna	𡈽	1
 tuna	𡌈	1	
 tunai	𡉁	1	
 tunai	𲙒	1	
-tunaimu	垜	1	duǒ
+tunaimu	垜	1	duǒ,duò
 tunaitu	𲙀	1	
 tunajiongshushugong	𡌾	1	
 tunan	𡎜	1	
@@ -100997,7 +100997,7 @@ tupian	𡒺	1
 tupian	𫭡	1	
 tupiao	墂	1	biāo
 tupie	耂	1	lǎo
-tupieqi	圫	1	yù
+tupieqi	圫	1	yù,tuō
 tupier	𦖜	1	
 tupin	𲙣	1	
 tuping	塀	1	píng
@@ -101054,7 +101054,7 @@ tuqiu	𲙧	1
 tuqu	堀	1	kū
 tuqu	塸	1	ōu
 tuqu	𡊛	1	áo
-tuqu	𫭟	1	ōu
+tuqu	𫭟	1	ōu,qū
 tuqu	𫭭	1	
 tuqu	𲙔	1	
 tuquan	𡉩	1	bào
@@ -101081,22 +101081,22 @@ turengumin	𭾌	1
 turenjin	𬫎	1	
 turenli	㘯	1	
 turenniu	㙚	1	xīng
-turenrendanwu	塲	1	cháng
+turenrendanwu	塲	1	cháng,chǎng
 turenrenguokou	嗇	1	sè
 turenrenhui	嗇	1	sè
 turenrenkoukou	嗇	1	sè
-turenrenrihengwu	塲	1	cháng
+turenrenrihengwu	塲	1	cháng,chǎng
 turenrenweikou	嗇	1	sè
-turenrenyang	塲	1	cháng
-turenrenyuehengwu	塲	1	cháng
+turenrenyang	塲	1	cháng,chǎng
+turenrenyuehengwu	塲	1	cháng,chǎng
 turensongjitu	𭏹	1	
 turenxin	𰑲	1	
 turenxuanjitu	𭏹	1	
 turi	𡉭	1	rì
 turi	𣉯	1	
 turibaoyou	𠭩	1	
-turibaozheren	堨	1	yè
-turigai	堨	1	yè
+turibaozheren	堨	1	yè,è
+turigai	堨	1	yè,è
 turihengwu	場	1	chǎng,cháng
 turimin	塭	1	wēn
 turimiyou	𠭩	1	
@@ -101134,8 +101134,8 @@ tushanbaoyou	埐	1	jīn,qín
 tushandaiwen	𲙵	1	
 tushandou	塏	1	kǎi
 tushang	圵	1	dàng
-tushang	埫	1	chǒng
-tushang	塲	1	cháng
+tushang	埫	1	chǒng,tǎng
+tushang	塲	1	cháng,chǎng
 tushang	墒	1	shāng
 tushangxia	垰	1	kǎ
 tushanmijin	埽	1	sào
@@ -101357,7 +101357,7 @@ tutun	坉	1	tún
 tutun	𭎝	1	
 tutun	𰇦	1	
 tutunvtu	𡤺	1	
-tutuo	圫	1	yù
+tutuo	圫	1	yù,tuō
 tutuo	𰊁	1	
 tutuo	𱖰	1	tuó
 tuturenkoumin	塩	1	yán
@@ -101490,11 +101490,11 @@ tuxiao	𡌔	1	qiāo
 tuxiao	𡏭	1	jiāo
 tuxiao	𫭚	1	
 tuxiaobaoerkougou	𡐃	1	
-tuxiaobaokou	埫	1	chǒng
+tuxiaobaokou	埫	1	chǒng,tǎng
 tuxiaoer	𨛧	1	
 tuxiaohengbei	𡏶	1	
 tuxiaomierkougou	𡐃	1	
-tuxiaomikou	埫	1	chǒng
+tuxiaomikou	埫	1	chǒng,tǎng
 tuxie	㙝	1	xié
 tuxie	埉	1	jiā,xiá
 tuxie	𡎮	1	sù
@@ -101563,7 +101563,7 @@ tuyan	埏	1	shān
 tuyan	埮	1	tàn,tán
 tuyan	埯	1	ǎn
 tuyan	堰	1	yàn
-tuyan	墕	1	yàn
+tuyan	墕	1	yàn,yān
 tuyan	壛	1	yán
 tuyan	壧	1	yán
 tuyan	𡋳	1	
@@ -101773,8 +101773,8 @@ tuzhaocun	埒	1	liè
 tuzhaocun	埓	1	liè
 tuzhaopiecun	埓	1	liè
 tuzhaoyoumu	𡏪	1	fū
-tuzhaozi	垺	1	fū
-tuzhe	圫	1	yù
+tuzhaozi	垺	1	fū,fú
+tuzhe	圫	1	yù,tuō
 tuzhe	𡏥	1	
 tuzhe	𰉕	1	
 tuzhe	𲙞	1	
@@ -101823,7 +101823,7 @@ tuzhuan	𫭞	1	zhuān
 tuzhuang	𪣐	1	
 tuzhuapiecun	埓	1	liè
 tuzhuayoumu	𡏪	1	fū
-tuzhuazi	垺	1	fū
+tuzhuazi	垺	1	fū,fú
 tuzhui	塠	1	duī
 tuzhui	𡑖	1	
 tuzhui	𨿖	1	
@@ -102197,7 +102197,7 @@ wangdanayou	𤥥	1
 wangdang	珰	1	dāng
 wangdang	璫	1	dāng
 wangdang	𪼲	1	
-wangdanwu	瑒	1	chàng
+wangdanwu	瑒	1	chàng,yáng
 wangdao	㺫	1	qiú
 wangdao	瓙	1	dào
 wangdao	𭸵	1	
@@ -103141,7 +103141,7 @@ wangri	𡯒	1	ruǐ
 wangri	𣅨	1	
 wangri	𱮳	1	
 wangrigong	𢍔	1	
-wangrihengwu	瑒	1	chàng
+wangrihengwu	瑒	1	chàng,yáng
 wangrilewen	𦋷	1	
 wangrimin	瑥	1	wēn
 wangrinong	𢍔	1	
@@ -103631,7 +103631,7 @@ wangyan	𲯿	1
 wangyandao	罰	1	fá
 wangyang	玚	1	chàng,yáng
 wangyang	珜	1	yáng
-wangyang	瑒	1	chàng
+wangyang	瑒	1	chàng,yáng
 wangyang	𤤠	1	
 wangyang	𭹴	1	
 wangyang	𮊤	1	
@@ -103810,7 +103810,7 @@ wangyue	𦚋	1
 wangyue	𪻬	1	
 wangyue	𰢙	1	
 wangyuefou	瑤	1	yáo
-wangyuehengwu	瑒	1	chàng
+wangyuehengwu	瑒	1	chàng,yáng
 wangyuemin	瑥	1	wēn
 wangyuheng	𬍿	1	
 wangyuhengri	𮊕	1	
@@ -104959,7 +104959,7 @@ weizhuan	𡦥	1
 weizhuayu	𡳲	1	
 weizhui	𨾼	1	
 weizhui	𳈻	1	
-weizi	囝	1	jiǎn
+weizi	囝	1	jiǎn,nān
 weizi	屘	1	mǎn
 weizi	𡇝	1	sòng
 weizi	𡇟	1	jī
@@ -105042,7 +105042,7 @@ wenhuan	㪱	1	huàn
 wenhuo	𤒸	1	
 wenhuo	𪯩	1	
 wenhuomi	𡕝	1	
-wenji	処	1	chǔ
+wenji	処	1	chǔ,chù
 wenji	𣁚	1	
 wenjian	斍	1	jué
 wenjian	𡕚	1	
@@ -106707,7 +106707,7 @@ xiji	𡖖	1
 xiji	𡲽	1	
 xiji	𧇔	1	
 xiji	𧟦	1	
-xijian	覻	1	qū
+xijian	覻	1	qū,qù
 xijian	𧢇	1	
 xijian	𧢧	1	wéi
 xijian	𫌞	1	
@@ -106726,7 +106726,7 @@ xijiemu	眢	1	yuān
 xijieniao	鴛	1	yuān
 xijienv	妴	1	yuàn
 xijieyan	詧	1	chá
-xijin	斮	1	cuò
+xijin	斮	1	cuò,zhuó
 xijin	鍌	1	xiǎn
 xijin	𡅸	1	
 xijin	𢁟	1	
@@ -107180,7 +107180,7 @@ xingcan	𧗸	1	jiàn
 xingchao	𧘀	1	
 xingche	䡓	1	juàn,xuān
 xingcheng	𲤾	1	
-xingchong	衝	1	chōng
+xingchong	衝	1	chōng,chòng
 xingchong	𧊔	1	yǎn
 xingchou	𳀢	1	
 xingchu	𬡁	1	
@@ -107491,7 +107491,7 @@ xingzheshuhengkouza	衞	1	wèi
 xingzhi	𢻏	1	
 xingzhi	𬠿	1	
 xingzhifang	𰳮	1	
-xingzhong	衝	1	chōng
+xingzhong	衝	1	chōng,chòng
 xingzhui	𨿋	1	
 xingzhui	𨿟	1	
 xinhai	㤥	1	hài
@@ -109194,7 +109194,7 @@ xixi	𮓬	1
 xixi	𰋴	1	
 xixi	𲓧	1	
 xixian	夗	1	yuàn,wǎn
-xixian	覻	1	qū
+xixian	覻	1	qū,qù
 xixian	𧢇	1	
 xixian	𧢧	1	wéi
 xixian	𫌞	1	
@@ -109947,7 +109947,7 @@ xuepiexiongna	𱶾	1
 xueping	𥧋	1	kū
 xuepo	𰩆	1	
 xuepu	敩	1	xiào
-xuepu	斅	1	xiào
+xuepu	斅	1	xiào,xué
 xuepu	斆	1	xiào
 xuepu	𢽾	1	xiào
 xueqi	窫	1	yà,yē
@@ -110284,7 +110284,7 @@ xuezui	𧗔	1
 xuezuo	𥦊	1	wěn
 xufou	䫠	1	pī
 xugan	𰏭	1	
-xuge	戯	1	hū
+xuge	戯	1	hū,xì
 xuge	戱	1	xì
 xuge	鬹	1	guī,xié
 xuge	𡃣	1	
@@ -111949,7 +111949,7 @@ yanqian	㰽	1	yàn
 yanqian	㱃	1	yǐn
 yanqian	䚿	1	yìn,xī
 yanqian	欻	1	chuā,xū
-yanqian	歘	1	chuā
+yanqian	歘	1	chuā,xū
 yanqian	詽	1	yán
 yanqian	譖	1	zèn,jiàn
 yanqian	譣	1	xiǎn
@@ -112885,7 +112885,7 @@ yanzhong	訲	1	yì
 yanzhong	諥	1	zhòng
 yanzhong	𫍳	1	zhòng
 yanzhou	詶	1	zhòu,chóu
-yanzhou	調	1	diào
+yanzhou	調	1	diào,tiáo
 yanzhou	𧧔	1	zhōu
 yanzhou	𬣱	1	chóu
 yanzhu	訹	1	xù
@@ -113594,7 +113594,7 @@ yichuanji	𠅞	1
 yichuanju	𨌤	1	chéng,chèng
 yichuankoutou	𧚱	1	
 yichuankouyi	𧚱	1	
-yichuanmu	椉	1	chéng
+yichuanmu	椉	1	chéng,shèng
 yichuba	𧙦	1	
 yichui	𳀼	1	
 yici	䘣	1	zǐ,zhì
@@ -113674,7 +113674,7 @@ yidi	褅	1	tì
 yidi	𧘨	1	diāo
 yidi	𬡜	1	
 yidian	𲀵	1	
-yidianmudao	剎	1	shā
+yidianmudao	剎	1	shā,chà
 yidiao	䘟	1	diāo
 yidiao	𢂋	1	
 yidiao	𧘨	1	diāo
@@ -114021,7 +114021,7 @@ yijiao	𫋽	1
 yijiao	𰐏	1	
 yijiao	𱎆	1	
 yijibi	𧙱	1	
-yijie	椉	1	chéng
+yijie	椉	1	chéng,shèng
 yijie	衸	1	jiè
 yijie	裓	1	gé,jiē
 yijie	襭	1	xié
@@ -114393,10 +114393,10 @@ yina	𮖍	1
 yina	𳁅	1	
 yinai	𧘌	1	
 yinai	𧛮	1	
-yinamudao	剎	1	shā
+yinamudao	剎	1	shā,chà
 yinan	𫡫	1	
 yinang	𧟘	1	nàng
-yinbai	廹	1	pǎi
+yinbai	廹	1	pǎi,pò
 yinbao	𩐜	1	páo
 yinbaxi	𪪰	1	
 yinbei	䪬	1	bó
@@ -114570,7 +114570,7 @@ yingshi	禜	1	yǒng,yíng
 yingshi	𮩕	1	
 yingshi	𰦷	1	láo
 yingshi	𰱈	1	yǒng
-yingshui	滎	1	xíng
+yingshui	滎	1	xíng,yíng
 yingshui	荥	1	xíng,yíng
 yingsi	縈	1	yíng
 yingsi	𦀤	1	
@@ -114601,7 +114601,7 @@ yingxinyao	𮐔	1
 yingxun	煢	1	qióng
 yingxun	茕	1	qióng
 yingyan	謍	1	yíng,yīng
-yingyan	譍	1	yīng
+yingyan	譍	1	yīng,yìng
 yingyan	譻	1	yīng
 yingyan	𤐺	1	
 yingyan	𬢯	1	yīng
@@ -115513,10 +115513,10 @@ yixie	𧜔	1	xiè
 yixie	𧝽	1	
 yixie	𫌗	1	
 yixieyi	𲀯	1	xié
-yixifangshumu	椉	1	chéng
+yixifangshumu	椉	1	chéng,shèng
 yixihuo	𤍍	1	
 yixiji	𠅟	1	
-yixikuangshumu	椉	1	chéng
+yixikuangshumu	椉	1	chéng,shèng
 yixin	㣻	1	yì
 yixin	㥋	1	yī
 yixin	亹	1	wěi
@@ -116078,7 +116078,7 @@ youbie	𨡊	1
 youbing	𡯞	1	
 youbing	𢆟	1	píng
 youbing	𫑾	1	
-youbo	醱	1	fā
+youbo	醱	1	fā,pō
 youboxi	𦅸	1	zhòu
 youbu	𨟷	1	
 youbuxi	𦅸	1	zhòu
@@ -116184,7 +116184,7 @@ youeryou	𰼉	1
 youfa	䣹	1	fá
 youfa	酦	1	pò,pō
 youfa	醗	1	pò
-youfa	醱	1	fā
+youfa	醱	1	fā,pō
 youfan	𡯘	1	bǎn
 youfan	𨟱	1	
 youfangwentu	𰊲	1	
@@ -116422,7 +116422,7 @@ youli	䤙	1	lì
 youli	酾	1	shāi,shī
 youli	醨	1	lí
 youli	醴	1	lǐ
-youli	釃	1	shāi
+youli	釃	1	shāi,shī
 youli	𠠹	1	zhěn
 youli	𠮔	1	
 youli	𡯄	1	lì
@@ -116738,7 +116738,7 @@ youshuiwentongjin	𠭽	1
 yousi	㕗	1	yòu
 yousi	䣳	1	
 yousi	絛	1	tāo
-yousi	釃	1	shāi
+yousi	釃	1	shāi,shī
 yousi	𠬟	1	
 yousi	𠬹	1	
 yousi	𠮔	1	
@@ -117817,7 +117817,7 @@ yudang	𩼉	1	dāng,hān
 yudang	𩽳	1	dǎng
 yudang	𪼲	1	
 yudanhuoge	𩆉	1	
-yudanwu	瑒	1	chàng
+yudanwu	瑒	1	chàng,yáng
 yudanwu	鰑	1	yáng
 yudao	㓱	1	tóu,shū
 yudao	㺫	1	qiú
@@ -118010,7 +118010,7 @@ yuebi	𫆝	1
 yuebi	𫆲	1	
 yuebi	𭩓	1	
 yuebian	䐔	1	bǐn,biàn
-yuebiao	脿	1	biāo
+yuebiao	脿	1	biāo,biǎo
 yuebiao	臕	1	biāo
 yuebiao	𦠎	1	biāo
 yuebiao	𦣁	1	
@@ -118177,7 +118177,7 @@ yuede	𦝂	1
 yuede	𲥞	1	
 yuedeng	膯	1	tēng,tún
 yuedeng	𦡪	1	tēng
-yuedi	䏲	1	dié
+yuedi	䏲	1	dié,tī
 yuedi	䐱	1	zhài
 yuedi	胝	1	zhī
 yuedi	腣	1	dì
@@ -118692,7 +118692,7 @@ yuelong	朧	1	lóng
 yuelong	𦢫	1	
 yuelong	𪱨	1	
 yuelou	膢	1	lǘ
-yuelou	𦝼	1	lǘ
+yuelou	𦝼	1	lǘ,lóu
 yuelou	𦡢	1	
 yuelu	䐂	1	lù
 yuelu	胪	1	lú
@@ -118774,7 +118774,7 @@ yuemin	𣎜	1
 yuemin	𰮭	1	
 yueming	𬂊	1	
 yueming	𭨽	1	
-yueminv	𦝼	1	lǘ
+yueminv	𦝼	1	lǘ,lóu
 yuemisi	𣎝	1	
 yuemixifangshu	膦	1	lìn
 yuemixikuangshu	膦	1	lìn
@@ -118945,7 +118945,7 @@ yuequdou	𦡊	1
 yueque	腳	1	jiǎo
 yuequn	䐃	1	jùn
 yuequn	朘	1	zuī,juān
-yuequn	脧	1	juān
+yuequn	脧	1	juān,zuī
 yuer	䣁	1	yǔ
 yuer	䣄	1	tú
 yuer	珎	1	zhēn
@@ -119142,7 +119142,7 @@ yuesi	𦘺	1
 yuesi	𦠭	1	
 yuesi	𫇃	1	
 yuesibawen	朘	1	zuī,juān
-yuesibawen	脧	1	juān
+yuesibawen	脧	1	juān,zuī
 yuesichou	𦚲	1	
 yuesigong	𦚪	1	
 yuesigong	𦞗	1	gōng
@@ -121740,7 +121740,7 @@ yuri	魯	1	lǔ,lǚ
 yuri	𮊸	1	
 yuri	𳉃	1	
 yuribanv	𱆶	1	
-yurihengwu	瑒	1	chàng
+yurihengwu	瑒	1	chàng,yáng
 yurihengwu	鰑	1	yáng
 yurimin	瑥	1	wēn
 yurimin	鰛	1	wēn
@@ -122716,7 +122716,7 @@ yuyan	𳉴	1
 yuyang	䱀	1	yāng
 yuyang	玚	1	chàng,yáng
 yuyang	珜	1	yáng
-yuyang	瑒	1	chàng
+yuyang	瑒	1	chàng,yáng
 yuyang	雵	1	yāng
 yuyang	霷	1	yáng
 yuyang	鮮	1	xiān
@@ -123103,7 +123103,7 @@ yuyue	𬎾	1
 yuyue	𬶈	1	
 yuyue	𰢙	1	
 yuyuefou	鰩	1	yáo
-yuyuehengwu	瑒	1	chàng
+yuyuehengwu	瑒	1	chàng,yáng
 yuyuehengwu	鰑	1	yáng
 yuyuemin	瑥	1	wēn
 yuyuemin	鰛	1	wēn
@@ -123493,7 +123493,7 @@ zaibing	𤳊	1	píng
 zaicai	𲞃	1	
 zaicaotun	𢨎	1	
 zaicaotunri	𢨢	1	
-zaiche	載	1	zài
+zaiche	載	1	zài,zǎi
 zaiche	𨌏	1	
 zaicheng	𢧜	1	
 zaichong	蛓	1	cì
@@ -123529,7 +123529,7 @@ zaihuo	𤌊	1	zǎi
 zaijian	𠕱	1	
 zaijie	疀	1	chā
 zaijiu	韯	1	xiān
-zaiju	載	1	zài
+zaiju	載	1	zài,zǎi
 zaiju	𨌏	1	
 zaikan	𠕱	1	
 zaikou	𠳆	1	
@@ -123606,7 +123606,7 @@ zanchong	𧌩	1
 zanchong	𧕽	1	
 zandan	𲤎	1	
 zandao	劗	1	jiǎn,zuān
-zandao	𭄛	1	zuān
+zandao	𭄛	1	zuān,jiǎn
 zaner	鄼	1	zàn
 zaner	酂	1	cuó,zàn
 zaner	酇	1	zàn,cuó
@@ -123795,8 +123795,8 @@ zhaiyue	𪗇	1
 zhaizhenwen	𪗓	1	zhāi
 zhaizhi	𰙷	1	
 zhalao	𤚧	1	
-zhami	紥	1	zā
-zhami	紮	1	zā
+zhami	紥	1	zā,zhā
+zhami	紮	1	zā,zhā
 zhami	𬗍	1	
 zhanba	𡁳	1	zhàn
 zhanbao	𰈻	1	
@@ -124304,7 +124304,7 @@ zhaozhaoyou	𢇏	1
 zhaozhaozhao	𤔙	1	shuǎ
 zhaozhaozi	𢇏	1	
 zhaozhengliu	𭶷	1	
-zhaozhezhezhehuopie	爲	1	wèi
+zhaozhezhezhehuopie	爲	1	wèi,wéi
 zhaozhi	㸕	1	jué
 zhaozhi	𬋦	1	
 zhaozhou	𬋬	1	
@@ -124322,8 +124322,8 @@ zhapu	𢼎	1
 zharun	𨷎	1	rùn
 zhashe	𰰂	1	
 zhashu	𬆢	1	
-zhasi	紥	1	zā
-zhasi	紮	1	zā
+zhasi	紥	1	zā,zhā
+zhasi	紮	1	zā,zhā
 zhasi	𬗍	1	
 zhawen	𫾩	1	
 zhaxiang	𡗑	1	rǒu
@@ -124338,13 +124338,13 @@ zhebei	𫎘	1
 zhebing	𫠥	1	lòu
 zhebing	𳄴	1	
 zhebomu	𠧡	1	
-zheboren	疋	1	pǐ
+zheboren	疋	1	pǐ,yǎ
 zheboriguowen	𠨅	1	
 zheborikouwen	𠨅	1	
 zheboriweiwen	𠨅	1	
 zhebu	𱎁	1	
 zhebumu	𠧡	1	
-zheburen	疋	1	pǐ
+zheburen	疋	1	pǐ,yǎ
 zheburiguowen	𠨅	1	
 zheburikouwen	𠨅	1	
 zheburiweiwen	𠨅	1	
@@ -124616,9 +124616,9 @@ zheshu	丩	1	jiū
 zheshu	殾	1	xùn
 zheshu	阝	1	fù
 zheshu	𰆊	1	
-zheshudianren	疋	1	pǐ
-zheshuhengren	疋	1	pǐ
-zheshunaren	疋	1	pǐ
+zheshudianren	疋	1	pǐ,yǎ
+zheshuhengren	疋	1	pǐ,yǎ
+zheshunaren	疋	1	pǐ,yǎ
 zheshuyou	収	1	shōu
 zhesi	䋢	1	biē
 zhesi	𣩂	1	
@@ -126308,7 +126308,7 @@ zhiyaoxian	𨘵	1	yóu
 zhiyaxian	𧢏	1	
 zhiye	䢡	1	yè,xiè
 zhiye	䫉	1	mào
-zhiye	迆	1	yí
+zhiye	迆	1	yí,yǐ
 zhiye	頉	1	yí
 zhiye	頍	1	kuǐ
 zhiye	𨒧	1	shì
@@ -127522,7 +127522,7 @@ zhuazeer	𫑞	1
 zhuazhan	𰔍	1	
 zhuazhaojigu	𠾄	1	
 zhuazhengliu	𭶷	1	
-zhuazhezhezhehuopie	爲	1	wèi
+zhuazhezhezhehuopie	爲	1	wèi,wéi
 zhuazhuajigu	𠾄	1	
 zhuazi	𭶯	1	
 zhuazier	郛	1	fú
@@ -127643,9 +127643,9 @@ zhucai	𱷯	1
 zhucailiu	籒	1	zhòu
 zhucan	䉔	1	cān
 zhucan	箋	1	jiān
-zhucan	篸	1	cǎn
+zhucan	篸	1	cǎn,zān
 zhucan	籛	1	jiǎn,jiān
-zhucan	𥮾	1	cǎn
+zhucan	𥮾	1	cǎn,zān
 zhucan	𥱄	1	
 zhucan	𥳋	1	zàn,zān
 zhucan	𥴷	1	
@@ -127779,7 +127779,7 @@ zhudan	𲶧	1
 zhudang	筜	1	dāng
 zhudang	簹	1	dāng
 zhudang	𥸈	1	dàng
-zhudao	劚	1	zhú
+zhudao	劚	1	zhú,zhǔ
 zhudao	箌	1	dào,zhào
 zhudao	𠞀	1	tū
 zhudao	𧰕	1	
@@ -127922,7 +127922,7 @@ zhufu	𲵸	1
 zhufu	𲶏	1	
 zhufufuri	簮	1	zān
 zhufumin	簠	1	fǔ
-zhuga	筴	1	cè
+zhuga	筴	1	cè,jiā
 zhugan	䇞	1	gān,gǎn
 zhugan	䈤	1	qián
 zhugan	䉞	1	dǎn
@@ -128190,7 +128190,7 @@ zhuishou	𲢶	1
 zhuishu	𪕪	1	
 zhuishu	𬆨	1	
 zhuishuang	𲉩	1	
-zhuishuzhehengshuzhe	雋	1	juàn
+zhuishuzhehengshuzhe	雋	1	juàn,jùn
 zhuisi	𩀗	1	
 zhuitongkun	𧔰	1	
 zhuitu	墜	1	zhuì
@@ -128245,11 +128245,11 @@ zhuji	𮅪	1
 zhuji	𱸟	1	
 zhuji	𲶩	1	
 zhuji	𲶬	1	
-zhujia	䇲	1	cè
+zhujia	䇲	1	cè,jiā
 zhujia	䈔	1	
 zhujia	笚	1	dā,xiá
 zhujia	笳	1	jiā
-zhujia	筴	1	cè
+zhujia	筴	1	cè,jiā
 zhujia	𥫻	1	
 zhujia	𮅭	1	
 zhujia	𲶝	1	
@@ -128662,16 +128662,16 @@ zhumu	𦵶	1
 zhumu	𲵳	1	
 zhumubai	𥲴	1	
 zhumuda	𮅕	1	
-zhumudaer	篹	1	zhuàn
-zhumudajie	篹	1	zhuàn
-zhumudaliang	籑	1	zhuàn
+zhumudaer	篹	1	zhuàn,zuǎn
+zhumudajie	篹	1	zhuàn,zuǎn
+zhumudaliang	籑	1	zhuàn,zuǎn
 zhumudame	簒	1	cuàn
 zhumudami	纂	1	zuǎn
 zhumudasi	纂	1	zuǎn
-zhumudaxian	篹	1	zhuàn
+zhumudaxian	篹	1	zhuàn,zuǎn
 zhumudengershu	𥴍	1	
 zhumuhengbaliang	𥶉	1	
-zhumuhengshi	籑	1	zhuàn
+zhumuhengshi	籑	1	zhuàn,zuǎn
 zhumuhengza	𬕣	1	
 zhumujiang	𥱝	1	
 zhumulou	𬕢	1	
@@ -129073,7 +129073,7 @@ zhushaomuyou	𭆷	1
 zhushe	筈	1	kuò
 zhushe	𥱈	1	
 zhushe	𥸓	1	
-zhushen	篸	1	cǎn
+zhushen	篸	1	cǎn,zān
 zhushen	𥬐	1	shěn
 zhushen	𥯓	1	
 zhushen	𥳱	1	shēn
@@ -129423,7 +129423,7 @@ zhuxi	𥸗	1	sǎ
 zhuxi	𮆧	1	
 zhuxi	𱸃	1	xī
 zhuxia	筪	1	xiá
-zhuxia	筴	1	cè
+zhuxia	筴	1	cè,jiā
 zhuxia	𥫫	1	
 zhuxia	𥷫	1	jiē
 zhuxiaerqian	𥴋	1	
@@ -129456,7 +129456,7 @@ zhuxiao	𥰹	1
 zhuxiao	𥳴	1	jiǎo
 zhuxiao	𱚩	1	
 zhuxiao	𲵺	1	
-zhuxie	筴	1	cè
+zhuxie	筴	1	cè,jiā
 zhuxie	𥭕	1	
 zhuxie	𥶘	1	
 zhuxie	𱸈	1	
@@ -129614,7 +129614,7 @@ zhuyingri	𮅾	1
 zhuyisimu	𥮧	1	yè
 zhuyiye	𥸊	1	yì
 zhuyizhao	𱸉	1	
-zhuyong	筩	1	tóng
+zhuyong	筩	1	tóng,tǒng
 zhuyong	𰩵	1	
 zhuyou	𥫹	1	chén
 zhuyou	𥬓	1	yào
@@ -130942,7 +130942,7 @@ zucan	𨅔	1	cán
 zucan	𨅶	1	
 zucan	𮜒	1	
 zucan	𰸙	1	
-zucang	蹌	1	qiāng
+zucang	蹌	1	qiāng,qiàng
 zucao	蹧	1	zāo
 zucaocun	𲃩	1	
 zucaozou	𮛙	1	
@@ -131325,14 +131325,14 @@ zujian	𨇿	1
 zujian	𮷒	1	
 zujian	𰸶	1	
 zujiang	跭	1	xiáng
-zujiang	蹡	1	qiāng
+zujiang	蹡	1	qiāng,qiàng
 zujiang	𨀹	1	
 zujiang	𨃇	1	jiāng
 zujiang	𫏣	1	
-zujiang	𬧀	1	qiāng
+zujiang	𬧀	1	qiāng,qiàng
 zujiang	𮜓	1	
 zujianren	𨁗	1	tǐng
-zujiao	蹻	1	juē
+zujiao	蹻	1	juē,qiāo
 zujiao	躈	1	qiào
 zujiao	𨅻	1	
 zujiao	𨇊	1	
@@ -131445,7 +131445,7 @@ zulao	𨀼	1
 zulao	𮜘	1	
 zulao	𲃽	1	
 zule	跞	1	lì
-zule	躒	1	lì
+zule	躒	1	lì,luò
 zule	𧾿	1	
 zulei	𨀤	1	lèi
 zulei	𨄱	1	lěi
@@ -131483,7 +131483,7 @@ zuliang	𨄈	1	liáng
 zuliang	𮛽	1	
 zuliang	𰸮	1	
 zuliao	蹽	1	liāo
-zuliao	躒	1	lì
+zuliao	躒	1	lì,luò
 zuliao	𨇉	1	
 zulie	躐	1	liè
 zulie	𨀺	1	
@@ -131523,7 +131523,7 @@ zulun	踚	1	lún
 zulun	𬦧	1	lún
 zulun	𳃛	1	
 zulun	𳃞	1	
-zuluo	躒	1	lì
+zuluo	躒	1	lì,luò
 zuluo	𨇽	1	luò
 zuluo	𫏑	1	luò
 zuluo	𫏙	1	
@@ -131735,9 +131735,9 @@ zuqian	𭭍	1
 zuqian	𰙊	1	
 zuqian	𳃙	1	
 zuqiang	𮜓	1	
-zuqiao	蹻	1	juē
+zuqiao	蹻	1	juē,qiāo
 zuqiao	𨇶	1	
-zuqiao	𫏋	1	juē
+zuqiao	𫏋	1	juē,qiāo
 zuqie	䟙	1	qiè
 zuqie	跙	1	jù,qū
 zuqie	踕	1	jié
@@ -132080,7 +132080,7 @@ zuyang	𰸄	1
 zuyang	𳃐	1	
 zuyangyong	𨄶	1	
 zuyao	蹺	1	qiāo
-zuyao	躒	1	lì
+zuyao	躒	1	lì,luò
 zuyao	𨂆	1	
 zuyao	𬦽	1	
 zuyao	𮛡	1	
@@ -132177,7 +132177,7 @@ zuyuan	𫏖	1
 zuyue	䟠	1	yuè
 zuyue	䠯	1	yuè
 zuyue	跀	1	yuè
-zuyue	躒	1	lì
+zuyue	躒	1	lì,luò
 zuyue	𨅿	1	
 zuyue	𨆗	1	
 zuyue	𨈅	1	
@@ -132218,7 +132218,7 @@ zuzhai	𨀟	1	duó
 zuzhai	𨀸	1	chā
 zuzhan	䠤	1	duǒ,duò
 zuzhan	䠨	1	chàn
-zuzhan	跕	1	diǎn
+zuzhan	跕	1	diǎn,diē
 zuzhan	蹍	1	niǎn
 zuzhan	𬧋	1	
 zuzhang	䠆	1	cháng

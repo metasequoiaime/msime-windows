@@ -4,6 +4,7 @@
 #include "../core/word_item.h"
 #include "../shuangpin/shuangpin_profile.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -23,6 +24,14 @@ std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_p
 // 命中排在前面，原串再按全拼查一遍排在后面，在双拼下打全拼仍然查得到。
 std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code,
                                     SchemeType scheme, const ShuangpinProfile &profile, int limit = 50);
+// 整张表的加载结果。entries_with_reading 为 0 表示数据目录里还是旧的三列表，U 模式能查字但
+// 没有读音可反显，调用方据此记录数据没刷新。
+struct RadicalTableStats
+{
+    std::size_t entries = 0;
+    std::size_t entries_with_reading = 0;
+};
+
 // 把拆字表读进进程内缓存。首次查询要解析十几万行，放在按键路径之外先调一次可以避开那一下。
-void preload_radical_table(const std::filesystem::path &decomposition_path);
+RadicalTableStats preload_radical_table(const std::filesystem::path &decomposition_path);
 } // namespace metasequoia::local_modes
