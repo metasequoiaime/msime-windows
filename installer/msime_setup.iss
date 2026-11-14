@@ -843,7 +843,8 @@ function IsCollocationModelDirectory(const FileName: String): Boolean;
 begin
   { octagram 语法模型包（目录首项为推荐包万象）在 <数据目录>\models\<id>，是设置页按需下载的
     约 390MB，安装包不携带，
-    也不是每次安装都会重写的东西。神经整句效果档模型同样按需下载在 models\neural-desktop。这份名单的语义恰好是「升级保留、卸载删除」——
+    也不是每次安装都会重写的东西。神经整句效果档模型同样按需下载在 models\neural-desktop（旧版 model-v1
+    的文件也在那里，新版下载前继续用）。这份名单的语义恰好是「升级保留、卸载删除」——
     IsPreservedAppDataItem 只被 CleanAppDataExceptUserFiles（覆盖安装）与 RemoveDataDir
     （卸载/换目录）读——所以归这里，不能进 IsRuntimeAppDataItem：后者两条路径都删，
     覆盖安装会把模型一并清掉，用户得重下一次。}
@@ -1806,7 +1807,9 @@ begin
     exit;
   end;
   { 轻量包不清根目录，但新 Server 同样只认 models\ 下的位置，所以两种包都要挪。
-    哈希分别对应 neural-model/lock.json 和 language-model/lock.json，installer/tests/retired-models.ps1 核对。}
+    哈希分别对应 neural-model/lock.json 的 retired（model-v1 效果档）和 language-model/lock.json，
+    installer/tests/retired-models.ps1 核对。效果档现在是 rerank-v2，落位文件名不同；挪过去的 v1 仍能
+    继续用，设置页显示「有新版本」，下载新版后由下载器删掉它。}
   AdoptRetiredModel('sentence-model-desktop.safetensors', 'neural-desktop', '',
     '0a6ecba69bf1d39c7eb49549c716477dd6c03fdf05757773e1f50435262fb469');
   AdoptRetiredModel('sc.lm', 'language-model', 'libime-lm-NOTICE.md',

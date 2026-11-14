@@ -2001,7 +2001,7 @@ VisualPtr BuildInputPage(PageContext &context)
             s->lattice);
         s->latticeToggle = BindToggle(context, "association.sentence_wordlattice");
 
-        s->neural = MakeModelRow(context, "", L"chinese-ime-lm 效果优先模型", L"约 25 MB · Apache-2.0", "", false,
+        s->neural = MakeModelRow(context, "", L"chinese-ime-lm 效果优先模型", L"约 26 MB · Apache-2.0", "", false,
                                  "neuralModelDownload", "neuralModelImport", "neuralModelDelete");
         auto neuralSection =
             downloadSection(L"神经网络模型（效果优先）下载",
@@ -2237,23 +2237,32 @@ VisualPtr BuildInputPage(PageContext &context)
             const Json *status = model->Find("association.sentence_neural_desktop_model_status");
             const std::string stateName = StateOf(status);
             const bool busy = IsBusy(stateName);
-            s->neural.status->SetText(StatusText(status));
+            // state 说的是新版；updateAvailable = 新版没落位而旧版 model-v1 还在，引擎照样在用旧版。
+            // 所以「可用」看两者，下载按钮在这种情况下就是「更新」。
+            const bool update_available = UpdateAvailable(status);
+            const bool usable = stateName == "ready" || update_available;
+            std::wstring statusText = StatusText(status);
+            if (update_available && !busy)
+                statusText =
+                    stateName == "error" ? statusText + L"（仍在使用旧版）" : L"有新版本可用，下载前继续使用旧版";
+            s->neural.status->SetText(statusText);
+            s->neural.download->SetText(update_available ? L"更新" : L"下载");
             s->neural.download->SetDisabled(stateName == "ready" || busy);
             s->neural.importBox->SetVisible(stateName != "ready");
             s->neural.import->SetDisabled(busy);
-            s->neural.removeBox->SetVisible(stateName == "ready");
+            s->neural.removeBox->SetVisible(usable);
             const std::string url = model->GetString("association.sentence_neural_desktop_model_url");
             const bool showLink = !url.empty() && stateName != "ready";
             if (showLink != s->neuralLinkShown || url != s->neuralUrl)
             {
                 s->neuralLinkShown = showLink;
                 s->neuralUrl = url;
-                s->neural.name->SetSpans(NameSpans(L"chinese-ime-lm 效果优先模型", L"约 25 MB · Apache-2.0", showLink,
+                s->neural.name->SetSpans(NameSpans(L"chinese-ime-lm 效果优先模型", L"约 26 MB · Apache-2.0", showLink,
                                                    [model, url]() { model->Post("openExternalUrl", url); }));
             }
-            // 同 Trigram：未下载时置灰并显示为关，引擎在模型缺席时本来也不重排。
-            s->neuralToggle->SetDisabled(stateName != "ready");
-            if (stateName != "ready")
+            // 同 Trigram：没有可用模型时置灰并显示为关，引擎在模型缺席时本来也不重排。
+            s->neuralToggle->SetDisabled(!usable);
+            if (!usable)
                 s->neuralToggle->SetChecked(false);
             if (busy && s->neuralPoll == 0)
                 s->neuralPoll =

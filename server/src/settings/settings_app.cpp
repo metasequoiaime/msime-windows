@@ -502,8 +502,10 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"sentence_neural_desktop", GetConfiguredAssocSentenceNeuralDesktop()},
             {"sentence_neural_desktop_model_status", [] {
                  const auto status = neural_model::GetModelStatus();
-                 return nlohmann::json{
-                     {"state", status.state}, {"progress", status.progress}, {"error", status.error}};
+                 return nlohmann::json{{"state", status.state},
+                                       {"progress", status.progress},
+                                       {"error", status.error},
+                                       {"updateAvailable", status.update_available}};
              }()},
             {"sentence_neural_desktop_model_url", neural_model::SourceUrl()},
             {"sentence_neural_keyboard", GetConfiguredAssocSentenceNeuralKeyboard()},

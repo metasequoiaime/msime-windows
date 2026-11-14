@@ -195,15 +195,19 @@ int run_test()
     }
 
     // ---- 超长输入不能崩：前文与候选都会被截断 ----
+    // 只要求给出有限的分数，不要求为负：self_normalized 的模型（rerank 6x256）按原始 logit 打分，
+    // 「字」连写两百遍时每一步都几乎必然，原始 logit 会在 0 上下浮动，累加起来可以略大于 0。
     {
         std::string long_context;
         for (int i = 0; i < 80; ++i)
             long_context += "很长的前文。";
-        expect(model->score_sentences(long_context, {"上海"})[0] < 0.0, "an over-long context should still score");
+        const double context_score = model->score_sentences(long_context, {"上海"})[0];
+        expect(std::isfinite(context_score) && context_score != 0.0, "an over-long context should still score");
         std::string long_text;
         for (int i = 0; i < 200; ++i)
             long_text += "字";
-        expect(model->score_sentences("", {long_text})[0] < 0.0, "an over-long candidate should still score");
+        const double text_score = model->score_sentences("", {long_text})[0];
+        expect(std::isfinite(text_score) && text_score != 0.0, "an over-long candidate should still score");
     }
 
     // ---- rerank_order 的契约 ----
