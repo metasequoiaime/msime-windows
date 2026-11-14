@@ -163,9 +163,11 @@ TEST_CASE(zero_is_a_candidate_digit_key_that_resolves_past_the_page)
     REQUIRE(!FanyImeIpc::IsCandidateDigitKey(0x6A)); // VK_MULTIPLY
     REQUIRE(!FanyImeIpc::IsCandidateDigitKey(0x08)); // VK_BACK
 
-    // Zero resolves to the slot before the first candidate, which the selection
-    // path treats as out of range rather than as index 0.
-    REQUIRE(static_cast<int>('0' - '1') == -1);
+    // Numpad zero reaches the selection branch as the main-row zero, so both
+    // keys take the same out-of-range reply instead of one of them falling
+    // through to the composition-reset path.
+    REQUIRE(FanyImeIpc::NormalizeNumpadDigitKey(0x60) == '0');
+    REQUIRE(FanyImeIpc::IsCandidateDigitKey(FanyImeIpc::NormalizeNumpadDigitKey(0x60)));
 }
 
 TEST_CASE(english_mode_toggle_requires_ctrl_shift_e)
