@@ -10,6 +10,7 @@
 #include "log/candidate_diag_log.h"
 #include "skin/candidate_skin_catalog.h"
 #include "window/candidate_skin_layers.h"
+#include "window/candidate_menu_placement.h"
 #include "window/candidate_skin_overlay.h"
 #include "utils/common_utils.h"
 #include "utils/ime_utils.h"
@@ -142,8 +143,12 @@ struct CandidatePresenter::Impl
     D2D1_COLOR_F menuText = D2D1::ColorF(0xE9E8E8);
     D2D1_COLOR_F menuHover = D2D1::ColorF(0x414141);
     RECT hostRectBeforeMenu{};
+    POINT menuAnchorClient{};
     bool contextMenuOpen = false;
     bool contextSubmenuOpen = false;
+    bool contextMenuAbove = false;
+    bool contextSubmenuLeft = false;
+    bool contextSubmenuAbove = false;
     bool hostExpandedForMenu = false;
     size_t contextMenuPageIndex = 0;
 };
@@ -616,9 +621,16 @@ void CandidatePresenter::ShowItemContextMenu(size_t pageIndex, POINT clientPoint
     impl_->contextSubmenu = std::make_shared<msimeui::Popup>(subStack);
     StyleContextPopup(*impl_->contextSubmenu, impl_->menuFill, impl_->menuBorder, kContextSubmenuWidthDip);
 
-    const msimeui::PointF anchor = impl_->window->ClientPixelsToDips(clientPoint);
+    // Measure before placing: the menu height depends on how many items the
+    // candidate allows (a single-character word has no delete item).
+    const msimeui::SizeF menuSize = impl_->contextMenu->MeasureInLayout({kContextMenuWidthDip, 4096.0f});
+    const msimeui::SizeF submenuSize = impl_->contextSubmenu->MeasureInLayout({kContextSubmenuWidthDip, 4096.0f});
+    ExpandHostForMenu(clientPoint, menuSize, submenuSize);
+
+    const msimeui::PointF anchor = impl_->window->ClientPixelsToDips(impl_->menuAnchorClient);
     impl_->contextMenu->SetAnchorRect({anchor.x, anchor.y, 1.0f, 1.0f});
-    ExpandHostForMenu(clientPoint);
+    impl_->contextMenu->SetPlacement(impl_->contextMenuAbove ? msimeui::PopupPlacement::AboveLeading
+                                                             : msimeui::PopupPlacement::BelowLeading);
 
     if (msimeui::Scene *scene = impl_->window->GetScene())
     {
@@ -664,6 +676,10 @@ void CandidatePresenter::CloseContextMenu(bool restoreHost)
     impl_->fixPositionItem.reset();
     impl_->contextMenu.reset();
     impl_->contextSubmenu.reset();
+    if (msimeui::Scene *scene = impl_->window ? impl_->window->GetScene() : nullptr)
+    {
+        scene->SetRootOffset({0.0f, 0.0f});
+    }
     if (restoreHost)
     {
         RestoreHostAfterMenu();
@@ -690,7 +706,12 @@ void CandidatePresenter::OpenFixSubmenu()
         return;
     }
     impl_->contextSubmenu->SetAnchorRect(anchor);
-    impl_->contextSubmenu->SetOffset(anchor.width - 2.0f, -anchor.height);
+    // AboveLeading still ends level with the item: the offset carries its
+    // height, so only the placement side has to change.
+    impl_->contextSubmenu->SetPlacement(impl_->contextSubmenuAbove ? msimeui::PopupPlacement::AboveLeading
+                                                                   : msimeui::PopupPlacement::BelowLeading);
+    impl_->contextSubmenu->SetOffset(impl_->contextSubmenuLeft ? 2.0f - kContextSubmenuWidthDip : anchor.width - 2.0f,
+                                     -anchor.height);
     if (msimeui::Scene *scene = impl_->window->GetScene())
     {
         scene->AddPopup(impl_->contextSubmenu, [this]() { impl_->contextSubmenuOpen = false; });
@@ -716,38 +737,47 @@ void CandidatePresenter::CloseFixSubmenu()
     Present();
 }
 
-void CandidatePresenter::ExpandHostForMenu(POINT clientPoint)
+void CandidatePresenter::ExpandHostForMenu(POINT clientPoint, const msimeui::SizeF &menuSize,
+                                           const msimeui::SizeF &submenuSize)
 {
     if (!hwnd_ || !impl_ || !impl_->window)
     {
         return;
     }
     RECT windowRect{};
-    RECT clientRect{};
     GetWindowRect(hwnd_, &windowRect);
-    GetClientRect(hwnd_, &clientRect);
     if (!impl_->hostExpandedForMenu)
     {
         impl_->hostRectBeforeMenu = windowRect;
         impl_->hostExpandedForMenu = true;
     }
 
+    POINT screenPoint = clientPoint;
+    ClientToScreen(hwnd_, &screenPoint);
     const float dpi = impl_->window->GetDpi();
-    const msimeui::PointF anchor = impl_->window->ClientPixelsToDips(clientPoint);
-    const msimeui::SizeF clientDip = impl_->window->ClientPixelsToDips(SIZE{clientRect.right, clientRect.bottom});
-    const float needWidth =
-        (std::max)(clientDip.width, anchor.x + kContextMenuWidthDip + kContextSubmenuWidthDip + 16.0f);
-    const float needHeight = (std::max)(clientDip.height, (std::max)(anchor.y + 168.0f, 176.0f));
-    const int widthPx = (std::max)(static_cast<int>(windowRect.right - windowRect.left),
-                                   static_cast<int>(std::ceil(needWidth * dpi / 96.0f)));
-    const int heightPx = (std::max)(static_cast<int>(windowRect.bottom - windowRect.top),
-                                    static_cast<int>(std::ceil(needHeight * dpi / 96.0f)));
-    if (widthPx == windowRect.right - windowRect.left && heightPx == windowRect.bottom - windowRect.top)
+    const FanyImeUi::CandidateMenuPlacement plan = FanyImeUi::PlanCandidateMenuPlacement(
+        windowRect, screenPoint, GetMonitorCoordinatesFromPoint(screenPoint), dpi / 96.0f,
+        (std::max)(menuSize.width, 1.0f), menuSize.height > 0.0f ? menuSize.height : 168.0f,
+        (std::max)(submenuSize.width, 1.0f), submenuSize.height > 0.0f ? submenuSize.height : 176.0f);
+
+    impl_->contextMenuAbove = plan.menuAbove;
+    impl_->contextSubmenuLeft = plan.submenuLeft;
+    impl_->contextSubmenuAbove = plan.submenuAbove;
+    impl_->menuAnchorClient = plan.anchorClient;
+
+    const bool resized = plan.host.left != windowRect.left || plan.host.top != windowRect.top ||
+                         plan.host.right != windowRect.right || plan.host.bottom != windowRect.bottom;
+    if (resized)
     {
-        return;
+        SetWindowPos(hwnd_, HWND_TOPMOST, plan.host.left, plan.host.top, plan.host.right - plan.host.left,
+                     plan.host.bottom - plan.host.top, SWP_NOACTIVATE | SWP_NOZORDER);
     }
-    SetWindowPos(hwnd_, HWND_TOPMOST, windowRect.left, windowRect.top, widthPx, heightPx,
-                 SWP_NOACTIVATE | SWP_NOZORDER);
+    // Growing left/up would drag the card with the window; shift the scene back
+    // by the same amount so only the popup gets the extra room.
+    if (msimeui::Scene *scene = impl_->window->GetScene())
+    {
+        scene->SetRootOffset({plan.contentOffsetXDip, plan.contentOffsetYDip});
+    }
 }
 
 void CandidatePresenter::RestoreHostAfterMenu()

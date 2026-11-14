@@ -90,6 +90,18 @@ void Scene::SetRoot(std::shared_ptr<Visual> root)
     arrangeDirtyRoot_ = root_.get();
 }
 
+void Scene::SetRootOffset(const PointF &offset)
+{
+    if (rootOffset_.x == offset.x && rootOffset_.y == offset.y)
+    {
+        return;
+    }
+    rootOffset_ = offset;
+    arrangeDirty_ = true;
+    arrangeDirtyRoot_ = root_.get();
+    InvalidateVisual();
+}
+
 void Scene::Attach(Window *window)
 {
     window_ = window;
@@ -145,7 +157,7 @@ void Scene::Layout(const SizeF &size)
     }
     if (needsArrange)
     {
-        const RectF rootSlot = {0.0f, 0.0f, innerSize.width, innerSize.height};
+        const RectF rootSlot = {rootOffset_.x, rootOffset_.y, innerSize.width, innerSize.height};
         if (!needsMeasure && !sizeChanged && arrangeDirtyRoot_ && arrangeDirtyRoot_ != root_.get() &&
             arrangeDirtyRoot_->HasArrangeSlot())
         {

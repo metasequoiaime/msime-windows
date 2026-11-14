@@ -16,6 +16,7 @@ add_executable(${TEST_EXECUTABLE_NAME}
     src/test_pager_arrows.cpp
     src/test_scroll_axis.cpp
     src/test_scroll_viewer.cpp
+    src/test_scene_root_offset.cpp
     src/test_text_layout.cpp
     src/test_text_selection.cpp
     src/test_window_focus.cpp
