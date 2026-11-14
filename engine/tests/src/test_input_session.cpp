@@ -3547,13 +3547,14 @@ int run_test()
     // 拆字查表走数据目录下的 radical/decomposition.txt。写一份最小表，测试不依赖部署数据
     // 目录里的真实表，字频只用来验证「同前缀内高频在前」。
     const std::filesystem::path radical_directory = data_directory / "radical-fixture";
-    write_file(radical_directory / "radical" / "decomposition.txt", "# 部件拼音连写<Tab>汉字<Tab>字频\n"
-                                                                    "ririri\t晶\t106\n"
-                                                                    "ririri\t曑\t1\n"
-                                                                    "heng\t一\t18584\n"
+    // 第四列读音可选：表里没有读音的行（丁）在候选上留空，不阻断查询。
+    write_file(radical_directory / "radical" / "decomposition.txt", "# 部件拼音连写<Tab>汉字<Tab>字频<Tab>读音\n"
+                                                                    "ririri\t晶\t106\tjīng\n"
+                                                                    "ririri\t曑\t1\tshēn\n"
+                                                                    "heng\t一\t18584\tyī\n"
                                                                     "hengheng\t丁\t900\n"
-                                                                    "koukoukou\t品\t500\n"
-                                                                    "dingkou\t叮\t2\n");
+                                                                    "koukoukou\t品\t500\tpǐn\n"
+                                                                    "dingkou\t叮\t2\tdīng\n");
     set_data_directory(radical_directory);
 
     metasequoia::InputSession radical_session(SchemeType::Quanpin);
@@ -3571,8 +3572,9 @@ int run_test()
     }
     require(radical_session.preedit() == "Uririri" && !radical_session.candidates().empty() &&
                 radical_session.candidates().front().word == "晶" &&
+                radical_session.candidates().front().reading == "jīng" &&
                 radical_session.candidates().front().source == CandidateSource::Generated,
-            "Radical mode did not rank the highest-frequency decomposition of 晶 first.");
+            "Radical mode did not rank the highest-frequency decomposition of 晶 first, or lost its reading.");
     const auto radical_commit = radical_session.select_candidate(0);
     require(radical_commit.handled && radical_commit.commit == "晶" && !radical_session.has_composition() &&
                 radical_session.local_input_mode() == metasequoia::LocalInputMode::None,
@@ -3581,9 +3583,11 @@ int run_test()
     // 前缀收窄：连写码 heng 的最高频命中是 一（18584，高于任何 heng* 的更长码）。
     require(radical_session.handle_character('U', true).handled, "Radical mode could not be re-entered for prefixing.");
     type(radical_session, "heng");
-    require(radical_session.preedit() == "Uheng" && !radical_session.candidates().empty() &&
-                radical_session.candidates().front().word == "一",
-            "A radical prefix did not return its highest-frequency character first.");
+    require(radical_session.preedit() == "Uheng" && radical_session.candidates().size() >= 2 &&
+                radical_session.candidates().front().word == "一" &&
+                radical_session.candidates().front().reading == "yī" && radical_session.candidates()[1].word == "丁" &&
+                radical_session.candidates()[1].reading.empty(),
+            "A radical prefix did not return its highest-frequency character first, or invented a reading.");
     require(radical_session.handle_command(metasequoia::Command::Cancel).handled &&
                 radical_session.local_input_mode() == metasequoia::LocalInputMode::None,
             "Cancel did not leave radical mode.");

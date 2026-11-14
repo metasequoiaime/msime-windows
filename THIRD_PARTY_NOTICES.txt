@@ -68,7 +68,8 @@ Sources:
 googlepinyinime-rev is a continuation of the Google Pinyin IME sources; the files
 under googlepinyinime-rev/src/share are compiled into the engine. OpenCC provides
 the Simplified and Traditional Chinese conversion the Server performs on output.
-cpp-pinyin provides Han-to-pinyin conversion used by the Server. The sherpa-onnx
+cpp-pinyin provides Han-to-pinyin conversion, used by the settings process to
+annotate imported entries. The sherpa-onnx
 C API header (engine/voice/third_party/sherpa-onnx/c-api.h, version 1.13.8)
 supplies the structure definitions the Server's on-device speech recognition
 uses; the sherpa-onnx and ONNX Runtime libraries themselves are not in the
@@ -1190,5 +1191,11 @@ Sources of radical/decomposition.txt, the U-mode radical-reverse-lookup table:
                                (CC-BY-3.0), CHISE (GPL-2.0-or-later) and
                                yi-bai/ids (MIT); the converted table keeps the
                                GPL-3.0 terms
+  pinyin-data          MIT      https://github.com/mozillazg/pinyin-data
+                               the reading column holds up to two readings per
+                               character from pinyin-data 0.16.0 (pinyin.txt
+                               plus its kHanyuPinlu, kXHC1983 and kTGHZ2013
+                               standard-reading tables), which merge the
+                               Unicode Unihan kMandarin and related fields
 
 Unresolved: CustomPinyinDictionary, rime-jp_sela and ZRM_Aux-code publish no license; the English word list in english.db includes word forms extracted from a commercial dictionary, whose rights belong to its publisher; and the helpcode tables reproduce input schemes whose rights belong to their respective authors. jiajia_helpcode.txt additionally aligns its codes with a data table extracted from the commercial 拼音加加 5.x installer. Redistributors who need an explicit grant for those parts should raise it with the Metasequoia IME maintainers rather than assume one. This notice will be updated as those terms are clarified.
