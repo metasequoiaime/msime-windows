@@ -88,6 +88,7 @@ int main()
         insert("zhong", "中");
         insert("guo", "国");
         insert("zhong'guo", "中国");
+        insert_weighted("shang", "上", 500000);
         // 回归夹具：权重取自出货词库的真实量级。xian->西安对先是真歧义（比值 3.3% 过门槛），
         // xie->西鄂、jiang->激昂被门槛拒收；youdian->尤迪安的键更长（you'di'an），旧排序按
         // 原始键长比较时，即使模糊音没有产出任何变体也会把它顶到第一。
@@ -227,9 +228,17 @@ int main()
         const auto &sentence = sentence_list.at(position(sentence_list, "另一边"));
         require(sentence.pinyin == "lin'yi'bian" && sentence.canonical_pinyin == "ling'yi'bian",
                 "fuzzy sentence identity lost");
+        require(sentence.fuzzy, "fuzzy sentence lost its correction marker flag");
         require(!contains(dictionary.query("linyibian", "lin'yi'bian", 0u), "另一边"),
                 "fuzzy lattice leaked into exact cache");
         dictionary.set_sentence_association({});
+        // 词格产出的行不经过 fuzzy_candidates，标记只能由 mark_fuzzy_reading 补。双拼的
+        // ShuangpinEngine::query 复用同一个函数，这里直接验证函数本身。
+        {
+            WordItem generated("lin'yi'bian", "另一边", 1, CandidateSource::Generated, "ling'yi'bian");
+            quanpin::mark_fuzzy_reading(generated, "lin'yi'bian", in_ing);
+            require(generated.fuzzy, "generated fuzzy sentence not marked");
+        }
         require(quanpin::fuzzy_syllables("zh", {0x7ff}) == std::vector<std::string>{"zh"},
                 "incomplete initial changed");
         require(quanpin::fuzzy_syllables("bian", {1u << 6}) == std::vector<std::string>{"bian"},
@@ -284,6 +293,19 @@ int main()
         Session exact(options);
         type(exact, "zsgo");
         require(!contains(exact.snapshot().candidates, "中国"), "session configuration leaked");
+        // 拼写纠错不算模糊音：sahng 纠正成 shang 的「上」带 corrected_from，但不该带 fuzzy，
+        // 否则候选窗会把每个打开纠错的输入都标成模糊音。
+        SessionOptions corrected_options;
+        corrected_options.paths = paths;
+        corrected_options.helpcode = false;
+        corrected_options.autocorrect_types = 1;
+        corrected_options.learning = false;
+        corrected_options.fuzzy_pinyin.rules = 0x7ff;
+        Session corrected(corrected_options);
+        type(corrected, "sahng");
+        const auto shang = corrected.snapshot().candidates[index(corrected, "上")];
+        require(shang.corrected_from == "sahng", "spelling correction lost its marker");
+        require(!shang.fuzzy, "spelling correction mislabelled as a fuzzy reading");
         const auto start = std::chrono::steady_clock::now();
         for (int i = 0; i < 200; ++i)
             dictionary.query("zongguo", "zong'guo", false, {0x7ff});

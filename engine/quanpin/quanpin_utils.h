@@ -10,6 +10,10 @@ namespace quanpin
 {
 using Segments = std::vector<std::string>;
 
+// 拆分带撇号的切分串。定义在 quanpin_query.cpp；声明放在这里，让只需要拆分的头文件
+// 不必包含 sqlite 与词格。
+Segments split_segments(const std::string &segmentation);
+
 struct SyllableEdge
 {
     size_t end = 0;

@@ -318,13 +318,16 @@ std::string BuildCurrentCandidatePage()
         CandidateViewItem view;
         // 含换行的候选用首行加 ↵ 显示（目前只有多行快捷短语）。提交与调频读 item.word，不受影响。
         view.text = FanyImeIpc::QuickPhraseDisplayText(word);
-        if (show_autocorrect_marker && !item.corrected_from.empty() && !item.jianpin_expansion)
+        const bool correction_marker = item.fuzzy || (!item.corrected_from.empty() && !item.jianpin_expansion);
+        if (show_autocorrect_marker && correction_marker)
         {
             // Correction-sourced candidates carry a light visible marker (PRD R5/AC7),
-            // unless the user turned it off via quanpin.autocorrect_marker.
+            // unless the user turned it off via quanpin.autocorrect_marker. Fuzzy
+            // readings are a correction too: the candidate's pronunciation differs
+            // from the typed syllables, just through a fuzzy rule instead of a typo.
             // jianpin_expansion marks a pure abbreviation expansion: it keeps
             // corrected_from for preedit and ranking, but it is not a typo repair,
-            // so it stays unmarked.
+            // so it stays unmarked unless the row is also a fuzzy reading.
             // Only the display text is touched: commits, word frequency updates and
             // pinned-position lookups read item.word / page_words and must never see
             // the marker suffix.

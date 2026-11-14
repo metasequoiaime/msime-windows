@@ -195,6 +195,10 @@ class QuanpinDictionary
     bool user_prefers_reading(const std::string &key);
     static void append_unique_words(std::vector<WordItem> &result, const std::vector<WordItem> &extra);
     void mark_autocorrect_candidates(std::vector<WordItem> &candidates, const std::string &raw_input);
+    // 模糊读音的候选也带纠错标记：词格产出的整句行不一定经过 fuzzy_candidates，
+    // 只有按读音逐音节比对才能补上。见 query() 里的调用。
+    void mark_fuzzy_candidates(std::vector<WordItem> &candidates, const std::string &segmentation,
+                               metasequoia::FuzzyPinyinOptions options) const;
 
     std::vector<std::string> select_data(const std::string &sql_str);
     std::vector<WordItem> select_complete_data(const std::string &sql_str);

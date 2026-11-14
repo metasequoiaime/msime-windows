@@ -137,6 +137,13 @@ std::vector<WordItem> ShuangpinEngine::query(const QueryRequest &request)
     // 辅助码筛过、重排过的列表不补：首选是按辅码挑出来的，补出来的长词不一定满足同样的约束。
     if (request.end_helpcodes.empty() && request.syllable_helpcodes.empty())
         dictionary_.insert_prefix_completion(candidates, request.raw_input, request.prefix_completion);
+    // 双拼的模糊词库行在 append_fuzzy 里已经带标；词格产出的整句行按读音补标。
+    // request.segmentation 是同一串输入的全拼切分，见 shuangpin_scheme.cpp。
+    if (request.fuzzy_pinyin.rules)
+    {
+        for (auto &item : candidates)
+            quanpin::mark_fuzzy_reading(item, request.segmentation, request.fuzzy_pinyin);
+    }
     return std::move(candidates);
 }
 
