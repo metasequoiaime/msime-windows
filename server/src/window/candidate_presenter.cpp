@@ -145,6 +145,8 @@ struct CandidatePresenter::Impl
     D2D1_COLOR_F menuHover = D2D1::ColorF(0x414141);
     RECT hostRectBeforeMenu{};
     POINT menuClient{};
+    // ExpandHostForMenu 给场景设的根偏移（DIP）。菜单开着时布局尺寸要把它算进去。
+    msimeui::PointF menuContentOffsetDip{};
     float contextSubmenuWidthDip = 0.0f;
     bool contextMenuOpen = false;
     bool contextSubmenuOpen = false;
@@ -727,6 +729,7 @@ void CandidatePresenter::CloseContextMenu(bool restoreHost)
     {
         impl_->hostExpandedForMenu = false;
     }
+    impl_->menuContentOffsetDip = {};
     if (msimeui::Scene *scene = impl_->window->GetScene())
     {
         scene->SetRootOffset({0.0f, 0.0f});
@@ -812,9 +815,10 @@ void CandidatePresenter::ExpandHostForMenu(POINT clickScreen, const FanyImeUi::C
     // set before the move and the WM_SIZE of the move does not present (same
     // guard as PlaceAndShow), so no frame pairs the moved origin with an
     // unshifted card. The caller presents once everything is in place.
+    impl_->menuContentOffsetDip = {plan.contentOffsetXDip, plan.contentOffsetYDip};
     if (msimeui::Scene *scene = impl_->window->GetScene())
     {
-        scene->SetRootOffset({plan.contentOffsetXDip, plan.contentOffsetYDip});
+        scene->SetRootOffset(impl_->menuContentOffsetDip);
     }
     const bool resized = plan.host.left != windowRect.left || plan.host.top != windowRect.top ||
                          plan.host.right != windowRect.right || plan.host.bottom != windowRect.bottom;
@@ -1237,10 +1241,25 @@ void CandidatePresenter::Present()
         // Host HWND is larger than the card (shadow padding, 64px buckets, and a
         // grow-only size while typing). Stretching the scene to that HWND fills
         // the rounded card with empty space. Keep layout at the measured DIP size.
-        if (!impl_->hostExpandedForMenu && lastLayoutWidthDip_ > 0.0f && lastLayoutHeightDip_ > 0.0f)
+        if (lastLayoutWidthDip_ > 0.0f && lastLayoutHeightDip_ > 0.0f)
         {
-            layoutW = lastLayoutWidthDip_;
-            layoutH = lastLayoutHeightDip_;
+            if (!impl_->hostExpandedForMenu)
+            {
+                layoutW = lastLayoutWidthDip_;
+                layoutH = lastLayoutHeightDip_;
+            }
+            else
+            {
+                // The grown host gives the popup its room, but it must never give
+                // the card less than it was measured with: next to the right or
+                // bottom screen edge PlaceAndShow trims the host below the
+                // measured size, and the plan cannot grow it past the work area,
+                // so the client alone would re-measure the card narrower and wrap
+                // the candidate row. The scene shifts the root by the offset, so
+                // the card needs its measured size past that offset.
+                layoutW = (std::max)(layoutW, lastLayoutWidthDip_ + impl_->menuContentOffsetDip.x);
+                layoutH = (std::max)(layoutH, lastLayoutHeightDip_ + impl_->menuContentOffsetDip.y);
+            }
         }
         scene->EnsureLayout({layoutW, layoutH});
         scene->Render(impl_->resources);
