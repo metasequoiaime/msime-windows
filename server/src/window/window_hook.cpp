@@ -6,6 +6,7 @@
 #include "window/floating_toolbar_presenter.h"
 #include "defines/globals.h"
 #include "defines/defines.h"
+#include "ipc/event_listener.h"
 #include "watchdog/watchdog_protocol.h"
 #include "log/ftb_diag_log.h"
 #include <atomic>
@@ -133,6 +134,14 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
             return CallNextHookEx(g_hHook, nCode, wParam, lParam);
         }
 
+        // DR Dict 查预编辑：Ctrl+Alt+Enter（不带 Shift、Win）。必须在钩子里认：Edge / Chrome 不把按着 Alt 的
+        // 键交给 TSF，输入法根本收不到这颗回车。候选窗不显示时上面已经放行，应用自己的 Ctrl+Alt+Enter 不受
+        // 影响；开关关着也放行。这里只排一个任务就返回，取预编辑、查词、清组合都在工作线程上做。
+        if (ctrl && alt && !shift && !win && p->vkCode == VK_RETURN && GetConfiguredDrDictLookupPreeditHotkey())
+        {
+            FanyNamedPipe::EnqueueDictionaryPreeditLookup();
+            return 1;
+        }
         if (ctrl && alt && shift)
         {
             // 只处理主键盘数字

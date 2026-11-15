@@ -72,7 +72,8 @@ TEST_CASE(ipc_pipe_ready_is_a_distinct_server_reply)
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::HorizontalArrowSelectionChanged, 39u);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::UpdateInstallerReady, 40u);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged, 41u);
-    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown, 41u);
+    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition, 42u);
+    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown, 42u);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::FocusSessionReady >
             Global::DataFromServerMsgTypeToTsfWorkerThread::PagingCommaPeriodChanged);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::PipeReady >
@@ -137,8 +138,10 @@ TEST_CASE(ipc_pipe_ready_is_a_distinct_server_reply)
             Global::DataFromServerMsgTypeToTsfWorkerThread::HorizontalArrowSelectionChanged);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged >
             Global::DataFromServerMsgTypeToTsfWorkerThread::UpdateInstallerReady);
+    REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition >
+            Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown,
-               Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged);
+               Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition);
 }
 
 TEST_CASE(ipc_client_suspension_is_a_distinct_nonterminal_route_reset)
@@ -146,6 +149,7 @@ TEST_CASE(ipc_client_suspension_is_a_distinct_nonterminal_route_reset)
     REQUIRE_EQ(FanyImePipeEventType::InputStateAction, 17u);
     REQUIRE_EQ(FanyImeProtocol::InputStateShortcuts, 1u << 7);
     REQUIRE_EQ(FanyImeProtocol::TemporaryJapaneseLongVowel, 1u << 8);
+    REQUIRE_EQ(FanyImeProtocol::ServerCompositionCancel, 1u << 9);
     REQUIRE_EQ(FanyImePipeEventType::ClientActivated, 11u);
     REQUIRE_EQ(FanyImePipeEventType::ClientDeactivated, 12u);
     REQUIRE_EQ(FanyImePipeEventType::StatusSnapshot, 13u);

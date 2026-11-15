@@ -405,6 +405,9 @@ SwitchLanguageHotkeys ParseSwitchLanguageHotkeys(const std::filesystem::path &co
     }
 
     bool inKeybindings = false;
+    bool inDrDict = false;
+    bool drDictEnabled = false;
+    bool drDictCandidate = false;
     bool sawShift = false;
     bool sawCtrl = false;
     bool sawCtrlAltSpace = false;
@@ -424,6 +427,22 @@ SwitchLanguageHotkeys ParseSwitchLanguageHotkeys(const std::filesystem::path &co
         if (line.front() == '[' && line.back() == ']')
         {
             inKeybindings = (line == "[keybindings]");
+            inDrDict = (line == "[dr_dict]");
+            continue;
+        }
+        if (inDrDict)
+        {
+            const size_t eq = line.find('=');
+            if (eq == std::string::npos)
+            {
+                continue;
+            }
+            const std::string key = TrimAscii(line.substr(0, eq));
+            const std::string raw = line.substr(eq + 1);
+            if (key == "enabled")
+                drDictEnabled = ParseTomlBool(raw, false);
+            else if (key == "lookup_candidate_ctrl_shift_enter")
+                drDictCandidate = ParseTomlBool(raw, false);
             continue;
         }
         if (!inKeybindings)
@@ -475,6 +494,7 @@ SwitchLanguageHotkeys ParseSwitchLanguageHotkeys(const std::filesystem::path &co
             }
     }
     result.input_state = FanyImeInputStateShortcuts::Resolve(values);
+    result.dr_dict_lookup_candidate = drDictEnabled && drDictCandidate;
     (void)sawCtrl;
     return result;
 }

@@ -77,6 +77,9 @@ void EnqueueCandidateUiPaging(CandidateUiAction action, int steps);
 void EnqueueCandidateUiCommitAt(int absolute_index, std::wstring expected_text);
 // 卷轴展开面板打开或滚到底部：向会话再要一批候选，并重新发布带后续候选的候选页。
 void EnqueueCandidateUiExpand();
+// DR Dict 查预编辑（Ctrl+Alt+Enter）：键盘钩子在候选窗显示时调用，按当前候选页所属的客户端排进工作线程。
+// 只投递任务，不碰输入状态，钩子回调里可以直接调。
+void EnqueueDictionaryPreeditLookup();
 void EnqueuePipeSessionInvalidatedTask(uint64_t client_id, uint64_t invalidation_epoch);
 void EnqueueReloadInputSessionTask();
 void EnqueueEnsureInputSessionMatchesConfigTask();

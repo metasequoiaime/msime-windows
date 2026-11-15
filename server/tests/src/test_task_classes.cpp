@@ -111,6 +111,7 @@ TEST_CASE(task_classification_covers_every_task_type)
         {TaskType::UiPageDown, TaskClass::Foreground},
         {TaskType::UiCommitCandidateAt, TaskClass::Foreground},
         {TaskType::UiExpandCandidates, TaskClass::UserAction},
+        {TaskType::UiDictionaryPreeditLookup, TaskClass::Foreground},
         {TaskType::ReloadInputSession, TaskClass::Foreground},
         {TaskType::EnsureInputSessionMatchesConfig, TaskClass::Foreground},
         {TaskType::ApplyCandidatePageSize, TaskClass::Maintenance},

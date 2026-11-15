@@ -8,7 +8,8 @@
 
 using Microsoft::WRL::ComPtr;
 
-// 高级：系统层面的开关（默认输入法、输入法图标、游戏兼容名称）、网络代理、输入法进程与日志、用户数据备份。
+// 高级：系统层面的开关（默认输入法、输入法图标、游戏兼容名称）、网络代理、DR Dict 词典联动、输入法进程与日志、
+// 用户数据备份。
 // 前四块原在「帮助」页（partials/help-settings.html + default-ime.ts / game-compat.ts），其余原在「关于」页
 // （partials/about-settings.html）。
 namespace native_settings
@@ -632,6 +633,37 @@ VisualPtr BuildAdvancedPage(PageContext &context)
             RefreshProxyState(*locked);
         });
         RefreshProxyState(*state);
+    }
+
+    // DR Dict 词典联动：总开关管候选右键菜单的「查词典」，两个快捷键各自另有开关，总开关关着时置灰。
+    {
+        auto candidateHotkey = BindToggle(context, "dr_dict.lookup_candidate_ctrl_shift_enter");
+        auto preeditHotkey = BindToggle(context, "dr_dict.lookup_preedit_ctrl_alt_enter");
+        page.AddSection(MakeRows({
+            MakeRow(L"DR Dict 词典联动",
+                    L"在候选的右键菜单中增加「查词典」，在 DR Dict 的弹窗中查询该候选。需要安装 DR Dict "
+                    L"并至少运行过一次；DR Dict 没在运行时会自动启动它。",
+                    BindToggle(context, "dr_dict.enabled")),
+            MakeRow(L"Ctrl+Shift+Enter 查询高亮候选",
+                    L"有候选时按下，在 DR Dict 中查询当前高亮的候选，并像按 Esc "
+                    L"一样清掉当前输入，不上屏。开启上面的词典联动后生效。",
+                    candidateHotkey),
+            MakeRow(L"Ctrl+Alt+Enter 查询预编辑",
+                    L"候选窗显示时按下，在 DR Dict 中查询当前输入的原始字母（例如英文单词），并像按 Esc "
+                    L"一样清掉当前输入，不上屏。由输入法的全局键盘钩子识别，Edge、Chrome 里也能用；"
+                    L"候选窗不显示时不拦截。开启上面的词典联动后生效。",
+                    preeditHotkey),
+        }));
+        SettingsModel *dictModel = &context.model;
+        std::weak_ptr<ToggleSwitch> weakCandidate = candidateHotkey;
+        std::weak_ptr<ToggleSwitch> weakPreedit = preeditHotkey;
+        context.OnConfig([dictModel, weakCandidate, weakPreedit]() {
+            const bool disabled = !dictModel->GetBool("dr_dict.enabled");
+            if (auto toggle = weakCandidate.lock())
+                toggle->SetDisabled(disabled);
+            if (auto toggle = weakPreedit.lock())
+                toggle->SetDisabled(disabled);
+        });
     }
 
     // 输入法进程与设置窗口

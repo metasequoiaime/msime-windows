@@ -330,6 +330,8 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch);
 // 只在任务线程上调用。
 bool RespellCandidatesForCharacterSetChange();
 void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id);
+// DR Dict 查预编辑（Ctrl+Alt+Enter），由键盘钩子经 EnqueueDictionaryPreeditLookup 投递，在工作线程上执行。
+void HandleDictionaryPreeditLookupFromHook(uint64_t client_id, uint64_t activation_epoch);
 void ClearState();
 // count_first_word = false 时这次上屏不进首词命中率（五笔四码唯一自动上屏：用户没有做选择）。
 // resolve_live_page: 展开面板点选的候选不在当前页上，MoveToExpandedCandidate 已把工作线程的页

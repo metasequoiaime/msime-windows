@@ -644,6 +644,14 @@ r_mode = true # Shift+R 进入临时日语模式（中文状态下使用罗马�
 v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，V123.45 → 壹佰贰拾叁元肆角伍分）或计算算式（V1+2*3 → 7）；双拼和五笔用大写 V，全拼大小写均可
 
 #
+# DR Dict
+# 词典联动：在 DR Dict 的弹窗中查词（需要安装并运行过一次 DR Dict）
+#
+[dr_dict]
+enabled = false # 候选右键菜单增加「查词典」
+lookup_candidate_ctrl_shift_enter = false # Ctrl+Shift+Enter 查询高亮候选；需先开启 enabled
+lookup_preedit_ctrl_alt_enter = false # Ctrl+Alt+Enter 查询当前预编辑；需先开启 enabled
+#
 # AI Assistant
 # AI 辅助
 #

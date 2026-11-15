@@ -36,6 +36,8 @@ enum class TaskType
     UiPageDown,
     UiCommitCandidateAt,
     UiExpandCandidates,
+    // DR Dict 查预编辑（Ctrl+Alt+Enter），键盘钩子在候选窗显示时投递。
+    UiDictionaryPreeditLookup,
     ReloadInputSession,
     EnsureInputSessionMatchesConfig,
     ApplyCandidatePageSize,

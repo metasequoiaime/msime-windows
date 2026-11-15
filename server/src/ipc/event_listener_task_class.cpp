@@ -38,6 +38,8 @@ TaskClass ClassifyTask(TaskType type)
     case TaskType::UiDeleteCandidate:
     case TaskType::UiFixCandidatePosition:
     case TaskType::UiClearCandidatePosition:
+    // A key the user just pressed, like any other; the keys after it must see its cleared composition.
+    case TaskType::UiDictionaryPreeditLookup:
     case TaskType::ReloadInputSession:
     case TaskType::EnsureInputSessionMatchesConfig:
         return TaskClass::Foreground;

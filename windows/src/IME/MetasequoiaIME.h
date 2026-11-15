@@ -55,6 +55,8 @@ const DWORD WM_AsyncCycleInputMode = WM_USER + 29;
 const DWORD WM_SyncCapsLockPunctuation = WM_USER + 30;
 const DWORD WM_ApplyUiLessCandidates = WM_USER + 31;
 const DWORD WM_ApplyCapsLockEdge = WM_USER + 32;
+// Worker CancelComposition: drop the composition without committing, as Esc does.
+const DWORD WM_CancelServerComposition = WM_USER + 33;
 constexpr ULONG_PTR SMART_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535050u;
 constexpr ULONG_PTR PAIRED_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535051u;
 // Synthetic input that this tip generates carries a marker meaning "this tip

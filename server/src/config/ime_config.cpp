@@ -198,6 +198,11 @@ bool g_language_bar_enabled = true;
 bool g_language_bar_show_ime_mode = true;
 bool g_language_bar_show_double_single_byte = true;
 bool g_language_bar_show_punctuation = true;
+// DR Dict 词典联动：右键菜单「查词典」与两个查词快捷键，默认全部关闭。候选窗右键菜单在界面线程上读，
+// 快捷键在工作线程上读，所以用原子量。
+std::atomic<bool> g_dr_dict_enabled{false};
+std::atomic<bool> g_dr_dict_lookup_candidate_hotkey{false};
+std::atomic<bool> g_dr_dict_lookup_preedit_hotkey{false};
 bool g_paging_minus_equal_enabled = true;
 bool g_paging_comma_period_enabled = false;
 bool g_paging_brackets_enabled = false;
@@ -729,6 +734,11 @@ bool LoadImeConfig()
         g_language_bar_show_ime_mode = tbl["language_bar"]["show_ime_mode"].value_or(true);
         g_language_bar_show_double_single_byte = tbl["language_bar"]["show_double_single_byte"].value_or(true);
         g_language_bar_show_punctuation = tbl["language_bar"]["show_punctuation"].value_or(true);
+        g_dr_dict_enabled.store(tbl["dr_dict"]["enabled"].value_or(false), std::memory_order_relaxed);
+        g_dr_dict_lookup_candidate_hotkey.store(tbl["dr_dict"]["lookup_candidate_ctrl_shift_enter"].value_or(false),
+                                                std::memory_order_relaxed);
+        g_dr_dict_lookup_preedit_hotkey.store(tbl["dr_dict"]["lookup_preedit_ctrl_alt_enter"].value_or(false),
+                                              std::memory_order_relaxed);
         const auto legacy_paging_mode = tbl["general"]["paging_mode"].value<std::string>();
         g_paging_minus_equal_enabled =
             tbl["general"]["paging_minus_equal"].value_or(!legacy_paging_mode || *legacy_paging_mode == "-/=");
