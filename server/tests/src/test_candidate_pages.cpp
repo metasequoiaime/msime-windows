@@ -9,10 +9,8 @@
 
 namespace
 {
-using FanyImeIpc::CandidateFreshness;
 using FanyImeIpc::CandidatePage;
 using FanyImeIpc::CandidatePages;
-using Clock = CandidatePages::Clock;
 using milliseconds = std::chrono::milliseconds;
 
 std::wstring Wide(const std::string &text)
@@ -45,44 +43,6 @@ CandidatePage MakePage(const std::string &input, const std::vector<std::string> 
     page.items = items;
     return page;
 }
-
-class FakeClock : public CandidatePages::ClockPort
-{
-  public:
-    Clock::time_point now() const override
-    {
-        return now_;
-    }
-
-    void schedule_at(Clock::time_point deadline, std::function<void()> fn) override
-    {
-        timers_.push_back({deadline, std::move(fn)});
-    }
-
-    void Advance(milliseconds delta)
-    {
-        now_ += delta;
-        for (;;)
-        {
-            const auto due = std::find_if(timers_.begin(), timers_.end(),
-                                          [this](const auto &timer) { return timer.deadline <= now_; });
-            if (due == timers_.end())
-                return;
-            auto fn = std::move(due->fn);
-            timers_.erase(due);
-            fn();
-        }
-    }
-
-  private:
-    struct Timer
-    {
-        Clock::time_point deadline;
-        std::function<void()> fn;
-    };
-    Clock::time_point now_{};
-    std::vector<Timer> timers_;
-};
 
 class FakeSurface : public CandidatePages::SurfacePort
 {
@@ -123,17 +83,16 @@ class FakeSurface : public CandidatePages::SurfacePort
     bool is_uiless = false;
 };
 
-std::unique_ptr<CandidatePages> MakePages(FakeClock &clock, FakeSurface &surface, milliseconds wait = milliseconds{80})
+std::unique_ptr<CandidatePages> MakePages(FakeSurface &surface, milliseconds wait = milliseconds{80})
 {
-    return std::make_unique<CandidatePages>(clock, surface, milliseconds{120}, wait);
+    return std::make_unique<CandidatePages>(surface, wait);
 }
 } // namespace
 
 TEST_CASE(candidate_pages_show_publishes_first_frame)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通", "炮筒"}));
 
@@ -142,65 +101,70 @@ TEST_CASE(candidate_pages_show_publishes_first_frame)
     REQUIRE(surface.last.generation == 1);
 }
 
-TEST_CASE(candidate_pages_rebuild_replaces_the_pending_frame_page)
+TEST_CASE(candidate_pages_async_update_paints_immediately)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通"}));
-    REQUIRE(pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast));
+    REQUIRE(pages->Update(MakePage("photon", {"炮同"})));
+
+    // 没有合并窗口：回包当场发布并请求显示。
+    REQUIRE(surface.show_count == 2);
+    REQUIRE(surface.last.generation == 2);
+    REQUIRE(surface.last.items->front().word == "炮同");
+}
+
+TEST_CASE(candidate_pages_every_async_update_for_an_input_paints)
+{
+    FakeSurface surface;
+    auto pages = MakePages(surface);
+
+    // 混输、重排、译文先后回来，每一份真实变化都要上屏；不再有「每个输入一帧」的额度把后到的挡掉，
+    // 否则列表里有的候选屏上没有，要翻页才看得到。
+    pages->Show(MakePage("photon", {"跑通"}));
+    REQUIRE(pages->Update(MakePage("photon", {"炮同"})));
     pages->Publish(MakePage("photon", {"跑痛"}));
+    REQUIRE(pages->UpdateCurrent());
+    REQUIRE(pages->Update(MakePage("photon", {"泡桐"})));
 
-    clock.Advance(milliseconds{120});
-    REQUIRE(surface.show_count == 2);
-    REQUIRE(surface.last.items->front().word == "跑痛");
+    REQUIRE(surface.show_count == 4);
+    REQUIRE(surface.last.items->front().word == "泡桐");
 }
 
-TEST_CASE(candidate_pages_rebuild_does_not_grant_another_fast_frame)
+TEST_CASE(candidate_pages_rejects_async_update_for_another_input)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通"}));
-    REQUIRE(pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast));
-    clock.Advance(milliseconds{120});
-    REQUIRE(surface.show_count == 2);
-
-    pages->Publish(MakePage("photon", {"跑痛"}));
-    REQUIRE(!pages->Update(MakePage("photon", {"跑痛"}), CandidateFreshness::Fast));
-
-    pages->Publish(MakePage("photonx", {"跑通x"}));
-    REQUIRE(pages->Update(MakePage("photonx", {"跑通x"}), CandidateFreshness::Fast));
+    REQUIRE(!pages->Update(MakePage("photo", {"迟到"})));
+    REQUIRE(surface.show_count == 1);
+    REQUIRE(surface.publish_count == 1);
 }
 
-TEST_CASE(candidate_pages_budget_resets_and_cancels_pending_frames)
+TEST_CASE(candidate_pages_block_holds_until_allowed_or_new_input)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通"}));
-    REQUIRE(pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast));
-    clock.Advance(milliseconds{120});
-    REQUIRE(surface.show_count == 2);
-    REQUIRE(!pages->Update(MakePage("photon", {"跑痛"}), CandidateFreshness::Fast));
+    pages->BlockAsyncUpdates();
+    REQUIRE(!pages->Update(MakePage("photon", {"炮同"})));
+    REQUIRE(!pages->UpdateCurrent());
+    REQUIRE(surface.show_count == 1);
 
-    pages->ResetFrameBudget();
-    REQUIRE(pages->Update(MakePage("photon", {"跑痛"}), CandidateFreshness::Fast));
-    pages->CancelPending();
-    clock.Advance(milliseconds{120});
-    REQUIRE(surface.show_count == 2);
-    REQUIRE(!pages->Update(MakePage("photon", {"泡桐"}), CandidateFreshness::Fast));
-    REQUIRE(!pages->Update(MakePage("photon", {"泡桐"}), CandidateFreshness::Late));
+    pages->AllowAsyncUpdates();
+    REQUIRE(pages->Update(MakePage("photon", {"炮同"})));
+
+    pages->BlockAsyncUpdates();
+    pages->Show(MakePage("photonx", {"跑通x"}));
+    REQUIRE(pages->Update(MakePage("photonx", {"炮同x"})));
 }
-
 TEST_CASE(candidate_pages_publish_defers_show_until_requested)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Publish(MakePage("photon", {"跑通"}));
     REQUIRE(surface.publish_count == 1);
@@ -214,9 +178,8 @@ TEST_CASE(candidate_pages_publish_defers_show_until_requested)
 
 TEST_CASE(candidate_pages_keyboard_commit_waits_for_the_first_paint)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface, milliseconds{500});
+    auto pages = MakePages(surface, milliseconds{500});
 
     pages->Show(MakePage("photon", {"跑通"}));
 
@@ -235,10 +198,9 @@ TEST_CASE(candidate_pages_keyboard_commit_waits_for_the_first_paint)
 
 TEST_CASE(candidate_pages_uiless_commit_never_waits_for_a_paint_echo)
 {
-    FakeClock clock;
     FakeSurface surface;
     surface.is_uiless = true;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通"}));
     const auto choice = pages->CommitSlot(0);
@@ -251,10 +213,9 @@ TEST_CASE(candidate_pages_uiless_commit_never_waits_for_a_paint_echo)
 
 TEST_CASE(candidate_pages_uiless_commit_highlighted_uses_the_published_page)
 {
-    FakeClock clock;
     FakeSurface surface;
     surface.is_uiless = true;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通", "炮同"}, 0, 1));
     const auto choice = pages->CommitHighlighted();
@@ -267,9 +228,8 @@ TEST_CASE(candidate_pages_uiless_commit_highlighted_uses_the_published_page)
 
 TEST_CASE(candidate_pages_ignores_an_echo_older_than_the_rendered_page)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface, milliseconds{0});
+    auto pages = MakePages(surface, milliseconds{0});
 
     pages->Show(MakePage("photon", {"旧页"}));
     REQUIRE(pages->Painted(1, true));
@@ -282,82 +242,24 @@ TEST_CASE(candidate_pages_ignores_an_echo_older_than_the_rendered_page)
     REQUIRE(choice->item.word == "新页");
 }
 
-TEST_CASE(candidate_pages_update_current_schedules_the_published_page)
+TEST_CASE(candidate_pages_update_current_shows_the_published_page)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Publish(MakePage("photon", {"跑通"}));
-    REQUIRE(pages->UpdateCurrent(CandidateFreshness::Fast));
     REQUIRE(surface.show_count == 0);
+    REQUIRE(pages->UpdateCurrent());
 
-    clock.Advance(milliseconds{120});
     REQUIRE(surface.show_count == 1);
     REQUIRE(surface.last.generation == 2);
     REQUIRE(surface.last.items->front().word == "跑通");
 }
 
-TEST_CASE(candidate_pages_fast_updates_fold_into_one_frame)
-{
-    FakeClock clock;
-    FakeSurface surface;
-    auto pages = MakePages(clock, surface);
-
-    pages->Show(MakePage("photon", {"跑通"}));
-    REQUIRE(pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast));
-    REQUIRE(pages->Update(MakePage("photon", {"跑痛"}), CandidateFreshness::Fast));
-    clock.Advance(milliseconds{119});
-    REQUIRE(surface.show_count == 1);
-    clock.Advance(milliseconds{1});
-    REQUIRE(surface.show_count == 2);
-    REQUIRE(surface.last.items->front().word == "跑痛");
-
-    REQUIRE(!pages->Update(MakePage("photon", {"泡桐"}), CandidateFreshness::Fast));
-    clock.Advance(milliseconds{120});
-    REQUIRE(surface.show_count == 2);
-}
-
-TEST_CASE(candidate_pages_late_adds_one_frame)
-{
-    FakeClock clock;
-    FakeSurface surface;
-    auto pages = MakePages(clock, surface);
-
-    pages->Show(MakePage("photon", {"跑通"}));
-    pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast);
-    clock.Advance(milliseconds{120});
-    REQUIRE(surface.show_count == 2);
-
-    pages->Update(MakePage("photon", {"跑痛"}), CandidateFreshness::Late);
-    clock.Advance(milliseconds{120});
-    REQUIRE(surface.show_count == 3);
-    REQUIRE(surface.last.items->front().word == "跑痛");
-
-    REQUIRE(!pages->Update(MakePage("photon", {"泡桐"}), CandidateFreshness::Late));
-    clock.Advance(milliseconds{120});
-    REQUIRE(surface.show_count == 3);
-}
-
-TEST_CASE(candidate_pages_immediate_paints_every_arrival)
-{
-    FakeClock clock;
-    FakeSurface surface;
-    auto pages = MakePages(clock, surface);
-
-    pages->Show(MakePage("photon", {"跑通"}));
-    pages->Update(MakePage("photon", {"云候选"}), CandidateFreshness::Immediate);
-    pages->Update(MakePage("photon", {"AI候选"}), CandidateFreshness::Immediate);
-
-    REQUIRE(surface.show_count == 3);
-    REQUIRE(surface.last.items->front().word == "AI候选");
-}
-
 TEST_CASE(candidate_pages_does_not_commit_a_page_from_a_previous_input)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface, milliseconds{0});
+    auto pages = MakePages(surface, milliseconds{0});
 
     pages->Show(MakePage("old", {"旧页"}));
     REQUIRE(pages->Painted(1, true));
@@ -370,14 +272,12 @@ TEST_CASE(candidate_pages_does_not_commit_a_page_from_a_previous_input)
 
 TEST_CASE(candidate_pages_commit_uses_the_rendered_page)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface, milliseconds{0});
+    auto pages = MakePages(surface, milliseconds{0});
 
     pages->Show(MakePage("photon", {"跑通"}));
     pages->Painted(1, true);
-    pages->Update(MakePage("photon", {"坏页"}), CandidateFreshness::Fast);
-    clock.Advance(milliseconds{120});
+    pages->Update(MakePage("photon", {"坏页"}));
     REQUIRE(surface.last.generation == 2);
 
     const auto unseen = pages->CommitSlot(0);
@@ -394,15 +294,13 @@ TEST_CASE(candidate_pages_commit_uses_the_rendered_page)
 
 TEST_CASE(candidate_pages_gesture_freezes_the_rendered_page)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通"}));
     pages->Painted(1, true);
     pages->Gesture(1);
-    REQUIRE(!pages->Update(MakePage("photon", {"新页"}), CandidateFreshness::Fast));
-    clock.Advance(milliseconds{120});
+    REQUIRE(!pages->Update(MakePage("photon", {"新页"})));
     REQUIRE(surface.publish_count == 1);
 
     const auto choice = pages->CommitSlot(0);
@@ -412,15 +310,13 @@ TEST_CASE(candidate_pages_gesture_freezes_the_rendered_page)
 
 TEST_CASE(candidate_pages_hide_drops_late_results)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通"}));
     pages->Painted(1, true);
     pages->Hide();
-    REQUIRE(!pages->Update(MakePage("photon", {"迟到"}), CandidateFreshness::Fast));
-    clock.Advance(milliseconds{120});
+    REQUIRE(!pages->Update(MakePage("photon", {"迟到"})));
 
     REQUIRE(surface.publish_count == 1);
     REQUIRE(!pages->CommitSlot(0));
@@ -428,14 +324,12 @@ TEST_CASE(candidate_pages_hide_drops_late_results)
 
 TEST_CASE(candidate_pages_keyboard_commit_waits_for_the_pending_paint)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface, milliseconds{500});
+    auto pages = MakePages(surface, milliseconds{500});
 
     pages->Show(MakePage("photon", {"跑通"}));
     pages->Painted(1, true);
-    pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast);
-    clock.Advance(milliseconds{120});
+    pages->Update(MakePage("photon", {"炮同"}));
     REQUIRE(surface.last.generation == 2);
 
     std::thread painter([&pages] {
@@ -454,14 +348,12 @@ TEST_CASE(candidate_pages_keyboard_commit_waits_for_the_pending_paint)
 
 TEST_CASE(candidate_pages_keyboard_commit_times_out_on_the_rendered_page)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface, milliseconds{5});
+    auto pages = MakePages(surface, milliseconds{5});
 
     pages->Show(MakePage("photon", {"跑通"}));
     pages->Painted(1, true);
-    pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast);
-    clock.Advance(milliseconds{120});
+    pages->Update(MakePage("photon", {"炮同"}));
 
     const auto choice = pages->CommitSlot(0);
     REQUIRE(choice);
@@ -472,14 +364,12 @@ TEST_CASE(candidate_pages_keyboard_commit_times_out_on_the_rendered_page)
 
 TEST_CASE(candidate_pages_pointer_commit_never_waits)
 {
-    FakeClock clock;
     FakeSurface surface;
-    auto pages = MakePages(clock, surface);
+    auto pages = MakePages(surface);
 
     pages->Show(MakePage("photon", {"跑通"}));
     pages->Painted(1, true);
-    pages->Update(MakePage("photon", {"炮同"}), CandidateFreshness::Fast);
-    clock.Advance(milliseconds{120});
+    pages->Update(MakePage("photon", {"炮同"}));
 
     const auto choice = pages->CommitAt(0);
     REQUIRE(choice);

@@ -8,7 +8,6 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -40,30 +39,11 @@ struct CandidateChoice
     bool timed_out = false;
 };
 
-enum class CandidateFreshness
-{
-    Fast,
-    Late,
-    Immediate,
-};
-
-// Worker-affine publish/show/settle/latch/selection state machine. The only UI-thread entries are Painted() and
+// Worker-affine publish/show/latch/selection state machine. The only UI-thread entries are Painted() and
 // Gesture(); everything else runs on the task thread and is serialized by the task queue.
 class CandidatePages
 {
   public:
-    using Clock = std::chrono::steady_clock;
-
-    class ClockPort
-    {
-      public:
-        virtual ~ClockPort() = default;
-        virtual Clock::time_point now() const = 0;
-        // Runs fn on the worker after the deadline. A callback that fires after the page was replaced must be a
-        // no-op; the module checks whether a frame is still pending.
-        virtual void schedule_at(Clock::time_point deadline, std::function<void()> fn) = 0;
-    };
-
     class SurfacePort
     {
       public:
@@ -75,10 +55,8 @@ class CandidatePages
         virtual bool uiless() const = 0;
     };
 
-    CandidatePages(ClockPort &clock, SurfacePort &surface,
-                   std::chrono::milliseconds settle = std::chrono::milliseconds{120},
-                   std::chrono::milliseconds wait = std::chrono::milliseconds{80})
-        : clock_(clock), surface_(surface), settle_(settle), wait_(wait)
+    explicit CandidatePages(SurfacePort &surface, std::chrono::milliseconds wait = std::chrono::milliseconds{80})
+        : surface_(surface), wait_(wait)
     {
     }
 
@@ -91,25 +69,11 @@ class CandidatePages
     }
 
     // Silent publish: the page is what the next show will paint, but no frame is requested. The key path builds a
-    // page this way and the caller decides whether to show it; a page for the same input also replaces the page a
-    // queued fast/late frame would have painted.
+    // page this way and the caller decides whether to show it.
     void Publish(CandidatePage page)
     {
         std::lock_guard lock(mutex_);
-        const bool input_changed = page.input != input_;
-        if (input_changed)
-        {
-            pending_.reset();
-            fast_done_ = false;
-            late_done_ = false;
-            latched_ = false;
-        }
-        else if (pending_)
-        {
-            // A synchronous rebuild on the same input is newer than the queued enrichment page; keep the frame
-            // that is already scheduled, but let it paint this page instead of the stale one.
-            pending_->page = page;
-        }
+        BeginInputIfChanged(page.input);
         StorePage(std::move(page));
     }
 
@@ -117,14 +81,7 @@ class CandidatePages
     void Show(CandidatePage page)
     {
         std::lock_guard lock(mutex_);
-        const bool input_changed = page.input != input_;
-        pending_.reset();
-        if (input_changed)
-        {
-            fast_done_ = false;
-            late_done_ = false;
-            latched_ = false;
-        }
+        BeginInputIfChanged(page.input);
         StorePage(std::move(page));
         surface_.request_show();
     }
@@ -136,58 +93,23 @@ class CandidatePages
         surface_.request_show();
     }
 
-    // Fast: at most one coalesced frame per input. Late: at most one late frame. Immediate: cloud/AI, every arrival
-    // paints. Returns false when the update is already covered, stale, or blocked by a latched interaction.
-    bool Update(CandidatePage page, CandidateFreshness freshness)
+    // An asynchronous result (mixed input, rerank, cloud/AI, gloss) for the current input: publish and paint now.
+    // There is no coalescing window and no per-input frame budget — callers only reach here when the visible list
+    // really changed, and holding a real change back leaves the screen behind the list. Returns false when the page
+    // belongs to another input, or a latched interaction or a selection blocks async updates.
+    bool Update(CandidatePage page)
     {
         std::lock_guard lock(mutex_);
-        if (input_.empty() || page.input != input_ || latched_)
+        if (input_.empty() || page.input != input_ || latched_ || async_blocked_)
             return false;
-
-        if (freshness == CandidateFreshness::Immediate)
-        {
-            // Cloud/AI answers are newer than any pending settle frame; never let the older frame land after them.
-            pending_.reset();
-            StorePage(std::move(page));
-            surface_.request_show();
-            return true;
-        }
-
-        if (freshness == CandidateFreshness::Fast)
-        {
-            if (fast_done_)
-                return false;
-            if (!pending_)
-            {
-                pending_ = Pending{std::move(page), true, false};
-                Schedule();
-            }
-            else
-            {
-                pending_->page = std::move(page);
-                pending_->fast = true;
-            }
-            return true;
-        }
-
-        if (late_done_)
-            return false;
-        if (!pending_)
-        {
-            pending_ = Pending{std::move(page), false, true};
-            Schedule();
-        }
-        else
-        {
-            pending_->page = std::move(page);
-            pending_->late = true;
-        }
+        StorePage(std::move(page));
+        surface_.request_show();
         return true;
     }
 
-    // Schedule one frame for the page that is already published. Callers use this after a silent Publish when an
-    // asynchronous source only needs to decide timing, not build another page.
-    bool UpdateCurrent(CandidateFreshness freshness)
+    // Paint the page that is already published. Callers use this after a silent Publish when an asynchronous source
+    // decided the rebuilt page should be shown.
+    bool UpdateCurrent()
     {
         std::shared_ptr<const CandidatePage> page;
         {
@@ -196,38 +118,31 @@ class CandidatePages
         }
         if (!page)
             return false;
-        return Update(*page, freshness);
+        return Update(*page);
     }
 
-    // A new keystroke starts a new input: drop any pending frame and allow this input its own fast and late frames.
-    void ResetFrameBudget()
+    // A new keystroke starts a new input: async results for it may paint again.
+    void AllowAsyncUpdates()
     {
         std::lock_guard lock(mutex_);
-        pending_.reset();
-        fast_done_ = false;
-        late_done_ = false;
+        async_blocked_ = false;
     }
 
-    // Selection, hide or another user action: a pending enrichment frame must not land on top of it, and later
-    // async results for this input must not retry the frame that was spent.
-    void CancelPending()
+    // Selection or another user action: later async results for this input must not repaint on top of it.
+    void BlockAsyncUpdates()
     {
         std::lock_guard lock(mutex_);
-        pending_.reset();
-        fast_done_ = true;
-        late_done_ = true;
+        async_blocked_ = true;
     }
 
     void Hide()
     {
         std::lock_guard lock(mutex_);
         input_.clear();
-        pending_.reset();
         published_.reset();
         rendered_.reset();
         published_pages_.clear();
-        fast_done_ = false;
-        late_done_ = false;
+        async_blocked_ = false;
         latched_ = false;
         rendered_generation_ = 0;
         rendered_visible_ = false;
@@ -276,15 +191,14 @@ class CandidatePages
         return true;
     }
 
-    // UI thread: the user interacted with the page it saw. Freeze only that page; a pending fast/late frame is
-    // discarded, and later async updates are rejected until a page for a new input is published or the page is hidden.
+    // UI thread: the user interacted with the page it saw. Freeze only that page; later async updates are rejected
+    // until a page for a new input is published or the page is hidden.
     void Gesture(std::uint64_t generation)
     {
         std::lock_guard lock(mutex_);
         if (generation == 0 || generation != rendered_generation_ || !rendered_ || !rendered_visible_)
             return;
         latched_ = true;
-        pending_.reset();
     }
 
     void Visibility(bool visible)
@@ -296,31 +210,12 @@ class CandidatePages
     }
 
   private:
-    struct Pending
+    void BeginInputIfChanged(const std::string &input)
     {
-        CandidatePage page;
-        bool fast = false;
-        bool late = false;
-    };
-
-    void Schedule()
-    {
-        clock_.schedule_at(clock_.now() + settle_, [this] { FlushPending(); });
-    }
-
-    void FlushPending()
-    {
-        std::lock_guard lock(mutex_);
-        if (!pending_)
+        if (input == input_)
             return;
-        Pending pending = std::move(*pending_);
-        pending_.reset();
-        if (pending.fast)
-            fast_done_ = true;
-        if (pending.late)
-            late_done_ = true;
-        StorePage(std::move(pending.page));
-        surface_.request_show();
+        async_blocked_ = false;
+        latched_ = false;
     }
 
     void StorePage(CandidatePage page)
@@ -395,9 +290,7 @@ class CandidatePages
 
     static constexpr std::size_t kPageHistory = 32;
 
-    ClockPort &clock_;
     SurfacePort &surface_;
-    std::chrono::milliseconds settle_;
     std::chrono::milliseconds wait_;
 
     mutable std::mutex mutex_;
@@ -407,10 +300,8 @@ class CandidatePages
     std::uint64_t published_generation_ = 0;
     std::uint64_t rendered_generation_ = 0;
     bool rendered_visible_ = false;
-    bool fast_done_ = false;
-    bool late_done_ = false;
+    bool async_blocked_ = false;
     bool latched_ = false;
-    std::optional<Pending> pending_;
     std::shared_ptr<const CandidatePage> published_;
     std::shared_ptr<const CandidatePage> rendered_;
     std::deque<std::shared_ptr<const CandidatePage>> published_pages_;
