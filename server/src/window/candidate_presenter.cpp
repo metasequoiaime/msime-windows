@@ -13,6 +13,7 @@
 #include "window/candidate_menu_placement.h"
 #include "window/candidate_skin_overlay.h"
 #include "utils/common_utils.h"
+#include "utils/dr_dict_lookup.h"
 #include "utils/ime_utils.h"
 #include "utils/window_utils.h"
 #include "window/small_windows.h"
@@ -602,6 +603,25 @@ void CandidatePresenter::ShowItemContextMenu(size_t pageIndex, POINT clientPoint
             }
         });
         stack->AddChild(del);
+    }
+    // DR Dict 词典联动：查的是右键时看见的这个候选。点击点就是鼠标位置，弹窗开在它旁边。
+    if (GetConfiguredDrDictEnabled() && !word.empty())
+    {
+        auto lookup = makeItem(L"查词典", false, [this, word]() {
+            POINT at{};
+            GetCursorPos(&at);
+            // 关菜单会销毁这一项连同这个 lambda，先把要用的值拷出来。
+            std::wstring target = word;
+            CloseContextMenu(true);
+            DrDictLookup::LookupAtPointer(std::move(target), at);
+        });
+        lookup->SetOnHover([this](bool hovered) {
+            if (hovered)
+            {
+                CloseFixSubmenu();
+            }
+        });
+        stack->AddChild(lookup);
     }
 
     auto subStack = std::make_shared<msimeui::StackPanel>(0.0f);

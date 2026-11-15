@@ -355,6 +355,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitCandidateAndContinue ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InsertText ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition ||
+            buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelComposition ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
         {
             bool hasTerminator = false;
@@ -542,6 +543,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateVoiceComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitVoiceComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition ||
+                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateInstallerReady)
             {
@@ -607,6 +609,15 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             if (pIME->_workerCommitReady.load(std::memory_order_acquire))
             {
                 pIME->_PostServerTextDelivery(WM_CancelVoiceComposition, L"");
+            }
+        }
+        else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelComposition)
+        {
+            // The Server already dropped its composition (it caught a shortcut in its keyboard hook); the
+            // UI thread drops ours if the focus session and composition epoch are still the ones it saw.
+            if (pIME->_workerCommitReady.load(std::memory_order_acquire))
+            {
+                pIME->_PostServerTextDelivery(WM_CancelServerComposition, L"");
             }
         }
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)

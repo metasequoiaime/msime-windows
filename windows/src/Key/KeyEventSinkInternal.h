@@ -20,6 +20,13 @@ bool IsEnglishInputModeToggle(UINT code, UINT modifiers);
 bool IsTranslationCommitShortcut(UINT code, UINT modifiers);
 bool IsTranslationDigitShortcut(UINT code, UINT modifiers);
 bool IsPinyinCommitShortcut(UINT code, UINT modifiers);
+// DR Dict candidate lookup: Ctrl+Shift+Enter on a candidate, only when its [dr_dict] switch (and the
+// master switch) is on. Off, the chord stays the host's. The preedit lookup (Ctrl+Alt+Enter) is the
+// Server keyboard hook's, not TSF's.
+bool IsDictionaryCandidateLookupShortcut(UINT code, UINT modifiers);
+// Lets DR Dict's popup take the foreground from this (foreground) host before the Server asks
+// it to open: the Server is not the foreground process when the chord is pressed.
+void AllowDictionaryPopupForeground();
 bool IsCharacterSetInputModeToggle(UINT code, UINT modifiers);
 bool IsTrilingualCycleEnabled();
 void PostOwnerMessageWithSyncFallback(HWND window, UINT message, WPARAM wParam = 0, LPARAM lParam = 0);

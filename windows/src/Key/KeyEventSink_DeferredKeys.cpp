@@ -463,9 +463,12 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
     const bool projectedInputActive = _deferredKeyProjectionValid
                                           ? _deferredProjectedInputLength > 0
                                           : _pCompositionProcessorEngine->GetVirtualKeyLength() > 0;
+    // DR Dict 查高亮候选（Ctrl+Shift+Enter）同理，与同步分类器一致。
     if (projectedImeOpen && !_IsKeyboardDisabled() &&
         ((projectedCandidateActive && (IsTranslationCommitShortcut(*classifiedCode, capturedModifiers) ||
                                        IsTranslationDigitShortcut(*classifiedCode, capturedModifiers))) ||
+         (!_serverUnavailableFallbackActive && projectedCandidateActive &&
+          IsDictionaryCandidateLookupShortcut(*classifiedCode, capturedModifiers)) ||
          (!_serverUnavailableFallbackActive && projectedInputActive &&
           IsPinyinCommitShortcut(*classifiedCode, capturedModifiers))))
     {

@@ -11,6 +11,7 @@
 #include "ipc/candidate_translation_policy.h"
 #include "ipc/input_key_policy.h"
 #include "engine/contracts/date_time_input.h"
+#include "engine/contracts/dictionary_lookup_keys.h"
 #include "engine/contracts/direct_helpcode.h"
 #include "engine/contracts/ipc_negotiation.h"
 #include "engine/contracts/mid_sentence_helpcode.h"
@@ -21,6 +22,7 @@
 #include "utils/common_utils.h"
 #include "global/globals.h"
 #include "window/caret_state_indicator_policy.h"
+#include "utils/dr_dict_lookup_policy.h"
 #include "utils/ime_utils.h"
 #include "config/ime_config.h"
 #include "conversion/chinese_converter.h"
@@ -882,6 +884,88 @@ void HandleTranslationCommitKey(uint64_t client_id, uint64_t activation_epoch, u
     SendCurrentDataToClient(client_id, activation_epoch, request_id);
 }
 
+namespace
+{
+// 把查词交给候选窗的界面线程（WM_DR_DICT_LOOKUP）：隐藏候选窗和定位弹窗都在那里做。弹窗要开在候选窗本该在的
+// 光标处，那个锚点（TSF 光标、UIA 兜底光标、会话锚点）只在界面线程上，而且得在隐藏把它清掉之前读——所以调用方
+// 要先调这里，再 ClearState（它投递的隐藏消息排在这条后面）。没有可查的词或投递失败时返回 false。
+bool PostDictionaryLookup(std::wstring word)
+{
+    word = DrDictLookup::NormalizeWord(word);
+    if (word.empty() || !::global_hwnd || !IsWindow(::global_hwnd))
+        return false;
+    auto *text = new (std::nothrow) std::wstring(std::move(word));
+    if (!text)
+        return false;
+    if (!PostMessageW(::global_hwnd, WM_DR_DICT_LOOKUP, 0, reinterpret_cast<LPARAM>(text)))
+    {
+        delete text;
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+// Ctrl+Shift+Enter：在 DR Dict 里查高亮候选。
+// 查得到词时，效果等于先按 Esc 退出输入再打开词典：清掉组合、什么也不上屏。必须在弹窗抢走焦点之前清，
+// 否则宿主失焦时会把还挂着的预编辑当成文字留下。清法与造词态 Esc 相同（HandleCreatingWordEscape）：
+// ClearState，回空负载的 CompositionRestored，TSF 据此取消组合。
+// 没有可查的词（开关关着时 TSF 读到的配置比这里新或旧的那一瞬、没有候选）就什么也不动，回 NavigationIgnored：
+// TSF 已经吃了这颗键，必须给一条既不上屏也不补标点的回复，不能落进下面的普通回车分支把预编辑上屏。
+// 查预编辑（Ctrl+Alt+Enter）不走这里，见 HandleDictionaryPreeditLookupFromHook。
+void HandleDictionaryLookupKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
+{
+    Global::MsgTypeToTsf = Global::DataFromServerMsgType::NavigationIgnored;
+    std::wstring word;
+    if (GetConfiguredDrDictLookupCandidateHotkey() && !Global::candidate_ui.items.empty())
+    {
+        // 和译文上屏一样，先等画面追上已发布的那一页，查的才是用户看见的那个高亮候选。
+        WaitForCandidateRenderSync(Global::Keycode);
+        EnsureCandidatePageReady();
+        const auto &ui = Global::candidate_ui;
+        const size_t index = static_cast<size_t>((std::max)(0, ui.selected_index_in_page));
+        if (index < ui.page_words.size())
+        {
+            word = ui.page_words[index];
+        }
+    }
+    if (!PostDictionaryLookup(std::move(word)))
+    {
+        SendCurrentDataToClient(client_id, activation_epoch, request_id);
+        return;
+    }
+    // 不认 CompositionRestored 的旧 TSF 没法让它取消组合，只能保留组合、回空。
+    if (ClientNegotiatedCompositionRestore(client_id))
+    {
+        ClearState();
+        Global::MsgTypeToTsf = Global::DataFromServerMsgType::CompositionRestored;
+        Global::candidate_ui.selected_text = L"\t\t\t0";
+    }
+    SendCurrentDataToClient(client_id, activation_epoch, request_id);
+}
+
+// Ctrl+Alt+Enter：在 DR Dict 里查当前预编辑。按键由 Server 的低级键盘钩子在候选窗显示时截下（Edge / Chrome
+// 不把按着 Alt 的键交给 TSF），这里在工作线程上、按候选页所属的客户端执行。效果与上面相同：查得到词就先
+// 打开词典，再像 Esc 一样清掉组合。TSF 没收到这颗键，没有回复可带，所以经 Worker 管道主动发 CancelComposition；
+// 只对声明了 ServerCompositionCancel 的 TSF 这样做，旧 TSF 会忽略这条消息，两边就只查词、都不动组合。
+void HandleDictionaryPreeditLookupFromHook(uint64_t client_id, uint64_t activation_epoch)
+{
+    if (!GetConfiguredDrDictLookupPreeditHotkey())
+        return;
+    const auto &composition = GlobalIme::composition;
+    std::wstring word =
+        DrDictLookup::PreeditLookupText(string_to_wstring(composition.creating_word.prefix_text),
+                                        string_to_wstring(composition.raw_input_with_cases), g_r_mode_triggered);
+    if (!PostDictionaryLookup(std::move(word)))
+        return;
+    if (ClientNegotiatedServerCompositionCancel(client_id) &&
+        SendToTsfWorkerThreadClientViaNamedpipe(client_id, activation_epoch,
+                                                Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition, L""))
+    {
+        ClearState();
+    }
+}
+
 // 真顶字与自动上屏的推送负载："<消费字符数>\t<上屏文本>"。TSF 拿这个数字裁自己的
 // 组合缓冲，所以服务端看到的是四码、用户已抢敲第五个字母时，第五个字母不会被旧快照覆盖。
 // 消费数就是五笔完整码的字母数（engine/schemes/wubi_scheme.h 的 kMaxCodeLength）。
@@ -1200,6 +1284,13 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         return;
     }
 
+    // DR Dict 查高亮候选（Ctrl+Shift+Enter）。放在子页退出之前。查预编辑的 Ctrl+Alt+Enter 由键盘钩子
+    // 截下，TSF 不会发来，见 HandleDictionaryPreeditLookupFromHook。
+    if (FanyImeDictionaryLookupKeys::IsCandidateLookupKey(Global::Keycode, Global::ModifiersDown))
+    {
+        HandleDictionaryLookupKey(client_id, activation_epoch, request_id);
+        return;
+    }
     if (FanyImeIpc::IsTranslationCommitKey(Global::Keycode, Global::ModifiersDown))
     {
         HandleTranslationCommitKey(client_id, activation_epoch, request_id, -1);

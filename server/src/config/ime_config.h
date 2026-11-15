@@ -660,6 +660,16 @@ bool GetConfiguredLanguageBarShowDoubleSingleByte();
 bool SetConfiguredLanguageBarShowDoubleSingleByte(bool enabled);
 bool GetConfiguredLanguageBarShowPunctuation();
 bool SetConfiguredLanguageBarShowPunctuation(bool enabled);
+// DR Dict 词典联动（[dr_dict]）。enabled 是总开关，管候选右键菜单的「查词典」；两个快捷键各自另有开关，
+// 总开关关着时它们也不生效（GetConfiguredDrDictLookup*Hotkey 已经把总开关算进去了）。
+bool GetConfiguredDrDictEnabled();
+bool SetConfiguredDrDictEnabled(bool enabled);
+bool GetConfiguredDrDictLookupCandidateHotkeySwitch();
+bool SetConfiguredDrDictLookupCandidateHotkey(bool enabled);
+bool GetConfiguredDrDictLookupPreeditHotkeySwitch();
+bool SetConfiguredDrDictLookupPreeditHotkey(bool enabled);
+bool GetConfiguredDrDictLookupCandidateHotkey();
+bool GetConfiguredDrDictLookupPreeditHotkey();
 bool GetConfiguredPagingMinusEqualEnabled();
 bool SetConfiguredPagingMinusEqualEnabled(bool enabled);
 bool GetConfiguredPagingCommaPeriodEnabled();

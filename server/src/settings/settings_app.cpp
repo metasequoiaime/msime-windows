@@ -573,6 +573,10 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"show_ime_mode", GetConfiguredLanguageBarShowImeMode()},
             {"show_double_single_byte", GetConfiguredLanguageBarShowDoubleSingleByte()},
             {"show_punctuation", GetConfiguredLanguageBarShowPunctuation()}}},
+          {"dr_dict",
+           {{"enabled", GetConfiguredDrDictEnabled()},
+            {"lookup_candidate_ctrl_shift_enter", GetConfiguredDrDictLookupCandidateHotkeySwitch()},
+            {"lookup_preedit_ctrl_alt_enter", GetConfiguredDrDictLookupPreeditHotkeySwitch()}}},
           {"appearance",
            {{"settings_window_linger", GetConfiguredSettingsWindowLinger()},
             {"settings_launch_animation", GetConfiguredSettingsLaunchAnimation()},
@@ -1044,6 +1048,12 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredLanguageBarShowDoubleSingleByte(json::value_to<bool>(data.at("value")));
     if (path == "language_bar.show_punctuation")
         return SetConfiguredLanguageBarShowPunctuation(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.enabled")
+        return SetConfiguredDrDictEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.lookup_candidate_ctrl_shift_enter")
+        return SetConfiguredDrDictLookupCandidateHotkey(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.lookup_preedit_ctrl_alt_enter")
+        return SetConfiguredDrDictLookupPreeditHotkey(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_minus_equal")
         return SetConfiguredPagingMinusEqualEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_tab")

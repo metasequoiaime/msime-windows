@@ -46,7 +46,19 @@ int main()
            FanyImeProtocol::TemporaryJapaneseLongVowel) == 0);
     CHECK(FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged == 36);
     CHECK(FanyImeWorkerReplyType::UpdateInstallerReady == 40);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::CancelComposition);
+    // ServerCompositionCancel is optional: an unversioned hello or a client without the bit never gets it.
+    CHECK(FanyImeProtocol::ServerCompositionCancel == (1u << 9));
+    CHECK((FanyImeProtocol::ServerCompositionCancel & FanyImeProtocol::RequiredCapabilities) == 0);
+    {
+        const auto cancelCapabilities = FanyImeProtocol::Capabilities | FanyImeProtocol::ServerCompositionCancel;
+        const auto cancelHello = FanyImeProtocol::Hello(7, 125, cancelCapabilities);
+        CHECK((FanyImeProtocol::Negotiate(cancelHello).capabilities & FanyImeProtocol::ServerCompositionCancel) == 0);
+        CHECK((FanyImeProtocol::Negotiate(cancelHello, cancelCapabilities).capabilities &
+               FanyImeProtocol::ServerCompositionCancel) != 0);
+        CHECK((FanyImeProtocol::Negotiate(FanyImeProtocol::Hello(7, 126), cancelCapabilities).capabilities &
+               FanyImeProtocol::ServerCompositionCancel) == 0);
+    }
     for (wchar_t payload = L'0'; payload <= L'3'; ++payload)
     {
         CHECK(FanyImeTemporaryJapanese::IsValidPayload(payload));
@@ -245,7 +257,8 @@ int main()
     CHECK(FanyImeWorkerReplyType::HorizontalArrowSelectionChanged == 39);
     CHECK(FanyImeWorkerReplyType::UpdateInstallerReady == 40);
     CHECK(FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged == 41);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged);
+    CHECK(FanyImeWorkerReplyType::CancelComposition == 42);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::CancelComposition);
     // EnumerationCommaKeysChanged 的载荷：\ 和 / 各一位，两个都没勾按只有 \ 发。
     CHECK(FanyImeEnumerationComma::PayloadFor(true, false) == L'1' &&
           FanyImeEnumerationComma::PayloadFor(false, true) == L'2' &&

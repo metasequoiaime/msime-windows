@@ -809,7 +809,7 @@ bool NegotiateMainPipeClient(const FanyImeNamedpipeData &hello, uint64_t registr
         hello, FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
                    FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
                    FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
-                   FanyImeProtocol::TemporaryJapaneseLongVowel);
+                   FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::ServerCompositionCancel);
     std::lock_guard lock(g_pipe_clients_mutex);
     auto it = g_pipe_clients.find(hello.client_id);
     if (it == g_pipe_clients.end() || registration_id == 0 || it->second.main_registration_id != registration_id)
@@ -874,6 +874,14 @@ bool ClientNegotiatedTemporaryJapanese(uint64_t client_id)
     const auto it = g_pipe_clients.find(client_id);
     return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
            (it->second.protocol.capabilities & FanyImeProtocol::TemporaryJapaneseLongVowel) != 0;
+}
+
+bool ClientNegotiatedServerCompositionCancel(uint64_t client_id)
+{
+    std::lock_guard lock(g_pipe_clients_mutex);
+    const auto it = g_pipe_clients.find(client_id);
+    return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
+           (it->second.protocol.capabilities & FanyImeProtocol::ServerCompositionCancel) != 0;
 }
 
 uint64_t RegisterToTsfPipeClient(uint64_t client_id, HANDLE pipe)

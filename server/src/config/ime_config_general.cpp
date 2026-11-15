@@ -713,3 +713,58 @@ bool SetConfiguredLanguageBarShowPunctuation(bool enabled)
     g_language_bar_show_punctuation = enabled;
     return true;
 }
+
+bool GetConfiguredDrDictEnabled()
+{
+    return g_dr_dict_enabled.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredDrDictEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("dr_dict", "enabled", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_dr_dict_enabled.store(enabled, std::memory_order_relaxed);
+    return true;
+}
+
+bool GetConfiguredDrDictLookupCandidateHotkeySwitch()
+{
+    return g_dr_dict_lookup_candidate_hotkey.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredDrDictLookupCandidateHotkey(bool enabled)
+{
+    if (!WriteConfiguredValue("dr_dict", "lookup_candidate_ctrl_shift_enter", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_dr_dict_lookup_candidate_hotkey.store(enabled, std::memory_order_relaxed);
+    return true;
+}
+
+bool GetConfiguredDrDictLookupPreeditHotkeySwitch()
+{
+    return g_dr_dict_lookup_preedit_hotkey.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredDrDictLookupPreeditHotkey(bool enabled)
+{
+    if (!WriteConfiguredValue("dr_dict", "lookup_preedit_ctrl_alt_enter", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_dr_dict_lookup_preedit_hotkey.store(enabled, std::memory_order_relaxed);
+    return true;
+}
+
+bool GetConfiguredDrDictLookupCandidateHotkey()
+{
+    return GetConfiguredDrDictEnabled() && GetConfiguredDrDictLookupCandidateHotkeySwitch();
+}
+
+bool GetConfiguredDrDictLookupPreeditHotkey()
+{
+    return GetConfiguredDrDictEnabled() && GetConfiguredDrDictLookupPreeditHotkeySwitch();
+}

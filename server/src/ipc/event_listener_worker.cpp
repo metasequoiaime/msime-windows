@@ -419,7 +419,7 @@ void WorkerThread()
             task.type == TaskType::UiDeleteCandidate || task.type == TaskType::UiFixCandidatePosition ||
             task.type == TaskType::UiClearCandidatePosition || task.type == TaskType::UiPageUp ||
             task.type == TaskType::UiPageDown || task.type == TaskType::UiCommitCandidateAt ||
-            task.type == TaskType::UiExpandCandidates;
+            task.type == TaskType::UiExpandCandidates || task.type == TaskType::UiDictionaryPreeditLookup;
         if (candidateUiAction && !CandidateUiOwnerIsCurrent({task.client_id, task.activation_epoch}))
         {
             // The page was hidden or replaced after the click was posted.
@@ -820,6 +820,11 @@ void WorkerThread()
                                                         Global::DataFromServerMsgTypeToTsfWorkerThread::CommitCandidate,
                                                         L"");
             }
+            break;
+        }
+
+        case TaskType::UiDictionaryPreeditLookup: {
+            HandleDictionaryPreeditLookupFromHook(task.client_id, task.activation_epoch);
             break;
         }
 
@@ -1633,6 +1638,27 @@ void EnqueueCandidateUiCommitAt(int absolute_index, std::wstring expected_text)
     pipe_queueCv.notify_one();
 }
 
+void EnqueueDictionaryPreeditLookup()
+{
+    if (!pipe_running)
+    {
+        return;
+    }
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner)
+    {
+        return;
+    }
+    {
+        std::lock_guard lock(queueMutex);
+        Task task;
+        task.type = TaskType::UiDictionaryPreeditLookup;
+        task.client_id = owner.client_id;
+        task.activation_epoch = owner.activation_epoch;
+        PushTaskLocked(std::move(task));
+    }
+    pipe_queueCv.notify_one();
+}
 void EnqueueCandidateUiExpand()
 {
     if (!pipe_running)

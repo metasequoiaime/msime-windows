@@ -498,7 +498,12 @@ constexpr std::uint32_t UpdateInstallerReady = 40;
 // Backspace over the end block it opened (IsEndTriggerBackspaceAt), as Server-authoritative keys and rebuilds its
 // buffer from the Server's CompositionRestored reply. Older DLLs ignore the opcode and keep the keys as punctuation.
 constexpr std::uint32_t DirectHelpcodeEndTriggerChanged = 41;
-constexpr std::uint32_t MaxKnown = DirectHelpcodeEndTriggerChanged;
+// Drop the current composition without committing anything, as Esc does. Sent only to a client that
+// negotiated FanyImeProtocol::ServerCompositionCancel, after the Server cleared its own composition for a
+// shortcut it caught in its keyboard hook (the DR Dict preedit lookup, which some hosts never hand to TSF).
+// The DLL applies it only to the focus session and composition epoch current when it arrives. Payload empty.
+constexpr std::uint32_t CancelComposition = 42;
+constexpr std::uint32_t MaxKnown = CancelComposition;
 // Source compatibility for the Server's historical spellings.
 constexpr std::uint32_t SwitchToEn = SwitchToEnglish;
 constexpr std::uint32_t SwitchToCn = SwitchToChinese;

@@ -80,3 +80,14 @@ Policy is sent on activation before FocusSessionReady, on Worker registration,
 and when configuration or dedicated English mode changes. A TIP keeps policy
 per bound service, clears it on disconnect, and ignores replaced-pipe frames.
 Older clients and older Servers retain temporary R mode's previous key policy.
+
+### Server-initiated composition cancel
+
+`ServerCompositionCancel` (bit 9) is optional. Only clients that negotiate it
+receive Worker `CancelComposition` (opcode 42, empty payload): drop the current
+composition without committing, as Esc does. The Server sends it after clearing
+its own composition for a shortcut its low-level keyboard hook caught while the
+candidate window was shown (Ctrl+Alt+Enter, the DR Dict preedit lookup); some
+hosts never hand Alt chords to TSF. The client applies it only to the focus
+session and composition epoch current when it arrives. For a client without the
+bit the Server performs the lookup and leaves both compositions as they were.

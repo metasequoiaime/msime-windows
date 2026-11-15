@@ -31,6 +31,11 @@ constexpr std::uint32_t CaretStateIndicator = 1u << 5;
 constexpr std::uint32_t TrilingualCycle = 1u << 6;
 constexpr std::uint32_t InputStateShortcuts = 1u << 7;
 constexpr std::uint32_t TemporaryJapaneseLongVowel = 1u << 8;
+// Optional: the client handles the CancelComposition worker opcode (drop the current composition
+// without committing, as Esc does). The Server only clears its own composition for a shortcut it
+// caught itself -- the DR Dict preedit lookup -- when the client advertised this bit, so an older
+// DLL that would ignore the opcode never ends up holding a composition the Server already forgot.
+constexpr std::uint32_t ServerCompositionCancel = 1u << 9;
 constexpr std::uint32_t Capabilities = RequestIds | FocusEpochs | FramedVoice;
 constexpr std::uint32_t RequiredCapabilities = RequestIds | FocusEpochs;
 

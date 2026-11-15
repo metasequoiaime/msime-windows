@@ -16,9 +16,12 @@
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 #include <fmt/xchar.h>
 #include "utils/window_utils.h"
+#include "utils/dr_dict_lookup.h"
+#include "utils/dr_dict_lookup_policy.h"
 #include "ipc/event_listener.h"
 #include "utils/ime_utils.h"
 #include "log/candidate_diag_log.h"
@@ -113,6 +116,32 @@ void NotePlacedCandidateCaret(POINT layoutCaret)
     g_last_placed_caret_x = layoutCaret.x;
     g_last_placed_caret_y = layoutCaret.y;
     g_caret_fallback_placed = g_caret_fallback_valid && Global::Point[1] == Global::INVALID_Y;
+}
+
+// DR Dict 查词快捷键的弹窗位置：候选窗本该在的那个光标锚点，取法与 GetCandidateLayoutCaret 同序
+// （TSF 光标 → 不跟随光标时的会话锚点 → UIA 兜底光标），但只读、不改任何状态。屏幕角落那个最后兜底
+// 不是光标，不算；都没有时返回空，由调用方退回鼠标位置。
+std::optional<RECT> DictionaryLookupCaret()
+{
+    std::optional<POINT> anchor;
+    const POINT caret{Global::Point[0], Global::Point[1]};
+    if (caret.y != Global::INVALID_Y)
+    {
+        anchor = !GetConfiguredCandidateWindowFollowCursor() && g_candidate_session_anchor_valid
+                     ? g_candidate_session_anchor
+                     : caret;
+    }
+    else if (g_caret_fallback_valid && !g_caret_fallback_pinned)
+    {
+        anchor = g_caret_fallback_anchor;
+    }
+    if (!anchor)
+    {
+        return std::nullopt;
+    }
+    const DrDictLookup::CaretRect line =
+        DrDictLookup::CaretRectFromAnchor(anchor->x, anchor->y, static_cast<double>(GetScaleForPoint(*anchor)));
+    return RECT{line.left, line.top, line.right, line.bottom};
 }
 } // namespace
 
@@ -962,6 +991,23 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
     case WM_EXPAND_CANDIDATES:
         FanyNamedPipe::EnqueueCandidateUiExpand();
         break;
+
+    case WM_DR_DICT_LOOKUP: {
+        // DR Dict 查词快捷键：候选窗照常隐藏，弹窗开在候选窗本该在的光标处，拿不到光标才退回鼠标位置。
+        std::unique_ptr<std::wstring> word(reinterpret_cast<std::wstring *>(lParam));
+        if (!word)
+        {
+            break;
+        }
+        // 先读锚点：隐藏会清掉会话锚点和 UIA 兜底光标。
+        const std::optional<RECT> caret = DictionaryLookupCaret();
+        if (::is_global_wnd_cand_shown)
+        {
+            WndProcCandWindow(hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+        }
+        DrDictLookup::LookupFromKeyboard(std::move(*word), caret);
+        break;
+    }
 
     case WM_CLEAR_IME_ENGINE_CACHE: {
 #ifdef FANY_DEBUG

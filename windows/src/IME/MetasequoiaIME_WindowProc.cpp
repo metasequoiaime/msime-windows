@@ -25,6 +25,7 @@
 #include "Utils/FanyUtils.h"
 #include "../Utils/PerfTimer.h"
 #include "MetasequoiaIMEInternal.h"
+#include "KeyEventSinkInternal.h"
 
 using namespace metasequoia_ime_detail;
 
@@ -578,6 +579,42 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
                 KeystrokeState.Function = FUNCTION_FINALIZE_CANDIDATELIST;
                 pIME->_InvokeKeyHandler(pContext, 0, 0, 0, KeystrokeState, FANY_IME_UNSOLICITED_REQUEST_ID,
                                         std::move(request.text), 0, request.compositionEpoch, request.focusToken);
+                pContext->Release();
+            }
+            pDocMgrFocus->Release();
+        }
+        break;
+    }
+    case WM_CancelServerComposition: {
+        // Worker CancelComposition: the Server caught a shortcut in its keyboard hook (the DR Dict preedit
+        // lookup) and already dropped its own composition. Drop ours the way Esc does, but only for the focus
+        // session and composition epoch the worker saw: a composition started since then is the user's new
+        // input and must survive. There is no reply to read, hence FANY_IME_NO_REQUEST_ID.
+        CMetasequoiaIME::WorkerCandidateCommit request;
+        if (!pIME->_TakeServerCandidateCommit(static_cast<UINT>(wParam), request))
+        {
+            break;
+        }
+        // The Server only sends this after it asked DR Dict to open its popup. This host is the foreground
+        // process and the Server is not, so let the popup take the foreground from here, as the TSF-side
+        // lookup chord does when it sends its key.
+        key_event_sink_detail::AllowDictionaryPopupForeground();
+        if (!pIME->_IsFocusSessionCurrent(request.focusToken) ||
+            !pIME->_IsCompositionEpochCurrent(request.compositionEpoch))
+        {
+            break;
+        }
+        ITfDocumentMgr *pDocMgrFocus = nullptr;
+        ITfContext *pContext = nullptr;
+        if (SUCCEEDED(pIME->_GetThreadMgr()->GetFocus(&pDocMgrFocus)) && pDocMgrFocus)
+        {
+            if (SUCCEEDED(pDocMgrFocus->GetTop(&pContext)) && pContext)
+            {
+                _KEYSTROKE_STATE KeystrokeState;
+                KeystrokeState.Category = CATEGORY_COMPOSING;
+                KeystrokeState.Function = FUNCTION_CANCEL;
+                pIME->_InvokeKeyHandler(pContext, 0, 0, 0, KeystrokeState, FANY_IME_NO_REQUEST_ID, std::wstring(), 0,
+                                        request.compositionEpoch, request.focusToken);
                 pContext->Release();
             }
             pDocMgrFocus->Release();
