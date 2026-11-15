@@ -10,6 +10,8 @@
 | [`sakura-night`](sakura-night/) | 夜樱 | v2 全贴图皮肤（`canvas`，取自 `examples/skin-examples`）：紫夜玻璃九宫格面板、面板后的月亮、APNG 飘落花瓣与 GIF 闪烁星星 |
 | [`acrylic`](acrylic/) | 亚克力 Acrylic | 候选卡片背后垫系统亚克力，模糊后面的窗口 |
 | [`mica`](mica/) | 云母 Mica | 候选卡片背后垫系统云母，取样桌面壁纸（Windows 11；更早的系统按亚克力画） |
+| [`acrylic-glassy`](acrylic-glassy/) | 亚克力-通透 | 亚克力的通透版，降低候选框和悬浮工具栏深浅主题的色调与亮度层不透明度 |
+| [`mica-glassy`](mica-glassy/) | 云母-通透 | 云母的通透版，降低候选框和悬浮工具栏深浅主题的色调与亮度层不透明度，透出更多桌面壁纸色调 |
 | [`anime-demo`](anime-demo/) | anime-demo | 奶油棕浅色 / 可可棕深色候选窗，四周挂着猫猫虫动图、抱樱花小白猫与倒挂少女，布朗熊敲电脑动图与按开关自动排列的圆底工具按钮；素材授权未核实，仅演示，不随安装包分发 |
 | [`tokisaki`](tokisaki/) | 时崎狂三 Demo | 时崎狂三与转动钟盘的 GIF 作候选框动态背景，黑底压暗、深红高亮与金色序号；素材授权未核实，仅演示，不随安装包分发 |
 | [`niya-demo`](niya-demo/) | Niya Demo | 官方外部皮肤样例：候选框上方的人物装饰图、星点背景图、12dip 圆角，以及配套的悬浮工具栏配色 |
