@@ -178,6 +178,16 @@ TEST_CASE(ipc_hide_caret_state_is_append_only_and_not_a_candidate_or_route_reset
     REQUIRE_EQ(sizeof(FanyImeNamedpipeData), 304u);
 }
 
+TEST_CASE(ipc_focus_field_state_is_an_appended_optional_event)
+{
+    REQUIRE_EQ(FanyImePipeEventType::FocusFieldState, 18u);
+    REQUIRE_EQ(FanyImeProtocol::FocusFieldAttestation, 1u << 10);
+    REQUIRE((FanyImeProtocol::Capabilities & FanyImeProtocol::FocusFieldAttestation) == 0u);
+    REQUIRE((FanyImeProtocol::RequiredCapabilities & FanyImeProtocol::FocusFieldAttestation) == 0u);
+    REQUIRE(!FanyImePipeEventType::IsRouteDeactivation(FanyImePipeEventType::FocusFieldState));
+    REQUIRE(!FanyImePipeEventType::IsTerminalDeactivation(FanyImePipeEventType::FocusFieldState));
+}
+
 TEST_CASE(ipc_uiless_flag_is_outside_key_modifier_mask)
 {
     REQUIRE_EQ(FanyImePipeFlags::UiLess, 0x80000000u);

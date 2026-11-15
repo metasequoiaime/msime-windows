@@ -208,6 +208,7 @@ bool IsKnownMainPipeEvent(UINT event_type)
     case FanyImePipeEventType::ClientSuspended:
     case FanyImePipeEventType::FocusRestored:
     case FanyImePipeEventType::HideCaretState:
+    case FanyImePipeEventType::FocusFieldState:
         return true;
     default:
         return false;
@@ -240,6 +241,11 @@ bool IsValidMainPipeFrame(const FanyImeNamedpipeData &pipe_data)
     {
         // FocusSessionReady can never acknowledge token zero. Reject the
         // activation instead of creating a server epoch that TSF cannot fence.
+        return false;
+    }
+    if (pipe_data.event_type == FanyImePipeEventType::FocusFieldState &&
+        (pipe_data.request_id == 0 || pipe_data.keycode > 1))
+    {
         return false;
     }
     return true;
@@ -483,6 +489,14 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
             }
+            continue;
+        }
+        if (pipeData.event_type == FanyImePipeEventType::FocusFieldState)
+        {
+            // State only: it describes this client's focused document under
+            // the token it carries and never claims or changes routing.
+            RecordPipeClientFocusField(clientId, mainRegistrationId, pipeData.request_id, pipeData.modifiers_down,
+                                       pipeData.keycode == 1);
             continue;
         }
         if (FanyImePipeEventType::IsRouteDeactivation(pipeData.event_type))

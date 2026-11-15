@@ -49,6 +49,12 @@ static thread_local std::atomic<FanyImeTemporaryJapanese::Policy> *boundTemporar
 static thread_local std::atomic<UINT> *boundWorkerPipeGeneration = nullptr;
 static thread_local HANDLE boundWorkerAckEvent = nullptr;
 static thread_local HANDLE boundWorkerPipePublishedEvent = nullptr;
+// Focused TSF document as reported with FocusFieldState
+// (FanyImeProtocol::FocusFieldAttestation). focusFieldPublishedToken is the
+// focus token the current state was last sent under; 0 means "send again".
+static thread_local uint32_t focusFieldSerial = 0;
+static thread_local bool focusFieldEditable = false;
+static thread_local uint64_t focusFieldPublishedToken = 0;
 
 /* Data size transfered from Server process */
 static const int ServerDtPipeDataSize = 512;
@@ -513,7 +519,8 @@ bool WritePipeHello(HANDLE hPipeHandle, UINT pipeRole)
             FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
                 FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
                 FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
-                FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::ServerCompositionCancel);
+                FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::ServerCompositionCancel |
+                FanyImeProtocol::FocusFieldAttestation);
         BOOL ret = WriteFile(hPipeHandle, &hello, sizeof(hello), &bytesWritten, NULL);
         // Never authorize keys from merely writing a hello. An old Server
         // without negotiation times out into the existing raw-input fallback.
@@ -999,6 +1006,8 @@ int CloseIpc()
 int CloseNamedpipe()
 {
     negotiatedServerCapabilities = 0;
+    // A new Main registration is a new Server session; it learns the state again.
+    focusFieldPublishedToken = 0;
     if (boundTemporaryJapanesePolicy)
         boundTemporaryJapanesePolicy->store(0, std::memory_order_relaxed);
     ClosePipeHandleIfValid(hPipe);
@@ -1054,6 +1063,58 @@ bool SupportsInputStateShortcuts()
 {
     return hPipe && hPipe != INVALID_HANDLE_VALUE &&
            (negotiatedServerCapabilities & FanyImeProtocol::InputStateShortcuts) != 0;
+}
+
+bool SendToNamedpipe(bool *deliveryAmbiguous);
+
+bool SupportsFocusFieldAttestation()
+{
+    return hPipe && hPipe != INVALID_HANDLE_VALUE &&
+           (negotiatedServerCapabilities & FanyImeProtocol::FocusFieldAttestation) != 0;
+}
+
+void FlushNamedpipeFocusField()
+{
+    // Only into a session that is already fenced: the exact focus token is
+    // activated and acknowledged. Activation itself calls this once the
+    // acknowledgement arrived, so a pending activation loses nothing here.
+    if (!SupportsFocusFieldAttestation() || !Global::g_connected || IsLocalSessionResetPending() ||
+        (boundFocusResetPending && *boundFocusResetPending) || (boundActivationRequired && *boundActivationRequired) ||
+        !boundExpectedWorkerFocusToken || !IsExpectedWorkerFocusAcknowledged())
+    {
+        return;
+    }
+    const uint64_t token = boundExpectedWorkerFocusToken->load(std::memory_order_acquire);
+    if (token == 0 || token == focusFieldPublishedToken)
+    {
+        return;
+    }
+    // Callers may have staged another packet's payload in the shared buffer.
+    const FanyImeNamedpipeData staged = namedpipeData;
+    namedpipeData = {};
+    namedpipeData.event_type = FanyImePipeEventType::FocusFieldState;
+    namedpipeData.request_id = token;
+    namedpipeData.keycode = focusFieldEditable ? 1u : 0u;
+    namedpipeData.modifiers_down = focusFieldSerial;
+    // Marked before the write: a failed write reconnects, and the reconnect's
+    // activation publishes again with its own token.
+    focusFieldPublishedToken = token;
+    SendToNamedpipe(nullptr);
+    namedpipeData = staged;
+}
+
+void UpdateNamedpipeFocusField(bool editable, bool newField)
+{
+    if (newField)
+    {
+        ++focusFieldSerial;
+    }
+    if (newField || editable != focusFieldEditable)
+    {
+        focusFieldEditable = editable;
+        focusFieldPublishedToken = 0;
+    }
+    FlushNamedpipeFocusField();
 }
 
 HANDLE GetToTsfWorkerThreadNamedpipe()
@@ -1344,6 +1405,13 @@ bool SendToNamedpipe(bool *deliveryAmbiguous = nullptr)
                                    packet.event_type == FanyImePipeEventType::ClientActivated ||
                                    packet.event_type == FanyImePipeEventType::ClientDeactivated ||
                                    packet.event_type == FanyImePipeEventType::ClientSuspended;
+    // FlushNamedpipeFocusField checks the fenced session itself and runs from
+    // inside Ensure...; going through the barrier again would re-enter it.
+    const bool barrierCheckedByCaller = packet.event_type == FanyImePipeEventType::FocusFieldState;
+    if (barrierCheckedByCaller && !IsValidPipeHandle(hPipe))
+    {
+        return false;
+    }
 
     // Tell Server never to raise an IME HWND for UILess hosts (games / fullscreen).
     if (Global::IsUiLessMode() && (packet.event_type == FanyImePipeEventType::KeyEvent ||
@@ -1370,7 +1438,7 @@ bool SendToNamedpipe(bool *deliveryAmbiguous = nullptr)
     // token activation, and the worker's FocusSessionReady echo. Preserve the
     // staged packet because Ensure... emits lifecycle packets through this
     // same thread-local buffer.
-    if (!isLifecyclePacket)
+    if (!isLifecyclePacket && !barrierCheckedByCaller)
     {
         if (!Global::g_connected || !EnsureNamedpipeFocusSessionActivated())
         {
@@ -2002,6 +2070,7 @@ bool EnsureNamedpipeFocusSessionActivated()
         {
             if (IsExpectedWorkerFocusAcknowledged())
             {
+                FlushNamedpipeFocusField();
                 return true;
             }
             break;
@@ -2028,6 +2097,9 @@ bool EnsureNamedpipeFocusSessionActivated()
         {
             return false;
         }
+        // Every activation starts a fresh record on the Server; report the
+        // focused field again once the worker acknowledged this token.
+        focusFieldPublishedToken = 0;
         if (IsLocalSessionResetPending())
         {
             return false;
@@ -2060,6 +2132,7 @@ bool EnsureNamedpipeFocusSessionActivated()
             }
             if (IsExpectedWorkerFocusAcknowledged())
             {
+                FlushNamedpipeFocusField();
                 return true;
             }
             const ULONGLONG now = GetTickCount64();

@@ -122,6 +122,14 @@ constexpr std::uint32_t PuncSwitch = 8;
 constexpr std::uint32_t DoubleSingleByteSwitch = 9;
 // Main, negotiated InputStateShortcuts: keycode is the stable input-state Action ID.
 constexpr std::uint32_t InputStateAction = 17;
+// Main, negotiated FocusFieldAttestation: the TSF document this client has
+// focused right now. request_id is the focus token the state belongs to (the
+// one its ClientActivated carried), keycode is 1 when the document has a
+// context that is not read-only and 0 otherwise, and modifiers_down is a
+// per-thread serial that changes whenever the focused document or its top
+// context changes. Sent after every activation and on every change; never
+// activates the route by itself.
+constexpr std::uint32_t FocusFieldState = 18;
 constexpr bool IsRouteDeactivation(std::uint32_t event_type)
 {
     return event_type == ClientDeactivated || event_type == ClientSuspended;

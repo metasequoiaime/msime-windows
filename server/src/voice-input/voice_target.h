@@ -22,26 +22,55 @@ struct Target
     std::uint32_t process = 0;
     std::uint32_t focus_process = 0;
     std::uint32_t thread = 0;
+    // Advances on every foreground change and every focus event inside the
+    // foreground window.
     std::uint64_t generation = 0;
+    // Advances on foreground changes only. A TSF-attested target uses it in
+    // place of `generation`, whose in-window focus events can come from the
+    // UIA query itself (Chromium enables accessibility on first use).
+    std::uint64_t window_generation = 0;
     std::vector<int> runtime_id;
     std::uint64_t client = 0;
     std::uint64_t epoch = 0;
     std::uint64_t focus_token = 0;
+    // Set by the voice service when the bound route's TSF client reported an
+    // editable focused document for this focus token
+    // (FanyImeProtocol::FocusFieldAttestation). `editable` then comes from TSF,
+    // and the TSF field serial replaces the UIA runtime ID and focus-event
+    // generation as the in-window field identity.
+    bool tsf_attested = false;
+    std::uint32_t tsf_field = 0;
 };
 
-// True only when both snapshots describe the same still-editable target:
-// identical foreground/focus HWNDs, host/focus processes, focus thread, focus
-// generation, UIA runtime ID and TSF route binding. Any change, including focus
-// leaving and returning to the same field (which advances the generation),
-// breaks the match. A target that was never confirmed editable is never "the
-// same".
-inline bool SameTarget(const Target &before, const Target &now)
+namespace Detail
+{
+inline bool SameWindowAndRoute(const Target &before, const Target &now)
 {
     return before.editable && now.editable && before.foreground != 0 && before.focus != 0 &&
            before.foreground == now.foreground && before.focus == now.focus && before.process == now.process &&
-           before.focus_process == now.focus_process && before.thread == now.thread &&
-           before.generation == now.generation && before.runtime_id == now.runtime_id && before.client == now.client &&
+           before.focus_process == now.focus_process && before.thread == now.thread && before.client == now.client &&
            before.epoch == now.epoch && before.focus_token == now.focus_token;
+}
+} // namespace Detail
+
+// True only when both snapshots describe the same still-editable target:
+// identical foreground/focus HWNDs, host/focus processes, focus thread and TSF
+// route binding, plus the in-window field identity: the focus generation and
+// UIA runtime ID, or for two TSF-attested snapshots the foreground generation
+// and TSF field serial. Any change, including focus leaving and returning to
+// the same field, breaks the match. A target that was never confirmed editable
+// is never "the same", and an attested snapshot never matches an unattested one.
+inline bool SameTarget(const Target &before, const Target &now)
+{
+    if (!Detail::SameWindowAndRoute(before, now) || before.tsf_attested != now.tsf_attested)
+    {
+        return false;
+    }
+    if (before.tsf_attested)
+    {
+        return before.window_generation == now.window_generation && before.tsf_field == now.tsf_field;
+    }
+    return before.generation == now.generation && before.runtime_id == now.runtime_id;
 }
 
 // True when both snapshots describe the same composition owner despite a focus
@@ -51,13 +80,15 @@ inline bool SameTarget(const Target &before, const Target &now)
 // owner. Every other SameTarget field, including the UIA runtime ID and the
 // client/epoch/focus-token route binding, must still match; a new field's
 // normal preedit is never torn down because only its generation differs.
+// For TSF-attested snapshots the same round-trip also moves the TSF field
+// serial, so both are ignored; the DLL only cancels a voice preview it holds.
 inline bool SameCompositionOwner(const Target &before, const Target &now)
 {
-    return before.editable && now.editable && before.foreground != 0 && before.focus != 0 &&
-           before.foreground == now.foreground && before.focus == now.focus && before.process == now.process &&
-           before.focus_process == now.focus_process && before.thread == now.thread &&
-           before.runtime_id == now.runtime_id && before.client == now.client && before.epoch == now.epoch &&
-           before.focus_token == now.focus_token;
+    if (!Detail::SameWindowAndRoute(before, now) || before.tsf_attested != now.tsf_attested)
+    {
+        return false;
+    }
+    return before.tsf_attested || before.runtime_id == now.runtime_id;
 }
 
 // Final routing decision: deliver through the bound route only when the
@@ -108,10 +139,11 @@ void ShutdownTargetTracking();
 // is no single whole-capture deadline.
 Target CaptureTarget();
 // No-COM re-validation for use inside the voice service's send lock right
-// before delivering: re-checks tracking is live, the focus generation, the
-// foreground window and host pid, and the focus HWND and its pid/tid against
-// the snapshot; for the native Edit/RichEdit fast path it also re-checks
-// enabled/read-only.
+// before delivering: re-checks tracking is live, the focus generation (the
+// foreground generation for a TSF-attested snapshot, whose field identity the
+// caller re-checks against the live route), the foreground window and host
+// pid, and the focus HWND and its pid/tid against the snapshot; for the native
+// Edit/RichEdit fast path it also re-checks enabled/read-only.
 // Returns false for any non-editable snapshot. The full CaptureTarget, which
 // performs the UIA provider query, must be called outside the lock.
 bool IsTargetCurrentFast(const Target &target);

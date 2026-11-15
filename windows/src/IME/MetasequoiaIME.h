@@ -756,6 +756,9 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     BOOL _InitThreadMgrEventSink();
     void _UninitThreadMgrEventSink();
     void _HandleFocusedContextStackChange(_In_opt_ ITfContext *changedContext);
+    // Reports the focused document to the Server (FocusFieldState). A non-NULL
+    // document other than the last one, or contextChanged, is a new field.
+    void _ReportFocusField(_In_opt_ ITfDocumentMgr *documentMgr, bool editable, bool contextChanged);
 
     BOOL _InitTextEditSink(_In_opt_ ITfDocumentMgr *pDocMgr);
 
@@ -898,6 +901,10 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     bool _pairedCaretRetryTimerActive = false;
 
     ITfDocumentMgr *_pDocMgrLastFocused;
+    // Last non-NULL focused document, owned. Identifies the field reported to the
+    // Server (UpdateNamedpipeFocusField): focus passing through NULL and back to
+    // it (Win+., Excel cell edit) is the same field, not a new one.
+    ITfDocumentMgr *_pFocusFieldDocMgr = nullptr;
 
     ITfContext *_pContext;
 
