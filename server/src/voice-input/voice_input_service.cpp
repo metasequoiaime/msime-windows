@@ -909,8 +909,14 @@ bool IsPipeRouteCurrent(const VoiceInput::Target &target)
         return false;
     }
     const PipeClientActivation active = GetActivePipeClient();
-    return active.client_id == target.client && active.epoch == target.epoch &&
-           active.focus_token == target.focus_token;
+    if (active.client_id != target.client || active.epoch != target.epoch || active.focus_token != target.focus_token)
+    {
+        return false;
+    }
+    // An attested target is the field TSF reported; it stays current only
+    // while that client still reports the same, still editable, field.
+    return !target.tsf_attested ||
+           (active.focus_field_known && active.focus_field_editable && active.focus_field_serial == target.tsf_field);
 }
 
 // SendInput fallback guarded by a final no-COM re-validation. On failure the
@@ -1069,6 +1075,14 @@ bool IsForegroundPipeClient(const VoiceInput::Target &target, std::uint64_t clie
 // client/epoch/focus token when that client belongs to the captured foreground
 // host or the focused child route. The COM/UIA work happens in the platform
 // adapter and must always run outside g_send_mutex.
+//
+// When that bound client reported an editable focused document for this focus
+// token, TSF decides: the target is editable and the TSF field serial is its
+// identity. This is the document the voice preview and commit are written into,
+// so UIA's view of the host (an empty tree under WebView2 visual hosting, a
+// UIA element in another process than the focused HWND, a Chromium tree that is
+// still being built) no longer decides it. A missing or read-only TSF report
+// leaves the UIA verdict in place, exactly as before attestation existed.
 VoiceInput::Target CaptureVoiceTarget()
 {
     VoiceInput::Target target = VoiceInput::CaptureTarget();
@@ -1078,6 +1092,12 @@ VoiceInput::Target CaptureVoiceTarget()
         target.client = active.client_id;
         target.epoch = active.epoch;
         target.focus_token = active.focus_token;
+        if (active.focus_field_known && active.focus_field_editable)
+        {
+            target.editable = true;
+            target.tsf_attested = true;
+            target.tsf_field = active.focus_field_serial;
+        }
     }
     return target;
 }
@@ -1153,6 +1173,50 @@ void PushInlinePreedit(const std::wstring &text)
         // commit path, which reconciles the captured identity outside the lock.
         g_last_inline_preedit.clear();
     }
+}
+
+// Retry budget for binding the inline owner after recording has started. Only
+// the recognition callback thread of one session touches it.
+struct InlineLateBind
+{
+    int attempts = 0;
+    ULONGLONG last_attempt = 0;
+};
+
+// Start binds the inline owner once. If that capture found no bound route yet
+// (the client was still activating, or its focus state had not arrived), retry
+// from the first few recognition results instead of showing the whole session
+// on the overlay. The capture runs outside g_send_mutex like every other one;
+// the bind is re-validated under it and only while this session still records.
+void TryLateBindInlineOwner(std::uint64_t voice_session, InlineLateBind &state)
+{
+    constexpr int kMaxAttempts = 5;
+    constexpr ULONGLONG kRetryIntervalMs = 300;
+    if (g_stream_inline_this_session.load() || !g_recording.load() || state.attempts >= kMaxAttempts)
+    {
+        return;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (state.attempts != 0 && now - state.last_attempt < kRetryIntervalMs)
+    {
+        return;
+    }
+    ++state.attempts;
+    state.last_attempt = now;
+    const VoiceInput::Target owner = CaptureVoiceTarget();
+    std::lock_guard<std::mutex> send_lock(g_send_mutex);
+    if (g_voice_session != voice_session || !g_recording.load() || g_stream_inline_this_session.load() ||
+        owner.client == 0 || owner.epoch == 0 || !OwnerRouteValid(owner))
+    {
+        return;
+    }
+    g_inline_owner = owner;
+    g_inline_owner_session = voice_session;
+    g_last_inline_preedit.clear();
+    g_stream_inline_this_session.store(true);
+    // From here the text goes into the field; the overlay keeps only the level.
+    g_overlay.set_show_transcript(false);
+    g_overlay.set_transcript(L"");
 }
 
 // Shared teardown of the inline preedit state. Must be called under g_send_mutex.
@@ -1530,10 +1594,14 @@ bool StartRecording()
     if (use_streaming)
     {
         // 识别中的文字：inline 时写进光标处的预编辑，否则显示在提示条上。
-        auto on_partial = [voice_session](const std::string &text) {
+        // 开录那一刻没绑上 inline（路由还在激活、焦点状态还没报上来）时，前几次出字再各试一次。
+        auto late_bind = std::make_shared<InlineLateBind>();
+        auto on_partial = [voice_session, want_inline, late_bind](const std::string &text) {
             if (g_voice_session != voice_session)
                 return;
             const std::wstring wide = string_to_wstring(text);
+            if (want_inline)
+                TryLateBindInlineOwner(voice_session, *late_bind);
             std::lock_guard<std::mutex> send_lock(g_send_mutex);
             if (g_voice_session != voice_session)
                 return;

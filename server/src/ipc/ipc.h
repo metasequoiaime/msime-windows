@@ -135,6 +135,10 @@ bool ClientNegotiatedInputStateShortcuts(uint64_t client_id);
 bool ClientNegotiatedTemporaryJapanese(uint64_t client_id);
 // Whether the client handles the CancelComposition worker opcode (FanyImeProtocol::ServerCompositionCancel).
 bool ClientNegotiatedServerCompositionCancel(uint64_t client_id);
+// Records a FocusFieldState from this client's current Main registration. Only
+// a versioned client that negotiated FocusFieldAttestation is recorded.
+void RecordPipeClientFocusField(uint64_t client_id, uint64_t main_registration_id, uint64_t focus_token,
+                                uint32_t serial, bool editable);
 uint64_t RegisterToTsfWorkerThreadPipeClient(uint64_t client_id, HANDLE pipe);
 uint64_t BeginPipeClientHandler(HANDLE pipe);
 void EndPipeClientHandler(uint64_t handler_id);
@@ -144,6 +148,11 @@ struct PipeClientActivation
     uint64_t epoch = 0;
     bool changed = false;
     uint64_t focus_token = 0;
+    // The client's last FocusFieldState (FanyImeProtocol::FocusFieldAttestation),
+    // filled by GetActivePipeClient only when it was reported for focus_token.
+    bool focus_field_known = false;
+    bool focus_field_editable = false;
+    uint32_t focus_field_serial = 0;
 };
 
 struct PipeClientUnregisterResult

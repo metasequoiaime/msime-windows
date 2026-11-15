@@ -269,6 +269,70 @@ void TestCtrlVInjectionCleanupClassification()
     check(4, true, false, false); // Complete paste: no cleanup.
 }
 
+Target MakeAttestedTarget(std::uint64_t generation = 10)
+{
+    Target target = MakeTarget(generation);
+    target.tsf_attested = true;
+    target.tsf_field = 5;
+    target.window_generation = 3;
+    // An attested capture may carry whatever UIA saw, including nothing.
+    target.runtime_id.clear();
+    return target;
+}
+
+void TestAttestedTargetIgnoresInWindowFocusEventsAndUia()
+{
+    // Chromium's first UIA query emits focus events inside the foreground
+    // window and builds the tree that later reports another runtime ID. Neither
+    // moves the TSF field, so the target stays the same.
+    const Target before = MakeAttestedTarget(42);
+    Target now = MakeAttestedTarget(47);
+    now.runtime_id = {9, 9};
+    CHECK(SameTarget(before, now));
+    CHECK(CanCommitToTarget(before, now));
+    CHECK(SameCompositionOwner(before, now));
+}
+
+void TestAttestedTargetBreaksOnTsfFieldOrForeground()
+{
+    const Target before = MakeAttestedTarget(42);
+
+    Target other_field = before;
+    other_field.tsf_field = 6;
+    CHECK(!SameTarget(before, other_field));
+
+    Target foreground_moved = before;
+    foreground_moved.window_generation = 4;
+    CHECK(!SameTarget(before, foreground_moved));
+
+    // Window and route identity still apply to attested targets.
+    Target other_focus = before;
+    other_focus.focus = 0x88888;
+    CHECK(!SameTarget(before, other_focus));
+    CHECK(!SameCompositionOwner(before, other_focus));
+    Target other_token = before;
+    other_token.focus_token = 0x999;
+    CHECK(!SameTarget(before, other_token));
+    CHECK(!SameCompositionOwner(before, other_token));
+
+    // A cancellation still reaches the owner after Win+. moved the foreground
+    // generation and the field serial, exactly as the focus generation before.
+    CHECK(SameCompositionOwner(before, other_field));
+    CHECK(SameCompositionOwner(before, foreground_moved));
+}
+
+void TestAttestedAndUnattestedSnapshotsNeverMatch()
+{
+    // The two kinds keep their identity in different fields; a target that
+    // gained or lost its TSF report between stop and commit keeps the card.
+    const Target attested = MakeAttestedTarget(42);
+    Target plain = attested;
+    plain.tsf_attested = false;
+    CHECK(!SameTarget(attested, plain));
+    CHECK(!SameTarget(plain, attested));
+    CHECK(!SameCompositionOwner(attested, plain));
+}
+
 void TestUnboundRouteFieldsCompareZero()
 {
     // Before the voice service binds a route, platform snapshots carry
@@ -303,6 +367,9 @@ int main()
         {"sendinput stops on zero or partial injection", TestSendUnicodeStopsOnZeroOrPartialInjection},
         {"ctrl+v partial injection cleanup classification", TestCtrlVInjectionCleanupClassification},
         {"unbound zero route fields compare equal", TestUnboundRouteFieldsCompareZero},
+        {"attested target ignores in-window focus events and UIA", TestAttestedTargetIgnoresInWindowFocusEventsAndUia},
+        {"attested target breaks on TSF field or foreground", TestAttestedTargetBreaksOnTsfFieldOrForeground},
+        {"attested and unattested snapshots never match", TestAttestedAndUnattestedSnapshotsNeverMatch},
     };
     for (const auto &entry : cases)
     {

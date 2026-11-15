@@ -17,6 +17,8 @@ using Microsoft::WRL::ComPtr;
 // background thread stamps the value before the UIA query and the result is
 // discarded if the epoch moved meanwhile (focus changed during the query).
 std::atomic<std::uint64_t> g_focus_generation{1};
+// Foreground changes only (see Target::window_generation).
+std::atomic<std::uint64_t> g_window_generation{1};
 std::atomic<bool> g_tracking{false};
 // Hook handles are owned by the Server UI thread; CaptureTarget only reads the
 // two atomics above.
@@ -31,6 +33,10 @@ void CALLBACK OnWinEvent(HWINEVENTHOOK, DWORD event, HWND window, LONG, LONG, DW
     if (event == EVENT_OBJECT_FOCUS && (!window || GetAncestor(window, GA_ROOT) != GetForegroundWindow()))
     {
         return;
+    }
+    if (event == EVENT_SYSTEM_FOREGROUND)
+    {
+        g_window_generation.fetch_add(1, std::memory_order_relaxed);
     }
     g_focus_generation.fetch_add(1, std::memory_order_relaxed);
 }
@@ -297,12 +303,16 @@ void ShutdownTargetTracking()
     }
     g_foreground_hook = nullptr;
     g_focus_hook = nullptr;
+    g_window_generation.fetch_add(1, std::memory_order_relaxed);
     g_focus_generation.fetch_add(1, std::memory_order_relaxed);
 }
 
 Target CaptureTarget()
 {
     Target target;
+    // Read before the snapshot is taken, like the focus generation: a change
+    // that races the capture leaves the snapshot looking stale, never current.
+    target.window_generation = g_window_generation.load(std::memory_order_relaxed);
     target.generation = g_focus_generation.load(std::memory_order_relaxed);
     if (!g_tracking.load(std::memory_order_relaxed))
     {
@@ -386,7 +396,11 @@ bool IsTargetCurrentFast(const Target &target)
     {
         return false;
     }
-    if (g_focus_generation.load(std::memory_order_relaxed) != target.generation)
+    // A TSF-attested target keeps its field identity in the TSF serial, which
+    // the voice service re-checks against the live route; in-window focus
+    // events would otherwise end it on Chromium's accessibility warm-up.
+    if (target.tsf_attested ? g_window_generation.load(std::memory_order_relaxed) != target.window_generation
+                            : g_focus_generation.load(std::memory_order_relaxed) != target.generation)
     {
         return false;
     }

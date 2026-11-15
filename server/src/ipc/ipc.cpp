@@ -165,6 +165,10 @@ struct PipeClientSession
     uint64_t focus_token = 0;
     uint64_t inactive_focus_token = 0;
     FanyImeIpc::OutboundSessionState outbound_state;
+    // Last FocusFieldState; valid only while focus_field_token == focus_token.
+    uint64_t focus_field_token = 0;
+    uint32_t focus_field_serial = 0;
+    bool focus_field_editable = false;
 };
 
 std::mutex g_pipe_clients_mutex;
@@ -774,6 +778,7 @@ uint64_t RegisterMainPipeClient(uint64_t client_id, HANDLE pipe)
             invalidation_epoch = g_active_client_state.deactivate(client_id);
         }
         session.focus_token = 0;
+        session.focus_field_token = 0;
         session.main_pipe = pipe;
         session.main_control_pipe = control_pipe;
         control_pipe = INVALID_HANDLE_VALUE;
@@ -809,7 +814,8 @@ bool NegotiateMainPipeClient(const FanyImeNamedpipeData &hello, uint64_t registr
         hello, FanyImeProtocol::Capabilities | FanyImeProtocol::CharacterSetShortcut |
                    FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
                    FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
-                   FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::ServerCompositionCancel);
+                   FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::ServerCompositionCancel |
+                   FanyImeProtocol::FocusFieldAttestation);
     std::lock_guard lock(g_pipe_clients_mutex);
     auto it = g_pipe_clients.find(hello.client_id);
     if (it == g_pipe_clients.end() || registration_id == 0 || it->second.main_registration_id != registration_id)
@@ -882,6 +888,22 @@ bool ClientNegotiatedServerCompositionCancel(uint64_t client_id)
     const auto it = g_pipe_clients.find(client_id);
     return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
            (it->second.protocol.capabilities & FanyImeProtocol::ServerCompositionCancel) != 0;
+}
+
+void RecordPipeClientFocusField(uint64_t client_id, uint64_t main_registration_id, uint64_t focus_token,
+                                uint32_t serial, bool editable)
+{
+    std::lock_guard lock(g_pipe_clients_mutex);
+    const auto it = g_pipe_clients.find(client_id);
+    if (focus_token == 0 || it == g_pipe_clients.end() || main_registration_id == 0 ||
+        it->second.main_registration_id != main_registration_id || it->second.protocol.legacy ||
+        (it->second.protocol.capabilities & FanyImeProtocol::FocusFieldAttestation) == 0)
+    {
+        return;
+    }
+    it->second.focus_field_token = focus_token;
+    it->second.focus_field_serial = serial;
+    it->second.focus_field_editable = editable;
 }
 
 uint64_t RegisterToTsfPipeClient(uint64_t client_id, HANDLE pipe)
@@ -1267,13 +1289,21 @@ PipeClientActivation GetActivePipeClient()
 {
     std::lock_guard lock(g_pipe_clients_mutex);
     const FanyImeIpc::ActiveClientTransition snapshot = g_active_client_state.snapshot();
-    uint64_t focus_token = 0;
+    PipeClientActivation active{snapshot.client_id, snapshot.epoch, false, 0};
     const auto session = g_pipe_clients.find(snapshot.client_id);
     if (session != g_pipe_clients.end())
     {
-        focus_token = session->second.focus_token;
+        active.focus_token = session->second.focus_token;
+        // A state reported under an older focus session says nothing about
+        // the current one; a fresh activation always reports again.
+        if (active.focus_token != 0 && session->second.focus_field_token == active.focus_token)
+        {
+            active.focus_field_known = true;
+            active.focus_field_editable = session->second.focus_field_editable;
+            active.focus_field_serial = session->second.focus_field_serial;
+        }
     }
-    return {snapshot.client_id, snapshot.epoch, false, focus_token};
+    return active;
 }
 
 bool IsActivePipeClient(uint64_t client_id, uint64_t activation_epoch)

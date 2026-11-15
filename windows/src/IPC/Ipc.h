@@ -67,6 +67,15 @@ bool UsesDirectHelpcodeEndTrigger();
 bool SupportsCaretStateIndicator();
 bool SupportsTrilingualCycle();
 bool SupportsInputStateShortcuts();
+// The Server negotiated FanyImeProtocol::FocusFieldAttestation.
+bool SupportsFocusFieldAttestation();
+// Records this thread's focused TSF document: whether it takes text and whether
+// it is another field than the last one reported (a new serial). Sends
+// FocusFieldState when it changed and the focus session is already fenced;
+// otherwise the next activation sends it. No-op without the capability.
+void UpdateNamedpipeFocusField(bool editable, bool newField);
+// Sends the recorded state if the current fenced focus token has not seen it.
+void FlushNamedpipeFocusField();
 bool FlushNamedpipeFocusSessionReset();
 bool FlushNamedpipeImeDeactivation(uint64_t focusToken = 0);
 

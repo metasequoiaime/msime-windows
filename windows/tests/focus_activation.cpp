@@ -109,6 +109,15 @@ void MarkNamedpipeSessionDirty()
     ++dirtyResets;
 }
 
+// FocusFieldState: an activation forgets what was published, and every
+// successful return flushes (the real flush sends only when it is due).
+uint64_t focusFieldPublishedToken = 0;
+int focusFieldFlushes = 0;
+void FlushNamedpipeFocusField()
+{
+    ++focusFieldFlushes;
+}
+
 #include "focus_activation_source.h"
 
 #define CHECK(condition)                                                                                               \
@@ -134,6 +143,7 @@ int main()
     service.threadMgr.querySucceeds = false;
     CHECK(!EnsureNamedpipeFocusSessionActivated());
     CHECK(activationWrites == 0 && activationRequired && expectedToken.load() == 42 && dirtyResets == 0);
+    CHECK(focusFieldFlushes == 0);
 
     // Test actual focus at the write boundary, after a connection has waited.
     service.threadMgr.querySucceeds = true;
@@ -144,10 +154,13 @@ int main()
 
     // Focus return completes the pending activation exactly once.
     service.threadMgr.focused = true;
+    focusFieldPublishedToken = 41;
     CHECK(EnsureNamedpipeFocusSessionActivated());
     CHECK(activationWrites == 1 && sentToken == 42 && !activationRequired && acknowledged);
+    // The new activation must report the focused field again.
+    CHECK(focusFieldPublishedToken == 0 && focusFieldFlushes == 1);
     CHECK(EnsureNamedpipeFocusSessionActivated());
-    CHECK(activationWrites == 1);
+    CHECK(activationWrites == 1 && focusFieldFlushes == 2);
 
     // Losing focus alone does not turn cleanup of an acknowledged session into
     // transport failure. A new token, however, must wait for foreground focus.
