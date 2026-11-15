@@ -1,7 +1,8 @@
 """msime.db：全拼表、自定义词条、读音纠错、86 五笔、空的快捷短语表（出厂不带内置快捷短语），以及日文直出候选表 japanese_lexicon。
 
 对应 Rust 构建器 msime.rs 的 quanpin / custom-words / reading-corrections / wubi / quick-phrases 阶段，但全拼表
-不再读 sources/pinyin/ 下的 rime-ice 系列与地名补充，只读 sources/pinyin/wanxiang/ 的万象词库。Release 把五笔
+不再读 sources/pinyin/ 下的 rime-ice 系列与地名补充，以 sources/pinyin/wanxiang/ 的万象词库为主，再用
+sources/pinyin/rime-ice-only/ 里万象没有的 rime-ice 词以最低权重补缺。Release 把五笔
 拆进了 msime-wubi.db，Windows 端仍然一个库：这里全建在 msime.db 里。98 五笔 Windows 端不读，不建。
 """
 
@@ -74,8 +75,9 @@ def wanxiang_files(directory: Path) -> list[Path]:
     return paths
 
 
-def build_quanpin(connection: sqlite3.Connection, paths: list[Path]) -> str:
-    """万象词库按给定顺序读入；同一 (拼音, 词) 只留一行：权重高的，平手留先读到的。"""
+def build_quanpin(connection: sqlite3.Connection, paths: list[Path], fallback_paths: list[Path] = ()) -> str:
+    """万象词库按给定顺序读入，再读 rime-ice 有而万象没有的词（fallback_paths）；同一 (拼音, 词) 只留一行：
+    权重高的，平手留先读到的。"""
     with connection:
         for table in QUANPIN_TABLES:
             connection.execute(f"\ndrop table if exists {table};\n")
@@ -87,6 +89,13 @@ def build_quanpin(connection: sqlite3.Connection, paths: list[Path]) -> str:
             count += len(rows)
             defaulted += file_defaulted
             skipped += file_skipped
+        fallback = fallback_skipped = 0
+        for path in fallback_paths:
+            rows, file_skipped = read_rime_ice_only(path)
+            _insert_quanpin_rows(connection, rows)
+            fallback += len(rows)
+            fallback_skipped += file_skipped
+        count += fallback
         for table in QUANPIN_TABLES:
             suffix = table.removeprefix("tbl_")
             connection.execute(f"\ncreate index idx_key_{suffix} on {table}(key);\n")
@@ -96,7 +105,8 @@ def build_quanpin(connection: sqlite3.Connection, paths: list[Path]) -> str:
                 f"and kept.value = {table}.value and (kept.weight > {table}.weight or "
                 f"(kept.weight = {table}.weight and kept.rowid < {table}.rowid)));\n").rowcount
     return (f"{count} rows from {len(paths)} files, {defaulted} without a weight set to {WANXIANG_DEFAULT_WEIGHT}, "
-            f"{skipped} readings that are not quanpin left out")
+            f"{skipped} readings that are not quanpin left out; {fallback} rime-ice-only rows at weight "
+            f"{RIME_ICE_ONLY_WEIGHT}, {fallback_skipped} not quanpin left out")
 
 
 def _insert_quanpin_rows(connection: sqlite3.Connection, rows: list[tuple[str, str, int]]) -> None:
@@ -170,6 +180,44 @@ def read_wanxiang(path: Path) -> tuple[list[tuple[str, str, int]], int, int]:
     if not in_body:
         raise ValueError(f"{path}: 没有 `...`，不是 Rime 词库")
     return rows, defaulted, skipped
+
+
+# ---- rime-ice 有而万象没有的词 ----
+
+# msime-dictionary 按词字面从 rime-ice 主表和补充表里取出的、万象全部词表都没有的词。只用来补万象的缺：
+# 原始权重不用，一律记成最低，排在同音的万象词后面，也不在整句里压过万象的词。
+RIME_ICE_ONLY = "sources/pinyin/rime-ice-only"
+RIME_ICE_ONLY_FILES = ("rime-ice-only-entries.txt", "rime-ice-supplement-only-entries.txt")
+RIME_ICE_ONLY_WEIGHT = 1
+
+
+def rime_ice_only_files(directory: Path) -> list[Path]:
+    paths = [directory / name for name in RIME_ICE_ONLY_FILES]
+    missing = [path.name for path in paths if not path.is_file()]
+    if missing:
+        raise ValueError(f"{directory} 下缺少 {', '.join(missing)}")
+    return paths
+
+
+def read_rime_ice_only(path: Path) -> tuple[list[tuple[str, str, int]], int]:
+    """`词<TAB>全拼<TAB>原始权重<TAB>源行号`，`#` 开头是注释。全拼已是去调、`'` 分隔的写法。
+
+    返回 ([(词, 全拼, RIME_ICE_ONLY_WEIGHT)], 跳过的行数)；跳过的是读音不是全拼的行。列数不对直接报错。
+    """
+    rows: list[tuple[str, str, int]] = []
+    skipped = 0
+    for number, line in enumerate(textutil.universal_lines(textutil.without_bom(textutil.read(path))), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) != 4 or not fields[0] or not fields[1]:
+            raise ValueError(f"{path.name}:{number}: 应为 词<TAB>全拼<TAB>权重<TAB>行号")
+        key = "'".join(_ZERO_INITIAL.get(syllable, syllable) for syllable in fields[1].split("'"))
+        if not is_quanpin(key):
+            skipped += 1
+            continue
+        rows.append((fields[0], key, RIME_ICE_ONLY_WEIGHT))
+    return rows, skipped
 
 
 # ---- 字母词 ----
