@@ -5,7 +5,7 @@
 namespace FanyImeIpc
 {
 // The UI stamps an interaction with the page generation it actually painted. The newest published snapshot may be
-// newer than the screen (a coalesced settle has not been painted yet), so only the rendered generation is the
+// newer than the screen (an async update whose frame has not been painted yet), so only the rendered generation is the
 // correct reference for deciding whether the interaction belongs to the visible page.
 inline bool ShouldLatchCandidateInteraction(std::uint64_t interaction_generation, std::uint64_t rendered_generation)
 {

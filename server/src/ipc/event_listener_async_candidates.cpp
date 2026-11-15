@@ -39,6 +39,9 @@ uint64_t g_jev_generation = 0;
 // 上限，超出的批次只让引擎缓存变新，下一键自然读到；组合边界（提交/隐藏）要重置，避免同一串重新输入
 // 时继承上一段用掉的额度。
 FanyImeIpc::RescoreRequeryBudget g_rescore_requery_budget;
+// ui.items 里的混输行属于哪次输入。不合进来的重建会把这些行一并丢掉，所以行在、且这里等于当前输入，
+// 就说明它们是为当前输入查出来的。
+std::string g_mixed_rows_input;
 } // namespace
 
 namespace event_listener_detail
@@ -53,6 +56,11 @@ void ClearJevSelection()
 const std::string &JevSelectionWord()
 {
     return g_jev_word;
+}
+
+const std::string &MixedRowsInput()
+{
+    return g_mixed_rows_input;
 }
 
 void RefreshJevSelection()
@@ -137,11 +145,11 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUiImmediate();
+    RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
 }
 
-bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late)
+bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner)
 {
     const std::vector<WordItem> before = g_inputSession->get_candidates();
     const int live_page_size =
@@ -176,7 +184,7 @@ bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner
     const std::vector<WordItem> after_page = first_page(Global::candidate_ui.items);
     const bool visible_changed = FanyImeIpc::VisibleCandidatePageChanged(before_page, after_page, page_size);
     if (visible_changed)
-        RequestShowCandidateWindowDeferred(late);
+        RequestShowCandidateWindowDeferred();
     PushUiLessCandidatesToOwner();
     return visible_changed;
 }
@@ -250,7 +258,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
         g_jev_word = candidate;
         g_jev_identity = identity;
         g_jev_generation = generation;
-        RefreshCandidatePageUiImmediate();
+        RefreshCandidatePageUiAsync();
         PushUiLessCandidatesToOwner();
         return;
     }
@@ -282,7 +290,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUiImmediate();
+    RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
 }
 
@@ -340,7 +348,7 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
     Global::candidate_ui.selection_started = false;
     Global::candidate_ui.clear_page();
     g_dedicated_english_answer_pending = false;
-    RefreshCandidatePageUiImmediate();
+    RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
 }
 
@@ -405,7 +413,7 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
         page_words.empty() || FanyImeIpc::AnyTranslatedKeyOnPage(page_words, changed_keys);
     if (glosses_changed && visible_gloss_changed && owner &&
         IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
-        RefreshCandidatePageUiLate();
+        RefreshCandidatePageUiAsync();
     if (!merge)
         CloudTranslation::RequestMisses(std::move(misses), generation);
 }
@@ -466,6 +474,7 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
     auto &items = Global::candidate_ui.items;
     const size_t size_before = items.size();
     bool changed = false;
+    g_mixed_rows_input = input;
 
     if (GetConfiguredDateTimeCandidatesEnabled())
     {
@@ -534,7 +543,7 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUiCoalesced();
+    RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
 }
 } // namespace FanyNamedPipe

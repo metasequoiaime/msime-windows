@@ -546,7 +546,7 @@ void RefreshCandidatePageUi(bool show_window)
         PublishCandidatePage(std::move(page));
 }
 
-void RefreshCandidatePageUiCoalesced()
+void RefreshCandidatePageUiAsync()
 {
     auto page = BuildPublishableCandidatePage();
     if (IsUiLessMode())
@@ -554,29 +554,7 @@ void RefreshCandidatePageUiCoalesced()
         PublishCandidatePage(std::move(page));
         return;
     }
-    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Fast);
-}
-
-void RefreshCandidatePageUiLate()
-{
-    auto page = BuildPublishableCandidatePage();
-    if (IsUiLessMode())
-    {
-        PublishCandidatePage(std::move(page));
-        return;
-    }
-    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Late);
-}
-
-void RefreshCandidatePageUiImmediate()
-{
-    auto page = BuildPublishableCandidatePage();
-    if (IsUiLessMode())
-    {
-        PublishCandidatePage(std::move(page));
-        return;
-    }
-    UpdateCandidatePage(std::move(page), FanyImeIpc::CandidateFreshness::Immediate);
+    UpdateCandidatePage(std::move(page));
 }
 } // namespace event_listener_detail
 
@@ -825,6 +803,32 @@ std::vector<WordItem> PreservedMixedEnglishForInput(const std::vector<WordItem> 
     return FanyImeIpc::PreservedMixedEnglish(current, input);
 }
 
+// 与 PrepareCandidateList 发混输请求时同一套条件：开关关了、光标截断了整串时，这些行本来就不会再查回来。
+std::vector<WordItem> PreservedMixedRowsForInput(const std::vector<WordItem> &current, const std::string &input)
+{
+    if (input.empty() || !GetConfiguredMixedCandidatesEnabled())
+        return {};
+    const SchemeType scheme = g_inputSession->current_scheme_type();
+    if (scheme != SchemeType::Quanpin && scheme != SchemeType::Shuangpin)
+        return {};
+    const bool whole_input = g_inputSession->prefix_end() == input.size();
+    return FanyImeIpc::PreservedMixedRows(current, MixedRowsInput(), input, [&](CandidateSource source) {
+        switch (source)
+        {
+        case CandidateSource::Emoji:
+            return whole_input && GetConfiguredEmojiMixedInputEnabled();
+        case CandidateSource::Kaomoji:
+            return GetConfiguredKaomojiMixedInputEnabled();
+        case CandidateSource::Symbol:
+            return whole_input && GetConfiguredSymbolMixedInputEnabled();
+        case CandidateSource::DateTime:
+            return whole_input && GetConfiguredDateTimeCandidatesEnabled();
+        default:
+            return false;
+        }
+    });
+}
+
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
 {
     CandidateBuildTimer segment;
@@ -849,7 +853,8 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     // 混输英文只活在 ui.items 里，引擎候选里没有。同一次输入的异步重排会把整页重建，英文行先原样带过
     // 重建，混输线程下一次回包仍会按最新规则替换它。只对普通拼音分支生效，Y/Emoji/日期等页面不动。
     std::vector<WordItem> preserved_english;
-    bool preserve_mixed_english = false;
+    std::vector<WordItem> preserved_mixed_rows;
+    bool preserve_mixed_rows = false;
     std::vector<WordItem> items;
     if (g_english_input_mode)
     {
@@ -929,7 +934,10 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
         if (!IsCandidateSubPageActive() && !GlobalIme::composition.creating_word.active)
         {
             preserved_english = PreservedMixedEnglishForInput(ui.items, EnglishInputKey());
-            preserve_mixed_english = !preserved_english.empty();
+            // 停手后的整句重查是同一输入的重建：只带英文的话，emoji、符号（du → °）等会先从屏上消失，
+            // 混输线程虽会再回一次包补回来，但首屏会先缺一帧、再跳回来。
+            preserved_mixed_rows = PreservedMixedRowsForInput(ui.items, current_input);
+            preserve_mixed_rows = !preserved_english.empty() || !preserved_mixed_rows.empty();
         }
         queryMs = segment.Split();
         user_dictionary::apply_fixed_positions(
@@ -973,26 +981,35 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     g_candidate_list_character_set = character_set;
     g_candidate_list_spelled_by_character_set = spelled_by_character_set;
     ui.set_items(std::move(items));
-    if (preserve_mixed_english && !preserved_english.empty())
+    if (preserve_mixed_rows)
     {
         auto &rebuilt = ui.items;
-        std::vector<WordItem> additions;
-        for (WordItem &item : preserved_english)
-        {
-            const bool duplicate = std::any_of(rebuilt.begin(), rebuilt.end(),
-                                               [&](const WordItem &existing) { return existing.word == item.word; });
-            if (!duplicate)
-                additions.push_back(std::move(item));
-        }
-        if (!additions.empty())
+        const auto take_unique = [&](std::vector<WordItem> &from, std::vector<WordItem> &to) {
+            for (WordItem &item : from)
+            {
+                const auto same_word = [&](const WordItem &existing) { return existing.word == item.word; };
+                if (std::none_of(rebuilt.begin(), rebuilt.end(), same_word) &&
+                    std::none_of(to.begin(), to.end(), same_word))
+                    to.push_back(std::move(item));
+            }
+        };
+        std::vector<WordItem> english_additions;
+        std::vector<WordItem> other_additions;
+        take_unique(preserved_english, english_additions);
+        take_unique(preserved_mixed_rows, other_additions);
+        if (!english_additions.empty() || !other_additions.empty())
         {
             const size_t insert_at = (std::min)(static_cast<size_t>(1), rebuilt.size());
             rebuilt.insert(rebuilt.begin() + static_cast<std::ptrdiff_t>(insert_at),
-                           std::make_move_iterator(additions.begin()), std::make_move_iterator(additions.end()));
+                           std::make_move_iterator(english_additions.begin()),
+                           std::make_move_iterator(english_additions.end()));
+            // 其余来源的位置全由归一化按来源摆，追加的先后只决定同来源内的顺序，与原列表一致。
+            rebuilt.insert(rebuilt.end(), std::make_move_iterator(other_additions.begin()),
+                           std::make_move_iterator(other_additions.end()));
             FanyImeIpc::NormalizeMixedCandidateOrder(rebuilt, 1, CurrentEnglishPlacement(rebuilt));
             ui.item_total_count = static_cast<int>(rebuilt.size());
-            CAND_DIAG_LOGF(L"mixed english preserved count={} input_units={}", additions.size(),
-                           EnglishInputKey().size());
+            CAND_DIAG_LOGF(L"mixed rows preserved english={} other={} input_units={}", english_additions.size(),
+                           other_additions.size(), current_input.size());
         }
     }
     RefreshCandidatePageUi(false);

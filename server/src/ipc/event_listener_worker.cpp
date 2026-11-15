@@ -10,7 +10,6 @@
 #include <utility>
 #include "ipc.h"
 #include "ipc/selection_replay_guard.h"
-#include "ipc/candidate_settle_arbitration_policy.h"
 #include "ipc/async_request_origin.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/input_key_policy.h"
@@ -220,22 +219,6 @@ bool AnyTaskQueuedLocked()
     return false;
 }
 
-// 调用方持 queueMutex，且已知至少有一个任务。只回答「下一类是谁」，不取任务。
-TaskClass NextQueuedTaskClassLocked()
-{
-    std::array<TaskClassHead, kTaskClassCount> heads;
-    for (std::size_t i = 0; i < kTaskClassCount; ++i)
-    {
-        if (!taskQueues[i].empty())
-        {
-            heads[i].has_task = true;
-            heads[i].wait_ms = QueueWaitMilliseconds(taskQueues[i].front());
-            heads[i].enqueue_sequence = taskQueues[i].front().enqueue_sequence;
-        }
-    }
-    return NextTaskClass(heads);
-}
-
 // 调用方持 queueMutex。每类队首现算一次年龄，再交给纯函数决定下一类。
 Task TakeNextTaskLocked()
 {
@@ -316,13 +299,7 @@ void WorkerThread()
                 cadence.CloseGate();
                 SetTypingInProgress(false);
             }
-            const auto gate_deadline = cadence.Deadline(idle_gate_ms);
-            auto wake_deadline = gate_deadline;
-            if (const auto page_deadline = CandidatePageTimerDeadline())
-            {
-                if (wake_deadline == InputCadence::Clock::time_point{} || *page_deadline < wake_deadline)
-                    wake_deadline = *page_deadline;
-            }
+            const auto wake_deadline = cadence.Deadline(idle_gate_ms);
             if (wake_deadline == InputCadence::Clock::time_point{})
             {
                 // 闸门关着（或不在打字）：保持原来的无限等待。
@@ -335,12 +312,7 @@ void WorkerThread()
             if (!pipe_running)
                 break;
             const auto now = InputCadence::Clock::now();
-            const bool page_frame_due = CandidatePageTimerIsDue(now);
-            const bool has_queued_task = AnyTaskQueuedLocked();
-            const FanyImeIpc::SettleFlushDecision settle_decision = FanyImeIpc::DecideSettleFlush(
-                page_frame_due, has_queued_task, has_queued_task ? NextQueuedTaskClassLocked() : TaskClass::Foreground);
-            const bool flush_page_frame = settle_decision == FanyImeIpc::SettleFlushDecision::FlushSettle;
-            if (!flush_page_frame && cadence.ShouldCloseGate(now, idle_gate_ms))
+            if (cadence.ShouldCloseGate(now, idle_gate_ms))
             {
                 // 到点且没有新按键：这段连续打字结束。先关闸再排重查，保证
                 // recompute_candidates 里重新应用的配置看到的是 Idle。
@@ -355,20 +327,9 @@ void WorkerThread()
                     PushTaskLocked(std::move(refresh));
                 }
             }
-            if (flush_page_frame)
-            {
-                // 这帧只请求显示一次，不在锁里 PostMessage。先把用户对已渲染页的操作结算掉，
-                // 别让定稿帧盖在点击/选词上。
-                lock.unlock();
-                LatchCandidateUiInteraction();
-                if (!CanMergeAsyncCandidates())
-                    CancelCandidatePageFrames();
-                FireDueCandidatePageTimers(now);
-                continue;
-            }
             // wait 与上面的超时分支都保证此刻队列非空；这里只是防御 TakeNextTaskLocked
             // 的 front() 没有空检查，别在后续改动里把「到点但没排到重查」变成空队列取任务。
-            if (!has_queued_task)
+            if (!AnyTaskQueuedLocked())
                 continue;
             task = TakeNextTaskLocked();
             // 出队即放行：之后完成的批次结果不一定被这次重查读到，得能再排一个。
@@ -1101,8 +1062,8 @@ void WorkerThread()
             }
             // Global::candidate_ui.items 是按键时那份副本，重查后必须重新组页才看得到新的
             // 整句候选；只刷新页面会把旧列表再发一遍。与 ApplyRescoredOrder 共用同一段。
-            // 这是停手后的晚到来源：快速定稿已经画过一帧时，允许它再补一帧；首屏没变则不会请求。
-            (void)RequeryCandidatesPreservingOnline(owner, /*late=*/true);
+            // 首屏变了才请求重画，没变则不动界面。
+            (void)RequeryCandidatesPreservingOnline(owner);
             break;
         }
         }

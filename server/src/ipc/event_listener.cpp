@@ -191,67 +191,6 @@ bool IsDedicatedEnglishAnswerPending()
            !IsCandidateSubPageActive();
 }
 
-// Timer queue for CandidatePages. The module never exposes its deadlines; the worker asks this adapter when to
-// wake and fires the due callbacks outside the task-queue lock. Callbacks are no-ops when their page no longer
-// exists, so a timer that outlives its page costs nothing.
-class CandidatePageTimerQueue : public FanyImeIpc::CandidatePages::ClockPort
-{
-  public:
-    using Clock = FanyImeIpc::CandidatePages::Clock;
-
-    Clock::time_point now() const override
-    {
-        return Clock::now();
-    }
-
-    void schedule_at(Clock::time_point deadline, std::function<void()> fn) override
-    {
-        std::lock_guard lock(mutex_);
-        timers_.push_back({deadline, std::move(fn)});
-    }
-
-    std::optional<Clock::time_point> deadline() const
-    {
-        std::lock_guard lock(mutex_);
-        if (timers_.empty())
-            return std::nullopt;
-        return std::min_element(timers_.begin(), timers_.end(),
-                                [](const auto &left, const auto &right) { return left.deadline < right.deadline; })
-            ->deadline;
-    }
-
-    bool due(Clock::time_point now) const
-    {
-        std::lock_guard lock(mutex_);
-        return std::any_of(timers_.begin(), timers_.end(), [now](const auto &timer) { return timer.deadline <= now; });
-    }
-
-    void fire_due(Clock::time_point now)
-    {
-        std::vector<std::function<void()>> due;
-        {
-            std::lock_guard lock(mutex_);
-            const auto split = std::stable_partition(timers_.begin(), timers_.end(),
-                                                     [now](const auto &timer) { return timer.deadline > now; });
-            for (auto timer = split; timer != timers_.end(); ++timer)
-                due.push_back(std::move(timer->fn));
-            timers_.erase(split, timers_.end());
-        }
-        for (auto &fn : due)
-            fn();
-    }
-
-  private:
-    struct Timer
-    {
-        Clock::time_point deadline;
-        std::function<void()> fn;
-    };
-
-    mutable std::mutex mutex_;
-    std::vector<Timer> timers_;
-};
-
 class CandidatePageSurface : public FanyImeIpc::CandidatePages::SurfacePort
 {
   public:
@@ -313,9 +252,8 @@ class CandidatePageSurface : public FanyImeIpc::CandidatePages::SurfacePort
 
 struct CandidatePagesRuntime
 {
-    CandidatePageTimerQueue timer;
     CandidatePageSurface surface;
-    FanyImeIpc::CandidatePages pages{timer, surface, std::chrono::milliseconds{120},
+    FanyImeIpc::CandidatePages pages{surface,
                                      std::chrono::milliseconds{FanyImeIpc::kCandidateSelectionRenderWaitMaxMs}};
 };
 
@@ -333,35 +271,34 @@ void RequestShowCandidateWindow()
     ShowPublishedCandidatePage();
 }
 
-void RequestShowCandidateWindowDeferred(bool late)
+void RequestShowCandidateWindowDeferred()
 {
     if (IsUiLessMode() || !::global_hwnd || !g_inputSession)
     {
-        CAND_DIAG_LOGF(L"settle request skipped uiless={} hwnd_present={} session={}", IsUiLessMode(),
+        CAND_DIAG_LOGF(L"async show request skipped uiless={} hwnd_present={} session={}", IsUiLessMode(),
                        ::global_hwnd != nullptr, g_inputSession != nullptr);
         return;
     }
     if (IsDedicatedEnglishAnswerPending())
     {
-        CAND_DIAG_LOGF(L"settle request deferred to english query raw_units={}",
+        CAND_DIAG_LOGF(L"async show request deferred to english query raw_units={}",
                        GlobalIme::composition.raw_input_with_cases.size());
         return;
     }
     if (!g_inputSession || g_inputSession->get_pinyin_sequence_with_cases().empty() ||
         Global::candidate_ui.items.empty())
     {
-        CAND_DIAG_LOGF(L"settle request skipped empty");
+        CAND_DIAG_LOGF(L"async show request skipped empty");
         return;
     }
     if (!CanMergeAsyncCandidates())
     {
-        CAND_DIAG_LOGF(L"settle request skipped user interaction");
+        CAND_DIAG_LOGF(L"async show request skipped user interaction");
         return;
     }
 
-    const bool accepted =
-        UpdateCurrentCandidatePage(late ? FanyImeIpc::CandidateFreshness::Late : FanyImeIpc::CandidateFreshness::Fast);
-    CAND_DIAG_LOGF(L"settle request late={} accepted={} raw_units={} candidate_count={}", late, accepted,
+    const bool accepted = UpdateCurrentCandidatePage();
+    CAND_DIAG_LOGF(L"async show request accepted={} raw_units={} candidate_count={}", accepted,
                    g_inputSession->get_pinyin_sequence_with_cases().size(), Global::candidate_ui.items.size());
 }
 
@@ -375,14 +312,14 @@ void ShowCandidatePage(FanyImeIpc::CandidatePage page)
     Pages().pages.Show(std::move(page));
 }
 
-void UpdateCandidatePage(FanyImeIpc::CandidatePage page, FanyImeIpc::CandidateFreshness freshness)
+void UpdateCandidatePage(FanyImeIpc::CandidatePage page)
 {
-    (void)Pages().pages.Update(std::move(page), freshness);
+    (void)Pages().pages.Update(std::move(page));
 }
 
-bool UpdateCurrentCandidatePage(FanyImeIpc::CandidateFreshness freshness)
+bool UpdateCurrentCandidatePage()
 {
-    return Pages().pages.UpdateCurrent(freshness);
+    return Pages().pages.UpdateCurrent();
 }
 
 void ShowPublishedCandidatePage()
@@ -395,14 +332,14 @@ void HideCandidatePages()
     Pages().pages.Hide();
 }
 
-void ResetCandidatePageFrames()
+void AllowAsyncCandidatePageUpdates()
 {
-    Pages().pages.ResetFrameBudget();
+    Pages().pages.AllowAsyncUpdates();
 }
 
-void CancelCandidatePageFrames()
+void BlockAsyncCandidatePageUpdates()
 {
-    Pages().pages.CancelPending();
+    Pages().pages.BlockAsyncUpdates();
 }
 
 std::optional<FanyImeIpc::CandidateChoice> CommitCandidateSlot(int index_in_page)
@@ -440,21 +377,6 @@ void NoteCandidatePageVisibility(bool visible)
 {
     Pages().pages.Visibility(visible);
     Global::SetCandidateWindowRenderedVisible(visible);
-}
-
-std::optional<std::chrono::steady_clock::time_point> CandidatePageTimerDeadline()
-{
-    return Pages().timer.deadline();
-}
-
-bool CandidatePageTimerIsDue(std::chrono::steady_clock::time_point now)
-{
-    return Pages().timer.due(now);
-}
-
-void FireDueCandidatePageTimers(std::chrono::steady_clock::time_point now)
-{
-    Pages().timer.fire_due(now);
 }
 
 // Drop every published candidate page and hide the candidate window without

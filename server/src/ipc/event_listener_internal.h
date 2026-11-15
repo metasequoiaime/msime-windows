@@ -42,6 +42,9 @@ namespace event_listener_detail
 void ClearJevSelection();
 void RefreshJevSelection();
 const std::string &JevSelectionWord();
+// 上一次混输回包合进 ui.items 时对应的输入（带大小写的完整串）。emoji、颜文字、符号、日期时间这些行
+// 只活在 ui.items 里，同一输入的重建要靠它判断能不能原样带过去。
+const std::string &MixedRowsInput();
 using AsyncRequestOrigin = FanyImeIpc::AsyncRequestOrigin;
 
 extern bool g_quick_phrase_triggered;
@@ -196,26 +199,22 @@ void SyncShuangpinPreeditForms();
 void EnsureCandidatePageReady();
 std::wstring BuildUiLessCandidatePageW();
 void RefreshCandidatePageUi(bool show_window);
-// Fast asynchronous sources (mixed English, neural reorder) coalesce into one additional frame per keystroke.
-// The first frame is still published immediately by the key path; these helpers only defer the enrichment frame
-// until the burst settles. Late enhancements (effect-tier rerank, gloss updates) may add one more frame after the
-// fast settle, because they intentionally arrive after the user stops typing.
-void RefreshCandidatePageUiCoalesced();
-void RefreshCandidatePageUiLate();
-// Cloud/AI/dedicated-English answers are not part of the settle budget: every arrival paints.
-void RefreshCandidatePageUiImmediate();
-void RequestShowCandidateWindowDeferred(bool late = false);
+// 异步来源（混输、重排、云/AI、专用英文、译文）的结果：重新组页并立即请求显示。不设合并窗口、不限帧数，
+// 调用方只在可见内容真的变了时才来，内容没变的回包在调用方就返回了。
+void RefreshCandidatePageUiAsync();
+// 已经静默发布过重建页（PrepareCandidateList）时，异步来源用它请求把那一页画出来。
+void RequestShowCandidateWindowDeferred();
 
 // event_listener.cpp — CandidatePages runtime. Worker-thread calls are serialized by the task queue; Painted,
 // Gesture and Visibility are the only UI-thread entries.
 void PublishCandidatePage(FanyImeIpc::CandidatePage page);
 void ShowCandidatePage(FanyImeIpc::CandidatePage page);
-void UpdateCandidatePage(FanyImeIpc::CandidatePage page, FanyImeIpc::CandidateFreshness freshness);
-bool UpdateCurrentCandidatePage(FanyImeIpc::CandidateFreshness freshness);
+void UpdateCandidatePage(FanyImeIpc::CandidatePage page);
+bool UpdateCurrentCandidatePage();
 void ShowPublishedCandidatePage();
 void HideCandidatePages();
-void ResetCandidatePageFrames();
-void CancelCandidatePageFrames();
+void AllowAsyncCandidatePageUpdates();
+void BlockAsyncCandidatePageUpdates();
 std::optional<FanyImeIpc::CandidateChoice> CommitCandidateSlot(int index_in_page);
 std::optional<FanyImeIpc::CandidateChoice> CommitCandidateHighlighted();
 std::optional<FanyImeIpc::CandidateChoice> CommitCandidateAt(int index_in_page);
@@ -223,9 +222,6 @@ bool HasCandidatePage();
 void NoteCandidatePagePainted(std::uint64_t generation, bool visible);
 void NoteCandidatePageGesture(std::uint64_t generation);
 void NoteCandidatePageVisibility(bool visible);
-std::optional<std::chrono::steady_clock::time_point> CandidatePageTimerDeadline();
-bool CandidatePageTimerIsDue(std::chrono::steady_clock::time_point now);
-void FireDueCandidatePageTimers(std::chrono::steady_clock::time_point now);
 
 // event_listener_pipes.cpp
 void WakeNamedPipeListenersForShutdown();
@@ -345,7 +341,7 @@ void ApplyRescoredOrder();
 // 用当前会话状态重查一次候选，保留只活在 series cache 里的云/AI 候选；首屏没变就不请求重画，
 // 但内部列表仍会更新（翻页要读到新结果）。调用方负责前置守卫（选词中/造词/子页、owner 有效性）。
 // 返回是否请求了新的首屏帧。
-bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner, bool late = false);
+bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner);
 // 组合边界（提交、隐藏、清理）重置重排重查额度；同一串重新输入时不得继承上一段用掉的次数。
 void ResetRescoreRequeryBudget();
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,

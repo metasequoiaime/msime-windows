@@ -156,7 +156,7 @@ void WaitForCandidateRenderSync(UINT keycode)
         return;
     }
 
-    // 合并发布的快照可能已经比屏幕新，而这次按键又取消了还没到点的定稿帧。必须先保证有一帧正在
+    // 静默发布（或异步刷新刚发布、界面还没画）的快照可能已经比屏幕新。必须先保证有一帧正在
     // 路上，否则下面的等待只能超时，然后对用户没看到的页选词。
     RequestShowCandidateWindow();
 
