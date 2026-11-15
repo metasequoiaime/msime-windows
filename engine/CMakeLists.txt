@@ -332,6 +332,7 @@ if(BUILD_TESTING)
     if(MSVC)
         target_compile_options(test_prefix_completion PRIVATE /utf-8)
     endif()
+    target_compile_definitions(test_prefix_completion PRIVATE METASEQUOIA_TEST_PINYIN_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/googlepinyinime-rev/data/dict_pinyin.dat")
     target_link_libraries(test_prefix_completion PRIVATE MetasequoiaIme::Engine)
     add_test(NAME prefix_completion COMMAND test_prefix_completion)
 

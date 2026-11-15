@@ -178,7 +178,9 @@ vector<ShuangpinDictionary::WordItem> ShuangpinDictionary::generateSeries( //
                 {
                     // 整句 fallback 必须带上 canonical quanpin，否则以它结尾的造词无法落库：
                     // update_creating_word_progress 依赖 canonical_pinyin 才能拼出完整读音。
-                    candidate_list.emplace_back(_pinyin_sequence, res, 1, CandidateSource::Fallback, quanpin_str);
+                    // 读音取参数而不是 _pinyin_sequence：引擎会话直接调本函数，那个成员只有旧的
+                    // 按键路径会填，留空的读音让前缀补全认不出首选（hduhugmk 补不出 海上生明月）。
+                    candidate_list.emplace_back(pinyin_sequence, res, 1, CandidateSource::Fallback, quanpin_str);
                     candidate_list.back().sentence_association = true;
                 }
             }
@@ -222,8 +224,7 @@ vector<ShuangpinDictionary::WordItem> ShuangpinDictionary::generateSeries( //
             {
                 // 整句 fallback 必须带上 canonical quanpin，否则以它结尾的造词无法落库。
                 const size_t insert_at = quanpin::generated_sentence_insert_position(candidate_list, quanpin_syllables);
-                WordItem sentence(_pinyin_sequence, google_sentence, 1, CandidateSource::Fallback,
-                                  quanpin_segmentation);
+                WordItem sentence(pinyin_sequence, google_sentence, 1, CandidateSource::Fallback, quanpin_segmentation);
                 sentence.sentence_association = true;
                 candidate_list.insert(candidate_list.begin() + static_cast<std::ptrdiff_t>(insert_at),
                                       std::move(sentence));

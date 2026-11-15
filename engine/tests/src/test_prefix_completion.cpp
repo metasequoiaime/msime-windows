@@ -2,6 +2,7 @@
 // 只按自己的键调频。
 #include "../../core/input_session.h"
 #include "../../core/data_path.h"
+#include "../../contracts/assets/assets.h"
 #include "../../quanpin/prefix_completion.h"
 #include "../../shuangpin/shuangpin_profile.h"
 #include "test_directory_cleanup.h"
@@ -262,6 +263,36 @@ void test_shuangpin(const metasequoia::RuntimePaths &paths)
     require(session.select_candidate(1).commit == "中华人民共和国" && !session.has_composition(),
             "Selecting the shuangpin completion must consume the whole input.");
 }
+
+// 双拼首选是 Google 整句猜的（诗句前四字不是词库词）：整句行要带上这次的双拼读音，否则补全认不出首选。
+void test_shuangpin_guessed_head(const metasequoia::RuntimePaths &paths)
+{
+    const auto &xiaohe = GetXiaoheShuangpinProfile();
+    metasequoia::InputSession session(SchemeType::Shuangpin, xiaohe, paths);
+    SentenceAssociationOptions association;
+    association.google = true;
+    session.set_sentence_association(association);
+    session.set_prefix_completion_options(enabled());
+    // 小鹤：chuang=il qian=qm ming=mk yue=yt
+    type(session, "ilqmmkyt");
+    const auto &candidates = session.candidates();
+    require(!candidates.empty() && candidates[0].source == CandidateSource::Fallback &&
+                candidates[0].pinyin == "ilqmmkyt",
+            "A shuangpin guessed sentence must carry the typed shuangpin reading.");
+    require(completion_index(session) == 1 && candidates[1].word == "床前明月光",
+            "A shuangpin guessed head must be completed by its reading.");
+    require(session.select_candidate(1).commit == "床前明月光" && !session.has_composition(),
+            "Selecting the completion of a guessed head must consume the whole input.");
+}
+
+void prepare_google_model(const std::filesystem::path &directory)
+{
+    const auto model = metasequoia::path_from_utf8(METASEQUOIA_TEST_PINYIN_MODEL);
+    if (!std::filesystem::exists(model))
+        throw std::runtime_error("The Google decoder model is missing: " + metasequoia::path_to_utf8(model));
+    std::filesystem::copy_file(model, directory / metasequoia::assets::pinyin_model,
+                               std::filesystem::copy_options::overwrite_existing);
+}
 } // namespace
 
 int main()
@@ -278,6 +309,10 @@ int main()
         test_guessed_head(directory);
         test_quanpin(paths, directory);
         test_shuangpin(paths);
+        const auto google = root / "google";
+        prepare_dictionary(google);
+        prepare_google_model(google);
+        test_shuangpin_guessed_head(paths_for(google));
     }
     catch (const std::exception &error)
     {
