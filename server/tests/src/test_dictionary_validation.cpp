@@ -919,6 +919,29 @@ TEST_CASE(QuickPhraseAllowsSharedCodesAndWeightUpdates)
     REQUIRE_EQ(rows.front().as_object().at("weight").as_int64(), 99);
 }
 
+// 设置页搜索框的「精确匹配」只列编码完全相同的短语；默认仍按前缀查，留空两种方式都列出全部。
+TEST_CASE(QuickPhraseQueryMatchesExactCodeOrPrefix)
+{
+    ScopedQuickPhraseDataDir data;
+    data.exec("INSERT INTO quick_parases VALUES('hw','红外',10),('hwbb','和我比比',10),('hwbf','毫无办法',10)");
+    const auto query = [](boost::json::object request) {
+        request["dictionary"] = "quick";
+        request["action"] = "query";
+        const auto response = SettingsDictionary::HandleRequest(request);
+        REQUIRE(response.at("ok").as_bool());
+        std::vector<std::string> codes;
+        for (const auto &row : response.at("rows").as_array())
+            codes.emplace_back(row.as_object().at("code").as_string());
+        return codes;
+    };
+
+    REQUIRE_EQ(query({{"code", "hw"}}).size(), size_t{3});
+    REQUIRE_EQ(query({{"code", "hw"}, {"match", "prefix"}}).size(), size_t{3});
+    REQUIRE_EQ(query({{"code", "HW"}, {"match", "exact"}}), std::vector<std::string>{"hw"});
+    REQUIRE(query({{"code", "h"}, {"match", "exact"}}).empty());
+    REQUIRE_EQ(query({{"code", ""}, {"match", "exact"}}).size(), size_t{5});
+}
+
 TEST_CASE(QuickPhraseOtherConstraintsKeepTheirErrorDetails)
 {
     ScopedQuickPhraseDataDir data;

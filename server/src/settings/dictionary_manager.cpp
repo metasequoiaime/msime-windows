@@ -1781,12 +1781,14 @@ json::object HandleQuickPhrase(const json::object &request)
     {
         if (!code.empty() && !valid_code(code))
             return Result(false, "编码只能包含英文字母");
+        // 默认按编码前缀查；精确匹配只认编码完全相同的行。编码留空时两种方式都列出全部。
+        const bool exact = !code.empty() && StringValue(request, "match") == "exact";
         Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM quick_parases WHERE key LIKE ?1 "
-                            "ORDER BY weight DESC,key,value" +
+                            std::string("SELECT key,value,weight FROM quick_parases WHERE ") +
+                                (exact ? "key = ?1 " : "key LIKE ?1 ") + "ORDER BY weight DESC,key,value" +
                                 Paging::Sql(request),
                             error);
-        if (!stmt || !BindText(stmt.get(), 1, code + "%"))
+        if (!stmt || !BindText(stmt.get(), 1, exact ? code : code + "%"))
             return Result(false, "查询失败：" + error);
         return Paging::Read(stmt.get(), request);
     }
