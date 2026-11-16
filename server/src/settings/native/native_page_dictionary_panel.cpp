@@ -22,6 +22,9 @@ namespace
 {
 constexpr size_t kNone = static_cast<size_t>(-1);
 constexpr size_t kPageSize = 100; // DICTIONARY_PAGE_SIZE
+// DictInput's trailing control: the gap on each side of it, and half the divider's height.
+constexpr float kTrailingInset = 5.0f;
+constexpr float kDividerHalfHeight = 10.0f;
 
 // 上一页的起点；第一页停在 0。
 size_t PreviousPageOffset(size_t offset)
@@ -282,22 +285,96 @@ void DictInput::ApplyAppearance(bool focused)
     box_->SetAppearance(appearance);
 }
 
+void DictInput::SetTrailing(VisualPtr trailing)
+{
+    if (trailing_)
+        ReleaseChild(trailing_);
+    trailing_ = std::move(trailing);
+    if (trailing_)
+        AdoptChild(trailing_);
+    // The box draws the chrome itself so that it surrounds the trailing control too.
+    box_->SetChromeVisible(!trailing_);
+    InvalidateMeasure();
+    InvalidateVisual();
+}
+
 SizeF DictInput::Measure(const SizeF &availableSize)
 {
-    box_->MeasureInLayout(availableSize);
+    if (!trailing_)
+    {
+        box_->MeasureInLayout(availableSize);
+        return {availableSize.width, height_};
+    }
+    trailingSize_ = trailing_->MeasureInLayout({availableSize.width * 0.5f, height_});
+    const float textWidth = std::max(availableSize.width - trailingSize_.width - kTrailingInset * 2.0f, 0.0f);
+    box_->MeasureInLayout({textWidth, height_});
     return {availableSize.width, height_};
+}
+
+float DictInput::DividerX() const
+{
+    return bounds_.x + bounds_.width - CssBorder() - kTrailingInset - trailingSize_.width - kTrailingInset;
+}
+
+void DictInput::Arrange(const RectF &finalRect)
+{
+    if (!trailing_)
+    {
+        msimeui::Container::Arrange(finalRect);
+        return;
+    }
+    bounds_ = finalRect;
+    const float divider = DividerX();
+    box_->ArrangeInLayout({bounds_.x, bounds_.y, std::max(divider - bounds_.x, 0.0f), bounds_.height});
+    trailing_->ArrangeInLayout({divider + kTrailingInset, bounds_.y + (bounds_.height - trailingSize_.height) * 0.5f,
+                                trailingSize_.width, trailingSize_.height});
 }
 
 void DictInput::Render(msimeui::DeviceResources &dr)
 {
+    const Palette &p = CurrentPalette();
     const bool focused = box_->IsFocused();
     ApplyAppearance(focused);
     if (focused)
     {
         // box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 22%, transparent)
-        FillRounded(dr, Inflate(bounds_, 2.0f), 10.0f, WithAlpha(CurrentPalette().accent, 0.22f));
+        FillRounded(dr, Inflate(bounds_, 2.0f), 10.0f, WithAlpha(p.accent, 0.22f));
     }
+    if (!trailing_)
+    {
+        box_->Render(dr);
+        return;
+    }
+    // The chrome TextBox would draw for `.dict-input`, around the text and the trailing control.
+    FillRounded(dr, bounds_, 8.0f, focused ? p.controlBg : p.surfaceSunken);
+    StrokeRounded(dr, bounds_, 8.0f, focused ? p.accent : p.controlBorder, CssBorder());
     box_->Render(dr);
+    const float divider = DividerX();
+    const float middle = bounds_.y + bounds_.height * 0.5f;
+    DrawLine(dr, {divider, middle - kDividerHalfHeight}, {divider, middle + kDividerHalfHeight}, p.controlBorder,
+             CssBorder());
+    trailing_->Render(dr);
+}
+
+void DictInput::Attach(msimeui::Window *window)
+{
+    msimeui::Container::Attach(window);
+    if (trailing_)
+        trailing_->Attach(window);
+}
+
+msimeui::Visual *DictInput::FindVisualAt(const PointF &point)
+{
+    if (trailing_ && trailing_->HitTest(point))
+        return trailing_->FindVisualAt(point);
+    return msimeui::Container::FindVisualAt(point);
+}
+
+msimeui::Visual *DictInput::FindFocusableAt(const PointF &point)
+{
+    if (trailing_ && trailing_->HitTest(point))
+        return trailing_->FindFocusableAt(point);
+    return msimeui::Container::FindFocusableAt(point);
 }
 
 std::shared_ptr<Label> MakeDialogTitle(const std::wstring &title)
@@ -718,7 +795,7 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     DictColumns columns;
     if (kind_ == Kind::Quick)
         columns.percents = {0.20f, 0.34f, 0.15f};
-    search_ = std::make_shared<DictInput>(kFontDefault, kind_ == Kind::Quick ? L"输入编码前缀，留空可查看全部" : L"");
+    search_ = std::make_shared<DictInput>(kFontDefault, kind_ == Kind::Quick ? L"输入编码" : L"");
     search_->SetOnSubmit([this]() { Query(0, true); });
     // 清空搜索框就回到默认视图。输入过程中不查，否则每敲一个键都要打一次库。
     search_->Box()->SetOnTextChanged([this](const std::wstring &text) {
@@ -726,6 +803,28 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
             return;
         Query(0, true);
     });
+    if (kind_ == Kind::Quick)
+    {
+        Dropdown::Options options;
+        options.embedded = true;
+        options.checkSelected = true;
+        options.minWidth = 0.0f;
+        options.paddingLeft = 8.0f;
+        options.paddingRight = 8.0f;
+        options.menuMinWidth = 112.0f;
+        match_ = std::make_shared<Dropdown>(
+            std::vector<DropdownOption>{{L"前缀匹配", "prefix"}, {L"精确匹配", "exact"}}, options);
+        match_->SetValue("prefix");
+        match_->SetOnChanged([this](size_t, const DropdownOption &) {
+            // 换了匹配方式就按框里现在的编码重查；还没显示过的页面等 Attach 再查。
+            if (loaded_)
+            {
+                scroll_->ScrollToTop();
+                Query(0, true);
+            }
+        });
+        search_->SetTrailing(match_);
+    }
     TextStyle hint;
     hint.size = 13.0f;
     hint.wrap = true;
@@ -942,7 +1041,14 @@ void DictionaryPanel::PostQuery(size_t offset)
         data["word"] = Narrow(lastQuery_);
     else
         data["code"] = Narrow(lastQuery_);
+    if (ExactMatch())
+        data["match"] = "exact";
     Post("query", std::move(data));
+}
+
+bool DictionaryPanel::ExactMatch() const
+{
+    return match_ && match_->GetValue() == "exact";
 }
 
 void DictionaryPanel::RefreshQuery(const std::string &action)

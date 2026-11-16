@@ -48,18 +48,29 @@ class DictInput : public msimeui::Container
     void SetOnSubmit(std::function<void()> handler);
     // 多行框：Enter 换行，Ctrl+Enter 提交，高度给三行。
     void SetMultiline(bool multiline);
+    // A control at the right end of a single-line box, behind a short vertical divider; the
+    // text stops before the divider. The box then draws the chrome around both.
+    void SetTrailing(VisualPtr trailing);
     const std::shared_ptr<msimeui::TextBox> &Box() const
     {
         return box_;
     }
 
     SizeF Measure(const SizeF &availableSize) override;
+    void Arrange(const RectF &finalRect) override;
     void Render(msimeui::DeviceResources &dr) override;
+    void Attach(msimeui::Window *window) override;
+    msimeui::Visual *FindVisualAt(const PointF &point) override;
+    msimeui::Visual *FindFocusableAt(const PointF &point) override;
 
   private:
     void ApplyAppearance(bool focused);
+    // Where the divider in front of the trailing control is drawn.
+    float DividerX() const;
 
     std::shared_ptr<msimeui::TextBox> box_;
+    VisualPtr trailing_;
+    SizeF trailingSize_ = {};
     int appliedState_ = -1;
     float height_ = 42.0f;
     bool multiline_ = false;
@@ -235,6 +246,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     void RenderRows();
     void SyncPager();
     std::wstring EmptyText() const;
+    bool ExactMatch() const;
     std::array<std::wstring, 4> HeaderLabels() const;
 
     PageContext &context_;
@@ -263,6 +275,8 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     bool dialogOpen_ = false;
 
     std::shared_ptr<DictInput> search_;
+    // Quick phrases only: 前缀匹配 / 精确匹配 inside the search box.
+    std::shared_ptr<Dropdown> match_;
     std::shared_ptr<Label> hint_;
     std::shared_ptr<DictTableHeader> header_;
     std::shared_ptr<DictTableBody> body_;

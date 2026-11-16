@@ -604,6 +604,13 @@ class Dropdown : public msimeui::Visual
         std::wstring placeholder;
         // font-weight inherited from the surrounding element (toggle label and menu items).
         DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL;
+        // A toggle that sits inside another control's box (the match mode in a search box):
+        // no box of its own, muted text with a soft pill under the pointer, and a single
+        // round-capped chevron that turns over while the menu is open.
+        bool embedded = false;
+        // A check mark at the end of the selected menu row, which is also drawn in the
+        // accent color.
+        bool checkSelected = false;
     };
 
     Dropdown(std::vector<DropdownOption> options, Options settings);
@@ -644,6 +651,8 @@ class Dropdown : public msimeui::Visual
     std::wstring CurrentLabel() const;
     TextStyle LabelStyle() const;
     void ApplySearch(const std::wstring &query);
+    void RenderEmbedded(msimeui::DeviceResources &dr);
+    void TurnChevron(bool open);
 
     std::vector<DropdownOption> options_;
     Options settings_;
@@ -657,6 +666,9 @@ class Dropdown : public msimeui::Visual
     bool disabled_ = false;
     ColorTransition background_{200.0};
     ColorTransition borderColor_{200.0};
+    ColorTransition labelColor_{160.0};
+    // 0 points the embedded chevron down, 1 up.
+    msimeui::Tween chevron_{0.0f};
     ChangeHandler onChanged_;
     std::shared_ptr<DropdownMenu> menu_;
     std::shared_ptr<DropdownPopup> popup_;

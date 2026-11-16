@@ -1621,6 +1621,66 @@ const std::string &ArrowSvg()
     static const std::string markup = LoadAssetSvg(L"arrow.svg");
     return markup;
 }
+
+// The embedded toggle: 13 DIP label, 4 DIP gap, an 8 DIP chevron box. Its menu rows use
+// the same text size.
+constexpr float kEmbeddedFontSize = 13.0f;
+constexpr float kEmbeddedChevronGap = 4.0f;
+constexpr float kEmbeddedChevronBox = 8.0f;
+constexpr double kChevronTurnMs = 180.0;
+// Room after a menu label for the check mark of checkSelected: 12 DIP mark, 12 DIP gap.
+constexpr float kCheckColumn = 24.0f;
+
+ComPtr<ID2D1StrokeStyle> RoundStroke(ID2D1RenderTarget *target)
+{
+    ComPtr<ID2D1Factory> factory;
+    target->GetFactory(factory.GetAddressOf());
+    ComPtr<ID2D1StrokeStyle> style;
+    if (factory)
+        factory->CreateStrokeStyle(D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
+                                                               D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND),
+                                   nullptr, 0, style.GetAddressOf());
+    return style;
+}
+
+// A `∨` with round caps and join, `width` wide, turned `turn` (0..1) of a half circle
+// about `center`: 0 points down, 1 points up.
+void DrawRoundChevron(msimeui::DeviceResources &dr, PointF center, float width, float turn, const D2D1_COLOR_F &color)
+{
+    ID2D1RenderTarget *target = dr.GetRenderTarget();
+    ID2D1SolidColorBrush *brush = target ? dr.GetSolidColorBrush(color) : nullptr;
+    if (!brush)
+        return;
+    ComPtr<ID2D1StrokeStyle> round = RoundStroke(target);
+    D2D1_MATRIX_3X2_F previous;
+    target->GetTransform(&previous);
+    target->SetTransform(D2D1::Matrix3x2F::Rotation(180.0f * turn) * D2D1::Matrix3x2F::Translation(center.x, center.y) *
+                         previous);
+    const float half = width * 0.5f;
+    const float rise = width * 0.25f;
+    const D2D1_POINT_2F left = D2D1::Point2F(-half, -rise);
+    const D2D1_POINT_2F tip = D2D1::Point2F(0.0f, rise);
+    const D2D1_POINT_2F right = D2D1::Point2F(half, -rise);
+    target->DrawLine(left, tip, brush, 1.5f, round.Get());
+    target->DrawLine(tip, right, brush, 1.5f, round.Get());
+    target->SetTransform(previous);
+}
+
+// A check mark with round caps, `size` wide, centered on `center`.
+void DrawRoundCheck(msimeui::DeviceResources &dr, PointF center, float size, const D2D1_COLOR_F &color)
+{
+    ID2D1RenderTarget *target = dr.GetRenderTarget();
+    ID2D1SolidColorBrush *brush = target ? dr.GetSolidColorBrush(color) : nullptr;
+    if (!brush)
+        return;
+    ComPtr<ID2D1StrokeStyle> round = RoundStroke(target);
+    const float s = size;
+    const D2D1_POINT_2F start = D2D1::Point2F(center.x - s * 0.42f, center.y + s * 0.02f);
+    const D2D1_POINT_2F knee = D2D1::Point2F(center.x - s * 0.12f, center.y + s * 0.30f);
+    const D2D1_POINT_2F end = D2D1::Point2F(center.x + s * 0.44f, center.y - s * 0.30f);
+    target->DrawLine(start, knee, brush, 1.6f, round.Get());
+    target->DrawLine(knee, end, brush, 1.6f, round.Get());
+}
 } // namespace
 
 class DropdownMenu : public msimeui::Visual
@@ -1670,8 +1730,9 @@ class DropdownMenu : public msimeui::Visual
         float widest = 0.0f;
         for (size_t index : filtered_)
             widest = std::max(widest, MeasureTextWidth(owner_->options_[index].label, ItemStyle(index)));
-        // item padding 8 + 8, item margins 2 + 2, menu border 1 + 1
-        return widest + 16.0f + kMenuInset * 2.0f + 2.0f;
+        // item padding 8 + 8, item margins 2 + 2, menu border 1 + 1, and the check column
+        const float checkSpace = owner_->settings_.checkSelected ? kCheckColumn : 0.0f;
+        return widest + 16.0f + checkSpace + kMenuInset * 2.0f + 2.0f;
     }
 
     float PreferredHeight() const
@@ -1714,11 +1775,17 @@ class DropdownMenu : public msimeui::Visual
             const bool hot = row == marked && !option.disabled;
             if (hot)
                 FillRounded(dr, item, 8.0f, p.dropdownItemHover);
+            const bool checked = owner_->settings_.checkSelected && filtered_[row] == owner_->selected_;
             D2D1_COLOR_F color = hot ? p.text : p.dropdownItem;
+            if (checked)
+                color = p.accent;
             if (option.disabled)
                 color = WithAlpha(p.textSecondary, 0.45f);
+            const float checkSpace = owner_->settings_.checkSelected ? kCheckColumn : 0.0f;
             DrawTextInRect(dr, option.label, ItemStyle(filtered_[row]),
-                           {item.x + 8.0f, item.y, item.width - 16.0f, item.height}, color);
+                           {item.x + 8.0f, item.y, item.width - 16.0f - checkSpace, item.height}, color);
+            if (checked)
+                DrawRoundCheck(dr, {item.x + item.width - 8.0f - 6.0f, item.y + item.height * 0.5f}, 11.0f, p.accent);
         }
         target->PopAxisAlignedClip();
 
@@ -1864,6 +1931,8 @@ class DropdownMenu : public msimeui::Visual
     TextStyle ItemStyle(size_t index) const
     {
         TextStyle style = BodyStyle();
+        if (owner_->settings_.embedded)
+            style.size = kEmbeddedFontSize;
         style.weight = owner_->settings_.weight;
         if (index < owner_->options_.size() && !owner_->options_[index].previewFamily.empty())
             style.family = owner_->options_[index].previewFamily;
@@ -2118,13 +2187,23 @@ std::wstring Dropdown::CurrentLabel() const
 
 TextStyle Dropdown::LabelStyle() const
 {
-    TextStyle style = ControlStyle();
+    // The embedded toggle is part of the box it sits in, so it takes the page font.
+    TextStyle style = settings_.embedded ? BodyStyle() : ControlStyle();
+    if (settings_.embedded)
+        style.size = kEmbeddedFontSize;
     style.weight = settings_.weight;
     return style;
 }
 
 SizeF Dropdown::Measure(const SizeF &availableSize)
 {
+    if (settings_.embedded)
+    {
+        // No border: padding, label, gap, chevron, padding. 4 DIPs above and below the line.
+        const float width = settings_.paddingLeft + MeasureTextWidth(CurrentLabel(), LabelStyle()) +
+                            kEmbeddedChevronGap + kEmbeddedChevronBox + settings_.paddingRight;
+        return {std::min(std::max(width, settings_.minWidth), availableSize.width), LineHeight(LabelStyle()) + 8.0f};
+    }
     // padding: 4px 6px 4px 12px, 18px arrow, 1px border; the toggle grows with the
     // label it currently shows.
     const float border = CssBorder();
@@ -2153,8 +2232,47 @@ void Dropdown::Arrange(const RectF &finalRect)
     }
 }
 
+void Dropdown::RenderEmbedded(msimeui::DeviceResources &dr)
+{
+    const Palette &p = CurrentPalette();
+    const bool raised = (hovered_ || open_) && !disabled_;
+    background_.SetTarget(raised ? p.dropdownItemHover : WithAlpha(p.dropdownItemHover, 0.0f), window_);
+    labelColor_.SetTarget(raised ? p.text : p.textMuted, window_);
+    if (disabled_)
+        PushOpacity(dr, 0.45f);
+    FillRounded(dr, bounds_, 5.0f, background_.Value(window_));
+    const D2D1_COLOR_F color = labelColor_.Value(window_);
+    const float chevronX = bounds_.x + bounds_.width - settings_.paddingRight - kEmbeddedChevronBox;
+    DrawTextInRect(dr, CurrentLabel(), LabelStyle(),
+                   {bounds_.x + settings_.paddingLeft, bounds_.y,
+                    std::max(0.0f, chevronX - kEmbeddedChevronGap - bounds_.x - settings_.paddingLeft), bounds_.height},
+                   color);
+    const double now = window_ ? window_->GetFrameTime() : msimeui::NowMs();
+    if (window_ && chevron_.IsRunning(now))
+        window_->RequestAnimationFrame();
+    DrawRoundChevron(dr, {chevronX + kEmbeddedChevronBox * 0.5f, bounds_.y + bounds_.height * 0.5f},
+                     kEmbeddedChevronBox, chevron_.Value(now), color);
+    if (disabled_)
+        PopOpacity(dr);
+}
+
+void Dropdown::TurnChevron(bool open)
+{
+    if (!settings_.embedded)
+        return;
+    const double now = window_ ? window_->GetFrameTime() : msimeui::NowMs();
+    chevron_.AnimateTo(open ? 1.0f : 0.0f, kChevronTurnMs, msimeui::Easing::Ease(), now);
+    if (window_)
+        window_->RequestAnimationFrame();
+}
+
 void Dropdown::Render(msimeui::DeviceResources &dr)
 {
+    if (settings_.embedded)
+    {
+        RenderEmbedded(dr);
+        return;
+    }
     const Palette &p = CurrentPalette();
     const bool raised = hovered_ || open_;
     background_.SetTarget(raised ? p.surfaceRaised : p.dropdownBg, window_);
@@ -2336,10 +2454,12 @@ void Dropdown::Open()
     popup_->SetOffset(settings_.menuAlignLeft ? 0.0f : bounds_.width - width, 2.0f);
     scene->AddPopup(popup_, [this]() {
         open_ = false;
+        TurnChevron(false);
         InvalidateVisual();
     });
     popup_->BeginAppearAnimation(140.0, -3.0f, 0.985f);
     open_ = true;
+    TurnChevron(true);
     if (!search_)
         window_->FocusVisual(menu_.get());
     window_->Invalidate();
@@ -2352,6 +2472,7 @@ void Dropdown::Close()
     if (msimeui::Scene *scene = window_ ? window_->GetScene() : nullptr)
         scene->RemovePopup(popup_.get(), false);
     open_ = false;
+    TurnChevron(false);
     if (window_)
     {
         if (!search_)

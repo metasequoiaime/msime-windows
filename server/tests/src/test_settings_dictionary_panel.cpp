@@ -77,6 +77,11 @@ class PanelHarness
         return *panel_;
     }
 
+    SettingsWindowHarness &Window()
+    {
+        return window_;
+    }
+
     void Build()
     {
         // 生产里页面视觉由 pageCache_ 持有；这里也要让 column 活过整个用例，
@@ -168,6 +173,58 @@ TEST_CASE(QuickPhrasePanelLoadsEveryPhraseOnFirstShow)
     REQUIRE_EQ(queries.size(), size_t{1});
     REQUIRE(!queries.at(0).contains("scope"));
     REQUIRE_EQ(queries.at(0).at("code").get<std::string>(), std::string());
+}
+
+// 快捷短语搜索框右端嵌着「前缀匹配 / 精确匹配」下拉，竖线隔开：它在输入框里面、不压住文字区，
+// 选了精确匹配之后立刻按框里的编码重查，并在请求里带上 match。
+TEST_CASE(QuickPhraseSearchBoxSwitchesToExactMatch)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Quick);
+    harness.Build();
+    harness.Show();
+    REQUIRE_EQ(harness.Queries().size(), size_t{1});
+    REQUIRE(!harness.Queries().at(0).contains("match"));
+
+    // 工具栏那一行（padding-top 20，输入框高 42）上从左往右找：先是文本框，再是下拉。
+    SettingsWindowHarness &window = harness.Window();
+    const float row = 20.0f + 21.0f;
+    native_settings::Dropdown *match = nullptr;
+    msimeui::TextBox *text = nullptr;
+    float matchLeft = 0.0f;
+    float textRight = 0.0f;
+    for (float x = 0.0f; x < 800.0f; x += 1.0f)
+    {
+        msimeui::Visual *visual = window.VisualAt(x, row);
+        if (auto *box = dynamic_cast<msimeui::TextBox *>(visual); box && !match)
+        {
+            text = box;
+            textRight = x;
+        }
+        if (auto *dropdown = dynamic_cast<native_settings::Dropdown *>(visual); dropdown && !match)
+        {
+            match = dropdown;
+            matchLeft = x;
+        }
+    }
+    REQUIRE(text != nullptr);
+    REQUIRE(match != nullptr);
+    REQUIRE_EQ(match->GetValue(), std::string("prefix"));
+    // 文本区停在竖线处，下拉在竖线后 5 DIP：两者的命中区不重叠，中间是竖线和间距。
+    REQUIRE(matchLeft - textRight >= 4.0f);
+    const msimeui::RectF toggle = match->GetBounds();
+    REQUIRE(toggle.height < 42.0f);
+
+    window.GiveWindowKeyboardFocus();
+    window.Click(toggle.x + toggle.width * 0.5f, toggle.y + toggle.height * 0.5f);
+    window.Key(VK_DOWN);
+    window.Key(VK_DOWN);
+    window.Key(VK_RETURN);
+    REQUIRE_EQ(match->GetValue(), std::string("exact"));
+
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    REQUIRE_EQ(queries.at(1).at("match").get<std::string>(), std::string("exact"));
+    REQUIRE_EQ(queries.at(1).at("offset").get<size_t>(), size_t{0});
 }
 
 // 拼音用户词库按 updated_at 排序：新增和修改都会把该行顶到第一页，留在原页等于什么都没发生。

@@ -561,6 +561,13 @@
               "user"
             ]
           },
+          "match": {
+            "type": "string",
+            "enum": [
+              "prefix",
+              "exact"
+            ]
+          },
           "content": {
             "type": "string"
           },
