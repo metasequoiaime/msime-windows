@@ -411,10 +411,13 @@ bool matches_double_helpcodes(const std::string &word, const std::string &help_c
                found->second[1] == help_codes[1];
     }
 
-    const auto first = keymap.find(get_first_han_char(word));
+    if (count_han_chars(word) < 2)
+    {
+        return false;
+    }
+
     const auto last = keymap.find(get_last_han_char(word));
-    return first != keymap.end() && last != keymap.end() && first->second[0] == help_codes[0] &&
-           last->second[0] == help_codes[1];
+    return last != keymap.end() && last->second[0] == help_codes[1];
 }
 
 bool is_supported_helpcode_schema(const std::string &schema)

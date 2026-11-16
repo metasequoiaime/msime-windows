@@ -1,5 +1,6 @@
 #include "../../core/input_session.h"
 #include "../../core/data_path.h"
+#include "../../common/helpcode_utils.h"
 #include "../../direct_helpcode/spelling_graph.h"
 #include "../../shuangpin/shuangpin_profile.h"
 #include "test_directory_cleanup.h"
@@ -30,6 +31,21 @@ void require(bool condition, const char *message)
     {
         throw std::runtime_error(message);
     }
+}
+
+void run_double_helpcode_filter_tests()
+{
+    const HelpcodeUtils::Keymap keymap{{"甲", "ab"}, {"乙", "cd"}, {"丙", "ef"}};
+    require(HelpcodeUtils::matches_double_helpcodes("甲乙", "xd", &keymap),
+            "A phrase was rejected although the second helpcode matched its last character.");
+    require(!HelpcodeUtils::matches_double_helpcodes("甲乙", "xc", &keymap),
+            "A phrase was accepted although the second helpcode did not match its last character.");
+    require(HelpcodeUtils::matches_double_helpcodes("甲乙丙", "xf", &keymap),
+            "A sentence was rejected although the second helpcode matched its last character.");
+    require(HelpcodeUtils::matches_double_helpcodes("甲", "ab", &keymap),
+            "The existing exact two-code match for a single character changed.");
+    require(!HelpcodeUtils::matches_double_helpcodes("甲", "xb", &keymap),
+            "Single-character matching stopped checking its first helpcode.");
 }
 
 class Database
@@ -416,6 +432,7 @@ void run_session_tests()
 
 int run()
 {
+    run_double_helpcode_filter_tests();
     run_spelling_graph_tests();
 
     const auto unique_suffix = std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count());
