@@ -636,6 +636,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/native/native_settings_pages.h"
     "./src/settings/native/native_settings_search.cpp"
     "./src/settings/native/native_settings_search.h"
+    "./src/settings/native/native_settings_search_field.cpp"
+    "./src/settings/native/native_settings_search_field.h"
     "./src/settings/native/native_settings_pill.cpp"
     "./src/settings/native/native_settings_pill.h"
     "./src/settings/native/native_settings_theme.cpp"
