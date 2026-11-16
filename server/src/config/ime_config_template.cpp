@@ -70,6 +70,9 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
         MakeTomlAssignmentId("general", "emoji_mixed_input"),
         MakeTomlAssignmentId("general", "candidate_translations"),
         MakeTomlAssignmentId("general", "floating_toolbar_font_size"),
+        // 0.14.0 起新装默认把符号、快捷短语、日期时间混进候选，并去掉候选第三位的「📅日期」入口；
+        // 老用户的候选列表不因升级多出或少掉东西。
+        MakeTomlAssignmentId("general", "symbol_mixed_input"),
         MakeTomlAssignmentId("association", "sentence_wordlattice"),
         MakeTomlAssignmentId("input", "default_ime_mode"),
         MakeTomlAssignmentId("appearance", "candidate_window_layout"),
@@ -78,6 +81,9 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
         MakeTomlAssignmentId("helpcode", "quanpin_helpcode"),
         MakeTomlAssignmentId("utility", "emoji_mode"),
         MakeTomlAssignmentId("utility", "kaomoji_mode"),
+        MakeTomlAssignmentId("utility", "quick_phrase_candidates"),
+        MakeTomlAssignmentId("utility", "date_time_candidates"),
+        MakeTomlAssignmentId("utility", "date_time_menu"),
         MakeTomlAssignmentId("voice_input", "voice_input"),
         MakeTomlAssignmentId("voice_input", "doubao_enable_ddc"),
         // 新装默认本地离线识别；老用户多半已在豆包上填好 Token，不能升级一次就被换到一个还没下载的本地模型。

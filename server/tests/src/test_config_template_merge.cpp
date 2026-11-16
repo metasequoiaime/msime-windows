@@ -370,13 +370,15 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(static_cast<bool>(input));
     const std::string installed((std::istreambuf_iterator<char>(input)), {});
     const std::string previous_defaults = "[general]\nemoji_mixed_input = true\ncandidate_translations = true\n"
-                                          "floating_toolbar_font_size = 24\n"
+                                          "floating_toolbar_font_size = 24\nsymbol_mixed_input = false\n"
                                           "[association]\nsentence_wordlattice = true\n"
                                           "[input]\ndefault_ime_mode = \"english\"\n"
                                           "[appearance]\ncandidate_window_layout = \"vertical\"\n"
                                           "candidate_skin = \"willow_green\"\n"
                                           "[helpcode]\nshuangpin_helpcode = true\nquanpin_helpcode = true\n"
                                           "[utility]\nemoji_mode = true # Shift+E\nkaomoji_mode = true\n"
+                                          "quick_phrase_candidates = false\ndate_time_candidates = false\n"
+                                          "date_time_menu = true\n"
                                           "[voice_input]\nvoice_input = true\ndoubao_enable_ddc = true\n"
                                           "asr_provider = \"doubao\"\n"
                                           "[ai_assistant]\nenabled = true\n"
@@ -387,6 +389,11 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(upgraded["general"]["emoji_mixed_input"].value_or(false));
     REQUIRE(upgraded["general"]["candidate_translations"].value_or(false));
     REQUIRE_EQ(upgraded["general"]["floating_toolbar_font_size"].value_or(0), 24);
+    // 0.14.0 新装默认混入符号、快捷短语、日期时间并去掉「📅日期」入口；老用户的候选保持原样。
+    REQUIRE(!upgraded["general"]["symbol_mixed_input"].value_or(true));
+    REQUIRE(!upgraded["utility"]["quick_phrase_candidates"].value_or(true));
+    REQUIRE(!upgraded["utility"]["date_time_candidates"].value_or(true));
+    REQUIRE(upgraded["utility"]["date_time_menu"].value_or(false));
     // 0.12.0 起 sc.lm 改为按需下载，新装默认关；升级用户的模型由安装器挪进 models\language-model\，开关保持原样。
     REQUIRE(upgraded["association"]["sentence_wordlattice"].value_or(false));
     REQUIRE_EQ(upgraded["input"]["default_ime_mode"].value_or(std::string()), std::string("english"));
@@ -411,6 +418,10 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(!fresh["association"]["sentence_wordlattice"].value_or(true));
     REQUIRE_EQ(fresh["voice_input"]["asr_provider"].value_or(std::string()), std::string("local"));
     REQUIRE_EQ(fresh["voice_input"]["local_asr_model"].value_or(std::string()), std::string("x-asr-zh-en-streaming"));
+    REQUIRE(fresh["general"]["symbol_mixed_input"].value_or(false));
+    REQUIRE(fresh["utility"]["quick_phrase_candidates"].value_or(false));
+    REQUIRE(fresh["utility"]["date_time_candidates"].value_or(false));
+    REQUIRE(!fresh["utility"]["date_time_menu"].value_or(true));
 }
 
 TEST_CASE(config_merge_drops_keys_and_sections_absent_from_template)
