@@ -344,6 +344,9 @@ VisualPtr BuildAdvancedPage(PageContext &context)
         const auto makeTile = [](std::shared_ptr<BitmapImage> image, std::shared_ptr<RadioOption> radio) {
             auto tile = std::make_shared<Column>(6.0f);
             image->SetHorizontalAlignment(msimeui::HorizontalAlignment::Leading);
+            // Centre the 40px icon over the radio ring: the ring sits 5px in and is 20px wide, so its
+            // centre is 15px from the tile's left edge, 5px left of the icon's.
+            image->SetMargin({-5.0f, 0.0f, 0.0f, 0.0f});
             tile->Add(image);
             radio->SetInnerPadding({0.0f, 4.0f, 4.0f, 4.0f});
             tile->Add(radio);
