@@ -594,10 +594,11 @@ class WebDavStore final : public RemoteStore
             message = "用户名或密码不正确，或这个账号没有访问该目录的权限";
             return false;
         }
-        if (IsNotFound(response.status))
+        // 基址还不存在。坚果云对「路径里有一级不存在」的 PROPFIND 回 409 而不是 404，
+        // 两种都按这一支处理。上一级能访问说明只是 msime 这一层没建，上传时补上；
+        // 上一级也不行就是地址本身写错了，早点报出来比等到 PUT 回 409 好懂。
+        if (IsNotFound(response.status) || response.status == 409)
         {
-            // 基址还不存在。上一级能访问说明只是 msime 这一层没建，上传时补上；
-            // 上一级也不行就是地址本身写错了，早点报出来比等到 PUT 回 409 好懂。
             const long parent = ParentStatus();
             if (IsSuccess(parent))
             {
