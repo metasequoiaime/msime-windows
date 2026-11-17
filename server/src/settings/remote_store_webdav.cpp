@@ -337,12 +337,25 @@ std::int64_t ParseServerTime(const std::string &text)
     return static_cast<std::int64_t>(_mkgmtime(&utc));
 }
 
+// 数据放在用户填的目录下面的这个固定子目录里。用户填的是网盘上的一个位置
+// （坚果云就是 https://dav.jianguoyun.com/dav），把所有对象直接摊在那里会冒出
+// devices 这种太通用的名字，和用户自己的文件夹混在一起。
+constexpr char kSyncSubdirectory[] = "msime";
+
 class WebDavStore final : public RemoteStore
 {
   public:
     explicit WebDavStore(WebDavOptions options) : options_(std::move(options))
     {
-        options_.base_url = CanonicalBaseUrl(options_.base_url);
+        // 用户填的目录原样留着给 Probe 用：探测的是"这个位置能不能访问、凭据对不对"，
+        // 和下面自动建出来的 msime 子目录无关。
+        user_base_url_ = CanonicalBaseUrl(options_.base_url);
+        // 有人可能照着以前的说明把 msime 也写进了地址里，别叠成 msime/msime。
+        const std::string suffix = std::string("/") + kSyncSubdirectory;
+        const bool already_named =
+            user_base_url_.size() >= suffix.size() &&
+            user_base_url_.compare(user_base_url_.size() - suffix.size(), suffix.size(), suffix) == 0;
+        options_.base_url = already_named ? user_base_url_ : JoinUrl(user_base_url_, kSyncSubdirectory);
     }
 
     bool Put(const std::string &key, const std::filesystem::path &file, const ProgressCallback &progress,
@@ -557,10 +570,12 @@ class WebDavStore final : public RemoteStore
 
     bool Probe(std::string &message) override
     {
-        // PROPFIND 根目录：不存在是 404，凭据错是 401/403，网络不通是 curl 错误。
+        // 只看用户填的那个目录：能不能访问、凭据对不对。数据实际写在它下面的 msime
+        // 子目录里，那个子目录由首次上传时的 MKCOL 自动建出来，所以这里不要求它已经存在，
+        // 也不让用户先去网盘里手动建好。
         HttpRequest request;
         request.method = "PROPFIND";
-        request.url = options_.base_url;
+        request.url = user_base_url_;
         request.headers = BaseHeaders(options_);
         request.headers.push_back("Depth: 0");
         request.body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
@@ -576,7 +591,14 @@ class WebDavStore final : public RemoteStore
         }
         if (IsNotFound(response.status))
         {
-            message = "备份目录不存在，请先在网盘里建好这个文件夹";
+            // 目录还不存在。上级集合能访问说明只是最后一级没建，首次上传会补上；
+            // 上级也不行就是地址本身写错了，早点报出来比等到 PUT 才失败好懂。
+            if (ParentReachable())
+            {
+                message = "连接正常。备份目录还不存在，首次上传时会自动创建。";
+                return true;
+            }
+            message = "这个地址不存在，请检查路径。坚果云填 https://dav.jianguoyun.com/dav";
             return false;
         }
         message = DescribeHttpFailure(response);
@@ -597,9 +619,10 @@ class WebDavStore final : public RemoteStore
         else
             directory = directory.substr(0, slash);
 
-        // 建 base_url 路径的末段（例如 /dav/msime-service-e2e 里的 msime-service-e2e），
-        // 再建 key 里的每一段。base 前面的部分由服务端保证存在：/dav 是坚果云的根集合，
-        // 对根集合发 MKCOL 会返回 403 OperationNotAllowed。
+        // 建 base_url 路径的末段（现在是用户填的目录下的 msime，例如
+        // https://dav.jianguoyun.com/dav/msime 里的 msime），再建 key 里的每一段。
+        // base 前面的部分由服务端保证存在：/dav 是坚果云的根集合，对根集合发 MKCOL
+        // 会返回 403 OperationNotAllowed，下面的 is_leaf 判断会把中间层级的 403 放过。
         // 路径一律用解码后的原文拼，最后由 JoinUrl 只编码一次；直接拿 base_url 里已编码的
         // 路径再进 JoinUrl 会变成 %25E6… 这种二次编码。
         std::vector<std::string> segments;
@@ -660,6 +683,32 @@ class WebDavStore final : public RemoteStore
     }
 
   private:
+    // 用户填的那个目录的上一级能不能访问。只用来区分「目录还没建」和「地址填错了」，
+    // 不参与任何写入。
+    bool ParentReachable()
+    {
+        std::string url = user_base_url_;
+        while (!url.empty() && url.back() == '/')
+            url.pop_back();
+        const std::size_t slash = url.rfind('/');
+        if (slash == std::string::npos)
+            return false;
+        // 别把 scheme 里的 "//" 当成路径分隔，否则会把 https://host 砍成 https:。
+        const std::size_t scheme = url.find("://");
+        if (scheme != std::string::npos && slash < scheme + 3)
+            return false;
+
+        HttpRequest request;
+        request.method = "PROPFIND";
+        request.url = url.substr(0, slash);
+        request.headers = BaseHeaders(options_);
+        request.headers.push_back("Depth: 0");
+        request.body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                       "<D:propfind xmlns:D=\"DAV:\"><D:prop><D:resourcetype/></D:prop></D:propfind>";
+        request.timeout_seconds = 30;
+        return IsSuccess(Perform(request).status);
+    }
+
     // HEAD 不可靠时用 PROPFIND Depth: 0 取单个对象的元信息。失败不改变已找到的结论：
     // Stat 的语义是"存不存在"，大小与时间只是附带信息。
     bool FillFromPropfind(const std::string &key, RemoteObject &object, std::string &message)
@@ -714,6 +763,8 @@ class WebDavStore final : public RemoteStore
     }
 
     WebDavOptions options_;
+    // 用户填的原始目录，只给 Probe 用。options_.base_url 是它加上 msime 子目录后的实际根。
+    std::string user_base_url_;
 };
 
 } // namespace

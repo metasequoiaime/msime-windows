@@ -61,8 +61,9 @@ class RemoteStore
 
 struct WebDavOptions
 {
-    // 备份根目录，例如 https://dav.example.com/remote.php/dav/files/me/msime。
-    // 末尾斜杠会被去掉；key 直接拼在后面。
+    // 网盘上放备份的位置，例如 https://dav.jianguoyun.com/dav。末尾斜杠会被去掉。
+    // 实际对象写在它下面的 msime 子目录里（<base_url>/msime/...），子目录由首次上传时的
+    // MKCOL 自动创建，不需要用户先建好。
     std::string base_url;
     std::string username;
     std::string password;

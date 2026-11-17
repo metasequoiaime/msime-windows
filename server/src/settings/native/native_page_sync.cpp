@@ -325,15 +325,15 @@ VisualPtr BuildSyncPage(PageContext &context)
 
         // WebDAV 字段组
         auto webdav = std::make_shared<Column>(10.0f);
-        state->webdavUrl = MakeField(L"https://dav.example.com/msime");
+        state->webdavUrl = MakeField(L"https://dav.jianguoyun.com/dav");
         state->webdavUser = MakeField(L"账号");
         state->webdavPassword = MakeField(L"密码", true);
-        webdav->Add(FieldWithCaption(L"备份目录地址", state->webdavUrl));
+        webdav->Add(FieldWithCaption(L"网盘地址", state->webdavUrl));
         webdav->Add(FieldWithCaption(L"用户名", state->webdavUser));
         webdav->Add(FieldWithCaption(L"密码", state->webdavPassword));
-        webdav->Add(
-            SyncDescription(L"目录要事先在网盘里建好。坚果云填 https://dav.jianguoyun.com/dav/水杉备份，Nextcloud 填"
-                            L" https://你的域名/remote.php/dav/files/用户名/msime。"));
+        webdav->Add(SyncDescription(L"填网盘上放备份的位置就行，不用先在网盘里建文件夹：数据写在它下面的 msime 目录里，"
+                                    L"第一次上传时自动创建。坚果云填 https://dav.jianguoyun.com/dav，Nextcloud 填"
+                                    L" https://你的域名/remote.php/dav/files/用户名。"));
         state->webdavFields = std::make_shared<Hideable>(webdav, false);
         column->Add(state->webdavFields);
 
