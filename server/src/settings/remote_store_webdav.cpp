@@ -583,7 +583,11 @@ class WebDavStore final : public RemoteStore
         request.timeout_seconds = 30;
         const HttpResponse response = Perform(request);
         if (IsSuccess(response.status))
+        {
+            // 成功也要给一句，否则页面把空字符串原样写进状态行，看起来像按钮没反应。
+            message = "连接正常，凭据可用。";
             return true;
+        }
         if (response.status == 401 || response.status == 403)
         {
             message = "用户名或密码不正确，或这个账号没有访问该目录的权限";
