@@ -521,6 +521,9 @@ VisualPtr BuildSyncPage(PageContext &context)
         });
     }
 
-    return page.Build();
+    // OwnerBox 把 state 钉在页面根上：RadioOption::onSelected_ 通过 RadioGroup*
+    // 裸指针访问 state->backend，state 必须活到本页被销毁（窗口关闭或 DPI 重建）。
+    // /about、/advanced、/stats 用的是同一种做法，见 native_page_help_widgets.h。
+    return std::make_shared<OwnerBox>(page.Build(), state);
 }
 } // namespace native_settings
