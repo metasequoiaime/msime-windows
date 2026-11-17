@@ -410,6 +410,12 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(upgraded["ai_assistant"]["enabled"].value_or(false));
     REQUIRE(upgraded["tencent_tmt"]["enabled"].value_or(false));
     REQUIRE(!upgraded["niutrans"]["enabled"].value_or(true));
+    // 新装默认哔哩哔哩翻译；老用户没有 provider 键时保持空串，加载时照旧按 enabled 布尔推导。
+    REQUIRE_EQ(upgraded["translation"]["provider"].value_or(std::string("missing")), std::string());
+    const std::string chose_nothing = "[translation]\nprovider = \"\"\n[niutrans]\nenabled = true\n";
+    const auto kept = toml::parse(MergeConfigIntoTemplate(installed, chose_nothing, chose_nothing));
+    REQUIRE_EQ(kept["translation"]["provider"].value_or(std::string("missing")), std::string());
+    REQUIRE(kept["niutrans"]["enabled"].value_or(false));
 
     // 新装用户拿到的是模板本身。
     const auto fresh = toml::parse(installed);
@@ -417,6 +423,9 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(!fresh["helpcode"]["shuangpin_helpcode"].value_or(true));
     REQUIRE(!fresh["association"]["sentence_wordlattice"].value_or(true));
     REQUIRE_EQ(fresh["voice_input"]["asr_provider"].value_or(std::string()), std::string("local"));
+    REQUIRE_EQ(fresh["translation"]["provider"].value_or(std::string()), std::string("bilibili"));
+    REQUIRE_EQ(fresh["bilibili_translate"]["model"].value_or(std::string()), std::string("Index-Translate-2B"));
+    REQUIRE(!fresh["niutrans"]["enabled"].value_or(true));
     REQUIRE_EQ(fresh["voice_input"]["local_asr_model"].value_or(std::string()), std::string("x-asr-zh-en-streaming"));
     REQUIRE(fresh["general"]["symbol_mixed_input"].value_or(false));
     REQUIRE(fresh["utility"]["quick_phrase_candidates"].value_or(false));

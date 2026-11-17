@@ -1,6 +1,7 @@
 #include "settings/native/native_page_voice_fields.h"
 #include "settings/native/native_settings_pages.h"
 
+#include "cloud/bilibili_translation.h"
 #include "config/ai_provider.h"
 
 #include "msimeui/DeviceResources.h"
@@ -1304,7 +1305,7 @@ struct InputPage
     std::shared_ptr<Hideable> smartHint;
 
     // Translation
-    std::string provider = "tencent";
+    std::string provider = "bilibili";
     std::shared_ptr<ToggleSwitch> translationsToggle;
     std::shared_ptr<OpacityBox> translationOptions;
     std::vector<std::shared_ptr<Dimmable>> translationInputs;
@@ -1355,6 +1356,8 @@ struct InputPage
     {
         if (provider == "ai")
             return {};
+        if (provider == "bilibili")
+            return {{"model", context->model.GetString("bilibili_translate.model")}};
         if (provider == "aliyun")
             return {{"accessKeyId", Field("aliyunAccessKeyId")}, {"accessKeySecret", Field("aliyunAccessKeySecret")}};
         if (provider == "niutrans")
@@ -1368,7 +1371,12 @@ struct InputPage
     {
         std::wstring text;
         bool ok = false;
-        if (provider == "ai")
+        if (provider == "bilibili")
+        {
+            // 免费接口不需要凭据，选中即可用。
+            ok = true;
+        }
+        else if (provider == "ai")
         {
             const voice_fields::ActiveAiConfig state = AiState();
             // 选择器模式下这里的 provider 已经解析成「生成式上次用的那家」，所以不再是 jev。
@@ -1758,7 +1766,8 @@ VisualPtr BuildInputPage(PageContext &context)
         language.minWidth = 140.0f;
         language.menuMinWidth = 140.0f;
         auto provider = BindDropdown(context, "translation.provider",
-                                     Options({{"tencent", L"腾讯云"},
+                                     Options({{"bilibili", L"哔哩哔哩"},
+                                              {"tencent", L"腾讯云"},
                                               {"aliyun", L"阿里云"},
                                               {"niutrans", L"小牛翻译"},
                                               {"custom", L"自定义 DeepLX"},
@@ -1833,13 +1842,27 @@ VisualPtr BuildInputPage(PageContext &context)
                                             {field("customTranslationApiKey", "custom_translation.api_key",
                                                    L"API Key（可选，以 Bearer Token 发送）", L"留空表示不鉴权", true),
                                              true}}))});
+        std::vector<DropdownOption> bilibiliModels;
+        for (const auto &info : BilibiliTranslation::Models())
+            bilibiliModels.push_back({info.label, info.id});
+        Dropdown::Options modelWidth;
+        modelWidth.minWidth = 240.0f;
+        modelWidth.menuMinWidth = 240.0f;
+        auto bilibiliModel = BindDropdown(context, "bilibili_translate.model", std::move(bilibiliModels), modelWidth);
+        auto bilibili = Col(
+            {heading(L"哔哩哔哩 Index-Translate",
+                     L"哔哩哔哩开源翻译模型的免费接口，无需注册或填写凭据；本地词库未命中的候选词会发送到 "
+                     L"index-translate.bilibili.com 翻译"),
+             std::make_shared<Divider>(Divider::Kind::Option),
+             blockInput(LanguageRow(L"翻译模型", L"默认 2B；更大的模型译文通常更准确，响应可能稍慢", bilibiliModel))});
         s->aiSummary = std::make_shared<ApiField>(L"当前服务商与模型", L"未配置", false, true);
         auto ai = Col({heading(L"复用 AI 辅助配置",
                                L"使用「AI 与云联想」页生成式服务商的接口地址、Token 与模型，无需在此重复填写。"
                                L"那边选了「从候选里挑」也照样能用，翻译会用生成式那一家。"
                                L"不依赖「启用 AI 联想」开关，凭据填好就能用于翻译。"),
                        blockInput(grid({{s->aiSummary, true}}))});
-        s->providerFields["tencent"] = std::make_shared<Hideable>(tencent, true);
+        s->providerFields["bilibili"] = std::make_shared<Hideable>(bilibili, true);
+        s->providerFields["tencent"] = std::make_shared<Hideable>(tencent, false);
         s->providerFields["aliyun"] = std::make_shared<Hideable>(aliyun, false);
         s->providerFields["niutrans"] = std::make_shared<Hideable>(niutrans, false);
         s->providerFields["custom"] = std::make_shared<Hideable>(custom, false);
@@ -1873,13 +1896,14 @@ VisualPtr BuildInputPage(PageContext &context)
                                     s->singleSenseBlock)),
              std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"在线翻译服务",
-                                    L"可使用腾讯云、阿里云、小牛翻译、自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置",
+                                    L"默认使用免费的哔哩哔哩 Index-Translate；也可使用腾讯云、阿里云、小牛翻译、"
+                                    L"自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置",
                                     provider)),
              std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用所选在线服务", target)),
-             std::make_shared<Divider>(Divider::Kind::Option), s->providerFields["tencent"],
-             s->providerFields["aliyun"], s->providerFields["niutrans"], s->providerFields["custom"],
-             s->providerFields["ai"], s->warningBox, s->credentialTest->View()});
+             std::make_shared<Divider>(Divider::Kind::Option), s->providerFields["bilibili"],
+             s->providerFields["tencent"], s->providerFields["aliyun"], s->providerFields["niutrans"],
+             s->providerFields["custom"], s->providerFields["ai"], s->warningBox, s->credentialTest->View()});
         s->translationOptions = std::make_shared<OpacityBox>(options);
         s->translationOptions->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         master->SetOnChanged([s, model](bool on) {
@@ -2182,7 +2206,8 @@ VisualPtr BuildInputPage(PageContext &context)
             s->SetTranslationsEnabled(translations->get<bool>());
         }
         const std::string provider = model->GetString("translation.provider");
-        s->provider = provider == "aliyun" || provider == "niutrans" || provider == "custom" || provider == "ai"
+        s->provider = provider == "aliyun" || provider == "niutrans" || provider == "custom" || provider == "ai" ||
+                              provider == "bilibili"
                           ? provider
                           : "tencent";
         s->fields["tencentTmtSecretId"]->SetText(Widen(model->GetString("tencent_tmt.secret_id")));

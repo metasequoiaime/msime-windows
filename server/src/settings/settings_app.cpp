@@ -360,6 +360,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
     const CustomTranslationConfig &custom_translation = GetConfiguredCustomTranslation();
     const AliyunMtConfig &aliyun_mt = GetConfiguredAliyunMt();
     const NiuTransConfig &niutrans = GetConfiguredNiuTrans();
+    const BilibiliTranslateConfig &bilibili_translate = GetConfiguredBilibiliTranslate();
     const auto translation = GetConfiguredTranslation();
     const NetworkProxyConfig network_proxy = GetConfiguredNetworkProxy();
     const SyncConfig sync = GetConfiguredSync();
@@ -718,6 +719,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"endpoint", custom_translation.endpoint},
             {"api_key", custom_translation.api_key}}},
           {"niutrans", {{"enabled", niutrans.enabled}, {"app_id", niutrans.app_id}, {"apikey", niutrans.apikey}}},
+          {"bilibili_translate", {{"model", bilibili_translate.model}}},
           {"translation", {{"provider", translation->provider}}},
           {"network", {{"proxy_mode", network_proxy.mode}, {"proxy_server", network_proxy.server}}},
           {"sync",
@@ -1161,6 +1163,13 @@ bool ApplyConfigUpdate(const json::object &data)
         const json::value &value = data.at("value");
         return value.is_string() && SetConfiguredNiuTransString(path.substr(std::string("niutrans.").size()),
                                                                 json::value_to<std::string>(value));
+    }
+    if (path.rfind("bilibili_translate.", 0) == 0)
+    {
+        const json::value &value = data.at("value");
+        return value.is_string() &&
+               SetConfiguredBilibiliTranslateString(path.substr(std::string("bilibili_translate.").size()),
+                                                    json::value_to<std::string>(value));
     }
     if (path == "translation.provider")
     {

@@ -135,6 +135,8 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_ai_assistant_reply.cpp"
     "${CMAKE_SOURCE_DIR}/src/ai/ai_assistant_reply.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_jev_candidates.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_bilibili_translation.cpp"
+    "${CMAKE_SOURCE_DIR}/src/cloud/bilibili_translation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_niutrans_translation.cpp"
     "${CMAKE_SOURCE_DIR}/src/cloud/niutrans_translation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_aliyun_mt.cpp"

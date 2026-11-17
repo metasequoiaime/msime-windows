@@ -288,6 +288,7 @@ extern TencentTmtConfig g_tencent_tmt;
 extern AliyunMtConfig g_aliyun_mt;
 extern CustomTranslationConfig g_custom_translation;
 extern NiuTransConfig g_niutrans;
+extern BilibiliTranslateConfig g_bilibili_translate;
 extern std::string g_translation_provider;
 extern std::mutex g_network_proxy_mutex;
 extern NetworkProxyConfig g_network_proxy; // guarded by g_network_proxy_mutex

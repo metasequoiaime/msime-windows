@@ -413,6 +413,7 @@
               "translation.tencent",
               "translation.aliyun",
               "translation.niutrans",
+              "translation.bilibili",
               "translation.custom",
               "translation.ai",
               "voice.asr",

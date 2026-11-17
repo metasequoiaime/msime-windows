@@ -92,6 +92,9 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
         MakeTomlAssignmentId("tencent_tmt", "enabled"),
         MakeTomlAssignmentId("aliyun_mt", "enabled"),
         MakeTomlAssignmentId("niutrans", "enabled"),
+        // 新装默认用哔哩哔哩免费翻译；老用户可能已在别家填好凭据，升级不能替用户换服务商，
+        // 也不能把候选词发给一个用户没选过的服务。
+        MakeTomlAssignmentId("translation", "provider"),
     };
     return kIds.count(assignment_id) != 0;
 }
@@ -123,6 +126,13 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
     if (!user_values.empty() && user_values.find(enumeration_comma_slash_id) == user_values.end())
     {
         user_values[enumeration_comma_slash_id] = "false";
+    }
+    // 很老的配置没有 [translation].provider，靠各家 enabled 布尔推导服务商。模板里的新默认不能替它
+    // 补上，否则推导结果被 bilibili 盖掉；补成空串，加载时照旧推导。
+    const auto translation_provider_id = MakeTomlAssignmentId("translation", "provider");
+    if (!user_values.empty() && user_values.find(translation_provider_id) == user_values.end())
+    {
+        user_values[translation_provider_id] = "\"\"";
     }
     struct ValuePatch
     {

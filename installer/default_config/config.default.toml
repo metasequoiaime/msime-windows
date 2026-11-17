@@ -162,18 +162,25 @@ api_key = ""
 # enabled 布尔仅为旧版兼容保留，实际生效方由 [translation].provider 决定。
 #
 [niutrans]
-enabled = true
+enabled = false
 app_id = ""
 apikey = ""
 
 #
-# 候选词翻译当前生效的在线提供方：tencent | aliyun | niutrans | custom | ai。
-# ai 表示复用 AI 辅助当前服务商的接口地址、Token 与模型。
+# 哔哩哔哩 Index-Translate 免费翻译接口（https://index-translate.bilibili.com），不需要凭据。
+# model 可选 Index-Translate-2B | Index-Translate-9B | Index-Translate-35B-A3B。
+#
+[bilibili_translate]
+model = "Index-Translate-2B"
+
+#
+# 候选词翻译当前生效的在线提供方：bilibili | tencent | aliyun | niutrans | custom | ai。
+# bilibili 是出厂默认；ai 表示复用 AI 辅助当前服务商的接口地址、Token 与模型。
 # 留空表示按 [tencent_tmt]/[aliyun_mt]/[custom_translation]/[niutrans] 的旧 enabled 布尔自动推导，
 # 在设置页选择过一次后会写入具体值。
 #
 [translation]
-provider = ""
+provider = "bilibili"
 
 #
 # 网络代理：云输入、模型下载、AI 联想、翻译、语音识别等需要联网的功能共用。
