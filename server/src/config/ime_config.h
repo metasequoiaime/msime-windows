@@ -187,18 +187,25 @@ struct NiuTransConfig
     std::string apikey;
 };
 
+// [bilibili_translate] 段：哔哩哔哩 Index-Translate 免费接口，不需要凭据，只选模型。
+struct BilibiliTranslateConfig
+{
+    std::string model = "Index-Translate-2B";
+};
+
 // 候选词翻译读取的整份配置快照。provider 来自 [translation].provider，旧配置没有这个键时由
 // [tencent_tmt]/[aliyun_mt]/[custom_translation]/[niutrans] 的 enabled 布尔在加载时推导；其余字段是各提供方
 // 配置的副本，ai 复用 AI 辅助当前服务商。配置加载和相关设置写入后整份替换，翻译 worker 与
 // 候选线程只读快照，不直接读会被重载改写的各段全局字符串。
 struct TranslationConfig
 {
-    // tencent | aliyun | niutrans | custom | ai
+    // tencent | aliyun | niutrans | custom | ai | bilibili
     std::string provider = "tencent";
     TencentTmtConfig tencent;
     AliyunMtConfig aliyun;
     CustomTranslationConfig custom;
     NiuTransConfig niutrans;
+    BilibiliTranslateConfig bilibili;
     struct Ai
     {
         std::string provider;
@@ -804,6 +811,8 @@ bool SetConfiguredAliyunMtString(const std::string &key, const std::string &valu
 const NiuTransConfig &GetConfiguredNiuTrans();
 bool SetConfiguredNiuTransBool(const std::string &key, bool value);
 bool SetConfiguredNiuTransString(const std::string &key, const std::string &value);
+const BilibiliTranslateConfig &GetConfiguredBilibiliTranslate();
+bool SetConfiguredBilibiliTranslateString(const std::string &key, const std::string &value);
 bool IsValidTranslationProvider(const std::string &provider);
 std::shared_ptr<const TranslationConfig> GetConfiguredTranslation();
 bool SetConfiguredTranslationString(const std::string &key, const std::string &value);

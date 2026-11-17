@@ -3,6 +3,7 @@
 #include "config/ime_config.h"
 #include "ai_translation.h"
 #include "aliyun_mt.h"
+#include "bilibili_translation.h"
 #include "custom_translation.h"
 #include "niutrans_translation.h"
 #include "tencent_tmt.h"
@@ -59,11 +60,14 @@ enum class Provider
     Custom,
     NiuTrans,
     Ai,
+    Bilibili,
 };
 
 // 当前生效的提供方由 [translation].provider 单一决定，服务端与页面不再各写一份优先级。
 Provider ActiveProvider(const TranslationConfig &config)
 {
+    if (config.provider == "bilibili")
+        return Provider::Bilibili;
     if (config.provider == "ai")
         return Provider::Ai;
     if (config.provider == "niutrans")
@@ -79,6 +83,9 @@ std::string ProviderScope(const TranslationConfig &config)
 {
     switch (ActiveProvider(config))
     {
+    case Provider::Bilibili:
+        // 不同模型的译文不同，按模型分缓存域，切换模型后能马上看到新模型的结果。
+        return "bilibili:" + BilibiliTranslation::NormalizeModel(config.bilibili.model);
     case Provider::Ai:
         return "ai:" + config.ai.provider + ":" + config.ai.endpoint + ":" + config.ai.model;
     case Provider::Aliyun:
@@ -155,6 +162,7 @@ struct ResolvedProvider
     CustomTranslation::Config custom;
     NiuTransTranslation::Config niutrans;
     AiTranslation::Config ai;
+    BilibiliTranslation::Config bilibili;
 };
 
 std::optional<ResolvedProvider> ResolveActiveProvider(const TranslationConfig &config)
@@ -163,6 +171,10 @@ std::optional<ResolvedProvider> ResolveActiveProvider(const TranslationConfig &c
     resolved.provider = ActiveProvider(config);
     switch (resolved.provider)
     {
+    case Provider::Bilibili:
+        // 免费接口不需要凭据，选中即可用。
+        resolved.bilibili.model = BilibiliTranslation::NormalizeModel(config.bilibili.model);
+        break;
     case Provider::Ai:
         // 复用 AI 辅助当前服务商的接口地址、Token 与模型，与 ai_assistant.enabled 解耦：
         // 用户可能只想用翻译、不开 AI 联想。
@@ -236,6 +248,8 @@ std::vector<std::string> TranslateWithProvider(const ResolvedProvider &resolved,
 {
     switch (resolved.provider)
     {
+    case Provider::Bilibili:
+        return BilibiliTranslation::TextTranslateBatch(resolved.bilibili, texts, source, target);
     case Provider::Ai:
         return AiTranslation::TextTranslateBatch(resolved.ai, texts, source, target);
     case Provider::Aliyun:

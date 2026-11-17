@@ -7,6 +7,7 @@
 #include "cloud/ai_translation.h"
 #include "cloud/aliyun_mt.h"
 #include "cloud/custom_translation.h"
+#include "cloud/bilibili_translation.h"
 #include "cloud/niutrans_translation.h"
 #include "cloud/tencent_tmt.h"
 #include "cloud/translation_gloss.h"
@@ -414,6 +415,14 @@ ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &requ
         if (!AliyunMt::IsUsableCredentials(credentials))
             return {false, "请先填写有效的 AccessKey ID 和 AccessKey Secret。"};
         translated = AliyunMt::TextTranslateBatch(credentials, {"测试"}, "zh", "en");
+    }
+    else if (request.service == "translation.bilibili")
+    {
+        const BilibiliTranslation::Config config{BilibiliTranslation::NormalizeModel(Value(request, "model"))};
+        std::string detail;
+        translated = BilibiliTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en", &detail);
+        if (translated.empty() || translated.front().empty())
+            return {false, "测试失败：" + (detail.empty() ? std::string("服务未返回有效译文") : detail)};
     }
     else if (request.service == "translation.niutrans")
     {
