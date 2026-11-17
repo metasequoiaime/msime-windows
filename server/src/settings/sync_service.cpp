@@ -505,6 +505,12 @@ bool SyncService::Probe(std::string &message)
         message = "未配置同步目标";
         return false;
     }
-    return store_->Probe(message);
+    if (!store_->Probe(message))
+        return false;
+    // 成功时也留一句话：设置页把回执正文原样写进状态行，空字符串会让「测试连接」
+    // 看起来像按钮没反应。
+    if (message.empty())
+        message = "连接正常，凭据可用。";
+    return true;
 }
 } // namespace user_data_sync

@@ -216,8 +216,8 @@ auto_upload_minutes = 0
 keep_snapshots = 5
 # 是否把 models/ 下的已下载模型一起打包。模型动辄几百 MB，默认不带。
 include_models = false
-# WebDAV：备份根目录的完整地址，例如
-# https://dav.example.com/remote.php/dav/files/me/msime
+# WebDAV：网盘上放备份的位置，例如坚果云填 https://dav.jianguoyun.com/dav。
+# 不用先在网盘里建文件夹：数据写在它下面的 msime 目录里，第一次上传时自动创建。
 webdav_url = ""
 webdav_username = ""
 # 密码用 DPAPI 加密后存在这里，设置页写入时自动加密。

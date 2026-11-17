@@ -325,15 +325,15 @@ VisualPtr BuildSyncPage(PageContext &context)
 
         // WebDAV 字段组
         auto webdav = std::make_shared<Column>(10.0f);
-        state->webdavUrl = MakeField(L"https://dav.example.com/msime");
+        state->webdavUrl = MakeField(L"https://dav.jianguoyun.com/dav");
         state->webdavUser = MakeField(L"账号");
         state->webdavPassword = MakeField(L"密码", true);
-        webdav->Add(FieldWithCaption(L"备份目录地址", state->webdavUrl));
+        webdav->Add(FieldWithCaption(L"网盘地址", state->webdavUrl));
         webdav->Add(FieldWithCaption(L"用户名", state->webdavUser));
         webdav->Add(FieldWithCaption(L"密码", state->webdavPassword));
-        webdav->Add(
-            SyncDescription(L"目录要事先在网盘里建好。坚果云填 https://dav.jianguoyun.com/dav/水杉备份，Nextcloud 填"
-                            L" https://你的域名/remote.php/dav/files/用户名/msime。"));
+        webdav->Add(SyncDescription(L"填网盘上放备份的位置，通常直接填根目录就行，不用自己建文件夹：数据写在它下面的"
+                                    L" msime 目录里，第一次上传时自动创建。坚果云填 https://dav.jianguoyun.com/dav，"
+                                    L"Nextcloud 填 https://你的域名/remote.php/dav/files/用户名。"));
         state->webdavFields = std::make_shared<Hideable>(webdav, false);
         column->Add(state->webdavFields);
 
@@ -521,6 +521,9 @@ VisualPtr BuildSyncPage(PageContext &context)
         });
     }
 
-    return page.Build();
+    // OwnerBox 把 state 钉在页面根上：RadioOption::onSelected_ 通过 RadioGroup*
+    // 裸指针访问 state->backend，state 必须活到本页被销毁（窗口关闭或 DPI 重建）。
+    // /about、/advanced、/stats 用的是同一种做法，见 native_page_help_widgets.h。
+    return std::make_shared<OwnerBox>(page.Build(), state);
 }
 } // namespace native_settings

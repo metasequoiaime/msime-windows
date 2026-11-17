@@ -154,9 +154,13 @@ void PostRestartServerDone(bool ok)
 
 // 按 [sync] 配置造一个传输层实例。凭据已在配置层解密，这里直接用。
 // 配置不完整时返回空指针并把原因写进 message，调用方据此回执给页面。
-std::unique_ptr<user_data_sync::RemoteStore> MakeSyncStore(const SyncConfig &config, std::string &message)
+//
+// allow_disabled 只给「测试连接」用：那个按钮就是在用户开同步之前验证地址和凭据的，
+// 被 enabled 挡住会看到一个和连接无关的「请先在设置里打开」。
+std::unique_ptr<user_data_sync::RemoteStore> MakeSyncStore(const SyncConfig &config, bool allow_disabled,
+                                                           std::string &message)
 {
-    if (!config.enabled)
+    if (!config.enabled && !allow_disabled)
     {
         message = "同步未开启，请先在设置里打开。";
         return nullptr;
@@ -1893,7 +1897,7 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                         try
                         {
                             const SyncConfig config = GetConfiguredSync();
-                            auto store = MakeSyncStore(config, message);
+                            auto store = MakeSyncStore(config, action == "probe", message);
                             if (!store)
                             {
                                 // MakeSyncStore 已经把原因写进 message。

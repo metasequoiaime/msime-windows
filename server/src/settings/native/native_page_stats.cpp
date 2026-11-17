@@ -1821,7 +1821,13 @@ VisualPtr BuildStatsPage(PageContext &context)
     }
 
     // Config snapshots: statistics.enabled / statistics.retention.
-    context.OnConfig([s]() {
+    // 用 weak：这个 listener 挂在 SettingsModel 上活到窗口结束，页面却会在 DPI 变化时
+    // 整体重建，裸指针会指到已经释放的 StatsState。
+    std::weak_ptr<StatsState> weak = state;
+    context.OnConfig([weak]() {
+        auto s = weak.lock();
+        if (!s)
+            return;
         s->enabled = s->model->GetBool("statistics.enabled");
         s->toggle->SetChecked(s->enabled);
         s->RenderEmptyState();
@@ -1830,7 +1836,6 @@ VisualPtr BuildStatsPage(PageContext &context)
             retention == "365d")
             s->retention->SetValue(retention);
     });
-    std::weak_ptr<StatsState> weak = state;
     context.OnMessage("statsResponse", [weak](const Json &message) {
         auto self = weak.lock();
         if (!self)

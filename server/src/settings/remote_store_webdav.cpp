@@ -223,18 +223,6 @@ std::string DecodedUrlPath(const std::string &url)
     return path;
 }
 
-// 把 base_url 规范成"路径只编码一次"的写法。用户可能填原文（我的坚果云）也可能填
-// 编码后的（%E6%88%91…），两种都先解码再统一编码，后面 JoinUrl 拼 key 就不会出现
-// %25 这种二次编码。
-std::string CanonicalBaseUrl(const std::string &url)
-{
-    const std::string root = UrlRoot(url);
-    if (root.empty())
-        return NormalizeBase(url);
-    const std::string path = DecodedUrlPath(url);
-    return path.empty() ? root : root + "/" + detail::UriEncode(path, false);
-}
-
 // PROPFIND 一个 response 里可能有多个 propstat（200 的一块、404 的一块），顺序不保证；
 // 只认状态为 200 的那块，没写 status 的按 200 处理。
 const XmlNode *SuccessfulProp(const XmlNode &response)
@@ -255,6 +243,33 @@ const XmlNode *SuccessfulProp(const XmlNode &response)
 
 namespace detail
 {
+// 把 base_url 规范成"路径只编码一次"的写法。用户可能填原文（我的坚果云）也可能填
+// 编码后的（%E6%88%91…），两种都先解码再统一编码，后面 JoinUrl 拼 key 就不会出现
+// %25 这种二次编码。
+std::string CanonicalBaseUrl(const std::string &url)
+{
+    const std::string root = UrlRoot(url);
+    if (root.empty())
+        return NormalizeBase(url);
+    const std::string path = DecodedUrlPath(url);
+    return path.empty() ? root : root + "/" + UriEncode(path, false);
+}
+
+// 去掉 URL 路径的最后一段。scheme 里的 "//" 不能被当成路径分隔，否则会把
+// https://host 砍成 https:；没有路径段时返回空串。
+std::string ParentOf(std::string url)
+{
+    while (!url.empty() && url.back() == '/')
+        url.pop_back();
+    const std::size_t slash = url.rfind('/');
+    if (slash == std::string::npos)
+        return {};
+    const std::size_t scheme = url.find("://");
+    if (scheme != std::string::npos && slash < scheme + 3)
+        return {};
+    return url.substr(0, slash);
+}
+
 std::string WebDavHrefToKey(const std::string &href, const std::string &base_url)
 {
     // 两边都先解码再比：服务端回的 href 是编码过的（大小写也不定），base 可能是原文。
@@ -337,12 +352,23 @@ std::int64_t ParseServerTime(const std::string &text)
     return static_cast<std::int64_t>(_mkgmtime(&utc));
 }
 
+// 数据放在用户填的目录下面的这个固定子目录里。用户填的是网盘上的一个位置
+// （坚果云就是 https://dav.jianguoyun.com/dav），把所有对象直接摊在那里会冒出
+// devices 这种太通用的名字，和用户自己的文件夹混在一起。
+constexpr char kSyncSubdirectory[] = "msime";
+
 class WebDavStore final : public RemoteStore
 {
   public:
     explicit WebDavStore(WebDavOptions options) : options_(std::move(options))
     {
-        options_.base_url = CanonicalBaseUrl(options_.base_url);
+        const std::string canonical = detail::CanonicalBaseUrl(options_.base_url);
+        // 有人把 msime 也写进了地址里，别叠成 msime/msime。大小写不敏感：Nextcloud 和
+        // Windows 上的 WebDAV 路径通常不区分大小写，/MSIME 也是同一个目录。
+        const std::string suffix = std::string("/") + kSyncSubdirectory;
+        const bool already_named = canonical.size() >= suffix.size() &&
+                                   _stricmp(canonical.c_str() + canonical.size() - suffix.size(), suffix.c_str()) == 0;
+        options_.base_url = already_named ? canonical : JoinUrl(canonical, kSyncSubdirectory);
     }
 
     bool Put(const std::string &key, const std::filesystem::path &file, const ProgressCallback &progress,
@@ -557,18 +583,12 @@ class WebDavStore final : public RemoteStore
 
     bool Probe(std::string &message) override
     {
-        // PROPFIND 根目录：不存在是 404，凭据错是 401/403，网络不通是 curl 错误。
-        HttpRequest request;
-        request.method = "PROPFIND";
-        request.url = options_.base_url;
-        request.headers = BaseHeaders(options_);
-        request.headers.push_back("Depth: 0");
-        request.body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-                       "<D:propfind xmlns:D=\"DAV:\"><D:prop><D:resourcetype/></D:prop></D:propfind>";
-        request.timeout_seconds = 30;
-        const HttpResponse response = Perform(request);
+        // 探测数据实际落点的基址（默认是用户填的目录下面的 msime）。这样 404 的含义就
+        // 正好是「msime 这一层还没建」，与 EnsureDirectory 从这一级开始 MKCOL 的行为对得上：
+        // 那一级上不去的话上传同样建不出来，探测不能给出一个必然失败的承诺。
+        const HttpResponse response = PropfindDepth0(options_.base_url, 30);
         if (IsSuccess(response.status))
-            return true;
+            return true; // 文案由 SyncService::Probe 统一兜底，这里不再写一份。
         if (response.status == 401 || response.status == 403)
         {
             message = "用户名或密码不正确，或这个账号没有访问该目录的权限";
@@ -576,7 +596,28 @@ class WebDavStore final : public RemoteStore
         }
         if (IsNotFound(response.status))
         {
-            message = "备份目录不存在，请先在网盘里建好这个文件夹";
+            // 基址还不存在。上一级能访问说明只是 msime 这一层没建，上传时补上；
+            // 上一级也不行就是地址本身写错了，早点报出来比等到 PUT 回 409 好懂。
+            const long parent = ParentStatus();
+            if (IsSuccess(parent))
+            {
+                message = "连接正常。备份目录还不存在，首次上传时会自动创建。";
+                return true;
+            }
+            if (parent == 401 || parent == 403)
+            {
+                // 共享盘只授权子目录时很常见，别把权限问题说成路径写错。
+                message = "用户名或密码不正确，或这个账号没有上级目录的访问权限";
+                return false;
+            }
+            // 0 是请求没走完（连不上、超时），5xx 与 429 是服务端暂时的问题。
+            // 这两种都不能断言地址写错了。
+            if (parent == 0 || IsRetryableStatus(parent))
+            {
+                message = "暂时连不上服务端，请稍后再试";
+                return false;
+            }
+            message = "这个地址不存在，请检查路径。坚果云填 https://dav.jianguoyun.com/dav";
             return false;
         }
         message = DescribeHttpFailure(response);
@@ -586,8 +627,9 @@ class WebDavStore final : public RemoteStore
     // WebDAV 必须先建集合，否则对不存在集合的 PUT 返回 409。逐级 MKCOL，
     // 405 表示集合已经存在（RFC 4918 允许这种响应），按成功处理。
     //
-    // base_url 自己也可能不存在（用户填了一个还没建的子目录）。这里从 base 的路径
-    // 末段开始逐级建，缺哪级补哪级，而不是假设用户已经建好。
+    // 只负责建 base_url 的最后一段（也就是 msime）和 key 里的各级。用户填的那个目录本身
+    // 必须已经存在：前面的层级属于他网盘里原有的结构，本实现不替他建，否则拼错一个目录名
+    // 也会悄悄在网盘里长出一串空文件夹。Probe 的「上一级能不能访问」正是这一条的前提。
     bool EnsureDirectory(const std::string &key, std::string &message) override
     {
         std::string directory = key;
@@ -597,9 +639,10 @@ class WebDavStore final : public RemoteStore
         else
             directory = directory.substr(0, slash);
 
-        // 建 base_url 路径的末段（例如 /dav/msime-service-e2e 里的 msime-service-e2e），
-        // 再建 key 里的每一段。base 前面的部分由服务端保证存在：/dav 是坚果云的根集合，
-        // 对根集合发 MKCOL 会返回 403 OperationNotAllowed。
+        // 建 base_url 的最后一段（msime，例如 https://dav.jianguoyun.com/dav/msime 里的
+        // msime），再建 key 里的每一段。用户填的那个目录之上的层级由他网盘里原有的结构
+        // 保证存在：/dav 是坚果云的根集合，对根集合发 MKCOL 会返回 403 OperationNotAllowed，
+        // 下面的 is_leaf 判断会把中间层级的 403 放过。
         // 路径一律用解码后的原文拼，最后由 JoinUrl 只编码一次；直接拿 base_url 里已编码的
         // 路径再进 JoinUrl 会变成 %25E6… 这种二次编码。
         std::vector<std::string> segments;
@@ -660,22 +703,39 @@ class WebDavStore final : public RemoteStore
     }
 
   private:
-    // HEAD 不可靠时用 PROPFIND Depth: 0 取单个对象的元信息。失败不改变已找到的结论：
-    // Stat 的语义是"存不存在"，大小与时间只是附带信息。
-    bool FillFromPropfind(const std::string &key, RemoteObject &object, std::string &message)
+    // 一个 Depth: 0 的 PROPFIND。Probe 用它探基址、ParentStatus 用它探上一级、
+    // FillFromPropfind 用它补 HEAD 拿不到的大小与时间，三处共用一份，改 prop 列表或
+    // 超时只用改这里。
+    HttpResponse PropfindDepth0(const std::string &url, long timeout_seconds = 60)
     {
         HttpRequest request;
         request.method = "PROPFIND";
-        request.url = JoinUrl(options_.base_url, key);
+        request.url = url;
         request.headers = BaseHeaders(options_);
         request.headers.push_back("Depth: 0");
-        request.headers.push_back("Content-Type: application/xml; charset=utf-8");
         request.body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
                        "<D:propfind xmlns:D=\"DAV:\"><D:prop>"
                        "<D:resourcetype/><D:getcontentlength/><D:getlastmodified/><D:getetag/>"
                        "</D:prop></D:propfind>";
-        request.timeout_seconds = 60;
-        const HttpResponse response = Perform(request);
+        request.timeout_seconds = timeout_seconds;
+        return Perform(request);
+    }
+
+    // 用户填的那个目录的上一级能不能访问。只用来区分「msime 这层还没建」和「地址填错了」，
+    // 不参与任何写入。返回 0 表示连上一级都算不出来或者请求没走完。
+    long ParentStatus()
+    {
+        const std::string parent = detail::ParentOf(options_.base_url);
+        if (parent.empty())
+            return 0;
+        return PropfindDepth0(parent, 30).status;
+    }
+
+    // HEAD 不可靠时用 PROPFIND Depth: 0 取单个对象的元信息。失败不改变已找到的结论：
+    // Stat 的语义是"存不存在"，大小与时间只是附带信息。
+    bool FillFromPropfind(const std::string &key, RemoteObject &object, std::string &message)
+    {
+        const HttpResponse response = PropfindDepth0(JoinUrl(options_.base_url, key));
         if (!IsSuccess(response.status))
         {
             message.clear();
