@@ -223,18 +223,6 @@ std::string DecodedUrlPath(const std::string &url)
     return path;
 }
 
-// 把 base_url 规范成"路径只编码一次"的写法。用户可能填原文（我的坚果云）也可能填
-// 编码后的（%E6%88%91…），两种都先解码再统一编码，后面 JoinUrl 拼 key 就不会出现
-// %25 这种二次编码。
-std::string CanonicalBaseUrl(const std::string &url)
-{
-    const std::string root = UrlRoot(url);
-    if (root.empty())
-        return NormalizeBase(url);
-    const std::string path = DecodedUrlPath(url);
-    return path.empty() ? root : root + "/" + detail::UriEncode(path, false);
-}
-
 // PROPFIND 一个 response 里可能有多个 propstat（200 的一块、404 的一块），顺序不保证；
 // 只认状态为 200 的那块，没写 status 的按 200 处理。
 const XmlNode *SuccessfulProp(const XmlNode &response)
@@ -255,6 +243,33 @@ const XmlNode *SuccessfulProp(const XmlNode &response)
 
 namespace detail
 {
+// 把 base_url 规范成"路径只编码一次"的写法。用户可能填原文（我的坚果云）也可能填
+// 编码后的（%E6%88%91…），两种都先解码再统一编码，后面 JoinUrl 拼 key 就不会出现
+// %25 这种二次编码。
+std::string CanonicalBaseUrl(const std::string &url)
+{
+    const std::string root = UrlRoot(url);
+    if (root.empty())
+        return NormalizeBase(url);
+    const std::string path = DecodedUrlPath(url);
+    return path.empty() ? root : root + "/" + UriEncode(path, false);
+}
+
+// 去掉 URL 路径的最后一段。scheme 里的 "//" 不能被当成路径分隔，否则会把
+// https://host 砍成 https:；没有路径段时返回空串。
+std::string ParentOf(std::string url)
+{
+    while (!url.empty() && url.back() == '/')
+        url.pop_back();
+    const std::size_t slash = url.rfind('/');
+    if (slash == std::string::npos)
+        return {};
+    const std::size_t scheme = url.find("://");
+    if (scheme != std::string::npos && slash < scheme + 3)
+        return {};
+    return url.substr(0, slash);
+}
+
 std::string WebDavHrefToKey(const std::string &href, const std::string &base_url)
 {
     // 两边都先解码再比：服务端回的 href 是编码过的（大小写也不定），base 可能是原文。
@@ -347,20 +362,26 @@ class WebDavStore final : public RemoteStore
   public:
     explicit WebDavStore(WebDavOptions options) : options_(std::move(options))
     {
-        // 用户填的目录原样留着给 Probe 用：探测的是"这个位置能不能访问、凭据对不对"，
-        // 和下面自动建出来的 msime 子目录无关。
-        user_base_url_ = CanonicalBaseUrl(options_.base_url);
-        // 有人可能照着以前的说明把 msime 也写进了地址里，别叠成 msime/msime。
+        const std::string canonical = detail::CanonicalBaseUrl(options_.base_url);
+        user_base_url_ = canonical;
+        // 有人照着以前的说明把 msime 也写进了地址里，别叠成 msime/msime。
+        // 那种写法本身就是要用的最终目录，不需要再探测旧布局。
         const std::string suffix = std::string("/") + kSyncSubdirectory;
-        const bool already_named =
-            user_base_url_.size() >= suffix.size() &&
-            user_base_url_.compare(user_base_url_.size() - suffix.size(), suffix.size(), suffix) == 0;
-        options_.base_url = already_named ? user_base_url_ : JoinUrl(user_base_url_, kSyncSubdirectory);
+        const bool already_named = canonical.size() >= suffix.size() &&
+                                   canonical.compare(canonical.size() - suffix.size(), suffix.size(), suffix) == 0;
+        if (already_named)
+        {
+            options_.base_url = canonical;
+            base_resolved_ = true;
+            return;
+        }
+        options_.base_url = JoinUrl(canonical, kSyncSubdirectory);
     }
 
     bool Put(const std::string &key, const std::filesystem::path &file, const ProgressCallback &progress,
              std::string &message) override
     {
+        ResolveBase();
         return Retry(
             [&](std::string &attempt_message) {
                 HttpRequest request;
@@ -382,6 +403,7 @@ class WebDavStore final : public RemoteStore
     bool Get(const std::string &key, const std::filesystem::path &file, const ProgressCallback &progress,
              std::string &message) override
     {
+        ResolveBase();
         return Retry(
             [&](std::string &attempt_message) {
                 HttpRequest request;
@@ -402,6 +424,7 @@ class WebDavStore final : public RemoteStore
 
     bool Stat(const std::string &key, RemoteObject &object, std::string &message) override
     {
+        ResolveBase();
         bool found = false;
         const bool ok = Retry(
             [&](std::string &attempt_message) {
@@ -443,6 +466,7 @@ class WebDavStore final : public RemoteStore
 
     bool List(const std::string &prefix, std::vector<RemoteObject> &objects, std::string &message) override
     {
+        ResolveBase();
         objects.clear();
         // PROPFIND 的是 prefix 指向的目录本身，Depth: 1 取它的直接子项。
         // 调用方用 prefix 表示"目录"，和 S3 的前缀语义对齐：devices 取设备清单，
@@ -550,6 +574,7 @@ class WebDavStore final : public RemoteStore
 
     bool Delete(const std::string &key, std::string &message) override
     {
+        ResolveBase();
         return Retry(
             [&](std::string &attempt_message) {
                 HttpRequest request;
@@ -570,12 +595,13 @@ class WebDavStore final : public RemoteStore
 
     bool Probe(std::string &message) override
     {
-        // 只看用户填的那个目录：能不能访问、凭据对不对。数据实际写在它下面的 msime
-        // 子目录里，那个子目录由首次上传时的 MKCOL 自动建出来，所以这里不要求它已经存在，
-        // 也不让用户先去网盘里手动建好。
+        ResolveBase();
+        // 探测数据实际落点的基址（默认是用户填的目录下面的 msime）。这样 404 的含义就
+        // 正好是「msime 这一层还没建」，与 EnsureDirectory 从这一级开始 MKCOL 的行为对得上：
+        // 那一级上不去的话上传同样建不出来，探测不能给出一个必然失败的承诺。
         HttpRequest request;
         request.method = "PROPFIND";
-        request.url = user_base_url_;
+        request.url = options_.base_url;
         request.headers = BaseHeaders(options_);
         request.headers.push_back("Depth: 0");
         request.body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
@@ -595,12 +621,19 @@ class WebDavStore final : public RemoteStore
         }
         if (IsNotFound(response.status))
         {
-            // 目录还不存在。上级集合能访问说明只是最后一级没建，首次上传会补上；
-            // 上级也不行就是地址本身写错了，早点报出来比等到 PUT 才失败好懂。
-            if (ParentReachable())
+            // 基址还不存在。上一级能访问说明只是 msime 这一层没建，上传时补上；
+            // 上一级也不行就是地址本身写错了，早点报出来比等到 PUT 回 409 好懂。
+            const long parent = ParentStatus();
+            if (IsSuccess(parent))
             {
                 message = "连接正常。备份目录还不存在，首次上传时会自动创建。";
                 return true;
+            }
+            if (parent == 401 || parent == 403)
+            {
+                // 共享盘只授权子目录时很常见，别把权限问题说成路径写错。
+                message = "用户名或密码不正确，或这个账号没有上级目录的访问权限";
+                return false;
             }
             message = "这个地址不存在，请检查路径。坚果云填 https://dav.jianguoyun.com/dav";
             return false;
@@ -616,6 +649,7 @@ class WebDavStore final : public RemoteStore
     // 末段开始逐级建，缺哪级补哪级，而不是假设用户已经建好。
     bool EnsureDirectory(const std::string &key, std::string &message) override
     {
+        ResolveBase();
         std::string directory = key;
         const std::size_t slash = directory.rfind('/');
         if (slash == std::string::npos)
@@ -687,24 +721,45 @@ class WebDavStore final : public RemoteStore
     }
 
   private:
-    // 用户填的那个目录的上一级能不能访问。只用来区分「目录还没建」和「地址填错了」，
-    // 不参与任何写入。
-    bool ParentReachable()
+    // 老版本把数据直接放在用户填的目录里（<目录>/devices/…）。新版本统一放进
+    // <目录>/msime/，但已经在旧位置上传过的人不该在升级后看到「云端暂无设备」。
+    // 第一次真正用到时判断一次：新目录已经在了就用新的，否则旧布局还在就继续用旧的。
+    // 只在没有自带 msime 后缀时才会走到这里，构造时已把那种情况标成已解析。
+    void ResolveBase()
     {
-        std::string url = user_base_url_;
-        while (!url.empty() && url.back() == '/')
-            url.pop_back();
-        const std::size_t slash = url.rfind('/');
-        if (slash == std::string::npos)
-            return false;
-        // 别把 scheme 里的 "//" 当成路径分隔，否则会把 https://host 砍成 https:。
-        const std::size_t scheme = url.find("://");
-        if (scheme != std::string::npos && slash < scheme + 3)
-            return false;
+        if (base_resolved_)
+            return;
+        base_resolved_ = true;
+        if (IsCollection(options_.base_url))
+            return;
+        if (IsCollection(JoinUrl(user_base_url_, "devices")))
+            options_.base_url = user_base_url_;
+    }
 
+    // 用户填的那个目录的上一级能不能访问。只用来区分「目录还没建」和「地址填错了」，
+    // 不参与任何写入。返回 0 表示连上一级都算不出来或者请求没走完。
+    long ParentStatus()
+    {
+        const std::string parent = detail::ParentOf(options_.base_url);
+        if (parent.empty())
+            return 0;
         HttpRequest request;
         request.method = "PROPFIND";
-        request.url = url.substr(0, slash);
+        request.url = parent;
+        request.headers = BaseHeaders(options_);
+        request.headers.push_back("Depth: 0");
+        request.body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                       "<D:propfind xmlns:D=\"DAV:\"><D:prop><D:resourcetype/></D:prop></D:propfind>";
+        request.timeout_seconds = 30;
+        return Perform(request).status;
+    }
+
+    // 一个 URL 是不是已经存在的集合。PROPFIND Depth: 0 返回 2xx（含 207）就算。
+    bool IsCollection(const std::string &url)
+    {
+        HttpRequest request;
+        request.method = "PROPFIND";
+        request.url = url;
         request.headers = BaseHeaders(options_);
         request.headers.push_back("Depth: 0");
         request.body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
@@ -767,8 +822,11 @@ class WebDavStore final : public RemoteStore
     }
 
     WebDavOptions options_;
-    // 用户填的原始目录，只给 Probe 用。options_.base_url 是它加上 msime 子目录后的实际根。
+    // 用户填的原始目录。options_.base_url 是实际用的基址：默认是它加上 msime，
+    // 老布局兼容时退回它本身。
     std::string user_base_url_;
+    // 基址只解析一次：ResolveBase 会先查新目录、再查旧布局，重复做没有意义。
+    bool base_resolved_ = false;
 };
 
 } // namespace

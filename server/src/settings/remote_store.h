@@ -63,7 +63,8 @@ struct WebDavOptions
 {
     // 网盘上放备份的位置，例如 https://dav.jianguoyun.com/dav。末尾斜杠会被去掉。
     // 实际对象写在它下面的 msime 子目录里（<base_url>/msime/...），子目录由首次上传时的
-    // MKCOL 自动创建，不需要用户先建好。
+    // MKCOL 自动创建，不需要用户先建好。老版本把对象直接放在 <base_url>/devices/ 下，
+    // 那里还有数据、而 msime 子目录还不存在时会继续用旧位置。
     std::string base_url;
     std::string username;
     std::string password;

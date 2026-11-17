@@ -64,6 +64,11 @@ std::string XmlDecodeEntities(const std::string &value);
 // 把 PROPFIND 返回的 href（完整 URL、绝对路径，编码与否都行）换算成相对于 base_url 的 key。
 // 两边都先解码再比前缀；href 不在 base 之下时返回它的完整解码路径（含 /，调用方据此跳过）。
 std::string WebDavHrefToKey(const std::string &href, const std::string &base_url);
+// 把 base_url 规范成「路径只编码一次」的写法：原文和已编码的输入都先解码再统一编码，
+// 末尾斜杠去掉。后面 JoinUrl 拼 key 因此不会出现 %25 二次编码。
+std::string CanonicalBaseUrl(const std::string &url);
+// 去掉 URL 路径的最后一段。scheme 里的 "//" 不算路径分隔；没有路径段时返回空串。
+std::string ParentOf(std::string url);
 // 规范化查询串：按编码后的参数名排序。
 std::string CanonicalQuery(const std::vector<std::pair<std::string, std::string>> &params);
 

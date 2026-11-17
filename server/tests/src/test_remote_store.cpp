@@ -135,6 +135,52 @@ TEST_CASE(url_root_keeps_only_scheme_and_authority)
     REQUIRE_EQ(user_data_sync::detail::UrlRoot("https://dav.example.com"), std::string("https://dav.example.com"));
 }
 
+// base 地址里的中文必须只编码一次：先解码再统一编码。填原文和填编码过的都要落到
+// 同一个结果，后面再 JoinUrl 拼 msime 也不能冒出 %25。
+TEST_CASE(webdav_canonical_base_url_encodes_path_exactly_once)
+{
+    using user_data_sync::detail::CanonicalBaseUrl;
+    REQUIRE_EQ(CanonicalBaseUrl("https://dav.jianguoyun.com/dav"), std::string("https://dav.jianguoyun.com/dav"));
+    // 末尾斜杠去掉。
+    REQUIRE_EQ(CanonicalBaseUrl("https://dav.jianguoyun.com/dav/"), std::string("https://dav.jianguoyun.com/dav"));
+    // 中文目录：原文进、%XX 出。
+    REQUIRE_EQ(CanonicalBaseUrl("https://dav.jianguoyun.com/dav/我的坚果云"),
+               std::string("https://dav.jianguoyun.com/dav/%E6%88%91%E7%9A%84%E5%9D%9A%E6%9E%9C%E4%BA%91"));
+    // 已经编码过的输入不二次编码。
+    REQUIRE_EQ(CanonicalBaseUrl("https://dav.jianguoyun.com/dav/%E6%88%91%E7%9A%84%E5%9D%9A%E6%9E%9C%E4%BA%91"),
+               std::string("https://dav.jianguoyun.com/dav/%E6%88%91%E7%9A%84%E5%9D%9A%E6%9E%9C%E4%BA%91"));
+    // 只有 host。
+    REQUIRE_EQ(CanonicalBaseUrl("https://dav.jianguoyun.com/"), std::string("https://dav.jianguoyun.com"));
+}
+
+TEST_CASE(webdav_sync_subdirectory_never_double_encodes)
+{
+    using user_data_sync::detail::CanonicalBaseUrl;
+    using user_data_sync::detail::JoinUrl;
+    const std::string base = CanonicalBaseUrl("https://dav.jianguoyun.com/dav/我的坚果云");
+    const std::string with_subdirectory = JoinUrl(base, "msime");
+    REQUIRE(with_subdirectory.find("%25") == std::string::npos);
+    REQUIRE_EQ(with_subdirectory,
+               std::string("https://dav.jianguoyun.com/dav/%E6%88%91%E7%9A%84%E5%9D%9A%E6%9E%9C%E4%BA%91/msime"));
+}
+
+// 上级目录只砍一层路径。scheme 里的 "//" 不是路径分隔；只有 host 时没有上级。
+TEST_CASE(webdav_parent_url_stops_at_authority)
+{
+    using user_data_sync::detail::ParentOf;
+    REQUIRE_EQ(ParentOf("https://dav.jianguoyun.com/dav/msime"), std::string("https://dav.jianguoyun.com/dav"));
+    REQUIRE_EQ(ParentOf("https://dav.jianguoyun.com/dav/msime/"), std::string("https://dav.jianguoyun.com/dav"));
+    REQUIRE_EQ(ParentOf("https://dav.jianguoyun.com/dav"), std::string("https://dav.jianguoyun.com"));
+    REQUIRE_EQ(ParentOf("https://dav.jianguoyun.com"), std::string());
+    REQUIRE_EQ(ParentOf("https://dav.jianguoyun.com/"), std::string());
+    // 端口不能吃掉一段路径。
+    REQUIRE_EQ(ParentOf("https://host:8443/a/b"), std::string("https://host:8443/a"));
+    REQUIRE_EQ(ParentOf("https://host:8443/a"), std::string("https://host:8443"));
+    // 方括号 IPv6 里的冒号不是端口分隔。
+    REQUIRE_EQ(ParentOf("https://[::1]:8443/a/b"), std::string("https://[::1]:8443/a"));
+    REQUIRE_EQ(ParentOf("https://[::1]/a"), std::string("https://[::1]"));
+}
+
 // 带认证的请求会先收到 401 挑战再收到 200。挑战块里的 Content-Length: 0 不是最终响应
 // 的事实，取头必须只看最后一个响应块——真实坚果云上 HEAD 就踩过这个坑。
 TEST_CASE(header_value_ignores_the_auth_challenge_block)
