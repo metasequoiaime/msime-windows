@@ -2,6 +2,7 @@
 
 #include "candidate_provider.h"
 #include "../core/runtime_paths.h"
+#include "../core/wubi_profile.h"
 #include <sqlite3.h>
 #include <string>
 
@@ -23,6 +24,12 @@ class WubiCandidateProvider : public ICandidateProvider
         return std::nullopt;
     }
     void reset_cache() override;
+    // 换一版码表（86、98、新世纪）。查询语句绑着表名，换了就关掉连接，下次查询按新表重新准备。
+    void set_profile(metasequoia::WubiProfile profile);
+    metasequoia::WubiProfile profile() const
+    {
+        return profile_;
+    }
     int create_word(SchemeType scheme, std::string code, std::string word) override;
     int update_weight_by_pinyin_and_word(SchemeType scheme, std::string code, std::string word) override;
     int delete_by_pinyin_and_word(SchemeType scheme, std::string code, std::string word) override;
@@ -40,6 +47,7 @@ class WubiCandidateProvider : public ICandidateProvider
 
     std::string db_path_;
     metasequoia::RuntimePaths paths_;
+    metasequoia::WubiProfile profile_ = metasequoia::WubiProfile::Wubi86;
     sqlite3 *db_ = nullptr;
     sqlite3_stmt *query_statement_ = nullptr;
     // 通配码（含 z）专用：WHERE 是 GLOB 而非范围，语句与参数个数都不同，单独 prepared。

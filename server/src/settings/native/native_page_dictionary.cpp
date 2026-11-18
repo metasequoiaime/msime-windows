@@ -213,11 +213,21 @@ VisualPtr BuildDictionaryPage(PageContext &context)
     auto hans = std::make_shared<Hideable>(hansCard);
     page.AddRaw(hans, 0.0f);
 
-    tabs->SetOnSelect([panel](size_t index) {
+    // 五笔标签页管理「输入」页选的那一版码表（86 / 98 / 新世纪）：三版共用一个标签，词库 id 随配置走。
+    SettingsModel *model = &context.model;
+    const auto wubiDictionary = [model]() { return WubiDictionaryId(model->GetString("input.wubi_schema")); };
+    tabs->SetOnSelect([panel, wubiDictionary](size_t index) {
         static const char *const kDictionaries[] = {"quanpin", "wubi", "english", "latin"};
-        panel->SetDictionary(kDictionaries[std::min<size_t>(index, std::size(kDictionaries) - 1)]);
+        const std::string dictionary = kDictionaries[std::min<size_t>(index, std::size(kDictionaries) - 1)];
+        panel->SetDictionary(dictionary == "wubi" ? wubiDictionary() : dictionary);
     });
     std::weak_ptr<DictionaryPanel> weakPanel = panel;
+    context.OnConfig([weakPanel, wubiDictionary]() {
+        // 在五笔标签页上时换了码表版本，跟着换到那一版的表。
+        auto locked = weakPanel.lock();
+        if (locked && IsWubiDictionaryId(locked->Dictionary()) && locked->Dictionary() != wubiDictionary())
+            locked->SetDictionary(wubiDictionary());
+    });
     panel->SetOnModeChanged([weakPanel, hans, hansTitle]() {
         auto locked = weakPanel.lock();
         if (!locked)
@@ -226,8 +236,9 @@ VisualPtr BuildDictionaryPage(PageContext &context)
         const std::string &dictionary = locked->Dictionary();
         hans->SetVisible(dictionary != "english");
         hansTitle->SetText(dictionary == "quanpin" ? L"批量导入纯汉字词组(e.g.人名)到拼音词库"
-                           : dictionary == "latin" ? L"批量导入字母词(e.g.T恤)，每行一个词，自动注音"
-                                                   : L"批量导入纯汉字词组(e.g.人名)到五笔词库");
+                           : dictionary == "latin"
+                               ? L"批量导入字母词(e.g.T恤)，每行一个词，自动注音"
+                               : L"批量导入纯汉字词组(e.g.人名)到" + WubiDictionaryLabel(dictionary));
     });
 
     // 导入其他词库：左边选格式，右边导入。都是拼音词库，一律进拼音用户词库，与当前标签页无关。
@@ -271,7 +282,10 @@ VisualPtr BuildDictionaryPage(PageContext &context)
     exportTitle->SetMargin({0.0f, 0.0f, 0.0f, 14.0f});
     exportBody->Add(exportTitle);
     exportBody->Add(MakeExportRow(L"导出拼音用户词库", [panel]() { panel->Export("quanpin"); }, 62.0f, true));
-    exportBody->Add(MakeExportRow(L"导出五笔用户词库", [panel]() { panel->Export("wubi"); }, 62.0f, true));
+    // 三版五笔的用户词各记各的，各导各的；86 沿用原来的词库 id 和文件名。
+    exportBody->Add(MakeExportRow(L"导出 86 五笔用户词库", [panel]() { panel->Export("wubi"); }, 62.0f, true));
+    exportBody->Add(MakeExportRow(L"导出 98 五笔用户词库", [panel]() { panel->Export("wubi98"); }, 62.0f, true));
+    exportBody->Add(MakeExportRow(L"导出新世纪五笔用户词库", [panel]() { panel->Export("wubixsj"); }, 62.0f, true));
     exportBody->Add(MakeExportRow(L"导出英文用户词库", [panel]() { panel->Export("english"); }, 62.0f, true));
     exportBody->Add(MakeExportRow(L"导出字母词用户词库", [panel]() { panel->Export("latin"); }, 62.0f, true));
     page.AddRaw(std::make_shared<PageCard>(exportBody, PageCard::Style::Section, Thickness{24.0f, 18.0f, 24.0f, 0.0f}),

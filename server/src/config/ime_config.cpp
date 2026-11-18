@@ -20,6 +20,7 @@
 #include "clipboard/clipboard_history.h"
 #include "engine/common/helpcode_utils.h"
 #include "engine/core/data_path.h"
+#include "engine/core/wubi_profile.h"
 #include "engine/contracts/input_state_shortcuts.h"
 #include "statistics/stats_store.h"
 #include "voice-input/voice_providers.h"
@@ -544,7 +545,11 @@ bool LoadImeConfig()
             const std::string schema = tbl["input"]["shuangpin_schema"].value_or(std::string("xiaohe"));
             g_shuangpin_schema = LoadShuangpinSchema(schema) ? schema : "xiaohe";
         }
-        g_wubi_schema = tbl["input"]["wubi_schema"].value_or(std::string("wubi86"));
+        {
+            // 不认识的码表版本（手改写错、或更新的版本加的）按 86 五笔读，不带着一张不存在的表输入。
+            const std::string schema = tbl["input"]["wubi_schema"].value_or(std::string("wubi86"));
+            g_wubi_schema = metasequoia::wubi_profile_from_name(schema) ? schema : "wubi86";
+        }
         g_wubi_mixed_pinyin = tbl["input"]["wubi_mixed_pinyin"].value_or(false);
         g_escape_keeps_selected_word = tbl["input"]["escape_keeps_selected_word"].value_or(false);
         g_enter_learns_english_word = tbl["input"]["enter_learns_english_word"].value_or(true);

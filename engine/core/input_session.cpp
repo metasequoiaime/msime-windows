@@ -646,7 +646,8 @@ void InputSession::set_wubi_input_options(metasequoia::WubiInputOptions options)
     // Server 每次击键都重读配置并调用这里；值没变就不能重建候选，否则五笔会话每键会多跑一轮
     // 码表（混输时再加一轮拼音）查询，而那次结果紧接着被真正按键的重建覆盖。
     const auto &current = engine_.wubi_input_options();
-    if (current.mixed_pinyin == options.mixed_pinyin && current.z_wildcard == options.z_wildcard)
+    if (current.mixed_pinyin == options.mixed_pinyin && current.z_wildcard == options.z_wildcard &&
+        current.profile == options.profile)
     {
         return;
     }
@@ -1413,7 +1414,7 @@ std::optional<std::string> InputSession::adjust_pinyin_candidate_frequency(const
     const bool pinyin_candidate = is_wubi() && !wubi;
     std::string context_key =
         super_jianpin ? local_modes::jianpin_ranking_context(local_preedit_.substr(1), scheme(), shuangpin_profile_)
-        : wubi        ? engine_.get_request().raw_input
+        : wubi        ? position_context(false, true)
         : pinyin_candidate ? position_context(false, false)
                            : engine_.get_request().normalized_segmentation;
     if (!super_jianpin && context_key.empty())
@@ -1428,7 +1429,8 @@ std::optional<std::string> InputSession::adjust_pinyin_candidate_frequency(const
         path_to_utf8(paths_.dictionary(assets::main_dictionary)), path_to_utf8(paths_.user(assets::user_journal)),
         context_key, ranked, entry_key, selected.word, frequency_mode_name(options.mode), options.linear_step,
         options.trigger_count, force_top, &ranking_changed,
-        (wubi && !super_jianpin) ? user_dictionary::DictionaryKind::Wubi : user_dictionary::DictionaryKind::Pinyin);
+        (wubi && !super_jianpin) ? user_dictionary::wubi_dictionary_kind(wubi_input_options().profile)
+                                 : user_dictionary::DictionaryKind::Pinyin);
     if (!adjusted)
     {
         return std::string("Unable to persist candidate frequency adjustment.");

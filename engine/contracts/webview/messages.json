@@ -533,6 +533,8 @@
             "enum": [
               "quanpin",
               "wubi",
+              "wubi98",
+              "wubixsj",
               "english",
               "quick",
               "latin"

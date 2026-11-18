@@ -5,16 +5,31 @@
 #include <functional>
 #include <optional>
 #include "../core/word_item.h"
+#include "../core/wubi_profile.h"
 
 namespace user_dictionary
 {
 enum class DictionaryKind
 {
     Pinyin,
+    // 86 五笔（日志里写 wubi，表 wubi86）。
     Wubi,
     QuickPhrase,
     English,
+    // 98 五笔与新世纪五笔，日志里写 wubi98 / wubixsj，表名同。只追加在末尾，已有的值不变。
+    Wubi98,
+    WubiXsj,
 };
+
+// 五笔方案下这一版码表的调频、删词和用户词归入的种类。
+DictionaryKind wubi_dictionary_kind(metasequoia::WubiProfile profile);
+// 三版五笔共用编码规则（1–4 个 a–y 字母），只是表不同。
+bool is_wubi_kind(DictionaryKind kind);
+// msime.db 里这个种类的五笔码表；不是五笔种类时为 nullptr。
+const char *wubi_table(DictionaryKind kind);
+// 日志 user_dictionary_operations.dictionary 列里的种类名（pinyin、wubi、wubi98、wubixsj、quick、english）。
+const char *dictionary_kind_name(DictionaryKind kind);
+std::optional<DictionaryKind> dictionary_kind_from_name(const std::string &name);
 
 std::string default_user_db_path();
 
@@ -70,8 +85,9 @@ bool record_pinyin_upsert_from_database(const std::string &main_db_path, const s
 // semantics as the quanpin side) and persist the new weight plus a journal upsert in one
 // attached-database transaction. Existing rows only: a missing (key,value) pair returns false
 // without inserting. Row-missing behaviour matches update_wubi_weight.
+// kind 选五笔版本的表（Wubi / Wubi98 / WubiXsj），不是五笔种类时返回 false。
 bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
-                      const std::string &value);
+                      const std::string &value, DictionaryKind kind = DictionaryKind::Wubi);
 // 同上，拼音分表（key 是带分隔符的完整全拼，表名按格式契约从它算）。长词前缀补全（#1343）选中时用：
 // 它的键和同页其他候选不同，不能走 adjust_candidate_ranking 按排位挪位置。
 bool bump_pinyin_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,

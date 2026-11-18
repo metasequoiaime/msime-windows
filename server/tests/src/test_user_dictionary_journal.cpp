@@ -239,6 +239,59 @@ TEST_CASE(UserDictionaryReplayIsIdempotentAcrossAllSettingsDictionaries)
     std::filesystem::remove_all(directory);
 }
 
+// 98、新世纪五笔的日志行写进各自的表；词库还没有那一版的表（旧词库）时那一行计入 skipped、
+// 留在日志里，不能算失败让整批回滚、中止安装。换上带这张表的词库后再回放就写进去。
+TEST_CASE(UserDictionaryReplayWritesEachWubiProfileAndSkipsMissingTables)
+{
+    const auto directory = test::TempRoot() / ("msime-replay-wubi-" + std::to_string(GetCurrentProcessId()));
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    const auto user_path = directory / "msime_user.db";
+    const auto main_path = directory / "msime.db";
+    const auto english_path = directory / "english.db";
+    {
+        TestDatabase main_db(main_path);
+        main_db.exec("CREATE TABLE wubi86(key TEXT,value TEXT,weight INTEGER);");
+        TestDatabase english_db(english_path);
+        english_db.exec("CREATE TABLE english_words(word TEXT PRIMARY KEY,display TEXT);");
+    }
+    REQUIRE(user_dictionary::record_user_insert(test::Utf8(user_path), user_dictionary::DictionaryKind::Wubi, "wqaa",
+                                                "八六", 10));
+    REQUIRE(user_dictionary::record_user_insert(test::Utf8(user_path), user_dictionary::DictionaryKind::Wubi98, "wqbb",
+                                                "九八", 20));
+    REQUIRE(user_dictionary::record_user_insert(test::Utf8(user_path), user_dictionary::DictionaryKind::WubiXsj, "wqcc",
+                                                "新世纪", 30));
+
+    auto replay = user_dictionary::replay(test::Utf8(user_path), test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(replay.error.empty());
+    REQUIRE_EQ(replay.failed, 0);
+    REQUIRE_EQ(replay.applied, 1);
+    REQUIRE_EQ(replay.skipped, 2);
+
+    {
+        TestDatabase main_db(main_path);
+        main_db.exec("CREATE TABLE wubi98(key TEXT,value TEXT,weight INTEGER);"
+                     "CREATE TABLE wubixsj(key TEXT,value TEXT,weight INTEGER);");
+    }
+    replay = user_dictionary::replay(test::Utf8(user_path), test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(replay.error.empty());
+    REQUIRE_EQ(replay.failed, 0);
+    REQUIRE_EQ(replay.applied, 3);
+    REQUIRE_EQ(replay.skipped, 0);
+    {
+        TestDatabase main_db(main_path);
+        REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM wubi86 WHERE key='wqaa' AND value='八六'"), 1);
+        REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM wubi98 WHERE key='wqbb' AND value='九八' AND weight=20"),
+                   1);
+        REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM wubixsj WHERE key='wqcc' AND value='新世纪' AND weight=30"),
+                   1);
+        // 每一版只写自己的表。
+        REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM wubi86 WHERE value IN ('九八','新世纪')"), 0);
+        REQUIRE_EQ(main_db.scalar_int("SELECT COUNT(*) FROM wubi98 WHERE value IN ('八六','新世纪')"), 0);
+    }
+    std::filesystem::remove_all(directory);
+}
+
 // The journal stores the absolute weights a learning write produced against the shipped
 // dictionary of that time. After an upgrade that rescaled the dictionary (msime-dictionary
 // aligned its pinyin weights with rime-wanxiang: 了/le went from 3.5 million to 52 million),
