@@ -334,7 +334,8 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             // The frame already on screen is identical to the page just loaded, so the render echo is
             // honest even though nothing was repainted. Without it a digit/space selection would wait
             // out the full timeout on content that is already visible.
-            FanyNamedPipe::NoteCandidatePagePainted(candidatePage->generation, true);
+            FanyNamedPipe::NoteCandidatePagePainted(candidatePage->generation, true,
+                                                    CandidatePresenter::Instance().LastShownCount());
             CAND_DIAG_LOGF(L"candidate-frame path=dedup page_gen={}", candidatePage->generation);
             return 0;
         }
@@ -624,6 +625,9 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const std::string previous_candidate_skin = GetConfiguredCandidateSkin();
             const bool previous_fit_content = GetConfiguredCandidateWindowFitContent();
             const bool previous_single_line = GetConfiguredCandidateWindowSingleLine();
+            const bool previous_fixed_width = GetConfiguredCandidateWindowFixedWidth();
+            const double previous_fixed_width_ratio = GetConfiguredCandidateWindowFixedWidthRatio();
+            const bool previous_fixed_height = GetConfiguredCandidateWindowFixedHeight();
             const bool previous_floating_toolbar = GetConfiguredFloatingToolbarEnabled();
             const bool previous_caret_state_indicator = GetConfiguredCaretStateIndicatorEnabled();
             const FloatingToolbarItemsConfig previous_floating_toolbar_items = GetConfiguredFloatingToolbarItems();
@@ -714,6 +718,9 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
                     (previous_layout != GetConfiguredCandidateWindowLayout() ||
                      previous_fit_content != GetConfiguredCandidateWindowFitContent() ||
                      previous_single_line != GetConfiguredCandidateWindowSingleLine() ||
+                     previous_fixed_width != GetConfiguredCandidateWindowFixedWidth() ||
+                     previous_fixed_width_ratio != GetConfiguredCandidateWindowFixedWidthRatio() ||
+                     previous_fixed_height != GetConfiguredCandidateWindowFixedHeight() ||
                      previous_candidate_skin != GetConfiguredCandidateSkin() ||
                      previous_theme_mode != GetConfiguredThemeMode() ||
                      previous_theme_cand != GetConfiguredThemeCand() || previous_font != GetConfiguredCandidateFont() ||

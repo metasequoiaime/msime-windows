@@ -29,6 +29,8 @@ class CandidatePresenter
     // deriving it from the caret, for when no caret position is known at all.
     // nullptr returns to caret placement; Hide() clears it too.
     void SetPinnedCardOrigin(const POINT *origin);
+    // 横排固定宽度时上一帧只画出了前几个候选；没有裁掉时为 -1。去重路径回显绘制时要带上它。
+    int LastShownCount() const;
 
   private:
     CandidatePresenter();
@@ -117,4 +119,7 @@ class CandidatePresenter
     size_t expandRequestedCount_ = 0;
     int expandRows_ = 4;
     float expandRowStepDip_ = 30.0f;
+    // 最近一次画的候选页第一个候选的绝对下标，横排固定宽度回报「这一页放得下几个」时带上。
+    int renderedPageStart_ = 0;
+    int lastShownCount_ = -1;
 };

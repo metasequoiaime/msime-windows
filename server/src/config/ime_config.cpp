@@ -229,6 +229,9 @@ std::string g_candidate_window_layout = "vertical";
 bool g_candidate_window_follow_cursor = true;
 bool g_candidate_window_fit_content = false;
 bool g_candidate_window_single_line = false;
+bool g_candidate_window_fixed_width = false;
+double g_candidate_window_fixed_width_ratio = kCandidateWindowFixedWidthRatioDefault;
+bool g_candidate_window_fixed_height = false;
 std::string g_candidate_skin = "fluent";
 std::string g_candidate_window_preedit_style = "pinyin";
 bool g_candidate_fixed_badge = true;
@@ -833,6 +836,16 @@ bool LoadImeConfig()
         g_candidate_window_follow_cursor = tbl["appearance"]["candidate_window_follow_cursor"].value_or(true);
         g_candidate_window_fit_content = tbl["appearance"]["candidate_window_fit_content"].value_or(false);
         g_candidate_window_single_line = tbl["appearance"]["candidate_window_single_line"].value_or(false);
+        g_candidate_window_fixed_width = tbl["appearance"]["candidate_window_fixed_width"].value_or(false);
+        {
+            const double ratio = tbl["appearance"]["candidate_window_fixed_width_ratio"].value_or(
+                kCandidateWindowFixedWidthRatioDefault);
+            g_candidate_window_fixed_width_ratio =
+                ratio >= kCandidateWindowFixedWidthRatioMin && ratio <= kCandidateWindowFixedWidthRatioMax
+                    ? ratio
+                    : kCandidateWindowFixedWidthRatioDefault;
+        }
+        g_candidate_window_fixed_height = tbl["appearance"]["candidate_window_fixed_height"].value_or(false);
         const std::string skin = tbl["appearance"]["candidate_skin"].value_or(std::string("fluent"));
         g_candidate_skin = IsValidCandidateSkinId(skin) ? skin : "fluent";
         {

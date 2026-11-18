@@ -65,7 +65,11 @@ void EnqueueCandidateUiAction(CandidateUiAction action, int one_based_index, int
 // 代次，由工作线程在处理下一个任务前认领（见 LatchCandidateUiInteraction）。
 void NoteCandidateUiInteraction(uint64_t page_generation);
 // 候选窗实际画出了哪一代页面：界面线程在绘制完成（含去重命中）后回显，选词以它为准。
-void NoteCandidatePagePainted(uint64_t page_generation, bool visible);
+// shown_count >= 0 表示只画出了前 shown_count 个（横排固定宽度一行放不下），后面的不能选。
+void NoteCandidatePagePainted(uint64_t page_generation, bool visible, int shown_count = -1);
+// 横排固定宽度：候选窗量出 page_generation 那一版、从 page_start 起的当前页一行只放得下 count 个。
+// 界面线程调用，工作线程据此重新划页并重发一版。
+void EnqueueCandidatePageFitted(uint64_t page_generation, int page_start, int count);
 // 候选窗显示/隐藏：隐藏后迟到页不得复活，选词也不再等一次不会到来的绘制。
 void NoteCandidatePageVisibility(bool visible);
 // Paging carries a step count rather than a candidate index. Steps coalesce

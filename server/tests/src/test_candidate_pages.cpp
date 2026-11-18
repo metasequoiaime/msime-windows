@@ -32,6 +32,7 @@ CandidatePage MakePage(const std::string &input, const std::vector<std::string> 
         snapshot->page_words.push_back(Wide(word));
     }
     snapshot->page_index = page_index;
+    snapshot->page_start = page_index * 5;
     snapshot->selected_index_in_page = selected;
     snapshot->page_item_count = static_cast<int>(words.size());
 
@@ -268,6 +269,43 @@ TEST_CASE(candidate_pages_does_not_commit_a_page_from_a_previous_input)
     const auto choice = pages->CommitSlot(0);
     REQUIRE(choice);
     REQUIRE(choice->item.word == "新页");
+}
+
+// 横排固定宽度一行只画出了前两个：第三个不在屏幕上，数字键选不到它。
+TEST_CASE(candidate_pages_refuses_slots_the_presenter_did_not_draw)
+{
+    FakeSurface surface;
+    auto pages = MakePages(surface, milliseconds{0});
+
+    pages->Show(MakePage("shi", {"是", "事", "时"}));
+    REQUIRE(pages->Painted(1, true, 2));
+    REQUIRE(pages->CommitSlot(1));
+    REQUIRE(!pages->CommitSlot(2));
+
+    // 重画时整页都放下了，回显不带个数，限制随之解除。
+    REQUIRE(pages->Painted(1, true));
+    const auto choice = pages->CommitSlot(2);
+    REQUIRE(choice);
+    REQUIRE(choice->item.word == "时");
+}
+
+TEST_CASE(candidate_pages_commit_starts_at_the_snapshot_page_start)
+{
+    FakeSurface surface;
+    auto pages = MakePages(surface, milliseconds{0});
+
+    // 固定宽度下第二页从下标 2 开始，不是 page_index * page_size。
+    auto page = MakePage("shi", {"是", "事", "时", "市"}, 1);
+    auto snapshot = std::make_shared<Global::CandidatePageSnapshot>(*page.snapshot);
+    snapshot->page_start = 2;
+    snapshot->page_words = {L"时", L"市"};
+    page.snapshot = snapshot;
+    pages->Show(page);
+    REQUIRE(pages->Painted(1, true));
+    const auto choice = pages->CommitSlot(1);
+    REQUIRE(choice);
+    REQUIRE(choice->item.word == "市");
+    REQUIRE(choice->absolute_index == 3);
 }
 
 TEST_CASE(candidate_pages_commit_uses_the_rendered_page)

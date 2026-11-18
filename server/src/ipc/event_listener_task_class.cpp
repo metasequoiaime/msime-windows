@@ -42,6 +42,8 @@ TaskClass ClassifyTask(TaskType type)
     case TaskType::UiDictionaryPreeditLookup:
     case TaskType::ReloadInputSession:
     case TaskType::EnsureInputSessionMatchesConfig:
+    // The page split it reports must land before the next key pages or selects.
+    case TaskType::UiCandidatePageFitted:
         return TaskClass::Foreground;
 
     // Other UI actions keep their existing priority.

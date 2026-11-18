@@ -68,6 +68,14 @@ class CandidatePages
         return static_cast<bool>(published_);
     }
 
+    // Generation of the page last published, 0 when there is none. A report the presenter measured on an older
+    // page is stale against it.
+    std::uint64_t PublishedGeneration() const
+    {
+        std::lock_guard lock(mutex_);
+        return published_ ? published_->generation : 0;
+    }
+
     // Silent publish: the page is what the next show will paint, but no frame is requested. The key path builds a
     // page this way and the caller decides whether to show it.
     void Publish(CandidatePage page)
@@ -175,7 +183,9 @@ class CandidatePages
 
     // UI thread: the presenter echoes the generation it actually painted (including the dedup path). Returns true
     // when this echo belongs to a page the module still knows; a stale or foreign echo must not advance the mirror.
-    bool Painted(std::uint64_t generation, bool visible)
+    // shown_count >= 0 says the presenter drew only that many leading items of the page (a fixed-width horizontal
+    // window that fits fewer than page_size); slots past it are not on screen and cannot be committed.
+    bool Painted(std::uint64_t generation, bool visible, int shown_count = -1)
     {
         std::lock_guard lock(mutex_);
         if (generation == 0 || generation > published_generation_ || generation < rendered_generation_)
@@ -187,6 +197,7 @@ class CandidatePages
         rendered_ = *found;
         rendered_generation_ = generation;
         rendered_visible_ = visible;
+        rendered_shown_count_ = shown_count;
         cv_.notify_all();
         return true;
     }
@@ -270,10 +281,12 @@ class CandidatePages
         // page rather than dropping the key. This is the first-frame/timeout path; every other path prefers the
         // page the user actually saw.
 
-        const int count = static_cast<int>(page->snapshot->page_words.size());
+        int count = static_cast<int>(page->snapshot->page_words.size());
+        if (page == rendered_ && rendered_shown_count_ >= 0)
+            count = (std::min)(count, rendered_shown_count_);
         if (index_in_page < 0 || index_in_page >= count || index_in_page >= page->page_size || page->page_size <= 0)
             return std::nullopt;
-        const int start = page->snapshot->page_index * page->page_size;
+        const int start = page->snapshot->page_start;
         const int absolute = start + index_in_page;
         if (absolute < 0 || absolute >= static_cast<int>(page->items->size()))
             return std::nullopt;
@@ -300,6 +313,7 @@ class CandidatePages
     std::uint64_t published_generation_ = 0;
     std::uint64_t rendered_generation_ = 0;
     bool rendered_visible_ = false;
+    int rendered_shown_count_ = -1;
     bool async_blocked_ = false;
     bool latched_ = false;
     std::shared_ptr<const CandidatePage> published_;

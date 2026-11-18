@@ -47,6 +47,8 @@ enum class TaskType
     ToolbarLanguageToggle,
     ApplyRescoredOrder,
     RefreshWithEnrichment,
+    // 横排固定宽度：候选窗量出当前页一行只放得下几个，回报给工作线程重新划页。
+    UiCandidatePageFitted,
 };
 
 // The worker keeps FIFO order within each class.

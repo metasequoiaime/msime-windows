@@ -362,10 +362,15 @@ bool HasCandidatePage()
     return Pages().pages.HasPage();
 }
 
-void NoteCandidatePagePainted(std::uint64_t generation, bool visible)
+void NoteCandidatePagePainted(std::uint64_t generation, bool visible, int shown_count)
 {
-    if (Pages().pages.Painted(generation, visible))
+    if (Pages().pages.Painted(generation, visible, shown_count))
         Global::PublishRenderedCandidatePageGeneration(generation);
+}
+
+std::uint64_t PublishedCandidatePageGeneration()
+{
+    return Pages().pages.PublishedGeneration();
 }
 
 void NoteCandidatePageGesture(std::uint64_t generation)
@@ -975,9 +980,9 @@ void NoteCandidateUiInteraction(uint64_t page_generation)
         g_candidate_ui_interaction_generation.store(page_generation, std::memory_order_release);
 }
 
-void NoteCandidatePagePainted(uint64_t page_generation, bool visible)
+void NoteCandidatePagePainted(uint64_t page_generation, bool visible, int shown_count)
 {
-    event_listener_detail::NoteCandidatePagePainted(page_generation, visible);
+    event_listener_detail::NoteCandidatePagePainted(page_generation, visible, shown_count);
 }
 
 void NoteCandidatePageVisibility(bool visible)

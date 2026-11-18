@@ -491,6 +491,7 @@ FanyImeIpc::CandidatePage BuildCandidatePageValue(const std::wstring &candidate_
     snapshot->page_words = ui.page_words;
     snapshot->candidate_string = candidate_string;
     snapshot->page_index = ui.page_index;
+    snapshot->page_start = ui.current_page_start();
     snapshot->selected_index_in_page = ui.selected_index_in_page;
     snapshot->page_count = ui.current_page_count();
     snapshot->page_item_count = ui.cur_page_item_cnt;
@@ -730,8 +731,9 @@ int MoveToExpandedCandidate(int absolute_index, const std::wstring &expected_tex
             return -1;
     }
     ui.begin_selection();
-    ui.page_index = static_cast<int>(index) / ui.page_size;
-    ui.selected_index_in_page = static_cast<int>(index) % ui.page_size;
+    const auto [page, index_in_page] = ui.locate(static_cast<int>(index));
+    ui.page_index = page;
+    ui.selected_index_in_page = index_in_page;
     ui.clear_page();
     return ui.selected_index_in_page;
 }

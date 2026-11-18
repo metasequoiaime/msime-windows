@@ -404,6 +404,7 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
         impl_->expandContent->SetShowGrid(showGrid);
         impl_->expandToggle->SetExpanded(expanded_);
     }
+    renderedPageStart_ = page->page_start;
     return page->generation;
 }
 
@@ -1066,8 +1067,34 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // must not split measure (clamped at one scale) from placement (another).
     const ResolvedCandidateScale scale = ResolveCandidateScaleForCaret(caret);
     const HalfScreenDipLimits limits = ApplyScaleToHalfScreenLimits(caret, scale.scale);
-    const float maxW = limits.maxWidthDip > 1.0 ? static_cast<float>(limits.maxWidthDip) : 480.0f;
+    float maxW = limits.maxWidthDip > 1.0 ? static_cast<float>(limits.maxWidthDip) : 480.0f;
     const float maxH = limits.maxHeightDip > 1.0 ? static_cast<float>(limits.maxHeightDip) : 640.0f;
+    // 横排固定宽度：卡片宽度钉在光标所在屏幕宽度（物理像素）的固定比例上，按本次显示的缩放换成 DIP。
+    // 一行放不下的候选不换行，裁掉后回报给工作线程，由它把它们划到下一页。
+    const bool fixedWidth = CandidateWindowFixedWidthActive();
+    float fixedCardWidthDip = 0.0f;
+    if (fixedWidth)
+    {
+        const double monitorWidthPx =
+            (std::max)(1.0, static_cast<double>(limits.monitor.right) - static_cast<double>(limits.monitor.left));
+        const double dipScale = limits.scale > 0.0f ? static_cast<double>(limits.scale) : 1.0;
+        fixedCardWidthDip =
+            (std::max)(cardMinWidthDip_,
+                       static_cast<float>(monitorWidthPx * GetConfiguredCandidateWindowFixedWidthRatio() / dipScale));
+        maxW = fixedCardWidthDip + kShadowPadLeft + kShadowPadRight;
+    }
+    // 竖排固定高度：卡片始终保持放得下 page_size 个候选的高度，候选少的页下面留空。
+    const bool fixedHeight =
+        GetConfiguredCandidateWindowLayout() == "vertical" && GetConfiguredCandidateWindowFixedHeight();
+    // 固定高度时每一行的行高也固定：emoji 或回落字体的字比汉字行高略高，不能让那一行把卡片撑高几像素。
+    // 皮肤重新套用时外观会被整份换掉，所以每次显示都对一下。
+    if (impl_->list && impl_->list->GetAppearance().uniformRowHeight != fixedHeight)
+    {
+        msimeui::CandidateList::Appearance appearance = impl_->list->GetAppearance();
+        appearance.uniformRowHeight = fixedHeight;
+        impl_->list->SetAppearance(std::move(appearance));
+    }
+    int shownCount = -1;
     float widthDip = 0.0f;
     float heightDip = 0.0f;
     auto layoutRoot = [&]() {
@@ -1088,10 +1115,38 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // carrying the old size over leaves blank rows at the bottom.
     if (impl_->card)
     {
-        impl_->card->SetMinWidth(cardMinWidthDip_);
+        impl_->card->SetMinWidth(fixedWidth ? fixedCardWidthDip : cardMinWidthDip_);
         impl_->card->ClearMinHeight();
     }
     layoutRoot();
+    if (fixedWidth && impl_->list)
+    {
+        const size_t total = impl_->list->GetItemCount();
+        const size_t fit = (std::max)(static_cast<size_t>(1), impl_->list->CountItemsOnFirstLine());
+        if (fit < total)
+        {
+            ignoreSelectionCallback_ = true;
+            impl_->list->TruncateItems(fit);
+            ignoreSelectionCallback_ = false;
+            shownCount = static_cast<int>(fit);
+            layoutRoot();
+        }
+    }
+    float fixedCardHeightDip = 0.0f;
+    if (fixedHeight && impl_->card && impl_->list)
+    {
+        const size_t pageSize = static_cast<size_t>((std::max)(1, GetConfiguredCandidatePageSize()));
+        const size_t count = impl_->list->GetItemCount();
+        if (count < pageSize)
+        {
+            // 定高行（见下面打开 uniformRowHeight 的地方）每行一样高，空出来的行按同一步长补。
+            const float rowStep = impl_->list->UniformRowHeight() + impl_->list->GetAppearance().itemGap;
+            const size_t missing = pageSize - count;
+            // 一个候选都没有时列表仍占一行高（CandidateList::Measure），那一行算在已有的里面。
+            fixedCardHeightDip =
+                impl_->card->GetBounds().height + rowStep * static_cast<float>(count == 0 ? missing - 1 : missing);
+        }
+    }
     if (impl_->card)
     {
         std::wstring stickyKey = GetPreeditWithCaretMarker();
@@ -1109,10 +1164,11 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
         const msimeui::RectF natural = impl_->card->GetBounds();
         const float maxCardWidthDip = (std::max)(cardMinWidthDip_, maxW - kShadowPadLeft - kShadowPadRight);
         // fit_content 的卡片严格跟随文字宽度，只保留高度的只增不减。
-        stickyCardWidthDip_ = fitContent_
+        // 固定宽度的卡片本来就是定宽，不用再撑。
+        stickyCardWidthDip_ = fitContent_ || fixedWidth
                                   ? natural.width
                                   : (std::min)(StickyCardExtent(stickyCardWidthDip_, natural.width), maxCardWidthDip);
-        stickyCardHeightDip_ = StickyCardExtent(stickyCardHeightDip_, natural.height);
+        stickyCardHeightDip_ = (std::max)(StickyCardExtent(stickyCardHeightDip_, natural.height), fixedCardHeightDip);
         if (stickyCardWidthDip_ > natural.width + 0.5f || stickyCardHeightDip_ > natural.height + 0.5f)
         {
             impl_->card->SetMinWidth((std::max)(cardMinWidthDip_, stickyCardWidthDip_));
@@ -1143,7 +1199,17 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // PlaceAndShow paints synchronously, so the page is on screen now. Echo the generation of the
     // snapshot that was actually rendered (not the latest published one) so a pending digit/space
     // selection can settle against the same page the user is looking at.
-    FanyNamedPipe::NoteCandidatePagePainted(renderedGeneration, true);
+    lastShownCount_ = shownCount;
+    FanyNamedPipe::NoteCandidatePagePainted(renderedGeneration, true, shownCount);
+    if (shownCount > 0)
+    {
+        FanyNamedPipe::EnqueueCandidatePageFitted(renderedGeneration, renderedPageStart_, shownCount);
+    }
+}
+
+int CandidatePresenter::LastShownCount() const
+{
+    return lastShownCount_;
 }
 
 void CandidatePresenter::SetPinnedCardOrigin(const POINT *origin)

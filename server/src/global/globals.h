@@ -9,6 +9,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <tuple>
+#include <utility>
 #include <vector>
 #include <windows.h>
 #include "engine/core/word_item.h"
@@ -352,6 +353,10 @@ struct CandidateUiState
     bool is_num_out_of_range = false;
     // 用户开始选词后保持候选顺序，直到输入变化后重新建立候选列表。
     bool selection_started = false;
+    // 横排固定宽度时，一页实际放得下几个由界面按真实字形量出来回报（note_page_fit）。fitted_counts[i]
+    // 是第 i 页量出来的个数，0 表示还没量过、按 page_size 算；没有任何回报时分页与等长分页完全一样。
+    // 每页起点由前面各页的个数累加，换一批候选（set_items）或版式变了（reset_page_fit）就清空。
+    std::vector<int> fitted_counts;
 
     void set_items(std::vector<CandidateWordItem> new_items)
     {
@@ -360,7 +365,84 @@ struct CandidateUiState
         page_index = 0;
         selected_index_in_page = 0;
         selection_started = false;
+        fitted_counts.clear();
         clear_page();
+    }
+
+    void reset_page_fit()
+    {
+        fitted_counts.clear();
+    }
+
+    // 第 page 页最多放几个：量过的取回报值，否则取 page_size。
+    int page_capacity(int page) const
+    {
+        if (page >= 0 && static_cast<size_t>(page) < fitted_counts.size() && fitted_counts[page] > 0)
+        {
+            return (std::min)(fitted_counts[page], page_size);
+        }
+        return page_size;
+    }
+
+    int page_start(int page) const
+    {
+        if (page <= 0 || page_size <= 0)
+        {
+            return 0;
+        }
+        if (fitted_counts.empty())
+        {
+            return page * page_size;
+        }
+        int start = 0;
+        for (int i = 0; i < page; ++i)
+        {
+            start += page_capacity(i);
+        }
+        return start;
+    }
+
+    // 绝对下标落在第几页、页内第几项。
+    std::pair<int, int> locate(int absolute) const
+    {
+        if (page_size <= 0 || absolute <= 0)
+        {
+            return {0, 0};
+        }
+        if (fitted_counts.empty())
+        {
+            return {absolute / page_size, absolute % page_size};
+        }
+        int page = 0;
+        int start = 0;
+        while (absolute >= start + page_capacity(page))
+        {
+            start += page_capacity(page);
+            ++page;
+        }
+        return {page, absolute - start};
+    }
+
+    // 界面量出从 start 起的那一页只放得下 count 个。只记当前页；返回记录是否有变化。
+    // 这一页之后各页的起点跟着变，它们原先量过的个数作废。
+    bool note_page_fit(int start, int count)
+    {
+        if (page_size <= 0 || count <= 0 || count >= page_size || start != current_page_start())
+        {
+            return false;
+        }
+        const size_t page = static_cast<size_t>(page_index);
+        if (page < fitted_counts.size() && fitted_counts[page] == count)
+        {
+            return false;
+        }
+        fitted_counts.resize(page + 1, 0);
+        fitted_counts[page] = count;
+        if (selected_index_in_page >= count)
+        {
+            selected_index_in_page = count - 1;
+        }
+        return true;
     }
 
     void clear_page()
@@ -404,14 +486,15 @@ struct CandidateUiState
         {
             return false;
         }
-        page_index = next / page_size;
-        selected_index_in_page = next % page_size;
+        const auto [page, index] = locate(next);
+        page_index = page;
+        selected_index_in_page = index;
         return true;
     }
 
     int current_page_start() const
     {
-        return page_index * page_size;
+        return page_start(page_index);
     }
 
     int current_page_count() const
@@ -421,7 +504,8 @@ struct CandidateUiState
         {
             return 0;
         }
-        return remaining < page_size ? remaining : page_size;
+        const int capacity = page_capacity(page_index);
+        return remaining < capacity ? remaining : capacity;
     }
 
     bool has_prev_page() const
@@ -431,22 +515,41 @@ struct CandidateUiState
 
     bool has_next_page() const
     {
-        return page_index < (item_total_count - 1) / page_size;
+        if (page_size <= 0)
+        {
+            return false;
+        }
+        if (fitted_counts.empty())
+        {
+            return page_index < (item_total_count - 1) / page_size;
+        }
+        return current_page_start() + page_capacity(page_index) < item_total_count;
     }
 
+    // 这一页放满了：界面量出的个数（没量过就是 page_size）全占上，后面可能还能展开出下一页。
     bool is_current_page_full() const
     {
-        return page_size > 0 && current_page_count() == page_size;
+        return page_size > 0 && current_page_count() == page_capacity(page_index);
     }
 
     bool is_next_page_partial_last_page() const
     {
-        if (page_size <= 0 || item_total_count <= 0 || item_total_count % page_size == 0)
+        if (page_size <= 0 || item_total_count <= 0)
         {
             return false;
         }
-        const int last_page = (item_total_count - 1) / page_size;
-        return page_index + 1 == last_page;
+        if (fitted_counts.empty())
+        {
+            if (item_total_count % page_size == 0)
+            {
+                return false;
+            }
+            const int last_page = (item_total_count - 1) / page_size;
+            return page_index + 1 == last_page;
+        }
+        const int next_start = current_page_start() + page_capacity(page_index);
+        const int remaining = item_total_count - next_start;
+        return remaining > 0 && remaining < page_capacity(page_index + 1);
     }
 
     bool is_selection_at_current_page_end() const
@@ -477,6 +580,8 @@ struct CandidatePageSnapshot
     std::vector<std::wstring> page_words;
     std::wstring candidate_string;
     int page_index = 0;
+    // 这一页第一个候选的绝对下标。横排固定宽度时各页个数不等，不能再用 page_index * page_size 推。
+    int page_start = 0;
     int selected_index_in_page = 0;
     // page_count mirrors current_page_count() and page_item_count mirrors cur_page_item_cnt. Both are carried because
     // the height estimate prefers the derived count and only falls back to the rendered one.

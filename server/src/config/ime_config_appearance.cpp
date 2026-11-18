@@ -236,6 +236,66 @@ bool SetConfiguredCandidateWindowSingleLine(bool enabled)
     return true;
 }
 
+bool GetConfiguredCandidateWindowFixedWidth()
+{
+    return g_candidate_window_fixed_width;
+}
+
+bool SetConfiguredCandidateWindowFixedWidth(bool enabled)
+{
+    if (!WriteConfiguredValue("appearance", "candidate_window_fixed_width", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_candidate_window_fixed_width = enabled;
+    return true;
+}
+
+double GetConfiguredCandidateWindowFixedWidthRatio()
+{
+    return g_candidate_window_fixed_width_ratio;
+}
+
+bool SetConfiguredCandidateWindowFixedWidthRatio(double ratio)
+{
+    if (!(ratio >= kCandidateWindowFixedWidthRatioMin && ratio <= kCandidateWindowFixedWidthRatioMax))
+    {
+        return false;
+    }
+    // 存千分之一精度，滑块拖出来的浮点尾巴不进配置文件。
+    const int permille = static_cast<int>(ratio * 1000.0 + 0.5);
+    ratio = permille / 1000.0;
+    std::string text = std::to_string(permille / 1000) + "." + std::to_string(1000 + permille % 1000).substr(1);
+    while (text.size() > 3 && text.back() == '0')
+        text.pop_back();
+    if (!WriteConfiguredValue("appearance", "candidate_window_fixed_width_ratio", text))
+    {
+        return false;
+    }
+    g_candidate_window_fixed_width_ratio = ratio;
+    return true;
+}
+
+bool CandidateWindowFixedWidthActive()
+{
+    return g_candidate_window_fixed_width && g_candidate_window_layout == "horizontal";
+}
+
+bool GetConfiguredCandidateWindowFixedHeight()
+{
+    return g_candidate_window_fixed_height;
+}
+
+bool SetConfiguredCandidateWindowFixedHeight(bool enabled)
+{
+    if (!WriteConfiguredValue("appearance", "candidate_window_fixed_height", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_candidate_window_fixed_height = enabled;
+    return true;
+}
+
 const std::string &GetConfiguredCandidateSkin()
 {
     return g_candidate_skin;

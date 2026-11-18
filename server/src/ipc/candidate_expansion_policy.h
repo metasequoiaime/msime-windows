@@ -114,9 +114,12 @@ inline bool SetExpandedCandidatesKeepingPagePosition(Global::CandidateUiState &u
     NormalizeMixedCandidateOrder(expanded, 1, english_placement);
     const int current_page = ui.page_index;
     const int current_selection = ui.selected_index_in_page;
+    // 横排固定宽度量出的各页个数决定了当前页从哪儿开始，留着它当前页才不会挪位。
+    std::vector<int> fitted_counts = std::move(ui.fitted_counts);
     ui.set_items(std::move(expanded));
     ui.page_index = current_page;
     ui.selected_index_in_page = current_selection;
+    ui.fitted_counts = std::move(fitted_counts);
     return true;
 }
 } // namespace FanyImeIpc

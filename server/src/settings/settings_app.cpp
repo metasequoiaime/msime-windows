@@ -590,6 +590,9 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"candidate_window_follow_cursor", GetConfiguredCandidateWindowFollowCursor()},
             {"candidate_window_fit_content", GetConfiguredCandidateWindowFitContent()},
             {"candidate_window_single_line", GetConfiguredCandidateWindowSingleLine()},
+            {"candidate_window_fixed_width", GetConfiguredCandidateWindowFixedWidth()},
+            {"candidate_window_fixed_width_ratio", GetConfiguredCandidateWindowFixedWidthRatio()},
+            {"candidate_window_fixed_height", GetConfiguredCandidateWindowFixedHeight()},
             {"candidate_skin", GetConfiguredCandidateSkin()},
             {"candidate_window_preedit_style", GetConfiguredCandidateWindowPreeditStyle()},
             {"candidate_window_preedit_shuangpin_quanpin", GetConfiguredCandidateWindowPreeditShuangpinQuanpin()},
@@ -894,6 +897,16 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredCandidateWindowFitContent(json::value_to<bool>(data.at("value")));
     if (path == "appearance.candidate_window_single_line")
         return SetConfiguredCandidateWindowSingleLine(json::value_to<bool>(data.at("value")));
+    if (path == "appearance.candidate_window_fixed_width")
+        return SetConfiguredCandidateWindowFixedWidth(json::value_to<bool>(data.at("value")));
+    if (path == "appearance.candidate_window_fixed_width_ratio")
+    {
+        const json::value &value = data.at("value");
+        const double ratio = value.is_double() ? value.as_double() : static_cast<double>(value.as_int64());
+        return SetConfiguredCandidateWindowFixedWidthRatio(ratio);
+    }
+    if (path == "appearance.candidate_window_fixed_height")
+        return SetConfiguredCandidateWindowFixedHeight(json::value_to<bool>(data.at("value")));
     if (path == "appearance.candidate_skin")
         return SetConfiguredCandidateSkin(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.candidate_window_preedit_style")
