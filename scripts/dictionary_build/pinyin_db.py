@@ -66,8 +66,16 @@ def is_quanpin(key: str) -> bool:
 # msime-dictionary 整理好的拼音基础词库：万象全部词表（含已从上游删掉的 lianxiang、renming 里的词）加上 rime-ice
 # 有而万象没有的词（权重统一为 1），读音已去调、ü 记为 v、音节以 ' 连接。按字数拆成 1-chars.txt … 8plus-chars.txt，
 # 含字母的词另放 letters.txt。每行 `词<TAB>全拼<TAB>权重`，`#` 开头是注释。
+# msime-dictionary#148 起这些基础词表在 sources/pinyin-next/base/，旁边的 packs/ 是按需导入的专业词库，不进构建；
+# 更早的提交直接放在 sources/pinyin-next/ 下，照旧能重建。
 PINYIN_NEXT = "sources/pinyin-next"
+PINYIN_NEXT_BASE = f"{PINYIN_NEXT}/base"
 PINYIN_NEXT_LETTERS = "letters.txt"
+
+
+def pinyin_next_base(dictionary: Path) -> str:
+    """基础词表所在目录（相对 msime-dictionary 根）：有 base/ 用 base/，否则是旧布局。"""
+    return PINYIN_NEXT_BASE if (dictionary / PINYIN_NEXT_BASE).is_dir() else PINYIN_NEXT
 
 
 def pinyin_next_files(directory: Path) -> list[Path]:
@@ -156,7 +164,11 @@ def read_pinyin_next(path: Path) -> tuple[list[tuple[str, str, int]], int]:
 # letters.txt 里「拉丁字母 + 汉字」的词（T恤、AA制、卡拉OK）。全拼表不收（读音不是全拼），这里单独建表：
 # 每个字母自成一段，T恤 记成 t'xu、卡拉OK 记成 ka'la'o'k，引擎按打出的字母串整串或前缀匹配，再交给词格组句。
 # 不进 tbl_*：放进去简拼 tx 会冒出 T恤，i、u、v 开头的词也没有分表可放。
-LATIN_WORDS = f"{PINYIN_NEXT}/{PINYIN_NEXT_LETTERS}"
+def latin_words_path(dictionary: Path) -> str:
+    """letters.txt 相对 msime-dictionary 根的路径，跟着基础词表的目录走。"""
+    return f"{pinyin_next_base(dictionary)}/{PINYIN_NEXT_LETTERS}"
+
+
 CREATE_LATIN_WORDS = (
     '\n            CREATE TABLE latin_words (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
     '                "weight" INTEGER NOT NULL,\n                "exact_only" INTEGER NOT NULL DEFAULT 0,\n'
