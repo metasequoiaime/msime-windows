@@ -382,7 +382,7 @@ shuangpin_preedit_mode = "shuangpin"
 # 或 "custom/<文件名>"（数据目录 shuangpin\custom\<文件名>.toml 中的自定义方案，写法见 docs/custom-shuangpin.example.toml）
 # shuangpin_schema = "xiaohe"
 shuangpin_schema = "xiaohe"
-# 五笔方案，当前仅支持 "wubi86"；98 版待词库发布后另开任务接线
+# 五笔码表版本，可选："wubi86"（86 五笔）、"wubi98"（98 五笔）、"wubixsj"（新世纪五笔）
 wubi_schema = "wubi86"
 # 五笔拼音混输：同一串字母同时给五笔码表和全拼，五笔候选在前、拼音候选按权重追加在后
 wubi_mixed_pinyin = false

@@ -51,18 +51,7 @@ using Stmt = std::unique_ptr<sqlite3_stmt, StmtCloser>;
 
 const char *kind_name(DictionaryKind kind)
 {
-    switch (kind)
-    {
-    case DictionaryKind::Pinyin:
-        return "pinyin";
-    case DictionaryKind::Wubi:
-        return "wubi";
-    case DictionaryKind::QuickPhrase:
-        return "quick";
-    case DictionaryKind::English:
-        return "english";
-    }
-    return "";
+    return dictionary_kind_name(kind);
 }
 
 Db open_database(const std::string &path, int flags)
@@ -180,6 +169,15 @@ bool has_column(sqlite3 *db, const std::string &table, const std::string &column
             return true;
     }
     return false;
+}
+
+// main 库里有没有这张表。查不出来时当作有，交给随后的写入去报告。
+bool table_exists(sqlite3 *db, const std::string &table)
+{
+    auto stmt = prepare(db, "SELECT EXISTS(SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?1)");
+    if (!stmt || !bind_text(stmt.get(), 1, table) || sqlite3_step(stmt.get()) != SQLITE_ROW)
+        return true;
+    return sqlite3_column_int(stmt.get(), 0) != 0;
 }
 
 bool ensure_schema(sqlite3 *db)
@@ -336,23 +334,24 @@ bool update_pinyin_weight(sqlite3 *main_db, sqlite3_stmt *journal_upsert, const 
     return write_upsert_journal(journal_upsert, DictionaryKind::Pinyin, key, value, weight);
 }
 
-bool update_wubi_weight(sqlite3 *main_db, sqlite3_stmt *journal_upsert, const std::string &key,
+bool update_wubi_weight(sqlite3 *main_db, sqlite3_stmt *journal_upsert, DictionaryKind kind, const std::string &key,
                         const std::string &value, std::int64_t weight)
 {
     weight = clamp_managed_weight(weight);
-    if (main_db == nullptr || journal_upsert == nullptr || key.empty() || value.empty())
+    const char *table = wubi_table(kind);
+    if (main_db == nullptr || journal_upsert == nullptr || table == nullptr || key.empty() || value.empty())
         return false;
-    auto stmt = prepare(main_db, "UPDATE wubi86 SET weight=?1 WHERE key=?2 AND value=?3");
+    auto stmt = prepare(main_db, std::string("UPDATE \"") + table + "\" SET weight=?1 WHERE key=?2 AND value=?3");
     return stmt && sqlite3_bind_int64(stmt.get(), 1, weight) == SQLITE_OK && bind_text(stmt.get(), 2, key) &&
            bind_text(stmt.get(), 3, value) && sqlite3_step(stmt.get()) == SQLITE_DONE && sqlite3_changes(main_db) > 0 &&
-           write_upsert_journal(journal_upsert, DictionaryKind::Wubi, key, value, weight);
+           write_upsert_journal(journal_upsert, kind, key, value, weight);
 }
 
 bool update_ranked_weight(sqlite3 *main_db, sqlite3_stmt *journal_upsert, DictionaryKind kind, const std::string &key,
                           const std::string &value, std::int64_t weight)
 {
-    if (kind == DictionaryKind::Wubi)
-        return update_wubi_weight(main_db, journal_upsert, key, value, weight);
+    if (is_wubi_kind(kind))
+        return update_wubi_weight(main_db, journal_upsert, kind, key, value, weight);
     return update_pinyin_weight(main_db, journal_upsert, key, value, weight);
 }
 
@@ -625,6 +624,74 @@ bool ensure_user_database(const std::string &user_db_path)
     return true;
 }
 
+DictionaryKind wubi_dictionary_kind(metasequoia::WubiProfile profile)
+{
+    switch (profile)
+    {
+    case metasequoia::WubiProfile::Wubi98:
+        return DictionaryKind::Wubi98;
+    case metasequoia::WubiProfile::WubiXsj:
+        return DictionaryKind::WubiXsj;
+    case metasequoia::WubiProfile::Wubi86:
+        break;
+    }
+    return DictionaryKind::Wubi;
+}
+
+bool is_wubi_kind(DictionaryKind kind)
+{
+    return wubi_table(kind) != nullptr;
+}
+
+const char *wubi_table(DictionaryKind kind)
+{
+    switch (kind)
+    {
+    case DictionaryKind::Wubi:
+        return "wubi86";
+    case DictionaryKind::Wubi98:
+        return "wubi98";
+    case DictionaryKind::WubiXsj:
+        return "wubixsj";
+    case DictionaryKind::Pinyin:
+    case DictionaryKind::QuickPhrase:
+    case DictionaryKind::English:
+        break;
+    }
+    return nullptr;
+}
+
+const char *dictionary_kind_name(DictionaryKind kind)
+{
+    switch (kind)
+    {
+    case DictionaryKind::Pinyin:
+        return "pinyin";
+    case DictionaryKind::Wubi:
+        return "wubi";
+    case DictionaryKind::QuickPhrase:
+        return "quick";
+    case DictionaryKind::English:
+        return "english";
+    case DictionaryKind::Wubi98:
+        return "wubi98";
+    case DictionaryKind::WubiXsj:
+        return "wubixsj";
+    }
+    return "";
+}
+
+std::optional<DictionaryKind> dictionary_kind_from_name(const std::string &name)
+{
+    for (const auto kind : {DictionaryKind::Pinyin, DictionaryKind::Wubi, DictionaryKind::QuickPhrase,
+                            DictionaryKind::English, DictionaryKind::Wubi98, DictionaryKind::WubiXsj})
+    {
+        if (name == dictionary_kind_name(kind))
+            return kind;
+    }
+    return std::nullopt;
+}
+
 bool record_upsert(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
                    const std::string &value, std::int64_t weight, const std::string &display)
 {
@@ -879,7 +946,9 @@ bool delete_dictionary_candidate(const std::string &dictionary_db_path, const st
         table = pinyin_table(entry_key);
         break;
     case DictionaryKind::Wubi:
-        table = "wubi86";
+    case DictionaryKind::Wubi98:
+    case DictionaryKind::WubiXsj:
+        table = wubi_table(kind);
         break;
     case DictionaryKind::English:
         table = "english_words";
@@ -984,9 +1053,12 @@ bool bump_weight_in_table(const std::string &main_db_path, const std::string &us
 } // namespace
 
 bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
-                      const std::string &value)
+                      const std::string &value, DictionaryKind kind)
 {
-    return bump_weight_in_table(main_db_path, user_db_path, "wubi86", DictionaryKind::Wubi, key, value);
+    const char *table = wubi_table(kind);
+    if (table == nullptr)
+        return false;
+    return bump_weight_in_table(main_db_path, user_db_path, table, kind, key, value);
 }
 
 bool bump_pinyin_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
@@ -1929,8 +2001,7 @@ bool adjust_candidate_ranking(const std::string &main_db_path, const std::string
     owns_entry_key.reserve(database_candidates.size());
     for (const auto &item : database_candidates)
     {
-        const std::string item_key =
-            kind == DictionaryKind::Wubi ? item.pinyin : candidate_dictionary_key(item, context_key);
+        const std::string item_key = is_wubi_kind(kind) ? item.pinyin : candidate_dictionary_key(item, context_key);
         owns_entry_key.push_back(item_key == entry_key);
     }
     const auto selected = std::find_if(database_candidates.begin(), database_candidates.end(),
@@ -2136,7 +2207,9 @@ std::optional<std::string> replayed_dictionary_identity(sqlite3 *journal)
 std::optional<std::int64_t> shipped_weight(sqlite3 *main_db, const std::string &kind, const std::string &key,
                                            const std::string &value)
 {
-    const std::string table = kind == "wubi" ? std::string("wubi86") : pinyin_table(key);
+    const auto dictionary_kind = dictionary_kind_from_name(kind);
+    const char *wubi = dictionary_kind ? wubi_table(*dictionary_kind) : nullptr;
+    const std::string table = wubi != nullptr ? std::string(wubi) : pinyin_table(key);
     if (table.empty())
         return std::nullopt;
     auto stmt = prepare(main_db, "SELECT MAX(weight) FROM \"" + table + "\" WHERE key=?1 AND value=?2");
@@ -2272,6 +2345,14 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
     // 调出来的 650 万。这时自动调频的行只在高过新出厂权重时写回，其余保留新权重，
     // 并把日志里的这一行改记成新权重，免得下次回放又写回旧值。用户手动加的词、在设置页
     // 亲手改的权重和删除照旧。
+    // 词库里有哪几张五笔表。还没有 98、新世纪表的旧词库上，这两版的日志行没有能写的表：计入 skipped，
+    // 行留在日志里，换上带这张表的词库后的那次回放再写，不能算失败让整批回滚、中止安装。
+    std::vector<std::string> wubi_tables;
+    for (const auto kind : {DictionaryKind::Wubi, DictionaryKind::Wubi98, DictionaryKind::WubiXsj})
+    {
+        if (table_exists(main_db.get(), wubi_table(kind)))
+            wubi_tables.emplace_back(wubi_table(kind));
+    }
     const auto dictionary_identity = shipped_dictionary_identity(main_db_path);
     const bool rebase =
         dictionary_identity.has_value() && replayed_dictionary_identity(journal.get()) != dictionary_identity;
@@ -2305,7 +2386,15 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
             ++result.skipped;
             continue;
         }
-        if (rebase && operation == "upsert" && !user_owned_row && (kind == "pinyin" || kind == "wubi"))
+        const auto dictionary_kind = dictionary_kind_from_name(kind);
+        const char *wubi = dictionary_kind ? wubi_table(*dictionary_kind) : nullptr;
+        if (wubi != nullptr && *dictionary_kind != DictionaryKind::Wubi &&
+            std::find(wubi_tables.begin(), wubi_tables.end(), wubi) == wubi_tables.end())
+        {
+            ++result.skipped;
+            continue;
+        }
+        if (rebase && operation == "upsert" && !user_owned_row && (kind == "pinyin" || wubi != nullptr))
         {
             const auto shipped = shipped_weight(main_db.get(), kind, key, value);
             if (shipped && *shipped >= weight)
@@ -2319,8 +2408,8 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         bool ok = false;
         if (kind == "pinyin")
             ok = apply_pinyin(main_db.get(), key, value, operation, weight);
-        else if (kind == "wubi")
-            ok = apply_simple(main_db.get(), "wubi86", "key", "value", key, value, operation, weight);
+        else if (wubi != nullptr)
+            ok = apply_simple(main_db.get(), wubi, "key", "value", key, value, operation, weight);
         else if (kind == "quick")
             ok = apply_simple(main_db.get(), "quick_parases", "key", "value", key, value, operation, weight);
         else if (kind == "english")
@@ -2377,6 +2466,10 @@ user_dictionary::DictionaryKind journal_kind(PersonalDictionaryKind kind)
         return user_dictionary::DictionaryKind::QuickPhrase;
     case PersonalDictionaryKind::English:
         return user_dictionary::DictionaryKind::English;
+    case PersonalDictionaryKind::Wubi98:
+        return user_dictionary::DictionaryKind::Wubi98;
+    case PersonalDictionaryKind::WubiXsj:
+        return user_dictionary::DictionaryKind::WubiXsj;
     }
     return user_dictionary::DictionaryKind::Pinyin;
 }
@@ -2391,7 +2484,10 @@ bool apply_personal_edit(sqlite3 *db, const PersonalDictionaryEntry &entry, bool
         applied = apply_pinyin(db, entry.key, entry.value, operation, entry.weight);
         break;
     case PersonalDictionaryKind::Wubi:
-        applied = apply_simple(db, "wubi86", "key", "value", entry.key, entry.value, operation, entry.weight);
+    case PersonalDictionaryKind::Wubi98:
+    case PersonalDictionaryKind::WubiXsj:
+        applied = apply_simple(db, wubi_table(journal_kind(entry.kind)), "key", "value", entry.key, entry.value,
+                               operation, entry.weight);
         break;
     case PersonalDictionaryKind::QuickPhrase:
         applied = apply_simple(db, "quick_parases", "key", "value", entry.key, entry.value, operation, entry.weight);
@@ -2603,6 +2699,10 @@ PersonalDictionaryPage personal_dictionary_entries(const RuntimePaths &paths, st
                 entry_kind = PersonalDictionaryKind::QuickPhrase;
             else if (kind == "english")
                 entry_kind = PersonalDictionaryKind::English;
+            else if (kind == "wubi98")
+                entry_kind = PersonalDictionaryKind::Wubi98;
+            else if (kind == "wubixsj")
+                entry_kind = PersonalDictionaryKind::WubiXsj;
             else
                 continue;
             result.entries.push_back({entry_kind, text(1), text(2), sqlite3_column_int64(rows.get(), 3)});

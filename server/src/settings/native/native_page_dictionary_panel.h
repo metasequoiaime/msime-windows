@@ -191,6 +191,13 @@ enum class ListOrder
 };
 size_t OffsetAfterWrite(const std::string &action, size_t offset, ListOrder order);
 
+// 五笔标签页的词库 id 跟随配置 input.wubi_schema：wubi86 → "wubi"（沿用原来的 id），wubi98 → "wubi98"，
+// wubixsj → "wubixsj"；不认识的值按 86。
+std::string WubiDictionaryId(const std::string &wubiSchema);
+bool IsWubiDictionaryId(const std::string &dictionary);
+// 「86 五笔词库」「98 五笔词库」「新世纪五笔词库」；不是五笔词库 id 时为空。
+std::wstring WubiDictionaryLabel(const std::string &dictionary);
+
 // Toolbar + hint + table + pagination of a `.dict-card`, with the dictionaryRequest client
 // behind it (modules/dict.ts and the quick-phrase half of modules/tools-settings.ts).
 class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>

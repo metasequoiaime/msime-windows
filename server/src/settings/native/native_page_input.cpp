@@ -1668,7 +1668,9 @@ VisualPtr BuildInputPage(PageContext &context)
         settings.paddingLeft = 9.0f;
         settings.minWidth = 110.0f;
         settings.menuMinWidth = 110.0f;
-        auto scheme = BindDropdown(context, "input.wubi_schema", Options({{"wubi86", L"86 五笔"}}), settings);
+        auto scheme = BindDropdown(
+            context, "input.wubi_schema",
+            Options({{"wubi86", L"86 五笔"}, {"wubi98", L"98 五笔"}, {"wubixsj", L"新世纪五笔"}}), settings);
         // z 键只剩通配两态，配置值仍是字符串 off | wildcard。
         auto zMode = std::make_shared<ToggleSwitch>(false);
         zMode->SetOnChanged([model](bool on) { model->Update("input.wubi_z_mode", on ? "wildcard" : "off"); });

@@ -4,6 +4,7 @@
 #include "engine/contracts/assets/assets.h"
 #include "engine/core/data_path.h"
 #include "engine/core/sentence_association_options.h"
+#include "engine/core/wubi_profile.h"
 #include "engine/local_modes/radical_query.h"
 #include "engine/quanpin/quanpin_utils.h"
 #include "session/input_cadence.h"
@@ -156,6 +157,9 @@ void EngineInputSession::ApplyConfiguration()
     metasequoia::WubiInputOptions wubi_options;
     wubi_options.mixed_pinyin = GetConfiguredWubiMixedPinyin();
     wubi_options.z_wildcard = GetConfiguredWubiZMode() == "wildcard";
+    // 码表版本：配置读入时已把不认识的值归为 wubi86，这里的回退只防万一。
+    wubi_options.profile =
+        metasequoia::wubi_profile_from_name(GetConfiguredWubiSchema()).value_or(metasequoia::WubiProfile::Wubi86);
     session_.set_wubi_input_options(wubi_options);
 }
 

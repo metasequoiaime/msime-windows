@@ -1,6 +1,7 @@
 #pragma once
 #include "scheme_type.h"
 #include "word_item.h"
+#include "wubi_profile.h"
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -107,6 +108,8 @@ struct WubiInputOptions
     // Treat z as a wildcard in the code (any letter at that position, first position included).
     // Independent of mixed input: there z is an ordinary pinyin letter, here it is a wildcard.
     bool z_wildcard = false;
+    // 查哪一版码表（86、98、新世纪）；调频、删词和固定位置也按版本分开记。
+    WubiProfile profile = WubiProfile::Wubi86;
 };
 
 // Immutable description of the current composition for asynchronous providers. Frontends copy

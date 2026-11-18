@@ -101,7 +101,12 @@ std::filesystem::path prepare_resources(const std::filesystem::path &root)
             "INSERT INTO wubi86 VALUES('wq','你好',10000),('wqaa','众人',9000),"
             "('wqab','甲',8000),('wqab','乙',7000),('taaa','笔',6000),"
             "('a','工',10000),('aaaa','工',5000),('aaab','苛',4000),"
-            "('hao','号',9000),('au','乐',20000);");
+            "('hao','号',9000),('au','乐',20000);"
+            // 98 与新世纪各一张同结构的表；同一个码在三版里是不同的字，用来认出查的是哪张表。
+            "CREATE TABLE wubi98(key TEXT,value TEXT,weight INTEGER);"
+            "INSERT INTO wubi98 VALUES('kg','号',100),('wq','你们',10000),('wq','拟们',9000);"
+            "CREATE TABLE wubixsj(key TEXT,value TEXT,weight INTEGER);"
+            "INSERT INTO wubixsj VALUES('ent','力',100),('wq','我们',10000),('wq','俄们',9000);");
     require(EnglishDictionary::ensure_schema(path_to_utf8(resources / assets::english_dictionary)),
             "English schema failed");
     return resources;
@@ -468,6 +473,63 @@ int main()
             require(std::any_of(z_candidates.begin(), z_candidates.end(),
                                 [](const WordItem &item) { return item.word == "你好"; }),
                     "Toggling mixed pinyin reset the z wildcard setting.");
+        }
+
+        // 码表版本：同一个码按所选那一版的表查，换版本时正在组的码按新表重查。
+        {
+            InputSession session(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths_for(resources, root, next()));
+            WubiInputOptions options;
+            options.profile = WubiProfile::Wubi98;
+            session.set_wubi_input_options(options);
+            const auto kg = type(session, "kg");
+            require(kg.size() == 1 && kg[0] == "号", "Wubi 98 did not read the wubi98 table.");
+            session.handle_command(Command::Cancel);
+
+            const auto wq = type(session, "wq");
+            require(!wq.empty() && wq[0] == "你们", "Wubi 98 answered wq from another table.");
+            options.profile = WubiProfile::WubiXsj;
+            session.set_wubi_input_options(options);
+            const auto xsj = words(session);
+            require(!xsj.empty() && xsj[0] == "我们", "Switching to Xinshiji did not query the live code again.");
+            options.profile = WubiProfile::Wubi86;
+            session.set_wubi_input_options(options);
+            const auto back = words(session);
+            require(!back.empty() && back[0] == "你好", "Switching back to Wubi 86 did not read the wubi86 table.");
+        }
+
+        // 删词记进那一版的日志种类，删的是那一版的表：98 的「你们」删掉后 86 的同码候选不受影响。
+        {
+            const auto paths = paths_for(resources, root, next());
+            InputSession session(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths);
+            WubiInputOptions options;
+            options.profile = WubiProfile::Wubi98;
+            session.set_wubi_input_options(options);
+            const auto wq = type(session, "wq");
+            require(!wq.empty() && wq[0] == "你们", "The Wubi 98 fixture lost its candidates.");
+            require(session.remove_candidate(0).handled, "Removing a Wubi 98 candidate was not handled.");
+            const auto after = words(session);
+            require(std::find(after.begin(), after.end(), "你们") == after.end(),
+                    "The removed Wubi 98 candidate came back.");
+
+            sqlite3 *journal = nullptr;
+            require(sqlite3_open(path_to_utf8(paths.user(assets::user_journal)).c_str(), &journal) == SQLITE_OK,
+                    "Journal open failed");
+            sqlite3_stmt *statement = nullptr;
+            sqlite3_prepare_v2(journal,
+                               "SELECT dictionary FROM user_dictionary_operations WHERE value='你们' AND "
+                               "operation='delete'",
+                               -1, &statement, nullptr);
+            const bool row = statement != nullptr && sqlite3_step(statement) == SQLITE_ROW;
+            const std::string kind =
+                row ? reinterpret_cast<const char *>(sqlite3_column_text(statement, 0)) : std::string{};
+            sqlite3_finalize(statement);
+            sqlite3_close(journal);
+            require(kind == "wubi98", "A Wubi 98 removal was not journalled under wubi98.");
+
+            options.profile = WubiProfile::Wubi86;
+            session.set_wubi_input_options(options);
+            const auto wubi86 = words(session);
+            require(!wubi86.empty() && wubi86[0] == "你好", "A Wubi 98 removal touched the wubi86 table.");
         }
     }
     catch (const std::exception &error)

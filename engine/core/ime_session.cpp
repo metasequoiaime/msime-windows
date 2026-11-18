@@ -193,6 +193,7 @@ void ImeSession::bind_wubi_scheme()
 void ImeSession::set_wubi_input_options(metasequoia::WubiInputOptions options)
 {
     wubi_options_ = options;
+    provider_registry_.set_wubi_profile(wubi_options_.profile);
     if (wubi_scheme_ != nullptr)
     {
         wubi_scheme_->set_mixed_pinyin_allowed(wubi_options_.mixed_pinyin);

@@ -237,13 +237,40 @@ std::string SanitizeExportField(std::string value)
     return value;
 }
 
+// 三版五笔码表。设置页的词库 id、msime.db 里的表、日志种类各一一对应；86 沿用原来的 id「wubi」
+// 和导出文件名，旧版本导出的文件、已有的日志行照旧可用。
+struct WubiTable
+{
+    const char *dictionary;
+    const char *table;
+    user_dictionary::DictionaryKind kind;
+    const char *label;
+    const char *export_filename;
+};
+
+constexpr WubiTable kWubiTables[] = {
+    {"wubi", "wubi86", user_dictionary::DictionaryKind::Wubi, "86 五笔", "水杉IME-五笔用户词库.txt"},
+    {"wubi98", "wubi98", user_dictionary::DictionaryKind::Wubi98, "98 五笔", "水杉IME-98五笔用户词库.txt"},
+    {"wubixsj", "wubixsj", user_dictionary::DictionaryKind::WubiXsj, "新世纪五笔", "水杉IME-新世纪五笔用户词库.txt"},
+};
+
+const WubiTable *FindWubiTable(const std::string &dictionary)
+{
+    for (const auto &table : kWubiTables)
+    {
+        if (dictionary == table.dictionary)
+            return &table;
+    }
+    return nullptr;
+}
+
 // 日志里 `dictionary` 列的取值。未知词库返回 nullptr。
 const char *JournalKind(const std::string &dictionary)
 {
     if (dictionary == "quanpin")
         return "pinyin";
-    if (dictionary == "wubi")
-        return "wubi";
+    if (const auto *wubi = FindWubiTable(dictionary))
+        return user_dictionary::dictionary_kind_name(wubi->kind);
     if (dictionary == "english")
         return "english";
     if (dictionary == "quick")
@@ -272,8 +299,9 @@ json::object ExportUserDictionary(const std::string &dictionary)
     const char *journal_kind = JournalKind(dictionary);
     if (journal_kind == nullptr)
         return Result(false, "未知词库");
+    const auto *wubi = FindWubiTable(dictionary);
     const std::string filename = dictionary == "quanpin"   ? "水杉IME-拼音用户词库.txt"
-                                 : dictionary == "wubi"    ? "水杉IME-五笔用户词库.txt"
+                                 : wubi != nullptr         ? wubi->export_filename
                                  : dictionary == "english" ? "水杉IME-英文用户词库.txt"
                                                            : "水杉IME-快捷短语用户词库.txt";
 
@@ -315,7 +343,7 @@ json::object ExportUserDictionary(const std::string &dictionary)
 
         if (dictionary == "quanpin" && HelpcodeUtils::count_utf8_chars(value) <= 1)
             continue;
-        if (dictionary == "quanpin" || dictionary == "wubi")
+        if (dictionary == "quanpin" || wubi != nullptr)
             content << value << '\t' << key << '\t' << weight << '\n';
         else if (dictionary == "quick")
             content << key << '\t' << Validation::EscapeQuickPhraseField(value) << '\t' << weight << '\n';
@@ -532,7 +560,7 @@ json::object SummarizeImport(int inserted, int skipped, int failed, const std::v
 // wubi86，只看 wubi86 分不出来；不排除的话，给「张」自造的 aaaa 会按字典序压过出厂的
 // xtay，此后每个含「张」的词都取错码，导入还照样报成功。读不到日志时返回空集，退回
 // 只看 wubi86 的行为。
-std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars()
+std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars(const WubiTable &wubi)
 {
     std::set<std::pair<std::string, std::string>> entries;
     const std::string path = user_dictionary::default_user_db_path();
@@ -548,9 +576,9 @@ std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars()
     std::string error;
     Stmt stmt = Prepare(db.get(),
                         "SELECT key,value FROM user_dictionary_operations "
-                        "WHERE dictionary='wubi' AND operation='upsert' AND user_inserted=1 AND length(value)=1",
+                        "WHERE dictionary=?1 AND operation='upsert' AND user_inserted=1 AND length(value)=1",
                         error);
-    if (!stmt)
+    if (!stmt || !BindText(stmt.get(), 1, user_dictionary::dictionary_kind_name(wubi.kind)))
         return entries;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW)
     {
@@ -562,11 +590,14 @@ std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars()
     return entries;
 }
 
-bool LoadWubiCharCodes(sqlite3 *db, Validation::WubiCharCodes &codes, std::string &error)
+// 三版五笔的词组取码规则相同，只是单字码从各自的表里取。
+bool LoadWubiCharCodes(sqlite3 *db, const WubiTable &wubi, Validation::WubiCharCodes &codes, std::string &error)
 {
     // 排序是为了让「多个 4 级全码时取第一个」确定：同值内按 key 升序，先遇到的就是
     // 字典序最小的那个，不依赖 SQLite 的扫描顺序。
-    Stmt stmt = Prepare(db, "SELECT key, value FROM wubi86 WHERE length(value)=1 ORDER BY value, key", error);
+    Stmt stmt = Prepare(
+        db, std::string("SELECT key, value FROM \"") + wubi.table + "\" WHERE length(value)=1 ORDER BY value, key",
+        error);
     if (!stmt)
         return false;
     const auto text = [](sqlite3_stmt *s, int column) {
@@ -588,7 +619,7 @@ bool LoadWubiCharCodes(sqlite3 *db, Validation::WubiCharCodes &codes, std::strin
             existing->second = key;
     };
 
-    const auto user_inserted = LoadUserInsertedWubiChars();
+    const auto user_inserted = LoadUserInsertedWubiChars(wubi);
     Validation::WubiCharCodes user_codes;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW)
     {
@@ -602,6 +633,19 @@ bool LoadWubiCharCodes(sqlite3 *db, Validation::WubiCharCodes &codes, std::strin
     for (auto &entry : user_codes)
         codes.emplace(entry.first, std::move(entry.second));
     return true;
+}
+
+// 还没带 98、新世纪表的旧词库里没有这一版的表：直接报出来，不把「no such table」原样丢给用户。
+bool WubiTableExists(sqlite3 *db, const WubiTable &wubi)
+{
+    std::string error;
+    Stmt stmt = Prepare(db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1", error);
+    return stmt && BindText(stmt.get(), 1, wubi.table) && sqlite3_step(stmt.get()) == SQLITE_ROW;
+}
+
+std::string MissingWubiTableMessage(const WubiTable &wubi)
+{
+    return std::string("当前词库里没有") + wubi.label + "码表，请更新词库后再试";
 }
 
 bool BoolValue(const json::object &obj, const char *key)
@@ -1231,8 +1275,8 @@ json::object ImportForeign(const json::object &request)
 }
 
 // 纯汉字词组 -> 五笔码的导入。与 ImportHans 同构，差别只在码从哪来：
-// 拼音走 cpp-pinyin 注音，五笔走 wubi86 单字码按 86 词组取码规则组合。
-json::object ImportHansWubi(const json::object &request)
+// 拼音走 cpp-pinyin 注音，五笔走所选那一版码表的单字码，按（三版共用的）词组取码规则组合。
+json::object ImportHansWubi(const json::object &request, const WubiTable &wubi)
 {
     std::string content = StringValue(request, "content");
     if (content.size() >= 3 && static_cast<unsigned char>(content[0]) == 0xEF &&
@@ -1246,16 +1290,20 @@ json::object ImportHansWubi(const json::object &request)
     if (!db)
         return Result(false, "打开五笔词库失败：" + error);
 
+    if (!WubiTableExists(db.get(), wubi))
+        return Result(false, MissingWubiTableMessage(wubi));
     Validation::WubiCharCodes char_codes;
-    if (!LoadWubiCharCodes(db.get(), char_codes, error))
+    if (!LoadWubiCharCodes(db.get(), wubi, char_codes, error))
         return Result(false, "读取五笔码表失败：" + error);
     if (char_codes.empty())
         return Result(false, "五笔码表未就绪，请确认词库完整");
 
-    Stmt insert = Prepare(db.get(),
-                          "INSERT INTO wubi86(key,value,weight) SELECT ?1,?2,?3 "
-                          "WHERE NOT EXISTS (SELECT 1 FROM wubi86 WHERE key=?1 AND value=?2)",
-                          error);
+    const std::string table = std::string("\"") + wubi.table + "\"";
+    Stmt insert =
+        Prepare(db.get(),
+                "INSERT INTO " + table + "(key,value,weight) SELECT ?1,?2,?3 WHERE NOT EXISTS (SELECT 1 FROM " + table +
+                    " WHERE key=?1 AND value=?2)",
+                error);
     if (!insert)
         return Result(false, "准备导入失败：" + error);
 
@@ -1312,8 +1360,8 @@ json::object ImportHansWubi(const json::object &request)
             ++skipped;
             continue;
         }
-        (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(),
-                                                  user_dictionary::DictionaryKind::Wubi, code, word, kWeight);
+        (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(), wubi.kind, code, word,
+                                                  kWeight);
         ++inserted;
     }
     sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr);
@@ -1612,7 +1660,7 @@ json::object HandleEnglish(const json::object &request)
                          : std::string(label) + "失败：" + sqlite3_errmsg(db.get()));
 }
 
-json::object ImportWubi(const json::object &request)
+json::object ImportWubi(const json::object &request, const WubiTable &wubi)
 {
     std::string content = StringValue(request, "content");
     if (content.size() >= 3 && static_cast<unsigned char>(content[0]) == 0xEF &&
@@ -1625,10 +1673,14 @@ json::object ImportWubi(const json::object &request)
     Db db = OpenDatabase("msime.db", error);
     if (!db)
         return Result(false, "打开五笔词库失败：" + error);
-    Stmt insert = Prepare(db.get(),
-                          "INSERT INTO wubi86(key,value,weight) SELECT ?1,?2,?3 "
-                          "WHERE NOT EXISTS (SELECT 1 FROM wubi86 WHERE key=?1 AND value=?2)",
-                          error);
+    if (!WubiTableExists(db.get(), wubi))
+        return Result(false, MissingWubiTableMessage(wubi));
+    const std::string table = std::string("\"") + wubi.table + "\"";
+    Stmt insert =
+        Prepare(db.get(),
+                "INSERT INTO " + table + "(key,value,weight) SELECT ?1,?2,?3 WHERE NOT EXISTS (SELECT 1 FROM " + table +
+                    " WHERE key=?1 AND value=?2)",
+                error);
     if (!insert)
         return Result(false, "准备导入失败：" + error);
 
@@ -1691,8 +1743,8 @@ json::object ImportWubi(const json::object &request)
             ++skipped;
             continue;
         }
-        (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(),
-                                                  user_dictionary::DictionaryKind::Wubi, code, word, weight);
+        (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(), wubi.kind, code, word,
+                                                  weight);
         ++inserted;
     }
     sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr);
@@ -1700,11 +1752,11 @@ json::object ImportWubi(const json::object &request)
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
 
-json::object HandleWubi(const json::object &request)
+json::object HandleWubi(const json::object &request, const WubiTable &wubi)
 {
     const std::string action = StringValue(request, "action");
     if (action == "import")
-        return ImportWubi(request);
+        return ImportWubi(request, wubi);
     std::string code = StringValue(request, "code");
     const std::string word = StringValue(request, "word");
     const int weight = (std::max)(0, IntValue(request, "weight", 10));
@@ -1714,14 +1766,17 @@ json::object HandleWubi(const json::object &request)
     Db db = OpenDatabase("msime.db", error);
     if (!db)
         return Result(false, "打开五笔词库失败：" + error);
+    if (!WubiTableExists(db.get(), wubi))
+        return Result(false, MissingWubiTableMessage(wubi));
+    const std::string table = std::string("\"") + wubi.table + "\"";
     if (action == "query")
     {
         if (code.empty() ||
             !std::all_of(code.begin(), code.end(), [](unsigned char ch) { return ch >= 'a' && ch <= 'z'; }))
             return Result(false, "请输入合法的五笔编码");
         Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM wubi86 WHERE key LIKE ?1 ORDER BY weight DESC,key,value" +
-                                Paging::Sql(request),
+                            "SELECT key,value,weight FROM " + table +
+                                " WHERE key LIKE ?1 ORDER BY weight DESC,key,value" + Paging::Sql(request),
                             error);
         if (!stmt || !BindText(stmt.get(), 1, code + "%"))
             return Result(false, "查询失败：" + error);
@@ -1734,11 +1789,11 @@ json::object HandleWubi(const json::object &request)
     const std::string old_word = StringValue(request, "oldWord");
     std::string sql;
     if (action == "create")
-        sql = "INSERT INTO wubi86(key,value,weight) VALUES(?1,?2,?3)";
+        sql = "INSERT INTO " + table + "(key,value,weight) VALUES(?1,?2,?3)";
     else if (action == "update")
-        sql = "UPDATE wubi86 SET key=?1,value=?2,weight=?3 WHERE key=?4 AND value=?5";
+        sql = "UPDATE " + table + " SET key=?1,value=?2,weight=?3 WHERE key=?4 AND value=?5";
     else if (action == "delete")
-        sql = "DELETE FROM wubi86 WHERE key=?1 AND value=?2";
+        sql = "DELETE FROM " + table + " WHERE key=?1 AND value=?2";
     else
         return Result(false, "未知操作");
     Stmt stmt = Prepare(db.get(), sql, error);
@@ -1755,23 +1810,19 @@ json::object HandleWubi(const json::object &request)
     ok = ok && sqlite3_step(stmt.get()) == SQLITE_DONE && sqlite3_changes(db.get()) > 0;
     if (ok)
     {
-        const bool user_inserted = action == "create" || user_dictionary::is_user_inserted(
-                                                             user_dictionary::default_user_db_path(),
-                                                             user_dictionary::DictionaryKind::Wubi, old_code, old_word);
+        const auto journal = user_dictionary::default_user_db_path();
+        const bool user_inserted =
+            action == "create" || user_dictionary::is_user_inserted(journal, wubi.kind, old_code, old_word);
         if (action == "delete")
-            (void)user_dictionary::record_delete(user_dictionary::default_user_db_path(),
-                                                 user_dictionary::DictionaryKind::Wubi, old_code, old_word);
+            (void)user_dictionary::record_delete(journal, wubi.kind, old_code, old_word);
         else
         {
             if (action == "update" && (old_code != code || old_word != word))
-                (void)user_dictionary::record_delete(user_dictionary::default_user_db_path(),
-                                                     user_dictionary::DictionaryKind::Wubi, old_code, old_word);
+                (void)user_dictionary::record_delete(journal, wubi.kind, old_code, old_word);
             if (user_inserted)
-                (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(),
-                                                          user_dictionary::DictionaryKind::Wubi, code, word, weight);
+                (void)user_dictionary::record_user_insert(journal, wubi.kind, code, word, weight);
             else
-                (void)user_dictionary::record_weight_edit(user_dictionary::default_user_db_path(),
-                                                          user_dictionary::DictionaryKind::Wubi, code, word, weight);
+                (void)user_dictionary::record_weight_edit(journal, wubi.kind, code, word, weight);
         }
     }
     const char *label = action == "create" ? "新增" : action == "update" ? "修改" : "删除";
@@ -2045,19 +2096,20 @@ json::object HandleRequest(const json::object &request)
         return HandleLatin(request);
     if (action == "export")
         return ExportUserDictionary(dictionary);
-    // 纯汉字导入按目标词库分发出码方式：拼音走注音引擎，五笔走 wubi86 单字码组合。
+    const auto *wubi = FindWubiTable(dictionary);
+    // 纯汉字导入按目标词库分发出码方式：拼音走注音引擎，五笔走所选那一版码表的单字码组合。
     if (action == "importHans")
     {
-        if (dictionary == "wubi")
-            return ImportHansWubi(request);
+        if (wubi != nullptr)
+            return ImportHansWubi(request, *wubi);
         if (dictionary == "english" || dictionary == "quick")
             return Result(false, "该词库不支持纯汉字导入");
         return ImportHans(request);
     }
     if (dictionary == "english")
         return HandleEnglish(request);
-    if (dictionary == "wubi")
-        return HandleWubi(request);
+    if (wubi != nullptr)
+        return HandleWubi(request, *wubi);
     if (dictionary == "quick")
         return HandleQuickPhrase(request);
     if (dictionary != "quanpin")

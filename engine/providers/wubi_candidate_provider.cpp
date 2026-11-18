@@ -108,6 +108,14 @@ void WubiCandidateProvider::reset_cache()
     close_database();
 }
 
+void WubiCandidateProvider::set_profile(metasequoia::WubiProfile profile)
+{
+    if (profile_ == profile)
+        return;
+    profile_ = profile;
+    close_database();
+}
+
 int WubiCandidateProvider::create_word(SchemeType, std::string, std::string)
 {
     // 在线造词是后续任务（PRD Non-goals）；设置页词典管理已覆盖手工造词。这里保持 no-op，
@@ -119,7 +127,8 @@ int WubiCandidateProvider::update_weight_by_pinyin_and_word(SchemeType, std::str
 {
     // 增量语义对齐全拼侧 build_sql_for_updating_word：新权重 = 同码组当前最高权重 + 1，
     // 选中候选升到组内首位；主库更新与 journal upsert 同事务完成，升级回放可重建。
-    if (!user_dictionary::bump_wubi_weight(db_path_, journal_db_path(), code, word))
+    if (!user_dictionary::bump_wubi_weight(db_path_, journal_db_path(), code, word,
+                                           user_dictionary::wubi_dictionary_kind(profile_)))
     {
         return kMutationFailed;
     }
@@ -132,7 +141,7 @@ int WubiCandidateProvider::delete_by_pinyin_and_word(SchemeType, std::string cod
 {
     // user_dictionary 删词本就按 DictionaryKind 泛化，五笔此前只是没有接线。
     if (!user_dictionary::delete_dictionary_candidate(db_path_, journal_db_path(),
-                                                      user_dictionary::DictionaryKind::Wubi, code, word))
+                                                      user_dictionary::wubi_dictionary_kind(profile_), code, word))
     {
         return kMutationFailed;
     }
@@ -168,17 +177,20 @@ bool WubiCandidateProvider::ensure_query_statement()
         return false;
     }
 
+    // 表名来自固定的版本表（wubi_profile_table），不是外部输入。词库里没有这一版的表（还没带 98、新世纪表的
+    // 旧词库）时 prepare 失败，查询照常返回空候选，不影响别的方案。
+    const std::string table = "\"" + std::string(metasequoia::wubi_profile_table(profile_)) + "\"";
     const std::string query_sql =
-        "SELECT \"key\", \"value\", \"weight\" FROM wubi86 "
-        "WHERE \"key\" >= ?1 AND \"key\" < ?2 "
+        "SELECT \"key\", \"value\", \"weight\" FROM " + table +
+        " WHERE \"key\" >= ?1 AND \"key\" < ?2 "
         // 精确等长行优先（保住一级/二级简码），其余前缀行按权重降序；rowid 做稳定序，与现状一致。
         // key >= ?1 AND key < ?2 是范围扫描，受益于 key 上任何索引；LIMIT 只在截断处付出排序代价。
         "ORDER BY (\"key\" = ?1) DESC, \"weight\" DESC, \"key\" ASC, rowid ASC "
         "LIMIT " +
         std::to_string(kWubiQueryRowLimit);
     // 通配语句没有精确行可优先（模式里的 '?' 永远不等于真实 key 的那个字节），所以只按权重排。
-    const std::string wildcard_sql = "SELECT \"key\", \"value\", \"weight\" FROM wubi86 "
-                                     "WHERE \"key\" GLOB ?1 "
+    const std::string wildcard_sql = "SELECT \"key\", \"value\", \"weight\" FROM " + table +
+                                     " WHERE \"key\" GLOB ?1 "
                                      "ORDER BY \"weight\" DESC, \"key\" ASC, rowid ASC "
                                      "LIMIT " +
                                      std::to_string(kWubiQueryRowLimit);

@@ -31,7 +31,14 @@ std::string InputSession::position_context(bool english, bool wubi) const
     if (local_input_mode_ == LocalInputMode::SuperJianpin)
         return local_modes::jianpin_ranking_context(local_preedit_.substr(1), scheme(), shuangpin_profile_);
     if (wubi)
-        return engine_.get_request().raw_input;
+    {
+        // 86 五笔沿用原来的上下文（就是码本身），已有的固定位置和调频计数不受影响；98、新世纪同一个码
+        // 对应的是另一组字，加上版本名前缀分开记，免得在一版里固定的位置串到另一版。
+        const auto profile = wubi_input_options().profile;
+        if (profile == WubiProfile::Wubi86)
+            return engine_.get_request().raw_input;
+        return std::string(wubi_profile_name(profile)) + ":" + engine_.get_request().raw_input;
+    }
     std::string context = get_quanpin();
     if (context.empty())
         context = get_pinyin_segmentation();
@@ -163,9 +170,9 @@ KeyResult InputSession::remove_candidate(std::size_t index)
         return {};
 
     const bool wubi = is_wubi_native_candidate(selected) && local_input_mode_ != LocalInputMode::SuperJianpin;
-    const auto kind = english
-                          ? user_dictionary::DictionaryKind::English
-                          : (wubi ? user_dictionary::DictionaryKind::Wubi : user_dictionary::DictionaryKind::Pinyin);
+    const auto kind = english ? user_dictionary::DictionaryKind::English
+                              : (wubi ? user_dictionary::wubi_dictionary_kind(wubi_input_options().profile)
+                                      : user_dictionary::DictionaryKind::Pinyin);
     // A displayed pinyin candidate already carries its exact dictionary key. Re-segmenting it
     // (or expanding shuangpin again) can delete a different pronunciation of the same word.
     const auto &key = english || wubi ? selected.pinyin : selected.canonical_pinyin;

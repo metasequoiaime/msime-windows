@@ -3,7 +3,7 @@
 对应 Rust 构建器 msime.rs 的 quanpin / custom-words / reading-corrections / wubi / quick-phrases 阶段，但全拼表
 不再读 sources/pinyin/ 下的 rime-ice 系列与地名补充，只读 sources/pinyin-next/ 整理好的拼音基础词库（万象加上
 rime-ice 有而万象没有的词）。Release 把五笔
-拆进了 msime-wubi.db，Windows 端仍然一个库：这里全建在 msime.db 里。98 五笔 Windows 端不读，不建。
+拆进了 msime-wubi.db，Windows 端仍然一个库：86、98、新世纪三张五笔表全建在 msime.db 里。
 """
 
 from __future__ import annotations
@@ -29,15 +29,25 @@ CREATE_QUANPIN_TABLE = (
     '\ncreate table if not exists {} (\n   "key" text, -- 全拼拼音\n   "jp" text, -- 全拼简拼\n'
     '   "value" text, -- 对应的汉字或者词组\n   "weight" integer default 0 -- 权重\n);\n'
 )
-CREATE_WUBI86 = (
-    '\n            CREATE TABLE wubi86 (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
-    '                "weight" INTEGER NOT NULL DEFAULT 0,\n                UNIQUE("key", "value")\n            )\n            '
-)
-WUBI86_INDEXES = (
-    'CREATE INDEX idx_wubi86_key_weight ON wubi86("key", "weight" DESC)',
-    # 按词条反查五笔编码用。
-    'CREATE INDEX idx_wubi86_value ON wubi86("value")',
-)
+def _create_wubi(table: str) -> str:
+    return (
+        f'\n            CREATE TABLE {table} (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
+        '                "weight" INTEGER NOT NULL DEFAULT 0,\n                UNIQUE("key", "value")\n            )\n            '
+    )
+
+
+def _wubi_indexes(table: str) -> tuple[str, ...]:
+    return (
+        f'CREATE INDEX idx_{table}_key_weight ON {table}("key", "weight" DESC)',
+        # 按词条反查五笔编码用。
+        f'CREATE INDEX idx_{table}_value ON {table}("value")',
+    )
+
+
+# 三版五笔的表结构与索引相同，只是表名不同（与 msime 的 msime-wubi.db 一致）。
+CREATE_WUBI86 = _create_wubi("wubi86")
+WUBI86_INDEXES = _wubi_indexes("wubi86")
+WUBI_TABLES = ("wubi86", "wubi98", "wubixsj")
 CREATE_QUICK_PHRASES = (
     '\n            CREATE TABLE quick_parases (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
     '                "weight" INTEGER NOT NULL DEFAULT 0,\n                UNIQUE("key", "value")\n            )\n            '
@@ -391,6 +401,134 @@ def build_wubi86(connection: sqlite3.Connection, paths: list[Path]) -> tuple[int
 
     imported, skipped = _write_code_table(connection, "wubi86", CREATE_WUBI86, WUBI86_INDEXES, rows())
     return imported, skipped, outside
+
+
+# ---- 98 五笔与新世纪五笔（对应 msime crates/dict-builder/src/msime.rs 的 build_wubi98_sources / build_wubixsj） ----
+
+# 同一编码内按名次给的权重步长：最后一名是一步，与 86 表的最低名次相当。
+WUBI_RANK_STEP = 10
+
+
+def _unsupported_wubi_value(value: str) -> bool:
+    """基本区外的字、私用区字符和 CJK 兼容汉字都不进五笔表：候选窗画不出来，或与正规字同形却检索不到。"""
+    return _outside_basic_cjk(value) or any(
+        0xE000 <= ord(c) <= 0xF8FF or 0xF900 <= ord(c) <= 0xFAFF or ord(c) >= 0xF0000 for c in value)
+
+
+def _valid_wubi_code(code: str) -> bool:
+    """1 到 4 个 a–y 字母；z 是万能键和拼音反查键，从不是编码。"""
+    return 1 <= len(code) <= 4 and all("a" <= c <= "y" for c in code)
+
+
+def _rank_weights(parsed: list[tuple[str, str]]) -> list[tuple[str, str, int]]:
+    """`(code, value)` 已按「同一编码内越靠前越好」排好；每行权重是步长乘以该编码从这一行起还剩的行数，先后不变。"""
+    remaining: dict[str, int] = {}
+    for code, _ in parsed:
+        remaining[code] = remaining.get(code, 0) + 1
+    rows = []
+    for code, value in parsed:
+        rows.append((code, value, remaining[code] * WUBI_RANK_STEP))
+        remaining[code] -= 1
+    return rows
+
+
+def _generated_rows(paths: list[Path]):
+    """生成的补充词组表（`value<TAB>code<TAB>weight`），不收的字计入跳过。"""
+    for path in paths:
+        for line in textutil.universal_lines(textutil.without_bom(textutil.read(path))):
+            row = _parse_code_line(line)
+            yield None if row is not None and _unsupported_wubi_value(row[1]) else row
+
+
+def _decode_utf16le(path: Path) -> str:
+    data = path.read_bytes()
+    if len(data) % 2 or not data.startswith(b"\xff\xfe"):
+        raise ValueError(f"{path} 不是带 BOM 的 UTF-16LE")
+    return data[2:].decode("utf-16-le")
+
+
+def build_wubi98(connection: sqlite3.Connection, primary: Path, fcitx: Path, generated: list[Path]) -> tuple[int, int]:
+    """98 五笔：主表（UTF-16LE 的 `字<TAB>编码`，无权重，同码按先后排名次），再并入 Fcitx5 表里主表没有的
+    `编码 词` 行（权重 1），最后是生成的词组补充表。同码同权重按 rowid 排，所以后来的来源排在前面的之后。返回 (导入, 跳过)。"""
+    seen: set[tuple[str, str]] = set()
+    parsed: list[tuple[str, str]] = []
+    skipped = 0
+    for line in textutil.universal_lines(_decode_utf16le(primary)):
+        columns = line.split("\t")
+        if len(columns) == 2 and columns[0] and _valid_wubi_code(columns[1]) and (columns[1], columns[0]) not in seen:
+            seen.add((columns[1], columns[0]))
+            parsed.append((columns[1], columns[0]))
+        else:
+            skipped += 1
+    weighted = _rank_weights(parsed)
+    for line in textutil.universal_lines(textutil.read(fcitx)):
+        code, separator, value = line.partition(" ")
+        code, value = code.strip(), value.strip()
+        valid = separator and 1 <= len(code) <= 4 and code.isascii() and code.isalpha() and code.islower() and value
+        if valid and (code, value) not in seen:
+            seen.add((code, value))
+            weighted.append((code, value, 1))
+        else:
+            skipped += 1
+
+    def rows():
+        for code, value, weight in weighted:
+            yield None if _unsupported_wubi_value(value) else (code, value, weight)
+        yield from _generated_rows(generated)
+
+    imported, written_skipped = _write_code_table(connection, "wubi98", _create_wubi("wubi98"), _wubi_indexes("wubi98"),
+                                                  rows())
+    return imported, skipped + written_skipped
+
+
+def build_wubixsj(connection: sqlite3.Connection, source: Path, generated: list[Path]) -> tuple[int, int, int, int]:
+    """新世纪五笔：上游 Rime 码表（`...` 结束表头，`字<TAB>编码<TAB>权重`）只取基本区单字和 1–4 个 a–y 的编码，
+    上游权重只用来定同码名次，再按名次给权重；上游词组一概不收，词组全部来自生成的补充表。
+    返回 (导入, 跳过, 不收的单字, 丢弃的上游词组)。"""
+    lines = textutil.universal_lines(textutil.without_bom(textutil.read(source)))
+    try:
+        header_end = lines.index("...")
+    except ValueError:
+        raise ValueError(f"{source} 没有结束 Rime 表头的 `...` 行") from None
+    phrases = filtered = skipped = 0
+    by_code: dict[str, list[tuple[str, int]]] = {}
+    for line in lines[header_end + 1:]:
+        if not line or line.startswith("#"):
+            continue
+        columns = line.split("\t")
+        if len(columns) < 3:
+            skipped += 1
+            continue
+        value, code, weight = columns[0], columns[1], textutil.parse_int(columns[2])
+        if weight is None or weight < 0:
+            skipped += 1
+            continue
+        if len(value) != 1:
+            phrases += bool(value)
+            skipped += not value
+            continue
+        if not 0x4E00 <= ord(value) <= 0x9FFF or not _valid_wubi_code(code):
+            filtered += 1
+            continue
+        by_code.setdefault(code, []).append((value, weight))
+    parsed: list[tuple[str, str]] = []
+    for code, candidates in by_code.items():
+        # sorted 是稳定排序：同权重保持文件里的先后。
+        seen: set[str] = set()
+        for value, _ in sorted(candidates, key=lambda candidate: -candidate[1]):
+            if value in seen:
+                skipped += 1
+                continue
+            seen.add(value)
+            parsed.append((code, value))
+
+    def rows():
+        yield from _rank_weights(parsed)
+        yield from _generated_rows(generated)
+
+    imported, written_skipped = _write_code_table(connection, "wubixsj", _create_wubi("wubixsj"),
+                                                  _wubi_indexes("wubixsj"), rows())
+    return imported, skipped + written_skipped, filtered, phrases
 
 
 def build_quick_phrases(connection: sqlite3.Connection) -> None:

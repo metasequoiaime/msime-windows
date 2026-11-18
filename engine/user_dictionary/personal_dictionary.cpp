@@ -43,6 +43,8 @@ PersonalDictionaryValidation validate_personal_dictionary_entry(PersonalDictiona
         break;
     }
     case PersonalDictionaryKind::Wubi:
+    case PersonalDictionaryKind::Wubi98:
+    case PersonalDictionaryKind::WubiXsj:
         if (entry.key.size() > 4 || !std::all_of(entry.key.begin(), entry.key.end(), letters))
             return invalid("Wubi codes contain one to four letters");
         break;

@@ -11,6 +11,7 @@
 #include "engine/contracts/input_state_shortcuts.h"
 #include "engine/contracts/mid_sentence_helpcode.h"
 #include "engine/core/data_path.h"
+#include "engine/core/wubi_profile.h"
 #include "engine/shuangpin/shuangpin_profile.h"
 
 using namespace ime_config_detail;
@@ -240,7 +241,7 @@ const std::string &GetConfiguredWubiSchema()
 
 bool SetConfiguredWubiSchema(const std::string &schema)
 {
-    if (schema != "wubi86")
+    if (!metasequoia::wubi_profile_from_name(schema))
     {
         return false;
     }
