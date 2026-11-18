@@ -420,6 +420,8 @@ bool ImportDictionaryViaSettings(const std::string &dictionary, const std::strin
         request["action"] = "import";
         request["dictionary"] = dictionary;
         request["content"] = content;
+        // 恢复的是自己导出的词库：权重是用户调过的真实值，原样写回，不按设置页导入的规则换算。
+        request["keepWeights"] = true;
         const boost::json::object response = SettingsDictionary::HandleRequest(request);
         const boost::json::value *ok = response.if_contains("ok");
         const boost::json::value *response_message = response.if_contains("message");

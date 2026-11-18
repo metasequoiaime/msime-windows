@@ -3,16 +3,32 @@
 #include "engine/quanpin/quanpin_query.h"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace SettingsDictionary::Validation
 {
 // 缺省权重按词库区分。拼音表与五笔表的量级差三个数量级——实测拼音 2 字词
 // p50=2805、max=9931703，五笔 2 字词 p50=10、max=110。同一个 10000 落在拼音的
 // p50~p60 合理区间，搬到五笔就是全库 max 的 91 倍，导入的词会碾压原生词条。
+// 拼音这一档现在只剩备份恢复在用（keepWeights：原样写回导出时的权重，缺权重列才落到它）；
+// 设置页的拼音类导入改按 MapImportFrequencies 换算。
 inline constexpr int kDefaultPinyinImportWeight = 10000;
 inline constexpr int kDefaultWubiImportWeight = 30;
+
+// 设置页拼音类导入（全拼批量导入、纯汉字导入、字母词导入、导入其他词库）的权重区间。
+// 出厂全拼二字词中位数 235、P90 1981，三字、四字词 P99 不到 3000：导入的词落在这个区间里，
+// 能补上读音的空位，又不会大批压过同音的出厂常用词；常用的词靠选词调频自己升上去。
+inline constexpr int kMinImportWeight = 10;
+inline constexpr int kMaxImportWeight = 1000;
+
+// 一份文件里各词条的词频换算成导入权重：不同的词频值从小到大排名次，最小的记
+// kMinImportWeight、最大的记 kMaxImportWeight，中间按名次均分。只看名次不看数值，各家词频
+// 的量纲（整数次数、libime 的负对数概率）就都能用。没有词频的词条、以及整份文件只有一种
+// 词频值（分不出高低）时，记 kMinImportWeight。
+std::vector<int> MapImportFrequencies(const std::vector<std::optional<double>> &frequencies);
 
 // 单字到全码的映射，供 ComposeWubiPhraseCode 按 86 词组取码规则组合词码。
 using WubiCharCodes = std::unordered_map<std::string, std::string>;

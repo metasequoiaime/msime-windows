@@ -980,9 +980,11 @@ void DictionaryPanel::SetDictionary(const std::string &dictionary)
     hint_->SetText(
         english ? L"按英文前缀查询；批量导入格式为：单词<Tab>显示内容<Tab>权重（兼容无权重的两列文件）"
         : quanpin ? L"全拼新增会校验拼音合法性、汉字数量和重复词条；批量导入格式为：词语<Tab>全拼[<Tab>权重]（兼容 "
-                    L"Rime userdb.txt / dict.yaml，全拼可用空格或 ' 分音节；含英文字母的词自动按字母词导入）"
+                    L"Rime userdb.txt / dict.yaml，全拼可用空格或 ' 分音节；含英文字母的词自动按字母词导入）。"
+                    L"权重列按文件内的高低换算成 10～1000，没写权重的记 10"
         : latin ? L"字母词由英文字母和汉字组成（T恤、卡拉OK），字母照原样敲、汉字敲全拼；内置字母词只能查询。"
-                  L"读音写成 t'xu 或 T xu，留空则自动注音；批量导入格式为：词语[<Tab>读音[<Tab>权重]]"
+                  L"读音写成 t'xu 或 T xu，留空则自动注音；批量导入格式为：词语[<Tab>读音[<Tab>权重]]，"
+                  L"权重按文件内的高低换算成 10～1000，没写的记 10"
                 : L"管理 86 五笔编码、词条及权重；批量导入格式为：词语<Tab>五笔编码[<Tab>权重]（兼容 Rime "
                   L"dict.yaml）");
     header_->SetLabels(HeaderLabels());

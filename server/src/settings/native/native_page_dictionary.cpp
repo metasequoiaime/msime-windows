@@ -235,7 +235,8 @@ VisualPtr BuildDictionaryPage(PageContext &context)
         auto body = std::make_shared<Column>(0.0f);
         body->Add(MakeTitle(L"导入其他词库", L"导入 Rime、搜狗、QQ、百度、LibIME、Mac 等输入法的词库"));
         auto description =
-            MakeDescription(L"导入到拼音用户词库，已有的词条会跳过；文件里没有读音或读音不完整的纯汉字词会自动注音");
+            MakeDescription(L"导入到拼音用户词库，已有的词条会跳过；文件里没有读音或读音不完整的纯汉字词会自动注音。"
+                            L"原词库带词频的按词频高低换算成 10～1000 的权重，没有词频的记 10");
         description->SetMargin({0.0f, 4.0f, 0.0f, 14.0f});
         body->Add(description);
 
