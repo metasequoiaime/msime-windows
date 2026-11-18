@@ -949,9 +949,10 @@ VisualPtr BuildAppearancePage(PageContext &context)
         auto slider = std::make_shared<ScreenFractionSlider>([host]() { return SettingsMonitorWidthPx(host->Hwnd()); });
         slider->SetOnCommit(
             [model](double ratio) { model->Update("appearance.candidate_window_fixed_width_ratio", ratio); });
-        auto widthRow = MakeRow(L"窗口宽度", L"占当前屏幕宽度的比例，靠近刻度时自动吸附", slider, true);
+        // 只在开了固定宽度时出现，算作「固定宽度」的一部分：与它左对齐、同一级标题，中间不加分隔线。
+        auto widthRow = MakeRow(L"窗口宽度", L"占当前屏幕宽度的比例，靠近刻度时自动吸附", slider);
         widthRow->SetMinHeight(48.0f);
-        widthRow->SetMargin({18.0f, 0.0f, 0.0f, 4.0f});
+        widthRow->SetMargin({0.0f, 6.0f, 0.0f, 4.0f});
         auto widthRowHideable = std::make_shared<Hideable>(widthRow, false);
         rows->Add(widthRowHideable);
 
