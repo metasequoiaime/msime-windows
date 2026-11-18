@@ -25,6 +25,8 @@ dependencies are installed beside it as DLLs rather than linked into it.
   OpenCC                  Apache-2.0    https://github.com/byvoid/opencc
   cpp-pinyin              Apache-2.0    https://github.com/wolfgitpr/cpp-pinyin
   kenlm                   LGPL-2.1+     https://github.com/kpu/kenlm
+  zstd                    BSD-3-Clause  https://github.com/facebook/zstd
+  imewlconverter (ported) GPL-3.0       https://github.com/studyzy/imewlconverter
   utfcpp                  BSL-1.0       https://github.com/nemtrif/utfcpp
   fmt                     MIT           https://github.com/fmtlib/fmt
   spdlog                  MIT           https://github.com/gabime/spdlog
@@ -1096,6 +1098,67 @@ necessary.  Here is a sample; alter the names:
   Ty Coon, President of Vice
 
 That's all there is to it!
+
+------------------------------------------------------------------------------
+14. imewlconverter - GNU General Public License version 3
+------------------------------------------------------------------------------
+
+The settings window's "导入其他词库" (import other dictionaries) feature reads
+Rime, Sogou (scel, text and backup bin), QQ (qcel and text), Baidu (bdict and
+text), LibIME (text and binary) and Mac plist dictionaries. Its format readers
+in server/src/settings/foreign_dictionary.cpp are a C++ port of the importers
+in the "深蓝词库转换" project imewlconverter, Copyright studyzy and
+contributors. The Sogou backup reader there was in turn translated from
+Sogou-User-Dict-Converter (Copyright h4x3rotab) and rose (Copyright nopdan).
+All three are licensed under the GNU General Public License version 3, the same
+license as this project; its full text is in the LICENSE file at the root of
+this repository.
+
+Sources:
+  https://github.com/studyzy/imewlconverter
+  https://github.com/h4x3rotab/Sogou-User-Dict-Converter
+  https://github.com/nopdan/rose
+
+------------------------------------------------------------------------------
+15. zstd - BSD License
+------------------------------------------------------------------------------
+
+Zstandard decompression, used by the settings process to read LibIME (fcitx5)
+binary dictionaries. zstd is dual licensed under BSD and GPLv2; it is used here
+under the BSD license, reproduced below.
+
+Source: https://github.com/facebook/zstd
+
+BSD License
+
+For Zstandard software
+
+Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook, nor Meta, nor the names of its contributors may
+   be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
 Downloaded on request

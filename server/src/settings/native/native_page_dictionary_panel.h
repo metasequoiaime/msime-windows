@@ -214,6 +214,9 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     }
     // 批量导入 for the current dictionary (`import`) or 纯汉字导入 (`importHans`).
     void Import(const std::string &action);
+    // 导入其他词库：按 `format`（foreign_dictionary.h 的格式标识）选文件，交给宿主读取并
+    // 导入拼音用户词库。导入进行中再点只提示，不重复提交。
+    void ImportForeign(const std::string &format);
     void Export(const std::string &dictionary);
     // Called when the current dictionary changes, e.g. to retitle the hans import card.
     void SetOnModeChanged(std::function<void()> handler);

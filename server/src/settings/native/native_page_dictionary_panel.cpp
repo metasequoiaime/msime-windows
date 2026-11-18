@@ -1,6 +1,7 @@
 #include "settings/native/native_page_dictionary_panel.h"
 
 #include "ipc/candidate_display_text.h"
+#include "settings/foreign_dictionary.h"
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
 
@@ -1086,6 +1087,44 @@ void DictionaryPanel::Import(const std::string &action)
         return;
     }
     Post(action, {{"dictionary", target}, {"content", Narrow(*content)}});
+}
+
+void DictionaryPanel::ImportForeign(const std::string &format)
+{
+    const ForeignDictionary::Format *info = ForeignDictionary::FindFormat(format);
+    if (!info)
+        return;
+    for (const auto &item : pending_)
+    {
+        if (item.second.action == "importForeign")
+        {
+            context_.host.ShowToast(L"正在导入词库，请稍候", true);
+            return;
+        }
+    }
+
+    ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+        return;
+    const std::wstring title = std::wstring(L"选择") + info->label;
+    const COMDLG_FILTERSPEC filters[] = {{info->filterName, info->filterPattern}, {L"所有文件", L"*.*"}};
+    dialog->SetTitle(title.c_str());
+    dialog->SetFileTypes(ARRAYSIZE(filters), filters);
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->Show(context_.host.Hwnd())) || FAILED(dialog->GetResult(&item)))
+        return;
+    PWSTR path = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+        return;
+    const std::wstring selected = path;
+    CoTaskMemFree(path);
+
+    // 大词库要读、解析、逐条校验写库，几十万条得十几秒，先告诉用户在做了。
+    context_.host.ShowToast(L"正在导入词库，请稍候", true);
+    Post("importForeign", {{"dictionary", "quanpin"}, {"format", format}, {"path", Narrow(selected)}});
 }
 
 void DictionaryPanel::Export(const std::string &dictionary)
