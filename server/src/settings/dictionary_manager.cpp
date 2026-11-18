@@ -5,6 +5,7 @@
 #include "config/ime_config.h"
 #include "defines/defines.h"
 #include "settings/dictionary_validation.h"
+#include "settings/foreign_dictionary.h"
 #include "utils/common_utils.h"
 #include "utils/hanzi_pinyin.h"
 #include "engine/common/helpcode_utils.h"
@@ -23,7 +24,9 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1054,6 +1057,114 @@ json::object ImportHans(const json::object &request)
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
 
+// 导入其他输入法的词库（Rime、搜狗、QQ、百度、LibIME、Mac）到拼音用户词库。
+// 文件由设置窗口选好后把路径交过来，在这里读：细胞词库动辄几十万条，不经消息通道搬内容。
+// 解析见 foreign_dictionary.cpp；写库与「批量导入」同一套校验、去重和用户日志。
+// 外来词频与本词库不在一个量级，一律按批量导入的默认权重写入。
+json::object ImportForeign(const json::object &request)
+{
+    const std::string format = StringValue(request, "format");
+    if (!ForeignDictionary::FindFormat(format))
+        return Result(false, "不支持的词库格式");
+    const std::string path = StringValue(request, "path");
+    if (path.empty())
+        return Result(false, "没有选择词库文件");
+
+    std::string bytes;
+    {
+        std::error_code size_error;
+        const std::filesystem::path file(string_to_wstring(path));
+        const auto size = std::filesystem::file_size(file, size_error);
+        // 已知最大的细胞词库也只有几十 MB；再大只会是选错了文件。
+        constexpr std::uintmax_t kMaxFileSize = 512ull * 1024 * 1024;
+        if (size_error)
+            return Result(false, "读取文件失败");
+        if (size > kMaxFileSize)
+            return Result(false, "文件过大，不是可导入的词库");
+        std::ifstream stream(file, std::ios::binary);
+        if (!stream)
+            return Result(false, "读取文件失败");
+        bytes.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    }
+    if (bytes.empty())
+        return Result(false, "文件内容为空");
+
+    std::vector<ForeignDictionary::Entry> entries;
+    std::string parse_error;
+    if (!ForeignDictionary::Parse(format, bytes, entries, parse_error))
+        return Result(false, parse_error);
+    bytes.clear();
+    bytes.shrink_to_fit();
+    if (entries.empty())
+        return Result(false, "文件中没有可导入的词条，请确认选择的格式与文件一致");
+
+    std::string error;
+    Db db = OpenDatabase("msime.db", error);
+    if (!db)
+        return Result(false, "打开拼音词库失败：" + error);
+
+    constexpr int kWeight = Validation::kDefaultPinyinImportWeight;
+    int inserted = 0;
+    int skipped = 0;
+    int failed = 0;
+    std::vector<std::string> error_details;
+    const auto append_error = [&](int index, const std::string &detail) {
+        ++failed;
+        if (error_details.size() < 5)
+            error_details.push_back("第 " + std::to_string(index) + " 条：" + detail);
+    };
+
+    // 含英文字母的词（T恤、卡拉OK）按字母词导入并自动注音，理由同 ImportChinese。
+    std::vector<LatinImportLine> latin_lines;
+    sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+        const int index = static_cast<int>(i + 1);
+        const ForeignDictionary::Entry &entry = entries[i];
+        if (quanpin::contains_latin_letter(entry.word))
+        {
+            latin_lines.push_back({index, entry.word, std::string(), kWeight});
+            continue;
+        }
+
+        // 文件里的读音不可用（没给、是简拼、音节数对不上）时，纯汉字词改用自动注音。
+        quanpin::Segments segments;
+        std::string key;
+        std::string message;
+        bool valid =
+            !entry.pinyin.empty() && ValidateChineseEntry("quanpin", entry.pinyin, entry.word, segments, key, message);
+        if (!valid && IsPureHanPhrase(entry.word))
+        {
+            std::string annotated;
+            std::string annotate_message;
+            if (AnnotateHansToPinyin(entry.word, annotated, annotate_message))
+                valid = ValidateChineseEntry("quanpin", annotated, entry.word, segments, key, message);
+            else if (message.empty())
+                message = annotate_message;
+        }
+        if (!valid)
+        {
+            append_error(index, entry.word + "：" + (message.empty() ? std::string("没有可用的读音") : message));
+            continue;
+        }
+        if (ChineseExists(db.get(), segments, key, entry.word))
+        {
+            ++skipped;
+            continue;
+        }
+        if (!InsertChineseWord(db.get(), segments, key, entry.word, kWeight, message))
+        {
+            append_error(index, "写入失败：" + message);
+            continue;
+        }
+        ++inserted;
+    }
+    sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr);
+    ImportLatinLines(latin_lines, inserted, skipped, append_error);
+
+    return SummarizeImport(inserted, skipped, failed, error_details);
+}
+
 // 纯汉字词组 -> 五笔码的导入。与 ImportHans 同构，差别只在码从哪来：
 // 拼音走 cpp-pinyin 注音，五笔走 wubi86 单字码按 86 词组取码规则组合。
 json::object ImportHansWubi(const json::object &request)
@@ -1862,6 +1973,9 @@ json::object HandleRequest(const json::object &request)
     const std::string action = StringValue(request, "action");
     if (action == "query" && StringValue(request, "scope") == "user")
         return QueryUserEntries(dictionary, request);
+    // 其他输入法的词库都是拼音词库，只导入全拼用户词库。
+    if (action == "importForeign")
+        return dictionary == "quanpin" ? ImportForeign(request) : Result(false, "其他词库只能导入到拼音词库");
     if (dictionary == "latin")
         return HandleLatin(request);
     if (action == "export")

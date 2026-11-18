@@ -279,6 +279,9 @@ set(TEST_SOURCE_FILES
     # Routing lives in dictionary_manager.cpp's HandleRequest, so the importHans dispatch test has
     # to link the real translation unit rather than restate the branch order.
     "${CMAKE_SOURCE_DIR}/src/settings/dictionary_manager.cpp"
+    # 导入其他词库：各格式用内存里构造的样本驱动真实的解析器。
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_foreign_dictionary.cpp"
+    "${CMAKE_SOURCE_DIR}/src/settings/foreign_dictionary.cpp"
     # The backup tests drive the real archive writer/reader and the real orchestration module;
     # stop/start and dictionary callbacks are injected so no Server is ever touched.
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_data_backup.cpp"
@@ -353,6 +356,8 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     ws2_32
     # zip_archive.cpp 用 zlib 的 CRC 与 deflate 解压。
     ZLIB::ZLIB
+    # foreign_dictionary.cpp 解压 LibIME 二进制词库。
+    ${MSIME_ZSTD_TARGET}
 )
 
 add_test(NAME ${TEST_EXECUTABLE_NAME} COMMAND ${TEST_EXECUTABLE_NAME})
@@ -391,6 +396,7 @@ target_link_libraries(MetasequoiaImeSettingsUiTests PRIVATE
     cpp-pinyin::cpp-pinyin
     CURL::libcurl
     ZLIB::ZLIB
+    ${MSIME_ZSTD_TARGET}
     bcrypt
     wintrust
     crypt32

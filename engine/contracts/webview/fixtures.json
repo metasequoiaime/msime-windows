@@ -267,6 +267,38 @@
     "direction": "client"
   },
   {
+    "name": "dictionary foreign import",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-2",
+        "dictionary": "quanpin",
+        "action": "importForeign",
+        "format": "scel",
+        "path": "C:\\Users\\me\\Downloads\\网络流行新词.scel"
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "dictionary foreign import unknown format",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-3",
+        "dictionary": "quanpin",
+        "action": "importForeign",
+        "format": "zip",
+        "path": "C:\\a.zip"
+      }
+    },
+    "valid": false,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
     "name": "dictionary request unknown action",
     "message": {
       "type": "dictionaryRequest",

@@ -1,4 +1,5 @@
 #include "settings/native/native_page_dictionary_panel.h"
+#include "settings/foreign_dictionary.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
@@ -228,6 +229,40 @@ VisualPtr BuildDictionaryPage(PageContext &context)
                            : dictionary == "latin" ? L"批量导入字母词(e.g.T恤)，每行一个词，自动注音"
                                                    : L"批量导入纯汉字词组(e.g.人名)到五笔词库");
     });
+
+    // 导入其他词库：左边选格式，右边导入。都是拼音词库，一律进拼音用户词库，与当前标签页无关。
+    {
+        auto body = std::make_shared<Column>(0.0f);
+        body->Add(MakeTitle(L"导入其他词库", L"导入 Rime、搜狗、QQ、百度、LibIME、Mac 等输入法的词库"));
+        auto description =
+            MakeDescription(L"导入到拼音用户词库，已有的词条会跳过；文件里没有读音或读音不完整的纯汉字词会自动注音");
+        description->SetMargin({0.0f, 4.0f, 0.0f, 14.0f});
+        body->Add(description);
+
+        std::vector<DropdownOption> options;
+        for (const auto &format : ForeignDictionary::Formats())
+            options.push_back({format.label, format.id});
+        Dropdown::Options settings;
+        settings.minWidth = 240.0f;
+        settings.menuAlignLeft = true;
+        settings.compact = true;
+        auto formats = std::make_shared<Dropdown>(std::move(options), settings);
+        formats->SetSelectedIndex(0);
+        auto button = std::make_shared<Button>(L"导入", ButtonKind::Primary);
+        button->SetMinWidth(68.0f);
+        std::weak_ptr<Dropdown> weakFormats = formats;
+        button->SetOnClick([panel, weakFormats]() {
+            if (const auto locked = weakFormats.lock())
+                panel->ImportForeign(locked->GetValue());
+        });
+        auto row = std::make_shared<Row>(18.0f);
+        row->SetJustify(Row::Justify::SpaceBetween);
+        row->Add(formats);
+        row->Add(button);
+        body->Add(row);
+        page.AddRaw(std::make_shared<PageCard>(body, PageCard::Style::Section, Thickness{24.0f, 18.0f, 24.0f, 20.0f}),
+                    18.0f);
+    }
 
     // .dict-export-section: padding-top 18px, padding-bottom 0.
     auto exportBody = std::make_shared<Column>(0.0f);

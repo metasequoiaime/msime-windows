@@ -134,6 +134,9 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
+# 设置程序导入 fcitx5 / LibIME 的二进制词库（*.dict 第 2 版用 zstd 压缩）。
+find_package(zstd CONFIG REQUIRED)
+set(MSIME_ZSTD_TARGET "$<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>")
 
 # The engine ships its own CMake target. Consume that instead of listing its
 # translation units here, so that adding a file to the engine no longer requires
@@ -698,6 +701,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/dictionary_manager.h"
     "./src/settings/dictionary_validation.cpp"
     "./src/settings/dictionary_validation.h"
+    "./src/settings/foreign_dictionary.cpp"
+    "./src/settings/foreign_dictionary.h"
     "./src/statistics/stats_overview.cpp"
     "./src/statistics/stats_overview.h"
     "./src/statistics/stats_store.cpp"
@@ -773,6 +778,7 @@ target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     cpp-pinyin::cpp-pinyin
     CURL::libcurl
     ZLIB::ZLIB
+    ${MSIME_ZSTD_TARGET}
     bcrypt
     wintrust
     crypt32

@@ -547,8 +547,28 @@
               "delete",
               "import",
               "importHans",
+              "importForeign",
               "export"
             ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "rime",
+              "scel",
+              "sgpy",
+              "sgpybin",
+              "qqpy",
+              "qcel",
+              "bdpy",
+              "bdict",
+              "libimetxt",
+              "libimebin",
+              "plist"
+            ]
+          },
+          "path": {
+            "type": "string"
           },
           "word": {
             "type": "string"
