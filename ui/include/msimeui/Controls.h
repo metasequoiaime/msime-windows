@@ -658,6 +658,11 @@ class CandidateList : public Visual
         // slack after the text beyond the annotation gap. Pair it with a
         // contentPadRight equal to contentPadLeft + textPadLeft for even margins.
         bool fitContent = false;
+        // Vertical only: every row is exactly UniformRowHeight() tall, decided
+        // by the fonts rather than by each item's text, so an emoji or a
+        // fallback glyph cannot make one row a few DIPs taller. Annotation and
+        // translation stay on the row's single line and are clipped there.
+        bool uniformRowHeight = false;
         float contentPadLeft = 5.0f;
         float contentPadRight = 5.0f;
         // Part of itemHeight that is the row's bottom padding. Lines stacked
@@ -716,6 +721,10 @@ class CandidateList : public Visual
     const Item *GetItem(size_t index) const;
     size_t GetItemCount() const;
     const Appearance &GetAppearance() const;
+    // Height of every row while Appearance::uniformRowHeight is on: the
+    // larger of itemHeight and one line of CJK and Latin text at the text and
+    // annotation sizes.
+    float UniformRowHeight() const;
     // Horizontal: how many leading items the last Measure put on the first
     // line (all of them when nothing wrapped or the list is not measured).
     size_t CountItemsOnFirstLine() const;

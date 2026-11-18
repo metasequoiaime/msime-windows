@@ -1086,6 +1086,14 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // 竖排固定高度：卡片始终保持放得下 page_size 个候选的高度，候选少的页下面留空。
     const bool fixedHeight =
         GetConfiguredCandidateWindowLayout() == "vertical" && GetConfiguredCandidateWindowFixedHeight();
+    // 固定高度时每一行的行高也固定：emoji 或回落字体的字比汉字行高略高，不能让那一行把卡片撑高几像素。
+    // 皮肤重新套用时外观会被整份换掉，所以每次显示都对一下。
+    if (impl_->list && impl_->list->GetAppearance().uniformRowHeight != fixedHeight)
+    {
+        msimeui::CandidateList::Appearance appearance = impl_->list->GetAppearance();
+        appearance.uniformRowHeight = fixedHeight;
+        impl_->list->SetAppearance(std::move(appearance));
+    }
     int shownCount = -1;
     float widthDip = 0.0f;
     float heightDip = 0.0f;
@@ -1131,8 +1139,8 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
         const size_t count = impl_->list->GetItemCount();
         if (count < pageSize)
         {
-            const msimeui::CandidateList::Appearance &appearance = impl_->list->GetAppearance();
-            const float rowStep = appearance.itemHeight + appearance.itemGap;
+            // 定高行（见下面打开 uniformRowHeight 的地方）每行一样高，空出来的行按同一步长补。
+            const float rowStep = impl_->list->UniformRowHeight() + impl_->list->GetAppearance().itemGap;
             const size_t missing = pageSize - count;
             // 一个候选都没有时列表仍占一行高（CandidateList::Measure），那一行算在已有的里面。
             fixedCardHeightDip =

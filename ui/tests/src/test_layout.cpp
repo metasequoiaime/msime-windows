@@ -306,6 +306,33 @@ TEST_CASE(vertical_candidate_rows_fill_a_wider_arranged_width)
     REQUIRE_NEAR(list.GetItemBounds(0).x, 0.0f);
 }
 
+TEST_CASE(uniform_vertical_rows_do_not_follow_their_text)
+{
+    // 定高行：emoji、带辅助码或翻译的候选与普通汉字候选一样高，整列高度只看行数。
+    CandidateList list(28.0f);
+    CandidateList::Appearance appearance;
+    appearance.itemHeight = 28.0f;
+    appearance.itemGap = 2.0f;
+    appearance.uniformRowHeight = true;
+    list.SetAppearance(appearance);
+    list.SetOrientation(CandidateList::Orientation::Vertical);
+    list.SetItems({{L"1", L"汉字", L"", L""},
+                   {L"2", L"😀🎉", L"", L""},
+                   {L"3", L"候选", L"(aA)", L"a translation that is much too long to fit on the row"}});
+    const SizeF measured = list.MeasureInLayout({160.0f, 1000.0f});
+    list.ArrangeInLayout({0.0f, 0.0f, 160.0f, measured.height});
+
+    const float rowH = list.UniformRowHeight();
+    REQUIRE(rowH >= 28.0f);
+    for (size_t i = 0; i < 3; ++i)
+        REQUIRE_NEAR(list.GetItemBounds(i).height, rowH);
+    REQUIRE_NEAR(measured.height, rowH * 3.0f + 2.0f * 2.0f);
+
+    // 没有候选时也占一整行。
+    list.SetItems({});
+    REQUIRE_NEAR(list.MeasureInLayout({160.0f, 1000.0f}).height, rowH);
+}
+
 TEST_CASE(vertical_candidate_rows_fill_min_width_card)
 {
     // 复刻候选窗真实层级：Card(最小宽度) -> body(StackPanel) -> CandidateList。
