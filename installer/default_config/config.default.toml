@@ -281,6 +281,13 @@ candidate_window_follow_cursor = true
 candidate_window_layout = "horizontal"
 # 横向排列时强制单行：候选窗口最宽可到当前屏幕宽度，放不下才换行；关闭时最宽为屏幕一半
 candidate_window_single_line = false
+# 横向排列时固定宽度：候选窗口宽度始终为屏幕宽度的 candidate_window_fixed_width_ratio，
+# 一行放不下的候选移到下一页，page_size 变为每页候选数量上限
+candidate_window_fixed_width = false
+# 固定宽度占当前屏幕宽度的比例，可选：0.125–0.75
+candidate_window_fixed_width_ratio = 0.25
+# 纵向排列时固定高度：候选窗口始终保持放得下 page_size 个候选的高度
+candidate_window_fixed_height = false
 # 候选窗口与悬浮工具栏皮肤，可选："fluent", "wechat", "wechat_scroll", "graphite", "willow_green", "autumn_osmanthus", "microsoft"，或外部皮肤的 id
 candidate_skin = "fluent"
 # 候选窗口顶部预编辑，可选："pinyin", "empty"

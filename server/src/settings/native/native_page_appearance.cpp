@@ -457,6 +457,243 @@ class ColorSwatch : public msimeui::Visual
     bool pressed_ = false;
 };
 
+// ---------------------------------------------------------------------------------
+// 横排固定宽度：屏幕宽度比例滑块，类似 <input type="range"> 带 <datalist> 刻度。
+// 1/8–3/4 之间连续可取，靠近 1/8、1/4、3/8、1/2、5/8、3/4 这几个刻度时吸附过去；右侧读数
+// 显示比例和按设置窗口所在屏幕折算的像素宽度。拖动只更新读数，松手才写配置。
+// ---------------------------------------------------------------------------------
+class ScreenFractionSlider : public msimeui::Visual
+{
+  public:
+    using ChangeHandler = std::function<void(double ratio)>;
+
+    explicit ScreenFractionSlider(std::function<int()> screenWidthPx) : screenWidthPx_(std::move(screenWidthPx))
+    {
+    }
+
+    void SetValue(double ratio)
+    {
+        if (dragging_)
+            return;
+        value_ = Clamp(ratio);
+        InvalidateVisual();
+    }
+    void SetOnCommit(ChangeHandler handler)
+    {
+        onCommit_ = std::move(handler);
+    }
+
+    SizeF Measure(const SizeF &) override
+    {
+        return {kTrackWidth + kReadoutGap + kReadoutWidth, kHeight};
+    }
+    void Arrange(const RectF &finalRect) override
+    {
+        bounds_ = finalRect;
+    }
+    void Render(msimeui::DeviceResources &dr) override
+    {
+        const Palette &palette = CurrentPalette();
+        const RectF track = TrackRect();
+        const float centerY = track.y + kTrackHeight * 0.5f;
+        FillRounded(dr, track, kTrackHeight * 0.5f, palette.toggleOff);
+        const float thumbX = XForValue(value_);
+        FillRounded(dr, {track.x, track.y, thumbX - track.x, kTrackHeight}, kTrackHeight * 0.5f, palette.accent);
+
+        // 刻度：轨道上的小圆点，下面一行小字；当前值正落在刻度上时那个刻度用强调色。
+        TextStyle tickStyle;
+        tickStyle.size = 11.0f;
+        for (const Stop &stop : Stops())
+        {
+            const float x = XForValue(stop.ratio);
+            const bool reached = stop.ratio <= value_ + 1e-6;
+            const bool current = std::abs(stop.ratio - value_) < 1e-4;
+            const float dot = 1.5f;
+            FillRounded(dr, {x - dot, centerY - dot, dot * 2.0f, dot * 2.0f}, dot,
+                        reached ? palette.accentStrong : palette.textSubtle);
+            const RectF label = {x - 14.0f, track.y + kTrackHeight + 7.0f, 28.0f, 14.0f};
+            DrawTextInRect(dr, stop.label, tickStyle, label, current ? palette.accent : palette.textMuted, true);
+        }
+
+        // 滑块：白底圆，hover/拖动时描边加粗并带一圈淡淡的强调色光晕。
+        const bool hot = hovered_ || dragging_;
+        if (hot)
+        {
+            const float halo = kThumbRadius + 4.0f;
+            FillRounded(dr, {thumbX - halo, centerY - halo, halo * 2.0f, halo * 2.0f}, halo, palette.accentSoft);
+        }
+        const RectF thumb = {thumbX - kThumbRadius, centerY - kThumbRadius, kThumbRadius * 2.0f, kThumbRadius * 2.0f};
+        FillRounded(dr, thumb, kThumbRadius, Hex(0xFFFFFF));
+        StrokeRounded(dr, thumb, kThumbRadius, palette.accent, hot ? 2.0f : 1.5f);
+
+        // 读数：比例 + 像素，放在一个小胶囊里。
+        const RectF pill = {bounds_.x + kTrackWidth + kReadoutGap, centerY - 11.0f, kReadoutWidth, 22.0f};
+        FillRounded(dr, pill, 11.0f, palette.surfaceSunken);
+        StrokeRounded(dr, pill, 11.0f, palette.border, 1.0f);
+        TextStyle readoutStyle;
+        readoutStyle.size = 12.0f;
+        DrawTextInRect(dr, Readout(), readoutStyle, pill, palette.textSecondary, true);
+    }
+    bool HitTest(const PointF &point) const override
+    {
+        const RectF track = TrackRect();
+        const RectF hit = {track.x - kThumbRadius, bounds_.y, track.width + kThumbRadius * 2.0f, bounds_.height};
+        return Contains(hit, point);
+    }
+    bool OnMouseDown(const POINT &point, WPARAM) override
+    {
+        if (!window_)
+            return false;
+        dragging_ = true;
+        UpdateFromPoint(point);
+        return true;
+    }
+    bool OnMouseMove(const POINT &point, WPARAM keyState) override
+    {
+        if (!dragging_ || !(keyState & MK_LBUTTON))
+        {
+            const bool hovered = window_ && HitTest(window_->ClientPixelsToDips(point));
+            if (hovered != hovered_)
+            {
+                hovered_ = hovered;
+                InvalidateVisual();
+            }
+            return false;
+        }
+        UpdateFromPoint(point);
+        return true;
+    }
+    bool OnMouseUp(const POINT &point, WPARAM) override
+    {
+        if (!dragging_)
+            return false;
+        UpdateFromPoint(point);
+        dragging_ = false;
+        InvalidateVisual();
+        if (onCommit_ && std::abs(value_ - committed_) > 1e-6)
+        {
+            committed_ = value_;
+            const auto handler = onCommit_;
+            handler(value_);
+        }
+        return true;
+    }
+    void OnMouseEnter() override
+    {
+        hovered_ = true;
+        InvalidateVisual();
+    }
+    void OnMouseLeave() override
+    {
+        hovered_ = false;
+        InvalidateVisual();
+    }
+    HCURSOR GetCursor() const override
+    {
+        return LoadCursor(nullptr, IDC_HAND);
+    }
+    // 配置快照里的值，用来判断松手时是否真的变了。
+    void SetCommitted(double ratio)
+    {
+        committed_ = Clamp(ratio);
+    }
+
+  private:
+    struct Stop
+    {
+        double ratio;
+        const wchar_t *label;
+    };
+    static const std::vector<Stop> &Stops()
+    {
+        static const std::vector<Stop> stops = {{0.125, L"1/8"}, {0.25, L"1/4"},  {0.375, L"3/8"},
+                                                {0.5, L"1/2"},   {0.625, L"5/8"}, {0.75, L"3/4"}};
+        return stops;
+    }
+    static double Clamp(double ratio)
+    {
+        return std::clamp(ratio, kCandidateFixedWidthMin, kCandidateFixedWidthMax);
+    }
+    RectF TrackRect() const
+    {
+        // 轨道两端各留出半个滑块，滑块走到头也不出界。
+        return {bounds_.x + kThumbRadius, bounds_.y + 8.0f, kTrackWidth - kThumbRadius * 2.0f, kTrackHeight};
+    }
+    float XForValue(double ratio) const
+    {
+        const RectF track = TrackRect();
+        const double t = (ratio - kCandidateFixedWidthMin) / (kCandidateFixedWidthMax - kCandidateFixedWidthMin);
+        return track.x + track.width * static_cast<float>(std::clamp(t, 0.0, 1.0));
+    }
+    void UpdateFromPoint(const POINT &point)
+    {
+        const RectF track = TrackRect();
+        const PointF dip = window_->ClientPixelsToDips(point);
+        const double t = std::clamp(static_cast<double>((dip.x - track.x) / track.width), 0.0, 1.0);
+        double ratio = kCandidateFixedWidthMin + t * (kCandidateFixedWidthMax - kCandidateFixedWidthMin);
+        // 千分之五一档；离刻度不到 4 DIP 时吸附到刻度上。
+        ratio = std::round(ratio / 0.005) * 0.005;
+        const double snap = 4.0 * (kCandidateFixedWidthMax - kCandidateFixedWidthMin) / track.width;
+        for (const Stop &stop : Stops())
+        {
+            if (std::abs(stop.ratio - ratio) <= snap)
+                ratio = stop.ratio;
+        }
+        ratio = Clamp(ratio);
+        if (std::abs(ratio - value_) > 1e-9)
+        {
+            value_ = ratio;
+            InvalidateVisual();
+        }
+    }
+    std::wstring Readout() const
+    {
+        std::wstring fraction;
+        for (const Stop &stop : Stops())
+        {
+            if (std::abs(stop.ratio - value_) < 1e-4)
+                fraction = stop.label;
+        }
+        if (fraction.empty())
+        {
+            const double percent = value_ * 100.0;
+            wchar_t buffer[16] = {};
+            swprintf_s(buffer, std::abs(percent - std::round(percent)) < 0.05 ? L"%.0f%%" : L"%.1f%%", percent);
+            fraction = buffer;
+        }
+        const int screen = screenWidthPx_ ? screenWidthPx_() : 0;
+        if (screen <= 0)
+            return fraction;
+        return fraction + L" · " + std::to_wstring(static_cast<int>(std::lround(value_ * screen))) + L" px";
+    }
+
+    static constexpr double kCandidateFixedWidthMin = 0.125;
+    static constexpr double kCandidateFixedWidthMax = 0.75;
+    static constexpr float kTrackWidth = 220.0f;
+    static constexpr float kTrackHeight = 4.0f;
+    static constexpr float kThumbRadius = 7.0f;
+    static constexpr float kReadoutGap = 12.0f;
+    static constexpr float kReadoutWidth = 104.0f;
+    static constexpr float kHeight = 38.0f;
+
+    std::function<int()> screenWidthPx_;
+    double value_ = 0.25;
+    double committed_ = 0.25;
+    bool dragging_ = false;
+    bool hovered_ = false;
+    ChangeHandler onCommit_;
+};
+
+// 设置窗口当前所在屏幕的宽度（物理像素）；候选窗用的是光标所在屏幕，单屏时两者一样。
+int SettingsMonitorWidthPx(HWND hwnd)
+{
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO info{sizeof(info)};
+    if (!monitor || !GetMonitorInfoW(monitor, &info))
+        return GetSystemMetrics(SM_CXSCREEN);
+    return info.rcMonitor.right - info.rcMonitor.left;
+}
+
 std::shared_ptr<Dropdown> SurfaceThemeDropdown(PageContext &context, const char *path)
 {
     return BindDropdown(context, path, Options({{"follow", L"跟随全局"}, {"dark", L"深色"}, {"light", L"浅色"}}));
@@ -596,9 +833,24 @@ VisualPtr BuildAppearancePage(PageContext &context)
         });
         reset->SetOnClick([model]() { model->Update("appearance.cand_text_color", "auto"); });
 
-        addRow(MakeRow(L"每页候选项数量", L"",
-                       BindDropdown(context, "appearance.page_size", NumberOptions(3, 9), Dropdown::Options{true},
-                                    ValueKind::Integer)));
+        // 横排固定宽度时一页放几个由宽度决定，这里的数只是上限，标题跟着改。
+        auto pageSizeTitle = MakeTitle(L"每页候选项数量");
+        auto pageSizeTitleBlock = std::make_shared<Column>(0.0f);
+        pageSizeTitleBlock->Add(pageSizeTitle);
+        addRow(std::make_shared<SettingRow>(pageSizeTitleBlock,
+                                            BindDropdown(context, "appearance.page_size", NumberOptions(3, 9),
+                                                         Dropdown::Options{true}, ValueKind::Integer)));
+        context.OnConfig([model, weakTitle = std::weak_ptr<Label>(pageSizeTitle)]() {
+            auto title = weakTitle.lock();
+            if (!title)
+                return;
+            const bool fixedWidth =
+                model->GetString("appearance.candidate_window_layout", "vertical") == "horizontal" &&
+                model->GetBool("appearance.candidate_window_fixed_width", false);
+            const std::wstring text = fixedWidth ? L"每页候选项数量上限" : L"每页候选项数量";
+            if (title->GetText() != text)
+                title->SetText(text);
+        });
         page.AddSection(rows);
 
         std::weak_ptr<Dropdown> weakFont = fontDropdown;
@@ -668,14 +920,75 @@ VisualPtr BuildAppearancePage(PageContext &context)
         page.AddSection(column);
     }
 
-    // 候选项排列方式
-    page.AddSection(MakeRows({
-        MakeRow(L"候选项排列方式", L"",
-                BindDropdown(context, "appearance.candidate_window_layout",
-                             Options({{"horizontal", L"横向"}, {"vertical", L"纵向"}}))),
-        MakeRow(L"横向候选强制单行", L"仅横向排列时生效：候选窗口最宽可到当前屏幕宽度，超出屏幕才换行",
-                BindToggle(context, "appearance.candidate_window_single_line")),
-    }));
+    // 候选项排列方式：横排的强制单行、固定宽度与竖排的固定高度只在对应排列下出现。
+    {
+        auto rows = std::make_shared<Column>(0.0f);
+        rows->Add(MakeRow(L"候选项排列方式", L"",
+                          BindDropdown(context, "appearance.candidate_window_layout",
+                                       Options({{"horizontal", L"横向"}, {"vertical", L"纵向"}}))));
+        // 分隔线随行一起隐藏。
+        const auto withDivider = [](VisualPtr row) {
+            auto column = std::make_shared<Column>(0.0f);
+            column->Add(std::make_shared<Divider>());
+            column->Add(std::move(row));
+            return column;
+        };
+
+        auto singleLine =
+            std::make_shared<Dimmable>(MakeRow(L"强制单行", L"候选窗口最宽可到当前屏幕宽度，超出屏幕才换行",
+                                               BindToggle(context, "appearance.candidate_window_single_line")));
+        auto singleLineRow = std::make_shared<Hideable>(withDivider(singleLine), false);
+        rows->Add(singleLineRow);
+
+        auto fixedWidthRow = std::make_shared<Hideable>(
+            withDivider(MakeRow(L"固定宽度", L"候选窗口宽度固定为屏幕宽度的一定比例，一行放不下的候选移到下一页",
+                                BindToggle(context, "appearance.candidate_window_fixed_width"))),
+            false);
+        rows->Add(fixedWidthRow);
+
+        auto slider = std::make_shared<ScreenFractionSlider>([host]() { return SettingsMonitorWidthPx(host->Hwnd()); });
+        slider->SetOnCommit(
+            [model](double ratio) { model->Update("appearance.candidate_window_fixed_width_ratio", ratio); });
+        auto widthRow = MakeRow(L"窗口宽度", L"占当前屏幕宽度的比例，靠近刻度时自动吸附", slider, true);
+        widthRow->SetMinHeight(48.0f);
+        widthRow->SetMargin({18.0f, 0.0f, 0.0f, 4.0f});
+        auto widthRowHideable = std::make_shared<Hideable>(widthRow, false);
+        rows->Add(widthRowHideable);
+
+        auto fixedHeightRow = std::make_shared<Hideable>(
+            withDivider(MakeRow(L"固定高度", L"候选窗口始终保持放得下每页候选项数量的高度，候选少时下方留空",
+                                BindToggle(context, "appearance.candidate_window_fixed_height"))),
+            false);
+        rows->Add(fixedHeightRow);
+        page.AddSection(rows);
+
+        context.OnConfig([model, weakSingle = std::weak_ptr<Hideable>(singleLineRow),
+                          weakSingleDim = std::weak_ptr<Dimmable>(singleLine),
+                          weakFixedWidth = std::weak_ptr<Hideable>(fixedWidthRow),
+                          weakWidth = std::weak_ptr<Hideable>(widthRowHideable),
+                          weakSlider = std::weak_ptr<ScreenFractionSlider>(slider),
+                          weakFixedHeight = std::weak_ptr<Hideable>(fixedHeightRow)]() {
+            const bool horizontal = model->GetString("appearance.candidate_window_layout", "vertical") == "horizontal";
+            const bool fixedWidth = model->GetBool("appearance.candidate_window_fixed_width", false);
+            const double ratio = model->GetNumber("appearance.candidate_window_fixed_width_ratio", 0.25);
+            if (auto row = weakSingle.lock())
+                row->SetVisible(horizontal);
+            // 固定宽度下宽度已经定死，强制单行不起作用。
+            if (auto dim = weakSingleDim.lock())
+                dim->SetDisabled(fixedWidth);
+            if (auto row = weakFixedWidth.lock())
+                row->SetVisible(horizontal);
+            if (auto row = weakWidth.lock())
+                row->SetVisible(horizontal && fixedWidth);
+            if (auto control = weakSlider.lock())
+            {
+                control->SetCommitted(ratio);
+                control->SetValue(ratio);
+            }
+            if (auto row = weakFixedHeight.lock())
+                row->SetVisible(!horizontal);
+        });
+    }
 
     // 行内预编辑
     page.AddSection(MakeRows({

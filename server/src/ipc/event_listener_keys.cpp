@@ -814,7 +814,7 @@ void RebuildDateTimeCandidatePage()
     const int page_index = ui.page_index;
     const int selected_index = ui.selected_index_in_page;
     ui.set_items(OrderedDateTimeCandidates(g_date_time_page_keyword));
-    if (page_index > 0 && page_index * ui.page_size < static_cast<int>(ui.items.size()))
+    if (page_index > 0 && ui.page_start(page_index) < static_cast<int>(ui.items.size()))
     {
         ui.page_index = page_index;
     }
@@ -1025,8 +1025,9 @@ void PublishRestoredCompositionCandidates(uint64_t client_id, uint64_t activatio
         if (rebuilt_page_prefix == restored_highlight.page_prefix && ui.item_total_count > 0 && ui.page_size > 0)
         {
             const int position = std::min(restored_highlight.absolute_index, ui.item_total_count - 1);
-            ui.page_index = position / ui.page_size;
-            ui.selected_index_in_page = position % ui.page_size;
+            const auto [page, index_in_page] = ui.locate(position);
+            ui.page_index = page;
+            ui.selected_index_in_page = index_in_page;
             ui.begin_selection();
             RefreshCandidatePageUi(false);
         }

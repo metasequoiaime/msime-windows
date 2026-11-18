@@ -219,7 +219,9 @@ std::optional<FanyImeIpc::CandidateChoice> CommitCandidateSlot(int index_in_page
 std::optional<FanyImeIpc::CandidateChoice> CommitCandidateHighlighted();
 std::optional<FanyImeIpc::CandidateChoice> CommitCandidateAt(int index_in_page);
 bool HasCandidatePage();
-void NoteCandidatePagePainted(std::uint64_t generation, bool visible);
+void NoteCandidatePagePainted(std::uint64_t generation, bool visible, int shown_count = -1);
+// 最近发布的那一版候选页的代次；还没有发布过时为 0。
+std::uint64_t PublishedCandidatePageGeneration();
 void NoteCandidatePageGesture(std::uint64_t generation);
 void NoteCandidatePageVisibility(bool visible);
 

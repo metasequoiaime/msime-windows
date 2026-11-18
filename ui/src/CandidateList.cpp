@@ -163,6 +163,40 @@ const CandidateList::Item *CandidateList::GetItem(size_t index) const
     return index < items_.size() ? &items_[index] : nullptr;
 }
 
+size_t CandidateList::GetItemCount() const
+{
+    return items_.size();
+}
+
+const CandidateList::Appearance &CandidateList::GetAppearance() const
+{
+    return appearance_;
+}
+
+size_t CandidateList::CountItemsOnFirstLine() const
+{
+    if (itemGeometry_.size() != items_.size() || itemGeometry_.empty())
+        return items_.size();
+    const float firstLineY = itemGeometry_.front().bounds.y;
+    size_t count = 0;
+    while (count < itemGeometry_.size() && itemGeometry_[count].bounds.y == firstLineY)
+        ++count;
+    return count;
+}
+
+void CandidateList::TruncateItems(size_t count)
+{
+    if (count >= items_.size())
+        return;
+    items_.resize(count);
+    itemGeometry_.clear();
+    if (selectedIndex_ >= items_.size() && !items_.empty())
+        selectedIndex_ = items_.size() - 1;
+    hoveredIndex_ = static_cast<size_t>(-1);
+    pressedIndex_ = static_cast<size_t>(-1);
+    InvalidateMeasure();
+}
+
 void CandidateList::SetAppearance(Appearance appearance)
 {
     appearance_ = appearance;

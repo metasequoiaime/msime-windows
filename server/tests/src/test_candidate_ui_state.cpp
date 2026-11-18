@@ -204,6 +204,78 @@ TEST_CASE(candidate_ui_flags_only_the_page_before_a_partial_last_page)
     REQUIRE(state.current_page_count() == 3);
 }
 
+// 横排固定宽度：界面量出当前页只放得下几个，后面的页从它后面接着开始。
+TEST_CASE(candidate_ui_fitted_page_moves_the_next_page_start)
+{
+    auto state = MakeCandidateUiState(20, 6);
+    REQUIRE(state.note_page_fit(0, 4));
+    REQUIRE_EQ(state.current_page_count(), 4);
+    REQUIRE_EQ(state.page_start(1), 4);
+    REQUIRE(state.has_next_page());
+    REQUIRE(state.is_current_page_full());
+
+    state.page_index = 1;
+    // 第二页还没量过，按 page_size 算。
+    REQUIRE_EQ(state.current_page_start(), 4);
+    REQUIRE_EQ(state.current_page_count(), 6);
+    REQUIRE(state.note_page_fit(4, 3));
+    REQUIRE_EQ(state.page_start(2), 7);
+
+    const auto [page, index] = state.locate(8);
+    REQUIRE_EQ(page, 2);
+    REQUIRE_EQ(index, 1);
+    const auto [first_page, first_index] = state.locate(3);
+    REQUIRE_EQ(first_page, 0);
+    REQUIRE_EQ(first_index, 3);
+}
+
+TEST_CASE(candidate_ui_selection_crosses_fitted_page_boundaries)
+{
+    auto state = MakeCandidateUiState(20, 6);
+    REQUIRE(state.note_page_fit(0, 2));
+    state.selected_index_in_page = 1;
+    REQUIRE(state.move_selection(1));
+    REQUIRE_EQ(state.page_index, 1);
+    REQUIRE_EQ(state.selected_index_in_page, 0);
+    REQUIRE(state.move_selection(-1));
+    REQUIRE_EQ(state.page_index, 0);
+    REQUIRE_EQ(state.selected_index_in_page, 1);
+}
+
+TEST_CASE(candidate_ui_fit_report_only_applies_to_the_current_page)
+{
+    auto state = MakeCandidateUiState(20, 6);
+    // 起点对不上（报告的是别的页）、放得下整页、或重复同一个数，都不算变化。
+    REQUIRE(!state.note_page_fit(6, 3));
+    REQUIRE(!state.note_page_fit(0, 6));
+    REQUIRE(state.note_page_fit(0, 3));
+    REQUIRE(!state.note_page_fit(0, 3));
+    // 选中项落在被挪走的那几个上时退到这一页最后一个。
+    state.selected_index_in_page = 2;
+    REQUIRE(state.note_page_fit(0, 2));
+    REQUIRE_EQ(state.selected_index_in_page, 1);
+}
+
+TEST_CASE(candidate_ui_fitted_pages_reset_with_new_items)
+{
+    auto state = MakeCandidateUiState(20, 6);
+    REQUIRE(state.note_page_fit(0, 2));
+    state.set_items(std::vector<WordItem>(20, WordItem("hao", "好", 1)));
+    REQUIRE(state.fitted_counts.empty());
+    REQUIRE_EQ(state.page_start(1), 6);
+}
+
+TEST_CASE(candidate_ui_fitted_last_page_is_detected_by_remaining_count)
+{
+    auto state = MakeCandidateUiState(9, 6);
+    REQUIRE(state.note_page_fit(0, 4));
+    // 剩下 5 个，不满下一页的 page_size。
+    REQUIRE(state.is_next_page_partial_last_page());
+    state.page_index = 1;
+    REQUIRE_EQ(state.current_page_count(), 5);
+    REQUIRE(!state.has_next_page());
+}
+
 TEST_CASE(candidate_ui_never_flags_a_partial_last_page_when_pages_divide_evenly)
 {
     auto state = MakeCandidateUiState(15, 5);

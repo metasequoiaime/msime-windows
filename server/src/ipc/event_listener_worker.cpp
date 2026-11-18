@@ -170,6 +170,10 @@ struct Task
     std::wstring candidate_expected_text;
     int fixed_position = 0;
     int page_steps = 0;
+    // UiCandidatePageFitted：量的是哪一版候选页、它从哪个绝对下标开始、一行放下了几个。
+    uint64_t fitted_generation = 0;
+    int fitted_page_start = 0;
+    int fitted_count = 0;
     bool toolbar_from_ime_enabled = false;
 };
 
@@ -380,7 +384,8 @@ void WorkerThread()
             task.type == TaskType::UiDeleteCandidate || task.type == TaskType::UiFixCandidatePosition ||
             task.type == TaskType::UiClearCandidatePosition || task.type == TaskType::UiPageUp ||
             task.type == TaskType::UiPageDown || task.type == TaskType::UiCommitCandidateAt ||
-            task.type == TaskType::UiExpandCandidates || task.type == TaskType::UiDictionaryPreeditLookup;
+            task.type == TaskType::UiExpandCandidates || task.type == TaskType::UiDictionaryPreeditLookup ||
+            task.type == TaskType::UiCandidatePageFitted;
         if (candidateUiAction && !CandidateUiOwnerIsCurrent({task.client_id, task.activation_epoch}))
         {
             // The page was hidden or replaced after the click was posted.
@@ -978,11 +983,23 @@ void WorkerThread()
         case TaskType::ApplyCandidatePageSize: {
             // 界面线程重读到配置变化后发来这个任务；字形也可能一起变了，那样就按新字形换写法。
             const int pageSize = GetConfiguredCandidatePageSize();
-            const bool page_size_changed = Global::candidate_ui.page_size != pageSize;
+            // 横排固定宽度量出的各页个数只对量的那套版式成立；宽度、字号、字体或皮肤变了就作废重量。
+            static std::string fit_layout_signature;
+            const std::string layout_signature = std::to_string(CandidateWindowFixedWidthActive()) + '|' +
+                                                 std::to_string(GetConfiguredCandidateWindowFixedWidthRatio()) + '|' +
+                                                 std::to_string(GetConfiguredCandidateFontSize()) + '|' +
+                                                 GetConfiguredCandidateEnglishFont() + '|' +
+                                                 GetConfiguredCandidateFont() + '|' + GetConfiguredCandidateSkin();
+            const bool fit_layout_changed = fit_layout_signature != layout_signature;
+            fit_layout_signature = layout_signature;
+            const bool page_size_changed = Global::candidate_ui.page_size != pageSize ||
+                                           (fit_layout_changed && !Global::candidate_ui.fitted_counts.empty());
             if (page_size_changed)
             {
                 Global::candidate_ui.page_size = pageSize;
                 Global::candidate_ui.page_index = 0;
+                Global::candidate_ui.selected_index_in_page = 0;
+                Global::candidate_ui.reset_page_fit();
                 Global::candidate_ui.clear_page();
             }
             if (RespellCandidatesForCharacterSetChange() || !page_size_changed)
@@ -1017,6 +1034,23 @@ void WorkerThread()
             {
                 session->reset_cache();
             }
+            break;
+        }
+
+        case TaskType::UiCandidatePageFitted: {
+            // 只认屏幕上那一版候选页的当前页：之后又按了键、翻了页或换了一批候选，这份回报就过期了，
+            // 新的那一版画出来时界面会再量一次。
+            if (!CandidateWindowFixedWidthActive() || IsUiLessMode() ||
+                task.fitted_generation != PublishedCandidatePageGeneration())
+                break;
+            auto &ui = Global::candidate_ui;
+            if (!ui.note_page_fit(task.fitted_page_start, task.fitted_count))
+                break;
+            CAND_DIAG_LOGF(L"candidate page fitted page={} start={} count={}", ui.page_index, task.fitted_page_start,
+                           task.fitted_count);
+            ui.clear_page();
+            // 页里只剩放得下的那几个，下一页箭头和数字键的范围都跟着变，重新发一版。
+            RefreshCandidatePageUi(true);
             break;
         }
 
@@ -1645,6 +1679,42 @@ void EnqueueCandidateUiExpand()
         task.type = TaskType::UiExpandCandidates;
         task.client_id = owner.client_id;
         task.activation_epoch = owner.activation_epoch;
+        PushTaskLocked(std::move(task));
+    }
+    pipe_queueCv.notify_one();
+}
+
+void EnqueueCandidatePageFitted(uint64_t page_generation, int page_start, int count)
+{
+    if (!pipe_running || page_generation == 0 || count <= 0)
+    {
+        return;
+    }
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner)
+    {
+        return;
+    }
+    {
+        std::lock_guard lock(queueMutex);
+        // 接连几帧的回报只有最后一份有用。
+        std::queue<Task> &queue = TaskQueueFor(TaskType::UiCandidatePageFitted);
+        if (!queue.empty() && queue.back().type == TaskType::UiCandidatePageFitted &&
+            queue.back().client_id == owner.client_id && queue.back().activation_epoch == owner.activation_epoch &&
+            queue.back().enqueue_sequence == lastTaskSequence)
+        {
+            queue.back().fitted_generation = page_generation;
+            queue.back().fitted_page_start = page_start;
+            queue.back().fitted_count = count;
+            return;
+        }
+        Task task;
+        task.type = TaskType::UiCandidatePageFitted;
+        task.client_id = owner.client_id;
+        task.activation_epoch = owner.activation_epoch;
+        task.fitted_generation = page_generation;
+        task.fitted_page_start = page_start;
+        task.fitted_count = count;
         PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();

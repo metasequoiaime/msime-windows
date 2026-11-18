@@ -742,6 +742,20 @@ bool SetConfiguredCandidateWindowFitContent(bool enabled);
 // 横排强制单行：候选框最宽放开到当前屏幕宽度（默认半屏），超出才换行；竖排不受影响。
 bool GetConfiguredCandidateWindowSingleLine();
 bool SetConfiguredCandidateWindowSingleLine(bool enabled);
+// 横排固定宽度：候选框宽度始终是当前屏幕宽度的 ratio 倍，一行放不下的候选挪到下一页，
+// page_size 只作每页个数的上限。竖排不受影响。
+inline constexpr double kCandidateWindowFixedWidthRatioMin = 0.125;
+inline constexpr double kCandidateWindowFixedWidthRatioMax = 0.75;
+inline constexpr double kCandidateWindowFixedWidthRatioDefault = 0.25;
+bool GetConfiguredCandidateWindowFixedWidth();
+bool SetConfiguredCandidateWindowFixedWidth(bool enabled);
+double GetConfiguredCandidateWindowFixedWidthRatio();
+bool SetConfiguredCandidateWindowFixedWidthRatio(double ratio);
+// 横排且开了固定宽度：分页按界面量出的每页实际个数走。
+bool CandidateWindowFixedWidthActive();
+// 竖排固定高度：候选框始终保持放得下 page_size 个候选的高度。横排不受影响。
+bool GetConfiguredCandidateWindowFixedHeight();
+bool SetConfiguredCandidateWindowFixedHeight(bool enabled);
 // 固定排位候选词徽标：总开关 + 样式枚举（"paperclip" | "pushpin" | "dot"）。
 bool GetConfiguredCandidateFixedBadge();
 bool SetConfiguredCandidateFixedBadge(bool enabled);

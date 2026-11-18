@@ -125,7 +125,7 @@ bool ResolveCandidateItem(int one_based_index, WordItem &item)
         return false;
     }
 
-    const size_t pageStart = static_cast<size_t>(ui.page_index) * static_cast<size_t>(ui.page_size);
+    const size_t pageStart = static_cast<size_t>(ui.current_page_start());
     if (pageStart > ui.items.size() || indexInPage >= ui.items.size() - pageStart)
     {
         return false;
@@ -279,7 +279,7 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         Global::candidate_ui.page_size > 0 ? Global::candidate_ui.page_size : GetConfiguredCandidatePageSize();
     int page_index = Global::candidate_ui.page_index;
     std::size_t absolute_index =
-        static_cast<std::size_t>(page_index) * static_cast<std::size_t>(page_size) + static_cast<std::size_t>(index);
+        static_cast<std::size_t>(Global::candidate_ui.current_page_start()) + static_cast<std::size_t>(index);
     std::wstring selected_page_word;
     WordItem curWordItem;
     bool is_valid_selection = false;
