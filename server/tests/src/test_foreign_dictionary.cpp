@@ -1,4 +1,5 @@
 #include "settings/dictionary_manager.h"
+#include "settings/dictionary_validation.h"
 #include "settings/foreign_dictionary.h"
 #include "engine/quanpin/quanpin_query.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
@@ -9,12 +10,15 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -147,6 +151,10 @@ TEST_CASE(ForeignDictionaryReadsCellDictionaries)
     bin += Le16(5) + std::string(2 + 5, '\0') + Le16(4) + Le16(0) + Le16(1) + std::string(2, '\0') + Le16(4) +
            Utf16(L"啊哎");
     REQUIRE_EQ(Pairs(ParseOk("sgpybin", bin)), (std::vector<std::string>{"啊哎|a'ai"}));
+    REQUIRE_EQ(ParseOk("sgpybin", bin).front().frequency, std::optional<double>(5.0));
+    // 细胞词库没有词频（扩展字段是编号）。
+    for (const auto &entry : ParseOk("scel", scel))
+        REQUIRE(!entry.frequency);
 }
 
 TEST_CASE(ForeignDictionaryReadsLibimeBinary)
@@ -183,6 +191,9 @@ TEST_CASE(ForeignDictionaryReadsLibimeBinary)
     auto pairs = Pairs(ParseOk("libimebin", dict));
     std::sort(pairs.begin(), pairs.end());
     REQUIRE_EQ(pairs, (std::vector<std::string>{"世界|shi'jie", "你好|ni'hao", "略微|lve'wei"}));
+    // 每条的 float 值原样带出（这份样本都是 1.0）。
+    for (const auto &entry : ParseOk("libimebin", dict))
+        REQUIRE_EQ(entry.frequency, std::optional<double>(1.0));
 
     // 截断、改坏的文件要整体报错，不能崩，也不能返回半截。
     for (const size_t keep : {size_t{4}, size_t{8}, size_t{40}, dict.size() - 1})
@@ -311,30 +322,83 @@ class ScopedForeignDataDir
     std::wstring previous_;
     bool hadPrevious_ = false;
 };
+// 测试数据目录里建好这些读音所在的全拼分表。
+void CreatePinyinTables(const ScopedForeignDataDir &data, std::initializer_list<const char *> keys)
+{
+    sqlite3 *raw = nullptr;
+    REQUIRE_EQ(sqlite3_open(test::Utf8(data.path() / L"msime.db").c_str(), &raw), SQLITE_OK);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+    for (const char *key : keys)
+    {
+        const std::string sql = "CREATE TABLE IF NOT EXISTS \"" +
+                                quanpin::build_table_name(quanpin::split_segments(key)) +
+                                "\"(key TEXT NOT NULL,jp TEXT NOT NULL,value TEXT NOT NULL,"
+                                "weight INTEGER NOT NULL,UNIQUE(key,value))";
+        REQUIRE_EQ(sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr), SQLITE_OK);
+    }
+}
+
+// 按编码查拼音词库，取某个词的权重；查不到返回 -1。
+int64_t PinyinWeight(const char *code, const std::string &word)
+{
+    const auto query =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"code", code}});
+    REQUIRE(query.at("ok").as_bool());
+    for (const auto &row : query.at("rows").as_array())
+    {
+        const auto &object = row.as_object();
+        if (object.at("word").as_string() == word)
+            return object.at("weight").as_int64();
+    }
+    return -1;
+}
 } // namespace
+
+TEST_CASE(ImportFrequenciesMapByRankIntoTheImportRange)
+{
+    using SettingsDictionary::Validation::MapImportFrequencies;
+    const std::optional<double> none;
+    // 不同的词频值排名次：最小 10、最大 1000、中间均分；相同词频同一权重；没给词频记 10。
+    REQUIRE_EQ(MapImportFrequencies({5.0, none, 1.0, 5.0, 100.0}), (std::vector<int>{505, 10, 10, 505, 1000}));
+    // 只看名次不看数值：libime 的负对数概率、悬殊的次数都一样排。
+    REQUIRE_EQ(MapImportFrequencies({-5.5, -1.0, -3.0}), (std::vector<int>{10, 1000, 505}));
+    REQUIRE_EQ(MapImportFrequencies({1.0, 2.0, 3.0, 4.0, 1e9}), (std::vector<int>{10, 258, 505, 753, 1000}));
+    // 只有一种词频值，分不出高低，等于没有词频。
+    REQUIRE_EQ(MapImportFrequencies({7.0, 7.0, none}), (std::vector<int>{10, 10, 10}));
+    REQUIRE_EQ(MapImportFrequencies({std::nan(""), 3.0, 9.0}), (std::vector<int>{10, 10, 1000}));
+    REQUIRE(MapImportFrequencies({}).empty());
+}
+
+TEST_CASE(ForeignDictionaryReportsTheFrequencyEachFormatCarries)
+{
+    const auto frequencies = [](const char *format, const std::string &bytes) {
+        std::vector<std::optional<double>> out;
+        for (const auto &entry : ParseOk(format, bytes))
+            out.push_back(entry.frequency);
+        return out;
+    };
+    const std::optional<double> none;
+    REQUIRE_EQ(frequencies("rime", "你好\tni hao\t100\n世界\t200\n略\tlve\n单\tdan\t50%\n"),
+               (std::vector<std::optional<double>>{100.0, 200.0, none, 50.0}));
+    REQUIRE_EQ(frequencies("qqpy", Utf16(L"ni'hao 你好 7, 2\r\nhao 好\r\n")),
+               (std::vector<std::optional<double>>{7.0, none}));
+    REQUIRE_EQ(frequencies("bdpy", Utf16(L"你好\tni'hao\t3\r\n")), (std::vector<std::optional<double>>{3.0}));
+    REQUIRE_EQ(frequencies("libimetxt", "你好 ni'hao -4.25\n好 hao\n"),
+               (std::vector<std::optional<double>>{-4.25, none}));
+    // 没有词频的格式。
+    REQUIRE_EQ(frequencies("sgpy", "'ni'hao \xC4\xE3\xBA\xC3\r\n"), (std::vector<std::optional<double>>{none}));
+}
 
 TEST_CASE(ForeignDictionaryImportWritesThroughThePinyinImportPath)
 {
     ScopedForeignDataDir data;
-    {
-        sqlite3 *raw = nullptr;
-        REQUIRE_EQ(sqlite3_open(test::Utf8(data.path() / L"msime.db").c_str(), &raw), SQLITE_OK);
-        const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
-        for (const char *key : {"ni'hao", "shi'jie", "lve'wei"})
-        {
-            const std::string sql = "CREATE TABLE IF NOT EXISTS \"" +
-                                    quanpin::build_table_name(quanpin::split_segments(key)) +
-                                    "\"(key TEXT NOT NULL,jp TEXT NOT NULL,value TEXT NOT NULL,"
-                                    "weight INTEGER NOT NULL,UNIQUE(key,value))";
-            REQUIRE_EQ(sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr), SQLITE_OK);
-        }
-    }
+    CreatePinyinTables(data, {"ni'hao", "shi'jie", "lve'wei"});
 
     // 文件名带中文：路径经 UTF-8 传过来，宿主要按宽字符打开。
     const std::filesystem::path file = data.path() / L"其他词库.txt";
     {
         std::ofstream stream(file, std::ios::binary);
-        stream << "你好\tni hao\t1\n世界\tshi jie\t1\n你好\tni hao\t1\n略微\tlue wei\t1\n１２\tzz\t1\n";
+        stream << "你好\tni hao\t100\n世界\tshi jie\t50\n你好\tni hao\t100\n略微\tlue wei\n１２\tzz\t1\n";
     }
     const auto request = [&file](const char *dictionary, const char *format) {
         return SettingsDictionary::HandleRequest(
@@ -346,14 +410,10 @@ TEST_CASE(ForeignDictionaryImportWritesThroughThePinyinImportPath)
     const std::string message(imported.at("message").as_string());
     REQUIRE(message.rfind("成功导入 3 条，跳过 1 条（已存在），失败 1 条。第 5 条：１２：", 0) == 0);
 
-    // lue 按查询侧的规范写法 lve 入库，查得到。
-    for (const char *code : {"nihao", "shijie", "lvewei"})
-    {
-        const auto query =
-            SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"code", code}});
-        REQUIRE(query.at("ok").as_bool());
-        REQUIRE_EQ(query.at("rows").as_array().size(), size_t{1});
-    }
+    // 词频 {1, 50, 100} 排名次换算；没写词频的记 10。lue 按规范写法 lve 入库，查得到。
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{1000});
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{505});
+    REQUIRE_EQ(PinyinWeight("lvewei", "略微"), int64_t{10});
 
     // 只进拼音词库；未知格式、文件不存在都给出明确原因。
     REQUIRE(!request("wubi", "rime").at("ok").as_bool());
@@ -363,4 +423,27 @@ TEST_CASE(ForeignDictionaryImportWritesThroughThePinyinImportPath)
                                                             {"format", "scel"},
                                                             {"path", test::Utf8(data.path() / L"不存在.scel")}});
     REQUIRE_EQ(std::string(missing.at("message").as_string()), std::string("读取文件失败"));
+}
+
+TEST_CASE(PinyinBatchImportMapsWeightsUnlessRestoringABackup)
+{
+    ScopedForeignDataDir data;
+    CreatePinyinTables(data, {"ni'hao", "shi'jie", "lve'wei", "shi'ji"});
+
+    // 设置页的批量导入：权重列按文件内名次换算，没写权重的行记 10。
+    const auto imported =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"},
+                                           {"action", "import"},
+                                           {"content", "你好\tni hao\t300\n世界\tshi jie\t20\n略微\tlve wei\n"}});
+    REQUIRE(imported.at("ok").as_bool());
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{1000});
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{10});
+    REQUIRE_EQ(PinyinWeight("lvewei", "略微"), int64_t{10});
+
+    // 备份恢复（keepWeights）写回的是自己导出的真实权重，原样保留。设置窗口发不出这个字段：
+    // 协议的 dictionaryRequest 不收它。
+    const auto restored = SettingsDictionary::HandleRequest(
+        {{"dictionary", "quanpin"}, {"action", "import"}, {"keepWeights", true}, {"content", "世纪\tshi ji\t4321\n"}});
+    REQUIRE(restored.at("ok").as_bool());
+    REQUIRE_EQ(PinyinWeight("shiji", "世纪"), int64_t{4321});
 }

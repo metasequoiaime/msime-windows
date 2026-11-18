@@ -19,7 +19,10 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <initializer_list>
 #include <map>
@@ -237,12 +240,29 @@ std::string JoinSyllables(const std::vector<std::string> &syllables)
     return out;
 }
 
-void AddEntry(std::vector<Entry> &entries, std::string_view word, std::string pinyin)
+// 文本词库里的词频列：整数或小数（libime 的对数概率是负的小数）。Rime 单字常写成「50%」，
+// 百分号去掉照样比高低。读不成数的当作没给。
+std::optional<double> ParseFrequency(std::string_view text)
+{
+    text = Trim(text);
+    if (!text.empty() && text.back() == '%')
+        text.remove_suffix(1);
+    if (text.empty())
+        return std::nullopt;
+    double value = 0.0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc() || end != text.data() + text.size() || !std::isfinite(value))
+        return std::nullopt;
+    return value;
+}
+
+void AddEntry(std::vector<Entry> &entries, std::string_view word, std::string pinyin,
+              std::optional<double> frequency = std::nullopt)
 {
     const std::string_view trimmed = Trim(word);
     if (trimmed.empty())
         return;
-    entries.push_back({std::string(trimmed), std::move(pinyin)});
+    entries.push_back({std::string(trimmed), std::move(pinyin), frequency});
 }
 
 // ---------------------------------------------------------------------------------
@@ -359,7 +379,11 @@ void ParseRime(const std::string &text, std::vector<Entry> &entries)
         if (fields.size() < 2)
             return;
         const std::string_view code = Trim(fields[1]);
-        AddEntry(entries, fields[0], AllDigits(code) ? std::string() : NormalizeReading(code));
+        if (AllDigits(code))
+            AddEntry(entries, fields[0], std::string(), ParseFrequency(code));
+        else
+            AddEntry(entries, fields[0], NormalizeReading(code),
+                     fields.size() >= 3 ? ParseFrequency(fields[2]) : std::nullopt);
     });
 }
 
@@ -389,7 +413,8 @@ void ParseQqText(const std::string &text, std::vector<Entry> &entries)
                 parts.push_back(part);
         if (parts.size() < 2)
             return;
-        AddEntry(entries, parts[1], NormalizeReading(parts[0]));
+        AddEntry(entries, parts[1], NormalizeReading(parts[0]),
+                 parts.size() >= 3 ? ParseFrequency(parts[2]) : std::nullopt);
     });
 }
 
@@ -400,7 +425,7 @@ void ParseBaiduText(const std::string &text, std::vector<Entry> &entries)
         const auto fields = Split(line, '\t');
         if (fields.size() < 3)
             return;
-        AddEntry(entries, fields[0], NormalizeReading(fields[1]));
+        AddEntry(entries, fields[0], NormalizeReading(fields[1]), ParseFrequency(fields[2]));
     });
 }
 
@@ -485,7 +510,8 @@ void ParseLibimeText(const std::string &text, std::vector<Entry> &entries)
         const auto tokens = TokenizeLibime(line);
         if (tokens.size() != 2 && tokens.size() != 3)
             return;
-        AddEntry(entries, tokens[0], NormalizeReading(tokens[1]));
+        AddEntry(entries, tokens[0], NormalizeReading(tokens[1]),
+                 tokens.size() == 3 ? ParseFrequency(tokens[2]) : std::nullopt);
     });
 }
 
@@ -658,7 +684,9 @@ void ParseScel(const std::string &bytes, std::vector<Entry> &entries)
         table[index] = Utf16LeToUtf8(reader.Take(size));
     }
 
-    // 词条区：同音词一组，组头是同音词数和拼音序号，每个词后跟一段扩展信息（词频等）。
+    // 词条区：同音词一组，组头是同音词数和拼音序号，每个词后跟一段扩展信息。扩展信息常被当成
+    // 词频，实测（唐诗 3563 条、诗词名句 34 万条）却是每条各不相同的编号，其余字节全 0，
+    // 所以 scel 只当作「只有位置」，不出词频。qcel 的对应字段同理。
     for (uint32_t group = 0; group < groupCount; ++group)
     {
         try
@@ -857,12 +885,12 @@ void ParseSogouBinNew(Reader &reader, std::vector<Entry> &entries)
         reader.Seek(static_cast<int64_t>(indexBegin) + 4 * static_cast<int64_t>(i));
         const uint32_t index = reader.U32();
         reader.Seek(static_cast<int64_t>(index) + dictBegin);
-        reader.U16(); // 词频
+        const uint16_t frequency = reader.U16();
         reader.Skip(2 + 5);
         const std::string pinyin = SogouBinPinyin(reader);
         reader.Skip(2);
         const uint16_t wordBytes = reader.U16();
-        AddEntry(entries, Utf16LeToUtf8(reader.Take(wordBytes)), pinyin);
+        AddEntry(entries, Utf16LeToUtf8(reader.Take(wordBytes)), pinyin, frequency);
     }
 }
 
@@ -1038,7 +1066,7 @@ void ParseSogouBinOld(Reader &reader, std::vector<Entry> &entries)
 
                 reader.Seek(attrPos);
                 const int32_t wordOffset = reader.I32();
-                reader.U16(); // 词频
+                const uint16_t frequency = reader.U16();
                 reader.U16();
                 reader.U32();
                 const uint32_t p1 = reader.U16();
@@ -1054,7 +1082,7 @@ void ParseSogouBinOld(Reader &reader, std::vector<Entry> &entries)
                     decoded ^= xk;
                     word.push_back(static_cast<wchar_t>(decoded));
                 }
-                AddEntry(entries, WideToUtf8(word.data(), word.size()), pinyin);
+                AddEntry(entries, WideToUtf8(word.data(), word.size()), pinyin, frequency);
                 if (offset == -1)
                     break;
             }
@@ -1356,7 +1384,7 @@ void ParseLibimeBinary(const std::string &bytes, std::vector<Entry> &entries)
         throw ParseFailure("不支持的 LibIME 词库版本：" + std::to_string(version));
 
     CedarTrie trie(decompressed);
-    trie.Enumerate([&entries](const std::string &key, int32_t) {
+    trie.Enumerate([&entries](const std::string &key, int32_t bits) {
         // 键形如「每音节 2 字节的拼音编码 + '!' + 汉字 UTF-8」。
         const size_t separator = key.find('!');
         if (separator == std::string::npos || separator == 0 || separator % 2 != 0 || separator + 1 >= key.size())
@@ -1364,7 +1392,11 @@ void ParseLibimeBinary(const std::string &bytes, std::vector<Entry> &entries)
         std::vector<std::string> syllables;
         for (size_t i = 0; i < separator; i += 2)
             syllables.push_back(LibimeSyllable(static_cast<uint8_t>(key[i]), static_cast<uint8_t>(key[i + 1])));
-        AddEntry(entries, std::string_view(key).substr(separator + 1), JoinSyllables(syllables));
+        // 值是 float 词频（libime 的对数概率，越大越常用）。
+        float value = 0.0f;
+        std::memcpy(&value, &bits, sizeof(value));
+        AddEntry(entries, std::string_view(key).substr(separator + 1), JoinSyllables(syllables),
+                 std::isfinite(value) ? std::optional<double>(value) : std::nullopt);
     });
 }
 } // namespace

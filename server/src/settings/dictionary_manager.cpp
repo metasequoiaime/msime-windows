@@ -604,9 +604,10 @@ bool LoadWubiCharCodes(sqlite3 *db, Validation::WubiCharCodes &codes, std::strin
     return true;
 }
 
-bool ParseImportLine(const std::string &line, std::string &word, std::string &code, int &weight, std::string &message)
+bool BoolValue(const json::object &obj, const char *key)
 {
-    return Validation::ParseCodedImportLine(line, word, code, weight, message);
+    const auto *value = obj.if_contains(key);
+    return value && value->is_bool() && value->as_bool();
 }
 
 // ---- 字母词（T恤、卡拉OK，dictionary == "latin"）----
@@ -655,8 +656,32 @@ struct LatinImportLine
     int line_no = 0;
     std::string word;
     std::string reading; // 空：自动注音
-    int weight = Validation::kDefaultPinyinImportWeight;
+    // 文件里写的权重或词频；没写为空。写库前由 AssignImportWeights 换算成 weight。
+    std::optional<double> frequency;
+    int weight = Validation::kMinImportWeight;
 };
+
+// 全拼批量导入的一行：词语<Tab>全拼[<Tab>权重]。
+struct PinyinImportLine
+{
+    int line_no = 0;
+    std::string word;
+    std::string code;
+    std::optional<double> frequency;
+    int weight = Validation::kMinImportWeight;
+};
+
+// 带码导入行的第三列：写了就是词频，没写（或是 Rime 的 key=value 列）为空。
+// ParseCodedImportLine 没写权重时回填 default_weight，传 -1 才分得出「没写」。
+bool ParseImportLineFrequency(const std::string &line, std::string &word, std::string &code,
+                              std::optional<double> &frequency, std::string &message)
+{
+    int weight = -1;
+    if (!Validation::ParseCodedImportLine(line, word, code, weight, message, -1))
+        return false;
+    frequency = weight >= 0 ? std::optional<double>(weight) : std::nullopt;
+    return true;
+}
 
 // 一行：词语[<Tab>读音[<Tab>权重]]。只有一列时自动注音。
 bool ParseLatinImportLine(const std::string &line, LatinImportLine &parsed, std::string &message)
@@ -667,7 +692,7 @@ bool ParseLatinImportLine(const std::string &line, LatinImportLine &parsed, std:
         const auto end = line.find_last_not_of(' ');
         parsed.word = begin == std::string::npos ? std::string{} : line.substr(begin, end - begin + 1);
         parsed.reading.clear();
-        parsed.weight = Validation::kDefaultPinyinImportWeight;
+        parsed.frequency.reset();
         if (parsed.word.empty())
         {
             message = "词语不能为空";
@@ -675,7 +700,33 @@ bool ParseLatinImportLine(const std::string &line, LatinImportLine &parsed, std:
         }
         return true;
     }
-    return Validation::ParseCodedImportLine(line, parsed.word, parsed.reading, parsed.weight, message);
+    return ParseImportLineFrequency(line, parsed.word, parsed.reading, parsed.frequency, message);
+}
+
+// 设置页拼音类导入的权重：同一份文件里的词频一起排名次换算（见 MapImportFrequencies），
+// 拼音词条和分流出去的字母词共用一套名次。keep_weights 是备份恢复：导出的权重原样写回。
+template <typename... Lists> void AssignImportWeights(bool keep_weights, Lists &...lists)
+{
+    std::vector<std::optional<double>> frequencies;
+    (
+        [&frequencies](auto &list) {
+            for (const auto &line : list)
+                frequencies.push_back(line.frequency);
+        }(lists),
+        ...);
+    const std::vector<int> mapped = Validation::MapImportFrequencies(frequencies);
+    size_t index = 0;
+    (
+        [&](auto &list) {
+            for (auto &line : list)
+            {
+                line.weight = keep_weights
+                                  ? static_cast<int>(line.frequency.value_or(Validation::kDefaultPinyinImportWeight))
+                                  : mapped[index];
+                ++index;
+            }
+        }(lists),
+        ...);
 }
 
 // 规范、校验后整批写进词库和日志（一个事务）。结果计进三个计数。
@@ -758,6 +809,7 @@ json::object ImportLatin(const json::object &request)
         }
         lines.push_back(std::move(parsed));
     }
+    AssignImportWeights(false, lines);
     ImportLatinLines(lines, inserted, skipped, append_error);
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
@@ -925,8 +977,9 @@ json::object ImportChinese(const json::object &request)
     // 含英文字母的词（Rime 词库里混着的 T恤、卡拉OK）按字母词导入：它们不是拼音表的词，拼音表也
     // 存不下（T 不是音节；写成 te'xu 硬塞进去，txu 反而打不出来）。拼音这批提交之后再写：字母词另开
     // 连接和事务，不能等在这批的写锁后面。
+    // 权重要看整份文件的词频名次才定得下来，所以先读完全部行，再写库。
+    std::vector<PinyinImportLine> pinyin_lines;
     std::vector<LatinImportLine> latin_lines;
-    sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
     std::istringstream stream(content);
     std::string line;
     int line_no = 0;
@@ -940,34 +993,39 @@ json::object ImportChinese(const json::object &request)
             continue;
 
         std::string word, code;
-        int weight = 0;
+        std::optional<double> frequency;
         std::string message;
-        if (!ParseImportLine(line, word, code, weight, message))
+        if (!ParseImportLineFrequency(line, word, code, frequency, message))
         {
             append_error(line_no, message);
             continue;
         }
         if (quanpin::contains_latin_letter(word))
-        {
-            latin_lines.push_back({line_no, word, code, weight});
-            continue;
-        }
+            latin_lines.push_back({line_no, std::move(word), std::move(code), frequency});
+        else
+            pinyin_lines.push_back({line_no, std::move(word), std::move(code), frequency});
+    }
+    AssignImportWeights(BoolValue(request, "keepWeights"), pinyin_lines, latin_lines);
 
+    sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
+    for (const auto &entry : pinyin_lines)
+    {
         quanpin::Segments segments;
         std::string key;
-        if (!ValidateChineseEntry("quanpin", code, word, segments, key, message))
+        std::string message;
+        if (!ValidateChineseEntry("quanpin", entry.code, entry.word, segments, key, message))
         {
-            append_error(line_no, message);
+            append_error(entry.line_no, message);
             continue;
         }
-        if (ChineseExists(db.get(), segments, key, word))
+        if (ChineseExists(db.get(), segments, key, entry.word))
         {
             ++skipped;
             continue;
         }
-        if (!InsertChineseWord(db.get(), segments, key, word, weight, message))
+        if (!InsertChineseWord(db.get(), segments, key, entry.word, entry.weight, message))
         {
-            append_error(line_no, "写入失败：" + message);
+            append_error(entry.line_no, "写入失败：" + message);
             continue;
         }
         ++inserted;
@@ -999,7 +1057,8 @@ json::object ImportHans(const json::object &request)
     if (!db)
         return Result(false, "打开拼音词库失败：" + error);
 
-    constexpr int kDefaultWeight = Validation::kDefaultPinyinImportWeight;
+    // 纯汉字名单只有位置没有词频：一律最低档。
+    constexpr int kDefaultWeight = Validation::kMinImportWeight;
     int inserted = 0;
     int skipped = 0;
     int failed = 0;
@@ -1060,7 +1119,8 @@ json::object ImportHans(const json::object &request)
 // 导入其他输入法的词库（Rime、搜狗、QQ、百度、LibIME、Mac）到拼音用户词库。
 // 文件由设置窗口选好后把路径交过来，在这里读：细胞词库动辄几十万条，不经消息通道搬内容。
 // 解析见 foreign_dictionary.cpp；写库与「批量导入」同一套校验、去重和用户日志。
-// 外来词频与本词库不在一个量级，一律按批量导入的默认权重写入。
+// 外来词频与本词库不在一个量级，只取它在文件里的名次换算成权重（MapImportFrequencies）；
+// 没有词频的格式（scel、qcel、bdict、sgpy、plist）一律最低档。
 json::object ImportForeign(const json::object &request)
 {
     const std::string format = StringValue(request, "format");
@@ -1103,7 +1163,12 @@ json::object ImportForeign(const json::object &request)
     if (!db)
         return Result(false, "打开拼音词库失败：" + error);
 
-    constexpr int kWeight = Validation::kDefaultPinyinImportWeight;
+    std::vector<std::optional<double>> frequencies;
+    frequencies.reserve(entries.size());
+    for (const auto &entry : entries)
+        frequencies.push_back(entry.frequency);
+    const std::vector<int> weights = Validation::MapImportFrequencies(frequencies);
+
     int inserted = 0;
     int skipped = 0;
     int failed = 0;
@@ -1123,7 +1188,7 @@ json::object ImportForeign(const json::object &request)
         const ForeignDictionary::Entry &entry = entries[i];
         if (quanpin::contains_latin_letter(entry.word))
         {
-            latin_lines.push_back({index, entry.word, std::string(), kWeight});
+            latin_lines.push_back({index, entry.word, std::string(), entry.frequency, weights[i]});
             continue;
         }
 
@@ -1152,7 +1217,7 @@ json::object ImportForeign(const json::object &request)
             ++skipped;
             continue;
         }
-        if (!InsertChineseWord(db.get(), segments, key, entry.word, kWeight, message))
+        if (!InsertChineseWord(db.get(), segments, key, entry.word, weights[i], message))
         {
             append_error(index, "写入失败：" + message);
             continue;

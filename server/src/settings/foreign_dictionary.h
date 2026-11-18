@@ -11,6 +11,7 @@
 // 这里只负责「文件字节 -> 词条 + 全拼」，不碰词库：校验、去重、写库和用户日志都由
 // dictionary_manager.cpp 按拼音批量导入的同一条路走。
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,10 @@ struct Entry
     std::string word;
     // 用 ' 分隔的全拼音节（例如 ni'hao）。为空表示文件没给出读音，交给调用方自动注音。
     std::string pinyin;
+    // 文件里给的词频，越大越常用；量纲随格式而定（次数、libime 的对数概率……），调用方只该
+    // 拿来比高低。没有词频的格式或词条为空：scel、qcel 的扩展字段实测是每条各异的编号，
+    // 不是词频，按「只有位置」处理。
+    std::optional<double> frequency;
 };
 
 struct Format

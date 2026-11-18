@@ -431,7 +431,8 @@ TEST_CASE(QuanpinImportAndQueryKeepExplicitSyllableBoundaries)
             const auto &row = rows.front().as_object();
             REQUIRE_EQ(std::string(row.at("code").as_string()), std::string(entry.key));
             REQUIRE_EQ(std::string(row.at("word").as_string()), std::string(entry.word));
-            REQUIRE_EQ(row.at("weight").as_int64(), 42);
+            // 整份文件只有一种权重（42），分不出高低，按导入规则记最低档。
+            REQUIRE_EQ(row.at("weight").as_int64(), SettingsDictionary::Validation::kMinImportWeight);
         }
     }
 }
@@ -581,8 +582,10 @@ TEST_CASE(LatinWordsAreImportedRoutedAndManagedInSettings)
     const auto exported = SettingsDictionary::HandleRequest({{"dictionary", "latin"}, {"action", "export"}});
     REQUIRE(exported.at("ok").as_bool());
     const std::string text(exported.at("content").as_string());
-    REQUIRE(text.find("T恤\tt'xu\t9\n") != std::string::npos);
-    REQUIRE(text.find("卡拉OK\tka'la'o'k\t10000\n") != std::string::npos);
+    // 导入时的权重按文件内名次换算：那份文件的权重是 {5, 9}，T恤 的 9 最大记 1000；
+    // 卡拉OK 没写权重记 10。之后手动新增、修改的照原值。
+    REQUIRE(text.find("T恤\tt'xu\t1000\n") != std::string::npos);
+    REQUIRE(text.find("卡拉OK\tka'la'o'k\t10\n") != std::string::npos);
     REQUIRE(text.find("B超\tb'chao\t20\n") != std::string::npos);
     REQUIRE(text.find("X线\tx'xian\t30\n") != std::string::npos);
     REQUIRE(text.find("AA制") == std::string::npos);
