@@ -577,7 +577,8 @@ CREATE_ENGLISH_PHRASES = (
     "CREATE TABLE english_phrases (word TEXT COLLATE BINARY NOT NULL, display TEXT NOT NULL, "
     "weight INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (word, display)) WITHOUT ROWID"
 )
-_PHRASE_SEPARATOR = re.compile(r"[ \-]")
+# 空格或连字符夹在两个字母或数字之间才算短语：-able、zymo- 这类词缀不收。
+_PHRASE_SEPARATOR = re.compile(r"[A-Za-z0-9][^A-Za-z0-9]*[ \-][^A-Za-z0-9]*[A-Za-z0-9]")
 _NON_LETTER = re.compile(r"[^a-z]")
 _WHITESPACE = re.compile(r"\s+")
 # 释义里挑不出中文词头（全是解释性的长句）时，退回用第一行，截到这么多字。
@@ -608,7 +609,8 @@ def _fallback_phrase_gloss(translation: str) -> str:
 
 
 def parse_ecdict_phrases(ecdict: Path) -> list[EnglishPhrase]:
-    """ECDICT 里所有纯 ASCII、带空格或连字符的条目（according to、well-known），不管有没有词频信号。
+    """ECDICT 里所有纯 ASCII、词与词之间有空格或连字符的条目（according to、well-known），不管有没有词频信号；
+    -able、zymo- 这类词缀不收。
     键少于两个字母的不要。释义按单词释义的同一套规则挑词头，挑不出来时用第一行。"""
     text = textutil.without_bom(ecdict.read_bytes().decode("utf-8"))
     csv.field_size_limit(1 << 30)

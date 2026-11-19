@@ -3,7 +3,8 @@
 
     hallelujahim-ipa.txt  英文候选的音标：hallelujahIM 词表里的 ipa 字段（CMUdict 经 eng_to_ipa 转写），
                           每行 `小写单词<TAB>音标`；eng_to_ipa 转不出来（带 *）和含空格的不收
-    ecdict-phrases.txt    英文候选的短语：ECDICT 里全部纯 ASCII、带空格或连字符的条目，每行 `写法<TAB>释义`，
+    ecdict-phrases.txt    英文候选的短语：ECDICT 里全部纯 ASCII、词与词之间有空格或连字符的条目（词缀不收），
+                          每行 `写法<TAB>释义`，
                           按字典序；释义按单词释义的规则挑两个中文词头，挑不出来时用第一行，没有释义只有写法
 
 两份上游文件都按 URL、大小和 SHA-256 固定（ECDICT 用 dictionary_build/inputs.lock.json 里那一份），首次运行时下载到
@@ -82,8 +83,8 @@ def phrases_file(commit: str) -> tuple[list[str], list[str]]:
     header = [
         f"# 由 MSIME-Windows 仓库提交 {commit} 的 scripts/generate-english-extras.py 生成，不要手工编辑。",
         f"# 上游：{ECDICT_REPOSITORY} 提交 {ecdict_commit} 的 ecdict.csv，MIT。",
-        "# 规则：收全部纯 ASCII、带空格或连字符的条目（不看词频），空白压成一个空格；去掉非字母后不足两个字母的、"
-        "以 # 开头的不收。",
+        "# 规则：收全部纯 ASCII、词与词之间有空格或连字符的条目（不看词频），空白压成一个空格；-able、zymo- 这类词缀、"
+        "去掉非字母后不足两个字母的、以 # 开头的不收。",
         "# 释义：按 english.db 单词释义的规则从 translation 挑至多两个中文词头，挑不出来时用第一行去掉领域和词性标记、"
         "截到 24 字。",
         "# 只由 MSIME-Windows 的本地构建器读（scripts/dictionary_build，english.db 的 english_phrases 表），msime 构建器不读。",
