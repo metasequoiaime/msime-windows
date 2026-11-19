@@ -4,6 +4,8 @@
 #include "../quanpin/quanpin_query.h"
 #include "../user_dictionary/user_dictionary_journal.h"
 #include <spdlog/spdlog.h>
+#include <algorithm>
+#include <initializer_list>
 #include <unordered_set>
 #include <utility>
 
@@ -14,7 +16,8 @@ constexpr int kNoMutation = 0;
 // 「成功 0 / 失败非 0」的既有约定。
 constexpr int kMutationFailed = -1;
 // 前缀查询截断上限：候选窗每页最多 10 个，50 给固定位置/重排留足余量。1 码前缀在真实
-// 词库上可命中数千行，必须截断；provider 在引擎层，不读 server 配置（分层边界）。
+// 词库上可命中数千行，必须截断；provider 在引擎层，不读 server 配置（分层边界）。精确码行、提示码个数、
+// 合并后的候选数都按这个上限截。
 constexpr int kWubiQueryRowLimit = 50;
 } // namespace
 
@@ -36,18 +39,18 @@ std::vector<WordItem> WubiCandidateProvider::query(const QueryRequest &request)
         return {};
     }
 
-    // 上一轮可能停在 SQLITE_ROW 上（出错分支不会走完），两个语句都先归零，否则下一次 bind
-    // 会以 SQLITE_BUSY 失败；reset 不清绑定，随后的 bind 覆盖全部参数。
-    sqlite3_reset(query_statement_);
-    sqlite3_reset(wildcard_statement_);
+    // 码表的权重是「码内名次」（同码组里 20、10、9……），不同码之间不可比：重码多的码组名次值大，按权重
+    // 跨码排序会让它们霸占提示位，新世纪表里还混着原始词频量级的行。所以只在同一个码内部按权重排，码与码
+    // 之间按「各码的首选先于任何码的次选」轮流取，同一名次里短码在前、再按字母序——敲一个字母时看到的是
+    // 二级简码，敲三个字母时看到的是每个四码的首选，即逐码提示。
     if (request.wubi_z_wildcard)
     {
         // Wildcard code: z stands for one unknown letter, so the pattern is the code with each z
         // replaced by GLOB's single-character '?' and the rest anchored by '*'. GLOB rather than
         // LIKE because the code is lowercase ASCII and the key column is BINARY: a literal prefix
         // still bounds the index scan (a?* scans a--b), while LIKE would need case_sensitive_like
-        // to do the same. The leading-z case (?bc*) scans the table and the weight order turns it
-        // into "most frequent codes first", which is what a learner typing z wants.
+        // to do the same. The pattern is never itself a code, so there is no exact row to lead
+        // with; the shortest matching codes (same length as the input) come first.
         std::string pattern;
         pattern.reserve(request.normalized_input.size() + 1);
         for (const char ch : request.normalized_input)
@@ -55,50 +58,129 @@ std::vector<WordItem> WubiCandidateProvider::query(const QueryRequest &request)
             pattern.push_back(ch == 'z' ? '?' : ch);
         }
         pattern.push_back('*');
-        if (sqlite3_bind_text(wildcard_statement_, 1, pattern.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK)
+        std::vector<std::string> keys;
+        sqlite3_reset(wildcard_key_statement_);
+        if (sqlite3_bind_text(wildcard_key_statement_, 1, pattern.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+            !collect_keys(wildcard_key_statement_, keys))
         {
             return {};
         }
-        return collect_rows(wildcard_statement_);
+        return assemble({}, keys);
     }
 
-    // 上界 = 前缀末字节 +1：五笔码字母域是 a–y（z 只在通配模式进码，上面已分流），末字节自增
-    // 不会越过域边界，无需进位处理。
-    std::string upper_bound = request.normalized_input;
-    ++upper_bound.back();
-    if (sqlite3_bind_text(query_statement_, 1, request.normalized_input.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
-        sqlite3_bind_text(query_statement_, 2, upper_bound.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK)
+    std::vector<Row> exact;
+    if (!code_rows(request.normalized_input, kWubiQueryRowLimit, exact))
     {
         return {};
     }
-    return collect_rows(query_statement_);
+    // 上界 = 前缀末字节 +1：五笔码字母域是 a–y（z 只在通配模式进码，上面已分流），末字节自增
+    // 不会越过域边界，无需进位处理。下界用 >：精确码本身已在上面取过。
+    std::string upper_bound = request.normalized_input;
+    ++upper_bound.back();
+    std::vector<std::string> keys;
+    sqlite3_reset(hint_key_statement_);
+    if (sqlite3_bind_text(hint_key_statement_, 1, request.normalized_input.c_str(), -1, SQLITE_TRANSIENT) !=
+            SQLITE_OK ||
+        sqlite3_bind_text(hint_key_statement_, 2, upper_bound.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+        !collect_keys(hint_key_statement_, keys))
+    {
+        return {};
+    }
+    return assemble(std::move(exact), keys);
 }
 
-std::vector<WordItem> WubiCandidateProvider::collect_rows(sqlite3_stmt *statement)
+bool WubiCandidateProvider::code_rows(const std::string &code, std::size_t limit, std::vector<Row> &rows)
 {
-    std::vector<WordItem> candidates;
-    // 同一个字常同时有简码与全码（工 = a / aaaa），前缀查询会把两行都带出来。按 ORDER BY 顺序
-    // 只保留每个词的第一行：精确码行排在最前，调频也就落在用户实际敲的那个码上。
-    std::unordered_set<std::string> seen_words;
-    int result = SQLITE_ROW;
-    while ((result = sqlite3_step(statement)) == SQLITE_ROW)
+    // 上一轮可能停在 SQLITE_ROW 上（截断或出错分支不会走完），先归零，否则 bind 会以 SQLITE_BUSY 失败。
+    sqlite3_reset(code_statement_);
+    if (sqlite3_bind_text(code_statement_, 1, code.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK)
     {
-        const auto *key = reinterpret_cast<const char *>(sqlite3_column_text(statement, 0));
-        const auto *value = reinterpret_cast<const char *>(sqlite3_column_text(statement, 1));
-        if (key == nullptr || value == nullptr || !seen_words.insert(value).second)
+        return false;
+    }
+    int result = SQLITE_ROW;
+    while (rows.size() < limit && (result = sqlite3_step(code_statement_)) == SQLITE_ROW)
+    {
+        const auto *key = reinterpret_cast<const char *>(sqlite3_column_text(code_statement_, 0));
+        const auto *value = reinterpret_cast<const char *>(sqlite3_column_text(code_statement_, 1));
+        if (key == nullptr || value == nullptr)
         {
             continue;
         }
-        candidates.emplace_back(key, value, sqlite3_column_int64(statement, 2));
+        rows.push_back({key, value, sqlite3_column_int64(code_statement_, 2)});
+    }
+    sqlite3_reset(code_statement_);
+    return result == SQLITE_ROW || result == SQLITE_DONE;
+}
+
+bool WubiCandidateProvider::collect_keys(sqlite3_stmt *statement, std::vector<std::string> &keys)
+{
+    int result = SQLITE_ROW;
+    while ((result = sqlite3_step(statement)) == SQLITE_ROW)
+    {
+        if (const auto *key = reinterpret_cast<const char *>(sqlite3_column_text(statement, 0)))
+        {
+            keys.emplace_back(key);
+        }
+    }
+    sqlite3_reset(statement);
+    return result == SQLITE_DONE;
+}
+
+std::vector<WordItem> WubiCandidateProvider::assemble(std::vector<Row> leading, const std::vector<std::string> &keys)
+{
+    // 每个提示码最多取剩余名额那么多行就够了：轮流取时任何一个码都轮不到更多。
+    const std::size_t remaining = leading.size() < static_cast<std::size_t>(kWubiQueryRowLimit)
+                                      ? static_cast<std::size_t>(kWubiQueryRowLimit) - leading.size()
+                                      : 0;
+    std::vector<std::vector<Row>> per_key;
+    per_key.reserve(keys.size());
+    std::size_t deepest = 0;
+    for (const std::string &key : keys)
+    {
+        if (remaining == 0)
+        {
+            break;
+        }
+        std::vector<Row> rows;
+        if (!code_rows(key, remaining, rows))
+        {
+            return {};
+        }
+        deepest = std::max(deepest, rows.size());
+        per_key.push_back(std::move(rows));
+    }
+
+    std::vector<Row> ordered = std::move(leading);
+    for (std::size_t rank = 0; rank < deepest && ordered.size() < static_cast<std::size_t>(kWubiQueryRowLimit); ++rank)
+    {
+        for (auto &rows : per_key)
+        {
+            if (rank < rows.size())
+            {
+                ordered.push_back(std::move(rows[rank]));
+                if (ordered.size() >= static_cast<std::size_t>(kWubiQueryRowLimit))
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    std::vector<WordItem> candidates;
+    candidates.reserve(ordered.size());
+    // 同一个字常同时有简码与全码（工 = a / aaaa），前缀查询会把两行都带出来。按上面的顺序只保留每个词
+    // 的第一行：精确码行排在最前，调频也就落在用户实际敲的那个码上。
+    std::unordered_set<std::string> seen_words;
+    for (Row &row : ordered)
+    {
+        if (!seen_words.insert(row.value).second)
+        {
+            continue;
+        }
+        candidates.emplace_back(std::move(row.key), std::move(row.value), row.weight);
         // 五笔码表候选显式标成 Wubi：混输组合里它们与追加的拼音候选共存，下游按候选自己的
         // 方案决定调频/删除/固定位置与上屏推进，不能再靠会话方案一刀切。
         candidates.back().scheme = SchemeType::Wubi;
-    }
-
-    if (result != SQLITE_DONE)
-    {
-        (void)0;
-        return {};
     }
     return candidates;
 }
@@ -165,7 +247,7 @@ int WubiCandidateProvider::cache_dynamic_candidate_for_request(const QueryReques
 
 bool WubiCandidateProvider::ensure_query_statement()
 {
-    if (query_statement_ != nullptr && wildcard_statement_ != nullptr)
+    if (code_statement_ != nullptr && hint_key_statement_ != nullptr && wildcard_key_statement_ != nullptr)
     {
         return true;
     }
@@ -180,22 +262,24 @@ bool WubiCandidateProvider::ensure_query_statement()
     // 表名来自固定的版本表（wubi_profile_table），不是外部输入。词库里没有这一版的表（还没带 98、新世纪表的
     // 旧词库）时 prepare 失败，查询照常返回空候选，不影响别的方案。
     const std::string table = "\"" + std::string(metasequoia::wubi_profile_table(profile_)) + "\"";
-    const std::string query_sql =
-        "SELECT \"key\", \"value\", \"weight\" FROM " + table +
-        " WHERE \"key\" >= ?1 AND \"key\" < ?2 "
-        // 精确等长行优先（保住一级/二级简码），其余前缀行按权重降序；rowid 做稳定序，与现状一致。
-        // key >= ?1 AND key < ?2 是范围扫描，受益于 key 上任何索引；LIMIT 只在截断处付出排序代价。
-        "ORDER BY (\"key\" = ?1) DESC, \"weight\" DESC, \"key\" ASC, rowid ASC "
-        "LIMIT " +
-        std::to_string(kWubiQueryRowLimit);
-    // 通配语句没有精确行可优先（模式里的 '?' 永远不等于真实 key 的那个字节），所以只按权重排。
-    const std::string wildcard_sql = "SELECT \"key\", \"value\", \"weight\" FROM " + table +
-                                     " WHERE \"key\" GLOB ?1 "
-                                     "ORDER BY \"weight\" DESC, \"key\" ASC, rowid ASC "
-                                     "LIMIT " +
-                                     std::to_string(kWubiQueryRowLimit);
-    if (sqlite3_prepare_v2(db_, query_sql.c_str(), -1, &query_statement_, nullptr) != SQLITE_OK ||
-        sqlite3_prepare_v2(db_, wildcard_sql.c_str(), -1, &wildcard_statement_, nullptr) != SQLITE_OK)
+    // 码内按权重降序，rowid 做稳定序。走 (key, weight DESC) 索引，不排序。
+    const std::string code_sql = "SELECT \"key\", \"value\", \"weight\" FROM " + table +
+                                 " WHERE \"key\" = ?1 ORDER BY \"weight\" DESC, rowid ASC";
+    // 提示码：以输入为前缀、比输入长的码，短码在前、同长按字母序。GROUP BY 沿 key 索引扫一遍范围，只对
+    // 去重后的码排序；在真实词库上一个字母的前缀（约三万行）约 5ms，与原来按权重排整个范围同一量级。
+    const std::string limit = " LIMIT " + std::to_string(kWubiQueryRowLimit);
+    const std::string hint_sql = "SELECT \"key\" FROM " + table +
+                                 " WHERE \"key\" > ?1 AND \"key\" < ?2 GROUP BY \"key\" "
+                                 "ORDER BY length(\"key\") ASC, \"key\" ASC" +
+                                 limit;
+    // 通配语句没有精确行可优先（模式里的 '?' 永远不等于真实 key 的那个字节）；与输入等长的码最短，排在前面。
+    const std::string wildcard_sql = "SELECT \"key\" FROM " + table +
+                                     " WHERE \"key\" GLOB ?1 GROUP BY \"key\" "
+                                     "ORDER BY length(\"key\") ASC, \"key\" ASC" +
+                                     limit;
+    if (sqlite3_prepare_v2(db_, code_sql.c_str(), -1, &code_statement_, nullptr) != SQLITE_OK ||
+        sqlite3_prepare_v2(db_, hint_sql.c_str(), -1, &hint_key_statement_, nullptr) != SQLITE_OK ||
+        sqlite3_prepare_v2(db_, wildcard_sql.c_str(), -1, &wildcard_key_statement_, nullptr) != SQLITE_OK)
     {
         (void)0;
         close_database();
@@ -211,15 +295,13 @@ std::string WubiCandidateProvider::journal_db_path() const
 
 void WubiCandidateProvider::close_database()
 {
-    if (query_statement_ != nullptr)
+    for (sqlite3_stmt **statement : {&code_statement_, &hint_key_statement_, &wildcard_key_statement_})
     {
-        sqlite3_finalize(query_statement_);
-        query_statement_ = nullptr;
-    }
-    if (wildcard_statement_ != nullptr)
-    {
-        sqlite3_finalize(wildcard_statement_);
-        wildcard_statement_ = nullptr;
+        if (*statement != nullptr)
+        {
+            sqlite3_finalize(*statement);
+            *statement = nullptr;
+        }
     }
     if (db_ != nullptr)
     {

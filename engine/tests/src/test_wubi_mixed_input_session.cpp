@@ -101,7 +101,11 @@ std::filesystem::path prepare_resources(const std::filesystem::path &root)
             "INSERT INTO wubi86 VALUES('wq','你好',10000),('wqaa','众人',9000),"
             "('wqab','甲',8000),('wqab','乙',7000),('taaa','笔',6000),"
             "('a','工',10000),('aaaa','工',5000),('aaab','苛',4000),"
-            "('hao','号',9000),('au','乐',20000);"
+            "('hao','号',9000),('au','乐',20000),"
+            // 码表权重是码内名次，跨码不可比：yab 是个重码多的码组，名次值远大于 ya，但敲 y 时
+            // 应先看到每个码的首选（二级简码 ya 在三码 yab 前面），再看各码的次选。
+            "('y','主',20),('ya','文',20),('ya','方',10),('yab','亭',900),('yab','亮',800),"
+            "('yyyy','言',30);"
             // 98 与新世纪各一张同结构的表；同一个码在三版里是不同的字，用来认出查的是哪张表。
             "CREATE TABLE wubi98(key TEXT,value TEXT,weight INTEGER);"
             "INSERT INTO wubi98 VALUES('kg','号',100),('wq','你们',10000),('wq','拟们',9000);"
@@ -196,6 +200,20 @@ int main()
                     "A word with a short and a full code was listed twice.");
             require(session.candidates().front().word == "工" && session.candidates().front().pinyin == "a",
                     "The deduplicated word did not keep the exact-code row.");
+        }
+
+        // Prefix hints do not compare weights across codes: the exact row leads, then the first
+        // candidate of every longer code (shorter codes first), then every code's second candidate.
+        {
+            InputSession session(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths_for(resources, root, next()));
+            session.set_wubi_input_options(WubiInputOptions{false});
+            require(type(session, "y") == std::vector<std::string>{"主", "文", "亭", "言", "方", "亮"},
+                    "Prefix hints were not ordered by rank within each code, then by code length.");
+
+            InputSession wildcard(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths_for(resources, root, next()));
+            wildcard.set_wubi_input_options(WubiInputOptions{false, true});
+            require(type(wildcard, "yz") == std::vector<std::string>{"文", "亭", "言", "方", "亮"},
+                    "Wildcard matches were not ordered by rank within each code, then by code length.");
         }
 
         // Auto-commit facts count only the code's own rows: a pinyin spelling mixed input appends
