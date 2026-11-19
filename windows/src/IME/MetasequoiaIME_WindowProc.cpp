@@ -7,6 +7,7 @@
 #include "CandidateListUIPresenter.h"
 #include "CompositionProcessorEngine.h"
 #include "Compartment.h"
+#include "LanguageBar.h"
 #include "define.h"
 #include <debugapi.h>
 #include <namedpipeapi.h>
@@ -105,6 +106,7 @@ class CCommitCandidateAndContinueEditSession : public CEditSessionBase
 
 void CMetasequoiaIME::_RefreshLanguageBarThemeIcons()
 {
+    InvalidateTaskbarThemeCache();
     CCompositionProcessorEngine *pEngine = GetCompositionProcessorEngine();
     if (pEngine)
     {
@@ -127,8 +129,7 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
         return;
     }
 
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0,
-                      KEY_NOTIFY, &_themeRegKey) != ERROR_SUCCESS)
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegKeyPersonalizeTheme, 0, KEY_NOTIFY, &_themeRegKey) != ERROR_SUCCESS)
     {
         return;
     }
@@ -150,26 +151,45 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
         return;
     }
 
+    // Accent color changes (the taskbar palette step lives in AccentColorMenu
+    // under DWM) do not touch Personalize. Optional: failure here leaves the
+    // theme-only watch running, same coverage as before.
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegKeyDwm, 0, KEY_NOTIFY, &_dwmRegKey) == ERROR_SUCCESS)
+    {
+        _dwmRegEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!_dwmRegEvent ||
+            RegNotifyChangeKeyValue(_dwmRegKey, FALSE, REG_NOTIFY_CHANGE_LAST_SET, _dwmRegEvent, TRUE) != ERROR_SUCCESS)
+        {
+            if (_dwmRegEvent)
+            {
+                CloseHandle(_dwmRegEvent);
+                _dwmRegEvent = nullptr;
+            }
+            RegCloseKey(_dwmRegKey);
+            _dwmRegKey = nullptr;
+        }
+    }
+
     _stopThemeWatcher.store(false);
     _pThemeWatcherThread = new (std::nothrow) std::thread([this]() {
         while (!_stopThemeWatcher.load(std::memory_order_acquire))
         {
-            const DWORD wait = WaitForSingleObject(_themeRegEvent, INFINITE);
+            HANDLE events[2] = {_themeRegEvent, _dwmRegEvent};
+            const DWORD count = _dwmRegEvent ? 2 : 1;
+            const DWORD wait = WaitForMultipleObjects(count, events, FALSE, INFINITE);
             if (_stopThemeWatcher.load(std::memory_order_acquire))
             {
                 break;
             }
-            if (wait != WAIT_OBJECT_0)
+            if (wait == WAIT_FAILED || wait >= WAIT_OBJECT_0 + count)
             {
                 continue;
             }
-            if (_stopThemeWatcher.load(std::memory_order_acquire))
-            {
-                break;
-            }
 
-            ResetEvent(_themeRegEvent);
-            RegNotifyChangeKeyValue(_themeRegKey, FALSE, REG_NOTIFY_CHANGE_LAST_SET, _themeRegEvent, TRUE);
+            const DWORD fired = wait - WAIT_OBJECT_0;
+            ResetEvent(events[fired]);
+            RegNotifyChangeKeyValue(fired == 0 ? _themeRegKey : _dwmRegKey, FALSE, REG_NOTIFY_CHANGE_LAST_SET,
+                                    events[fired], TRUE);
 
             const HWND ownerWindow = _msgWndHandle;
             if (ownerWindow && IsWindow(ownerWindow))
@@ -181,6 +201,16 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
 
     if (!_pThemeWatcherThread)
     {
+        if (_dwmRegEvent)
+        {
+            CloseHandle(_dwmRegEvent);
+            _dwmRegEvent = nullptr;
+        }
+        if (_dwmRegKey)
+        {
+            RegCloseKey(_dwmRegKey);
+            _dwmRegKey = nullptr;
+        }
         CloseHandle(_themeRegEvent);
         _themeRegEvent = nullptr;
         RegCloseKey(_themeRegKey);
@@ -195,6 +225,10 @@ void CMetasequoiaIME::_StopThemeRegistryWatcher()
     {
         SetEvent(_themeRegEvent);
     }
+    if (_dwmRegEvent)
+    {
+        SetEvent(_dwmRegEvent);
+    }
 
     if (_pThemeWatcherThread)
     {
@@ -204,6 +238,18 @@ void CMetasequoiaIME::_StopThemeRegistryWatcher()
         }
         delete _pThemeWatcherThread;
         _pThemeWatcherThread = nullptr;
+    }
+
+    if (_dwmRegEvent)
+    {
+        CloseHandle(_dwmRegEvent);
+        _dwmRegEvent = nullptr;
+    }
+
+    if (_dwmRegKey)
+    {
+        RegCloseKey(_dwmRegKey);
+        _dwmRegKey = nullptr;
     }
 
     if (_themeRegEvent)

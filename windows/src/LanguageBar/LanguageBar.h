@@ -9,6 +9,10 @@
 class CCompartment;
 class CCompartmentEventSink;
 
+// Drops the cached taskbar light/dark decision so the next GetIcon re-reads
+// the registry. Called by the theme watcher before refreshing the icons.
+void InvalidateTaskbarThemeCache();
+
 class CLangBarItemButton : public ITfLangBarItemButton, public ITfSource
 {
   public:

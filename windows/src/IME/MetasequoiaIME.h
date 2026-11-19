@@ -914,6 +914,11 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     HWND _msgWndHandle;
     HKEY _themeRegKey;
     HANDLE _themeRegEvent;
+    // Accent color changes live under a different key than the theme values;
+    // watched alongside _themeRegKey so recoloring the taskbar also refreshes
+    // the language bar icons. Optional: the watcher still runs without them.
+    HKEY _dwmRegKey;
+    HANDLE _dwmRegEvent;
     std::thread *_pThemeWatcherThread;
     std::atomic<bool> _stopThemeWatcher;
     std::thread *_pIpcThread;

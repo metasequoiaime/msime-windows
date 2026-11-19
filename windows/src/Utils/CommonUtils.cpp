@@ -19,3 +19,14 @@ std::wstring GetCurrentProcessName()
     CloseHandle(hProcess);
     return L"";
 }
+
+DWORD ReadHkcuDword(LPCWSTR subKey, LPCWSTR valueName, DWORD fallback)
+{
+    DWORD value = fallback;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, subKey, valueName, RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
+    {
+        return fallback;
+    }
+    return value;
+}

@@ -13,23 +13,52 @@
 #include "Globals.h"
 #include "Compartment.h"
 #include "Ipc.h"
+#include "CommonUtils.h"
 #include "fmt/xchar.h"
 
 #include <atomic>
+#include <cmath>
 
 namespace
 {
-// Taskbar/system tray follows SystemUsesLightTheme (0 = dark).
+// SystemUsesLightTheme (0 = dark) describes the system UI theme only. It does
+// NOT describe the taskbar when an accent color is shown on it -- do not use
+// this for taskbar-related decisions; use IsTaskbarDark instead.
 bool IsSystemDarkMode()
 {
-    DWORD value = 1; // default to light
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                     L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
+    return ReadHkcuDword(kRegKeyPersonalizeTheme, L"SystemUsesLightTheme", 1) == 0;
+}
+
+// "Show accent color on Start and taskbar" only colors the taskbar in dark mode
+// before Windows 11 24H2 (build 26100). In light mode on older builds
+// ColorPrevalence may be a leftover from dark mode while the taskbar itself is
+// light, so the accent path must stay off there.
+bool SupportsLightModeAccentTaskbar()
+{
+    using RtlGetVersionFn = LONG(WINAPI *)(OSVERSIONINFOEXW *);
+    HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll)
     {
         return false;
     }
-    return value == 0;
+    auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(::GetProcAddress(ntdll, "RtlGetVersion"));
+    if (!rtlGetVersion)
+    {
+        return false;
+    }
+    OSVERSIONINFOEXW info{};
+    info.dwOSVersionInfoSize = sizeof(info);
+    if (rtlGetVersion(&info) != 0)
+    {
+        return false;
+    }
+    return info.dwBuildNumber >= 26100;
+}
+
+double LinearizeSrgbChannel(double channel)
+{
+    const double c = channel / 255.0;
+    return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
 }
 
 // SystemUsesLightTheme alone does not describe the taskbar: in light mode the
@@ -43,35 +72,60 @@ bool IsTaskbarDark()
     {
         return true;
     }
-
-    DWORD prevalence = 0;
-    DWORD size = sizeof(prevalence);
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                     L"ColorPrevalence", RRF_RT_REG_DWORD, nullptr, &prevalence, &size) != ERROR_SUCCESS ||
-        prevalence == 0)
+    if (!SupportsLightModeAccentTaskbar())
+    {
+        return false;
+    }
+    if (ReadHkcuDword(kRegKeyPersonalizeTheme, L"ColorPrevalence", 0) == 0)
     {
         return false;
     }
 
-    DWORD accent = 0;
-    size = sizeof(accent);
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", L"AccentColor", RRF_RT_REG_DWORD,
-                     nullptr, &accent, &size) != ERROR_SUCCESS)
+    // The taskbar paints the palette step stored in AccentColorMenu, not the
+    // raw accent color; fall back to DWM\AccentColor. Both are AABBGGRR.
+    DWORD abgr = ReadHkcuDword(kRegKeyExplorerAccent, L"AccentColorMenu", ReadHkcuDword(kRegKeyDwm, L"AccentColor", 0));
+    // With transparency effects on, the taskbar is an acrylic blend and ends up
+    // darker than the palette step. There is no documented way to read the
+    // blended result; approximate it with a fixed darken so borderline colors
+    // still land on white glyphs like the shell's own taskbar text.
+    if (ReadHkcuDword(kRegKeyPersonalizeTheme, L"EnableTransparency", 1) != 0)
     {
-        return false;
+        const DWORD r = (abgr & 0xFF) * 3 / 4;
+        const DWORD g = ((abgr >> 8) & 0xFF) * 3 / 4;
+        const DWORD b = ((abgr >> 16) & 0xFF) * 3 / 4;
+        abgr = (abgr & 0xFF000000) | (b << 16) | (g << 8) | r;
     }
+    // WCAG relative luminance (linear-light Rec.709 primaries).
+    const double luminance = 0.2126 * LinearizeSrgbChannel(abgr & 0xFF) +
+                             0.7152 * LinearizeSrgbChannel((abgr >> 8) & 0xFF) +
+                             0.0722 * LinearizeSrgbChannel((abgr >> 16) & 0xFF);
+    // Pick the glyph color the way the shell picks its own taskbar text color:
+    // whichever of white/black has the higher WCAG contrast against the taskbar.
+    const double contrastForWhiteGlyph = (1.0 + 0.05) / (luminance + 0.05);
+    const double contrastForBlackGlyph = (luminance + 0.05) / 0.05;
+    return contrastForWhiteGlyph > contrastForBlackGlyph;
+}
 
-    // AccentColor is stored as AABBGGRR.
-    const double r = static_cast<double>(accent & 0xFF);
-    const double g = static_cast<double>((accent >> 8) & 0xFF);
-    const double b = static_cast<double>((accent >> 16) & 0xFF);
-    const double luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    return luminance < 128.0;
+// GetIcon runs on the host's UI thread for every mode / Caps Lock / OnUpdate,
+// so the registry reads above are cached. The theme watcher invalidates the
+// cache through InvalidateTaskbarThemeCache before refreshing the icons.
+// -1 = unknown, 0 = light taskbar, 1 = dark taskbar.
+std::atomic<int> s_taskbarDarkCache{-1};
+
+bool IsTaskbarDarkCached()
+{
+    int cached = s_taskbarDarkCache.load(std::memory_order_acquire);
+    if (cached < 0)
+    {
+        cached = IsTaskbarDark() ? 1 : 0;
+        s_taskbarDarkCache.store(cached, std::memory_order_release);
+    }
+    return cached == 1;
 }
 
 DWORD ResolveThemeIconIndex(DWORD lightIconIndex)
 {
-    if (!IsTaskbarDark())
+    if (!IsTaskbarDarkCached())
     {
         return lightIconIndex;
     }
@@ -147,6 +201,13 @@ SetThreadDpiAwarenessCtxFn ResolveSetThreadDpiAwarenessContext()
                   : nullptr;
 }
 } // namespace
+
+// Called by the theme watcher (CMetasequoiaIME::_RefreshLanguageBarThemeIcons)
+// before refreshing the icons, so the next GetIcon re-reads the theme state.
+void InvalidateTaskbarThemeCache()
+{
+    s_taskbarDarkCache.store(-1, std::memory_order_release);
+}
 
 //+---------------------------------------------------------------------------
 //
