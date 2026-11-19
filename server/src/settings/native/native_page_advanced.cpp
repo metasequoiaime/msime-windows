@@ -642,6 +642,7 @@ VisualPtr BuildAdvancedPage(PageContext &context)
     {
         auto candidateHotkey = BindToggle(context, "dr_dict.lookup_candidate_ctrl_shift_enter");
         auto preeditHotkey = BindToggle(context, "dr_dict.lookup_preedit_ctrl_alt_enter");
+        auto englishBrief = BindToggle(context, "dr_dict.english_brief");
         page.AddSection(MakeRows({
             MakeRow(L"DR Dict 词典联动",
                     L"在候选的右键菜单中增加「查词典」，在 DR Dict 的弹窗中查询该候选。需要安装 DR Dict "
@@ -656,15 +657,22 @@ VisualPtr BuildAdvancedPage(PageContext &context)
                     L"一样清掉当前输入，不上屏。由输入法的全局键盘钩子识别，Edge、Chrome 里也能用；"
                     L"候选窗不显示时不拦截。开启上面的词典联动后生效。",
                     preeditHotkey),
+            MakeRow(L"英文候选释义由 DR Dict 提供",
+                    L"英文候选模式下，高亮候选下方的释义改为 DR Dict 里第一本查到该词的词典的摘要。DR Dict "
+                    L"没在运行或查不到时用输入法自带的释义。开启上面的词典联动后生效。",
+                    englishBrief),
         }));
         SettingsModel *dictModel = &context.model;
         std::weak_ptr<ToggleSwitch> weakCandidate = candidateHotkey;
         std::weak_ptr<ToggleSwitch> weakPreedit = preeditHotkey;
-        context.OnConfig([dictModel, weakCandidate, weakPreedit]() {
+        std::weak_ptr<ToggleSwitch> weakBrief = englishBrief;
+        context.OnConfig([dictModel, weakCandidate, weakPreedit, weakBrief]() {
             const bool disabled = !dictModel->GetBool("dr_dict.enabled");
             if (auto toggle = weakCandidate.lock())
                 toggle->SetDisabled(disabled);
             if (auto toggle = weakPreedit.lock())
+                toggle->SetDisabled(disabled);
+            if (auto toggle = weakBrief.lock())
                 toggle->SetDisabled(disabled);
         });
     }

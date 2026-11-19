@@ -404,6 +404,11 @@ japanese_schema = "romaji"
 escape_keeps_selected_word = false
 # 回车上屏英文时把该英文单词写入英文词库，下次可作为候选
 enter_learns_english_word = true
+# 英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文候选后自动补一个空格；
+# 回车与标点上屏不补，数字开头或以撇号结尾的词也不补
+english_commit_with_space = true
+# 英文候选模式下在高亮候选下方显示音标与中文释义（开启 DR Dict 词典联动后释义可改由 DR Dict 提供）
+english_candidate_detail = true
 # 模糊音，全拼与双拼均生效；默认全部关闭，升级用户零行为变化
 # 总开关：关闭时所有规则不生效，已选规则保留，便于临时停用后恢复
 fuzzy_pinyin = false
@@ -667,6 +672,7 @@ v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，
 enabled = false # 候选右键菜单增加「查词典」
 lookup_candidate_ctrl_shift_enter = false # Ctrl+Shift+Enter 查询高亮候选；需先开启 enabled
 lookup_preedit_ctrl_alt_enter = false # Ctrl+Alt+Enter 查询当前预编辑；需先开启 enabled
+english_brief = true # 英文候选模式下高亮候选的释义改由 DR Dict 提供（DR Dict 没在运行时用本地释义）；需先开启 enabled
 #
 # AI Assistant
 # AI 辅助

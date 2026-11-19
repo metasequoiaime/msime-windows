@@ -43,6 +43,7 @@ set(METASEQUOIA_IME_ENGINE_SOURCES
     direct_helpcode/direct_resolver.cpp
     direct_helpcode/spelling_graph.cpp
     english/english_dictionary.cpp
+    english/english_spelling.cpp
     japanese/japanese_matrix_search.cpp
     japanese/japanese_sentence_decoder.cpp
     japanese/romaji_converter.cpp

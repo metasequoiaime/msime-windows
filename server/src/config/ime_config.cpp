@@ -89,6 +89,10 @@ bool g_wubi_mixed_pinyin = false;
 bool g_escape_keeps_selected_word = false;
 // 回车上屏英文时顺带写入英文词库。默认开启，保持原有行为。
 bool g_enter_learns_english_word = true;
+// 英文候选模式下空格、数字键或鼠标上屏后自动补一个空格。默认开启。
+bool g_english_commit_with_space = true;
+// 英文候选模式下在高亮候选下方显示音标与释义。默认开启。
+bool g_english_candidate_detail = true;
 // 五笔 z 键角色两态：off | wildcard。非法值回落 off（升级用户零变化）。
 std::string g_wubi_z_mode = "off";
 // 四码唯一自动上屏与顶字是两个独立开关，与混输、z 键角色都无关：前者决定第四键落下即上屏，
@@ -205,6 +209,7 @@ bool g_language_bar_show_punctuation = true;
 std::atomic<bool> g_dr_dict_enabled{false};
 std::atomic<bool> g_dr_dict_lookup_candidate_hotkey{false};
 std::atomic<bool> g_dr_dict_lookup_preedit_hotkey{false};
+std::atomic<bool> g_dr_dict_english_brief{true};
 bool g_paging_minus_equal_enabled = true;
 bool g_paging_comma_period_enabled = false;
 bool g_paging_brackets_enabled = false;
@@ -553,6 +558,8 @@ bool LoadImeConfig()
         g_wubi_mixed_pinyin = tbl["input"]["wubi_mixed_pinyin"].value_or(false);
         g_escape_keeps_selected_word = tbl["input"]["escape_keeps_selected_word"].value_or(false);
         g_enter_learns_english_word = tbl["input"]["enter_learns_english_word"].value_or(true);
+        g_english_commit_with_space = tbl["input"]["english_commit_with_space"].value_or(true);
+        g_english_candidate_detail = tbl["input"]["english_candidate_detail"].value_or(true);
         const std::string z_mode = tbl["input"]["wubi_z_mode"].value_or(std::string("off"));
         g_wubi_z_mode = z_mode == "wildcard" ? "wildcard" : "off";
         g_wubi_four_code_auto_commit = tbl["input"]["wubi_four_code_auto_commit"].value_or(true);
@@ -749,6 +756,7 @@ bool LoadImeConfig()
                                                 std::memory_order_relaxed);
         g_dr_dict_lookup_preedit_hotkey.store(tbl["dr_dict"]["lookup_preedit_ctrl_alt_enter"].value_or(false),
                                               std::memory_order_relaxed);
+        g_dr_dict_english_brief.store(tbl["dr_dict"]["english_brief"].value_or(true), std::memory_order_relaxed);
         const auto legacy_paging_mode = tbl["general"]["paging_mode"].value<std::string>();
         g_paging_minus_equal_enabled =
             tbl["general"]["paging_minus_equal"].value_or(!legacy_paging_mode || *legacy_paging_mode == "-/=");

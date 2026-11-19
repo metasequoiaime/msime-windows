@@ -396,6 +396,12 @@ std::string BuildCurrentCandidatePage()
         view.translation = FanyImeIpc::FormatTranslationGlossForDisplay(
             raw_translation, show_translation_pos, single_translation_sense,
             single_translation_sense && dictionary_translation);
+        // 英文候选模式：高亮的那一个在下方（横排）或右侧（竖排）显示音标与释义，取代普通译文。
+        if (i == ui.selected_index_in_page && !translation_page)
+        {
+            if (std::string detail = FanyNamedPipe::EnglishCandidateDetailText(item); !detail.empty())
+                view.translation = std::move(detail);
+        }
         const std::string visible = view.text + view.annotation + view.badge;
         const int display_length = static_cast<int>(utf8::distance(visible.begin(), visible.end()));
         candidate_string += CandidateViewHtml(view);

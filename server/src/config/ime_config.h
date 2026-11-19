@@ -387,6 +387,10 @@ bool GetConfiguredEscapeKeepsSelectedWord();
 bool SetConfiguredEscapeKeepsSelectedWord(bool enabled);
 bool GetConfiguredEnterLearnsEnglishWord();
 bool SetConfiguredEnterLearnsEnglishWord(bool enabled);
+bool GetConfiguredEnglishCommitWithSpace();
+bool SetConfiguredEnglishCommitWithSpace(bool enabled);
+bool GetConfiguredEnglishCandidateDetail();
+bool SetConfiguredEnglishCandidateDetail(bool enabled);
 // 五笔 z 键角色："off" | "wildcard"。混输已拆成独立开关，这里只剩通配两态。
 const std::string &GetConfiguredWubiZMode();
 bool SetConfiguredWubiZMode(const std::string &mode);
@@ -680,6 +684,10 @@ bool GetConfiguredDrDictLookupPreeditHotkeySwitch();
 bool SetConfiguredDrDictLookupPreeditHotkey(bool enabled);
 bool GetConfiguredDrDictLookupCandidateHotkey();
 bool GetConfiguredDrDictLookupPreeditHotkey();
+// 英文候选模式里高亮候选的释义改由 DR Dict 提供；开关本身与总开关合起来的结果分开取，同上。
+bool GetConfiguredDrDictEnglishBriefSwitch();
+bool SetConfiguredDrDictEnglishBrief(bool enabled);
+bool GetConfiguredDrDictEnglishBrief();
 bool GetConfiguredPagingMinusEqualEnabled();
 bool SetConfiguredPagingMinusEqualEnabled(bool enabled);
 bool GetConfiguredPagingCommaPeriodEnabled();

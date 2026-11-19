@@ -249,6 +249,39 @@ TEST_CASE(EnglishDictionaryQueriesBothGlossDirections)
     REQUIRE(dictionary.query_chinese_gloss("missing").empty());
 }
 
+TEST_CASE(EnglishDictionaryQueriesIpaAndToleratesDictionariesWithoutIt)
+{
+    // 旧词库没有 en_ipa 表：音标查不到，释义等其他查询照常。
+    {
+        TemporaryEnglishDatabase database;
+        EnglishDictionary dictionary(test::Utf8(database.path()));
+        sqlite3 *db = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(database.path()).c_str(), &db), SQLITE_OK);
+        REQUIRE_EQ(sqlite3_exec(db, "INSERT INTO en_zh_glosses VALUES('apple','n. 苹果');", nullptr, nullptr, nullptr),
+                   SQLITE_OK);
+        sqlite3_close(db);
+        REQUIRE(dictionary.query_ipa("apple").empty());
+        REQUIRE(dictionary.query_ipa("apple").empty());
+        REQUIRE_EQ(dictionary.query_chinese_gloss("apple"), std::string("n. 苹果"));
+    }
+    {
+        TemporaryEnglishDatabase database;
+        sqlite3 *db = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(database.path()).c_str(), &db), SQLITE_OK);
+        REQUIRE_EQ(sqlite3_exec(db,
+                                "CREATE TABLE en_ipa(english TEXT COLLATE BINARY NOT NULL PRIMARY KEY,"
+                                "ipa TEXT NOT NULL) WITHOUT ROWID;"
+                                "INSERT INTO en_ipa VALUES('algorithm','ˈælgərɪðəm');",
+                                nullptr, nullptr, nullptr),
+                   SQLITE_OK);
+        sqlite3_close(db);
+        EnglishDictionary dictionary(test::Utf8(database.path()));
+        REQUIRE_EQ(dictionary.query_ipa("algorithm"), std::string("ˈælgərɪðəm"));
+        REQUIRE(dictionary.query_ipa("missing").empty());
+        REQUIRE(dictionary.query_ipa("").empty());
+    }
+}
+
 TEST_CASE(EnglishDictionaryPrefersSiblingCustomTranslations)
 {
     TemporaryEnglishDatabase database;

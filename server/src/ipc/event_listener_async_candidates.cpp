@@ -22,10 +22,12 @@
 #include "cloud/translation_gloss.h"
 #include "ai/ai_assistant.h"
 #include "ai/jev_candidate_policy.h"
+#include "english/english_candidate_text_policy.h"
 #include "english/english_ime.h"
 #include "config/ime_config.h"
 #include "mixed/mixed_candidates.h"
 #include "utils/common_utils.h"
+#include "utils/dr_dict_brief.h"
 #include "log/candidate_diag_log.h"
 
 using namespace event_listener_detail;
@@ -335,11 +337,24 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
                          candidates.end());
         candidates.insert(candidates.begin(), WordItem("", input, 0, CandidateSource::Generated));
     }
-    else if (candidates.empty() && !input.empty())
+    else if (!input.empty() && std::none_of(candidates.begin(), candidates.end(), [](const WordItem &item) {
+                 return item.source == CandidateSource::EnglishDictionary;
+             }))
     {
         // A raw fallback is selectable, but it is not an english.db row
         // and therefore must not participate in dictionary mutations.
-        candidates.emplace_back("", input, 0, CandidateSource::Generated);
+        // 前缀查不到词时后台给的是纠错候选：原文仍排第一，空格上屏的是用户敲的字，改正要自己选。
+        candidates.insert(candidates.begin(), WordItem("", input, 0, CandidateSource::Generated));
+    }
+    // 显示与上屏跟着用户敲的大小写走（Tes → Test、NA → NASA）。word 仍是词库写法，调频、删词、
+    // 固定排位都按它找行；原文那一行本来就是用户敲的字，不用改。
+    for (auto &candidate : candidates)
+    {
+        if (candidate.source == CandidateSource::Generated && candidate.corrected_from.empty())
+            continue;
+        std::string cased = EnglishIme::WithTypedCase(input, candidate.word);
+        if (cased != candidate.word)
+            candidate.output_text = std::move(cased);
     }
     items = std::move(candidates);
     Global::candidate_ui.item_total_count = static_cast<int>(items.size());
@@ -348,6 +363,77 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
     Global::candidate_ui.selection_started = false;
     Global::candidate_ui.clear_page();
     g_dedicated_english_answer_pending = false;
+    RefreshCandidatePageUiAsync();
+    PushUiLessCandidatesToOwner();
+}
+
+namespace
+{
+std::string EnglishCandidateDetailKey(const WordItem &item)
+{
+    if (item.source != CandidateSource::EnglishDictionary && item.source != CandidateSource::Generated)
+        return {};
+    return EnglishIme::DetailKey(item.source == CandidateSource::EnglishDictionary && !item.pinyin.empty(), item.pinyin,
+                                 item.word);
+}
+
+bool EnglishCandidateDetailShown()
+{
+    return g_english_input_mode && GetConfiguredEnglishCandidateDetail() && !IsUiLessMode() &&
+           !IsCandidateSubPageActive();
+}
+} // namespace
+
+std::string EnglishCandidateDetailText(const WordItem &item)
+{
+    if (!EnglishCandidateDetailShown())
+        return {};
+    const std::string key = EnglishCandidateDetailKey(item);
+    if (key.empty())
+        return {};
+    auto found = g_english_candidate_details.find(key);
+    if (found == g_english_candidate_details.end())
+    {
+        if (g_english_candidate_details.size() >= kMaxEnglishCandidateDetails)
+            g_english_candidate_details.clear();
+        found = g_english_candidate_details.emplace(key, EnglishCandidateDetail{}).first;
+    }
+    EnglishCandidateDetail &detail = found->second;
+    // 两边都只保留最后一次请求：高亮移得快时跳过的词还没有答复，下次高亮到它时再请求一次。
+    if (!detail.local_done)
+        EnglishIme::RequestDetail(key);
+    if (!detail.brief_done && GetConfiguredDrDictEnglishBrief())
+        DrDictBrief::Request(key);
+    return EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief);
+}
+
+void ApplyEnglishCandidateDetail(const std::string &word, const std::string &ipa, const std::string &gloss,
+                                 bool from_dr_dict)
+{
+    auto found = g_english_candidate_details.find(word);
+    if (found == g_english_candidate_details.end())
+        return; // 缓存满了被清掉：下次组页会重新请求
+    EnglishCandidateDetail &detail = found->second;
+    const std::string before = EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief);
+    if (from_dr_dict)
+    {
+        detail.brief = gloss;
+        detail.brief_done = true;
+    }
+    else
+    {
+        detail.ipa = ipa;
+        detail.gloss = gloss;
+        detail.local_done = true;
+    }
+    if (!EnglishCandidateDetailShown() || g_inputSession == nullptr ||
+        EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief) == before)
+        return;
+    const auto &ui = Global::candidate_ui;
+    const int highlighted = ui.current_page_start() + ui.selected_index_in_page;
+    if (highlighted < 0 || static_cast<size_t>(highlighted) >= ui.items.size() ||
+        EnglishCandidateDetailKey(ui.items[static_cast<size_t>(highlighted)]) != word)
+        return;
     RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
 }

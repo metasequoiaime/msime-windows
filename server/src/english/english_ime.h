@@ -44,4 +44,16 @@ bool IsCurrent(const std::string &input, uint64_t generation, bool dedicated_mod
 void RequestTranslations(std::vector<TranslationQuery> queries, bool use_local_dictionary = true);
 void ClearTranslations();
 bool IsTranslationCurrent(uint64_t generation);
+
+// 英文候选模式里高亮候选的音标与本地释义。word 是小写词；查完在后台线程上回调，
+// 同一个词连着请求只查最后一次。
+struct EnglishDetail
+{
+    std::string word;
+    std::string ipa;
+    std::string gloss;
+};
+using DetailCallback = std::function<void(EnglishDetail detail)>;
+void SetDetailCallback(DetailCallback callback);
+void RequestDetail(const std::string &word);
 } // namespace EnglishIme

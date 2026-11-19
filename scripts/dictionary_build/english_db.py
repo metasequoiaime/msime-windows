@@ -568,3 +568,51 @@ def apply_custom_translations(connection: sqlite3.Connection, entries: list[Cust
             else:
                 connection.execute("INSERT OR REPLACE INTO en_zh_glosses(english,chinese_gloss) VALUES(?1,?2)",
                                    (entry.source, entry.gloss))
+
+
+# ---- 音标 ----
+
+IPA_NOTICE_SOURCE = "hallelujahIM IPA"
+IPA_NOTICE = (
+    "The en_ipa table is taken from the ipa field of hallelujahIM's "
+    "dictionary/words_with_frequency_and_translation_and_ipa.json "
+    "(https://github.com/dongyuwei/hallelujahIM, GPL-3.0, by Dong Yuwei). hallelujahIM generated it with "
+    "English-to-IPA (eng_to_ipa, https://github.com/mphilli/English-to-IPA, MIT), which transcribes the "
+    "Carnegie Mellon Pronouncing Dictionary (CMUdict, BSD-2-Clause). Only the ipa field is used; the word "
+    "frequencies and translations in the same file are not.")
+
+CREATE_EN_IPA = "CREATE TABLE en_ipa (english TEXT COLLATE BINARY NOT NULL PRIMARY KEY, ipa TEXT NOT NULL) WITHOUT ROWID"
+
+
+def parse_hallelujah_ipa(data: bytes) -> dict[str, str]:
+    """hallelujahIM 的 `{词: {"frequency", "translation", "ipa"}}`，只取 ipa。
+
+    eng_to_ipa 查不到 CMUdict 的词会原样返回并在末尾加 `*`，这类不是音标，丢掉。
+    """
+    import json
+
+    entries = json.loads(textutil.without_bom(data.decode("utf-8")))
+    result: dict[str, str] = {}
+    for word, value in entries.items():
+        ipa = value.get("ipa") if isinstance(value, dict) else None
+        if not isinstance(ipa, str):
+            continue
+        ipa = ipa.strip()
+        key = word.strip().lower()
+        if not ipa or "*" in ipa or " " in ipa or not _is_ascii_word(key):
+            continue
+        result[key] = ipa
+    return result
+
+
+def write_ipa(connection: sqlite3.Connection, ipa: dict[str, str]) -> int:
+    """只给 english_words 里有的词写音标。返回写入的条数。"""
+    words = {row[0] for row in connection.execute("SELECT DISTINCT word FROM english_words")}
+    rows = sorted((word, value) for word, value in ipa.items() if word in words)
+    with connection:
+        connection.execute("DROP TABLE IF EXISTS en_ipa")
+        connection.execute(CREATE_EN_IPA)
+        connection.executemany("INSERT INTO en_ipa(english, ipa) VALUES (?, ?)", rows)
+        connection.execute("INSERT OR REPLACE INTO source_notices(source, notice) VALUES (?, ?)",
+                           (IPA_NOTICE_SOURCE, IPA_NOTICE))
+    return len(rows)
