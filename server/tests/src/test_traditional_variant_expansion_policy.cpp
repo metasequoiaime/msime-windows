@@ -395,6 +395,23 @@ TEST_CASE(candidate_output_text_returns_the_word_when_not_converting)
     REQUIRE_EQ(conversions, 0);
 }
 
+TEST_CASE(candidate_output_text_keeps_the_typed_case_of_english_candidates_when_not_converting)
+{
+    // 英文候选模式里敲 Tes：word 仍是词库写法 test，output_text 是跟着输入大小写的 Test。
+    // 简体（默认）下也要显示、上屏 Test，回归 #1578 的「跟随大小写」在简体下不生效。
+    WordItem item("test", "test", 9, CandidateSource::EnglishDictionary);
+    item.output_text = "Test";
+    const auto to_output = [](const std::string &text) { return "converted:" + text; };
+    REQUIRE_EQ(FanyImeIpc::CandidateOutputTextFor(item, false, to_output), std::string("Test"));
+    WordItem phrase("accordingto", "according to", 0, CandidateSource::Generated);
+    phrase.output_text = "According to";
+    REQUIRE_EQ(FanyImeIpc::CandidateOutputTextFor(phrase, false, to_output), std::string("According to"));
+    // 拼法不同的写法不算大小写变体。
+    WordItem other("test", "test", 9, CandidateSource::EnglishDictionary);
+    other.output_text = "tests";
+    REQUIRE_EQ(FanyImeIpc::CandidateOutputTextFor(other, false, to_output), std::string("test"));
+}
+
 TEST_CASE(candidate_output_text_prefers_the_listed_spelling_when_converting)
 {
     WordItem item("tai", "台", 9);
