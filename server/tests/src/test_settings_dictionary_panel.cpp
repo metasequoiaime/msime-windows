@@ -513,28 +513,122 @@ TEST_CASE(DictionaryColumnsKeepTheActionColumnInsideANarrowTable)
         // 至少有一列文字撑得下 76px 内容和左右各 18px 的内边距。
         REQUIRE(widest >= native_settings::kDictMinTextColumn);
     }
+
+    // 极端窄表（比勾选列加操作列还窄）：操作列只能跟着缩，绝不能伸到表外去。
+    for (const float width : {200.0f, 164.0f, 160.0f, 100.0f})
+    {
+        const auto edges = columns.Edges(width);
+        for (size_t i = 1; i < edges.size(); ++i)
+            REQUIRE(edges[i] >= edges[i - 1] - 0.01f);
+        REQUIRE(edges[6] <= width + 0.01f);
+    }
+}
+
+// 收起顺序是有语义的：词条列最能说明一行是什么，留到最后；权重最先走，其次是编码。
+// 只断言「有一列够宽」抓不到顺序被改反，这里逐宽度锁住留下的是哪几列。
+TEST_CASE(DictionaryColumnsDropWeightThenCodeThenIndex)
+{
+    native_settings::DictColumns columns;
+    // {序号, 编码, 词条, 权重}
+    const std::array<bool, 4> all = {true, true, true, true};
+    const std::array<bool, 4> withoutWeight = {true, true, true, false};
+    const std::array<bool, 4> onlyWord = {false, false, true, false};
+
+    const auto roomy = columns.VisibleColumns(900.0f);
+    REQUIRE(roomy == all);
+
+    // 权重先让位，编码和词条都还在。
+    const auto medium = columns.VisibleColumns(458.0f);
+    REQUIRE(medium == withoutWeight);
+
+    // 再窄下去连编码也走，只剩词条；序号在最后一步才走。
+    const auto narrow = columns.VisibleColumns(300.0f);
+    REQUIRE(narrow == onlyWord);
+    const auto narrowEdges = columns.Edges(300.0f);
+    REQUIRE(narrowEdges[4] - narrowEdges[3] >= native_settings::kDictMinTextColumn);
+
+    // 可见列只会随宽度收窄越来越少：一个宽度下已经收起的列，更窄时不可能再回来。
+    std::array<bool, 4> previous = roomy;
+    for (const float width : {900.0f, 700.0f, 600.0f, 520.0f, 460.0f, 400.0f, 340.0f, 280.0f, 240.0f})
+    {
+        const auto current = columns.VisibleColumns(width);
+        for (size_t i = 0; i < current.size(); ++i)
+            REQUIRE(!current[i] || previous[i]);
+        previous = current;
+        // 词条列永远留着：全空白的表没人看得懂自己在删什么。
+        REQUIRE(current[2]);
+    }
+}
+
+// 表体和表头是两块分开的视觉：表格出现滚动条时表体让出 8px，表头必须跟着让，
+// 否则同一列的起点差半个滚动条，勾选框和文字都会错位。
+TEST_CASE(DictionaryHeaderReservesTheScrollbarTheBodyGives)
+{
+    {
+        PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+        harness.Build();
+        harness.Show();
+        // 三行时表体比可视高度矮，滚动条不出现，表头也不用让。
+        harness.Respond(harness.Queries().front(), QueryPage(0, 3, false, 3));
+        SettingsWindowHarness &window = harness.Window();
+        window.Layout();
+        const auto headers = Visible<native_settings::DictTableHeader>(window, 1600.0f);
+        REQUIRE_EQ(headers.size(), size_t{1});
+        REQUIRE_EQ((*headers.begin())->ScrollbarReserve(), 0.0f);
+    }
+
+    {
+        PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+        harness.Build();
+        harness.Show();
+        // 行多到超出最大高度，表体开始滚动，表头要占住同样的 8px。
+        harness.Respond(harness.Queries().front(), QueryPage(0, 12, false, 12));
+        SettingsWindowHarness &window = harness.Window();
+        window.Layout();
+        const auto headers = Visible<native_settings::DictTableHeader>(window, 1600.0f);
+        REQUIRE_EQ(headers.size(), size_t{1});
+        REQUIRE_EQ((*headers.begin())->ScrollbarReserve(), 8.0f);
+    }
 }
 
 // 设置窗口最小 600 DIP，扣掉侧栏和两层留白后卡片只剩 300 出头：工具栏里五个控件排不进一行，
 // 而 Row 不裁剪，末尾按钮会越过卡片边框。工具栏因此分成两行，操作那一行还能继续换行。
 TEST_CASE(DictionaryToolbarFitsTheNarrowestSettingsWindow)
 {
-    PanelHarness harness(DictionaryPanel::Kind::Dictionary, 340.0f);
-    harness.Build();
-    harness.Show();
-    harness.Respond(harness.Queries().front(), QueryPage(0, 2, false, 2));
-
-    SettingsWindowHarness &window = harness.Window();
-    window.Layout();
-    const msimeui::RectF root = harness.Root().GetBounds();
-    const auto buttons = Visible<native_settings::Button>(window, 400.0f);
-    REQUIRE(buttons.size() >= size_t{4});
-    for (native_settings::Button *button : buttons)
+    for (const auto kind : {DictionaryPanel::Kind::Dictionary, DictionaryPanel::Kind::Quick})
     {
-        const msimeui::RectF bounds = button->GetBounds();
-        // 每个按钮都要有可见宽度，且右缘留在页面内。
-        REQUIRE(bounds.width > 20.0f);
-        REQUIRE(bounds.x + bounds.width <= root.x + root.width + 0.01f);
+        PanelHarness harness(kind, 340.0f);
+        harness.Build();
+        harness.Show();
+        harness.Respond(harness.Queries().front(), QueryPage(0, 2, false, 2));
+
+        SettingsWindowHarness &window = harness.Window();
+        window.Layout();
+        const msimeui::RectF root = harness.Root().GetBounds();
+
+        // 搜索框也是被挤扁的那个：它必须还留得下可输入的宽度。
+        const auto inputs = Visible<native_settings::DictInput>(window, 400.0f);
+        REQUIRE_EQ(inputs.size(), size_t{1});
+        REQUIRE((*inputs.begin())->GetBounds().width > 100.0f);
+
+        const std::vector<std::wstring> labels = {L"查询", L"批量导入", L"删除选中",
+                                                  kind == DictionaryPanel::Kind::Quick ? L"新增短语" : L"新增词条"};
+        const auto buttons = Visible<native_settings::Button>(window, 400.0f);
+        for (const std::wstring &label : labels)
+        {
+            bool found = false;
+            for (native_settings::Button *button : buttons)
+            {
+                if (button->Text() != label)
+                    continue;
+                found = true;
+                const msimeui::RectF bounds = button->GetBounds();
+                // 每个按钮都要有可见宽度，且右缘留在页面内。
+                REQUIRE(bounds.width > 20.0f);
+                REQUIRE(bounds.x + bounds.width <= root.x + root.width + 0.01f);
+            }
+            REQUIRE(found);
+        }
     }
 }
 

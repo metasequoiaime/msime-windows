@@ -450,75 +450,89 @@ VisualPtr MakeDialogField(const std::wstring &label, const std::shared_ptr<DictI
 // ---------------------------------------------------------------------------------
 // Table
 // ---------------------------------------------------------------------------------
-std::array<float, 7> DictColumns::Edges(float width) const
+namespace
 {
-    // 窄窗口下先让出百分比列，再整列收起，绝不把文字列压成空白。固定列（勾选 / 序号 / 操作）
-    // 必须留在表格右边界以内：溢出部分会被滚动区裁掉，「删除」既看不见也点不到。
-    std::array<bool, 3> shown = {percents[0] > 0.0f, percents[1] > 0.0f, percents[2] > 0.0f};
-    const size_t liveColumns =
-        static_cast<size_t>(shown[0]) + static_cast<size_t>(shown[1]) + static_cast<size_t>(shown[2]);
-    size_t columns = liveColumns;
-    bool showIndex = true;
+struct DictColumnLayout
+{
+    std::array<bool, 3> shown;
+    bool index = true;
+    float budget = 0.0f;
+    float percentSum = 0.0f;
+};
 
-    const auto textBudget = [&]() {
-        const float fixed = kDictCheckColumn + (showIndex ? kDictIndexWidth : 0.0f) + kDictActionWidth;
-        return std::max(width - fixed, 0.0f);
-    };
+// 正常宽度按原百分比排版，剩下的空白按 64:124 分给序号列和操作列（table-layout: fixed）。
+// 放不下时整列收起，绝不把文字列压成空白：固定列（勾选 / 序号 / 操作）必须先留住，
+// 否则它们会被滚动区裁掉，「删除」既看不见也点不到。
+DictColumnLayout LayoutDictColumns(const DictColumns &columns, float width)
+{
+    DictColumnLayout layout{};
+    for (size_t i = 0; i < 3; ++i)
+        layout.shown[i] = columns.percents[i] > 0.0f;
+    const size_t liveColumns = static_cast<size_t>(layout.shown[0]) + static_cast<size_t>(layout.shown[1]) +
+                               static_cast<size_t>(layout.shown[2]);
+    size_t remaining = liveColumns;
+
     const auto percentSum = [&]() {
         float sum = 0.0f;
         for (size_t i = 0; i < 3; ++i)
-            sum += shown[i] ? percents[i] : 0.0f;
+            sum += layout.shown[i] ? columns.percents[i] : 0.0f;
         return sum;
     };
-    // 正常宽度按原百分比排版，剩下的空白按 64:124 分给序号列和操作列（table-layout: fixed）；
+    const auto textBudget = [&]() {
+        const float fixed = kDictCheckColumn + (layout.index ? kDictIndexWidth : 0.0f) + kDictActionWidth;
+        return std::max(width - fixed, 0.0f);
+    };
     // 收起过列之后剩下的列把预算吃满，省下来的宽度不白留在操作列里。
     const auto budget = [&]() {
         const float available = textBudget();
-        const float sum = percentSum();
-        return columns < liveColumns ? available : std::min(available, sum * width);
+        return remaining < liveColumns ? available : std::min(available, percentSum() * width);
     };
     const auto narrowest = [&]() {
         const float sum = percentSum();
         if (sum <= 0.0f)
-            return 0.0f;
+            return std::numeric_limits<float>::max();
         float smallest = std::numeric_limits<float>::max();
         for (size_t i = 0; i < 3; ++i)
         {
-            if (shown[i])
-                smallest = std::min(smallest, percents[i] * budget() / sum);
+            if (layout.shown[i])
+                smallest = std::min(smallest, columns.percents[i] * budget() / sum);
         }
         return smallest;
     };
-    // 收起的顺序：权重 → 序号 → 编码；词条最能说明这一行是什么，留到最后。
+
+    // 收起的顺序：权重 → 编码 → 序号；词条最能说明这一行是什么，留到最后。
     while (narrowest() < kDictMinTextColumn)
     {
-        bool changed = false;
-        if (columns > 1 && shown[2])
-        {
-            shown[2] = false;
-            changed = true;
-        }
-        else if (columns > 1 && shown[0])
-        {
-            shown[0] = false;
-            changed = true;
-        }
-        else if (showIndex)
-        {
-            showIndex = false;
-            changed = true;
-        }
-        if (!changed)
+        if (remaining > 1 && layout.shown[2])
+            layout.shown[2] = false;
+        else if (remaining > 1 && layout.shown[0])
+            layout.shown[0] = false;
+        else if (layout.index)
+            layout.index = false;
+        else
             break;
-        columns = static_cast<size_t>(shown[0]) + static_cast<size_t>(shown[1]) + static_cast<size_t>(shown[2]);
+        remaining = static_cast<size_t>(layout.shown[0]) + static_cast<size_t>(layout.shown[1]) +
+                    static_cast<size_t>(layout.shown[2]);
     }
 
-    const float sum = percentSum();
-    const float unit = sum > 0.0f ? budget() / sum : 0.0f;
-    const float leftover =
-        std::max(width - kDictCheckColumn - (showIndex ? kDictIndexWidth : 0.0f) - kDictActionWidth - budget(), 0.0f);
-    const float indexWidth = showIndex ? kDictIndexWidth + leftover * 64.0f / 188.0f : 0.0f;
-    const float actionWidth = kDictActionWidth + leftover * (showIndex ? 124.0f / 188.0f : 1.0f);
+    layout.budget = budget();
+    layout.percentSum = percentSum();
+    return layout;
+}
+} // namespace
+
+std::array<float, 7> DictColumns::Edges(float width) const
+{
+    const DictColumnLayout layout = LayoutDictColumns(*this, width);
+    const float leftover = std::max(
+        width - kDictCheckColumn - (layout.index ? kDictIndexWidth : 0.0f) - kDictActionWidth - layout.budget, 0.0f);
+    const float indexWidth = layout.index ? kDictIndexWidth + leftover * 64.0f / 188.0f : 0.0f;
+    // 表格比勾选列加操作列还窄时，操作列只能跟着缩——它是唯一还能救回一点点点击区域的东西，
+    // 让它溢出到表外反而什么都点不到。
+    const float actionLimit = std::max(width - kDictCheckColumn, 0.0f);
+    const float actionWidth =
+        std::min(kDictActionWidth + leftover * (layout.index ? 124.0f / 188.0f : 1.0f), actionLimit);
+    const float unit = layout.percentSum > 0.0f ? layout.budget / layout.percentSum : 0.0f;
 
     std::array<float, 7> edges{};
     edges[0] = 0.0f;
@@ -526,9 +540,15 @@ std::array<float, 7> DictColumns::Edges(float width) const
     edges[2] = edges[1] + indexWidth;
     // 收起的列把右边界停在上一条边上，单元格宽度成了 0 或负值，DrawCell 直接不画。
     for (size_t i = 0; i < 3; ++i)
-        edges[i + 3] = edges[i + 2] + (shown[i] ? percents[i] * unit : 0.0f);
+        edges[i + 3] = edges[i + 2] + (layout.shown[i] ? percents[i] * unit : 0.0f);
     edges[6] = std::max(edges[5] + actionWidth, width);
     return edges;
+}
+
+std::array<bool, 4> DictColumns::VisibleColumns(float width) const
+{
+    const DictColumnLayout layout = LayoutDictColumns(*this, width);
+    return {layout.index, layout.shown[0], layout.shown[1], layout.shown[2]};
 }
 
 DictTableHeader::DictTableHeader(DictColumns columns) : columns_(columns)
@@ -590,7 +610,7 @@ void DictTableHeader::Render(msimeui::DeviceResources &dr)
     const float border = CssBorder();
     FillRect(dr, bounds_, p.tableHeaderBg);
     FillRect(dr, {bounds_.x, bounds_.y, bounds_.width, border}, p.border);
-    FillRect(dr, {bounds_.x, bounds_.y + bounds_.height - border, bounds_.width - reserve_, border}, p.tableBorder);
+    FillRect(dr, {bounds_.x, bounds_.y + bounds_.height - border, bounds_.width, border}, p.tableBorder);
     const float width = std::max(bounds_.width - reserve_, 0.0f);
     const auto edges = columns_.Edges(width);
     const RectF row = {bounds_.x, bounds_.y + border, width, bounds_.height - border * 2.0f};
@@ -1243,7 +1263,7 @@ void DictionaryPanel::AddTo(Column &column)
             panel->EnsureLoaded();
     });
     // `.dict-toolbar` 拆成两行：搜索框和「查询」一行，表格级操作一行。原来五个控件挤在一行，
-    // 最窄窗口（设置窗最小 600 DIP，工具栏内宽只剩 260 出头）放不下，`Row` 又不裁剪，
+    // 最窄窗口（设置窗最小 600 DIP，工具栏内宽只剩 330 上下）放不下，`Row` 又不裁剪，
     // 末尾的按钮会被压成 0 宽或越过卡片边框。操作那一行还允许换行，再窄也不会溢出去。
     auto toolbar = std::make_shared<Column>(10.0f);
     // .dict-toolbar { padding: 20px 22px 10px }

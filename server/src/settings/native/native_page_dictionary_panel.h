@@ -98,6 +98,9 @@ struct DictColumns
     // Narrow tables drop whole columns (weight, then the code column, then the index) by
     // collapsing their edges; a collapsed cell measures zero or less and draws nothing.
     std::array<float, 7> Edges(float width) const;
+    // 这种宽度下还剩哪几列（序号、编码、词条、权重）：和 Edges 用同一套预算，
+    // 测试靠它锁住「收起的顺序是权重 → 编码 → 序号」这个语义。
+    std::array<bool, 4> VisibleColumns(float width) const;
 };
 
 // The `<thead>` of `.dict-table-header-wrap`.
@@ -108,6 +111,10 @@ class DictTableHeader : public msimeui::Visual
     void SetLabels(std::array<std::wstring, 4> labels);
     // padding-right of the header wrap: the body's scrollbar width.
     void SetScrollbarReserve(float width);
+    float ScrollbarReserve() const
+    {
+        return reserve_;
+    }
     // 表头的全选框：点它一次勾上当前页全部，再点一次全取消。
     void SetOnSelectAll(std::function<void()> handler);
     void SetAllSelected(bool selected);
