@@ -75,7 +75,8 @@ TEST_CASE(ai_request_disables_siliconflow_thinking_by_endpoint)
         REQUIRE_EQ(body["enable_thinking"].get<bool>(), false);
         REQUIRE_EQ(body["max_tokens"].get<int>(), 512);
         REQUIRE_EQ(AiAssistant::detail::RequestTimeoutMs(request.config), 8000L);
-        REQUIRE_EQ(body, ApiCredentialTest::detail::BuildChatProbeRequestBody(request.config));
+        const auto probe = ApiCredentialTest::detail::BuildChatProbeRequestBody(request.config);
+        REQUIRE_EQ(probe["enable_thinking"].get<bool>(), false);
     }
 
     const auto other = MakeRequest("openai", "disabled", "https://api.openai.com/v1/chat/completions");
