@@ -96,6 +96,7 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
         // 新装默认用哔哩哔哩免费翻译；老用户可能已在别家填好凭据，升级不能替用户换服务商，
         // 也不能把候选词发给一个用户没选过的服务。
         MakeTomlAssignmentId("translation", "provider"),
+        MakeTomlAssignmentId("translation", "english_provider"),
     };
     return kIds.count(assignment_id) != 0;
 }
@@ -128,8 +129,9 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
     {
         user_values[enumeration_comma_slash_id] = "false";
     }
-    // 候选词翻译拆成中文、英文两个开关，音标从「音标与释义」里拆成独立开关。老配置没有新键：跟着
-    // 原来管它的那个开关走，打开过翻译的用户升级后英文候选照旧有译文，关掉过释义的也不会多出音标。
+    // 候选词翻译拆成中文、英文两个开关；dr_dict.english_brief（释义写进候选窗）换成了 english_popup
+    // （DR Dict 弹窗停靠在候选窗旁）。老配置没有新键：跟着原来管它的那个开关走，打开过翻译的用户升级后
+    // 英文候选照旧有译文，关掉过 DR Dict 释义的也不会多出弹窗。
     const auto inherit = [&user_values](const std::string &section, const std::string &key,
                                         const std::string &from_section, const std::string &from_key) {
         const auto id = MakeTomlAssignmentId(section, key);
@@ -138,7 +140,7 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
             user_values[id] = from->second;
     };
     inherit("general", "english_candidate_translations", "general", "candidate_translations");
-    inherit("input", "english_candidate_phonetic", "input", "english_candidate_detail");
+    inherit("dr_dict", "english_popup", "dr_dict", "english_brief");
     // 很老的配置没有 [translation].provider，靠各家 enabled 布尔推导服务商。模板里的新默认不能替它
     // 补上，否则推导结果被 bilibili 盖掉；补成空串，加载时照旧推导。
     const auto translation_provider_id = MakeTomlAssignmentId("translation", "provider");
@@ -146,6 +148,9 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
     {
         user_values[translation_provider_id] = "\"\"";
     }
+    // 英文候选的服务拆出来之前两边共用 provider：升级后英文候选沿用同一家（推导中的空串也照抄，加载时
+    // 跟着推导结果走），不会被模板里的新默认换成别家。
+    inherit("translation", "english_provider", "translation", "provider");
     struct ValuePatch
     {
         size_t begin;

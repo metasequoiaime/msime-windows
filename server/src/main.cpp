@@ -25,7 +25,7 @@
 #include "engine/local_modes/radical_query.h"
 #include "global/globals.h"
 #include "utils/common_utils.h"
-#include "utils/dr_dict_brief.h"
+#include "utils/dr_dict_dock.h"
 #include "utils/process_priority.h"
 #include "utils/single_instance.h"
 #include "session/session_factory.h"
@@ -214,8 +214,8 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     // 英文候选模式里高亮候选下方的音标与释义：词库一路，DR Dict 摘要与英美音标一路（DR Dict 没运行时不会回）。
     EnglishIme::SetDetailCallback(
         [](EnglishIme::EnglishDetail detail) { FanyNamedPipe::EnqueueEnglishCandidateDetail(std::move(detail)); });
-    DrDictBrief::Start(
-        [](DrDictBrief::Answer answer) { FanyNamedPipe::EnqueueDrDictEnglishDetail(std::move(answer)); });
+    // 英文候选模式里停靠在候选窗旁的 DR Dict 弹窗（词典里的音标与释义）。
+    DrDictDock::Start();
     CloudTranslation::Start(CommonUtils::get_ime_data_path() + "\\english.db",
                             [](std::vector<EnglishIme::TranslationResult> results, uint64_t generation) {
                                 FanyNamedPipe::EnqueueCandidateTranslations(std::move(results), generation, true);
@@ -260,7 +260,7 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
 
     FanyNamedPipe::RegisterStatusSnapshotWindow(nullptr);
 
-    DrDictBrief::Stop();
+    DrDictDock::Stop();
     EnglishIme::Stop();
     CloudTranslation::Stop();
     MixedCandidates::Stop();

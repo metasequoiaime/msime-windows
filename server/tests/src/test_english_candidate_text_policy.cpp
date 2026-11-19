@@ -104,32 +104,12 @@ TEST_CASE(english_detail_key_uses_the_dictionary_key_or_a_plain_lowercased_word)
     REQUIRE(EnglishIme::DetailKey(false, "", "two words").empty());
 }
 
-TEST_CASE(english_detail_prefers_the_dr_dict_brief_over_the_local_gloss)
+TEST_CASE(english_detail_shows_the_local_ipa_and_gloss)
 {
-    REQUIRE(EnglishIme::FormatDetail("/ˈælgərɪðəm/", "n. 算法", "") == "/ˈælgərɪðəm/  n. 算法");
-    REQUIRE(EnglishIme::FormatDetail("/ˈælgərɪðəm/", "n. 算法", "n. 算法；运算法则") ==
-            "/ˈælgərɪðəm/  n. 算法；运算法则");
-    REQUIRE(EnglishIme::FormatDetail("", "n. 算法", "") == "n. 算法");
-    REQUIRE(EnglishIme::FormatDetail("/ˈælgərɪðəm/", "", "") == "/ˈælgərɪðəm/");
-    REQUIRE(EnglishIme::FormatDetail("", "", "").empty());
-}
-
-TEST_CASE(english_phonetic_picks_the_accent_and_falls_back_to_the_local_american_ipa)
-{
-    using EnglishIme::FormatPhonetic;
-    // 牛津高阶：tomato 英 təˈmɑːtəʊ，美 təˈmeɪtəʊ；本地（CMUdict）只有美式。
-    REQUIRE(FormatPhonetic("us", "təˈmɑːtəʊ", "təˈmeɪtəʊ", "təˈmeɪtoʊ") == "/təˈmeɪtəʊ/");
-    REQUIRE(FormatPhonetic("uk", "təˈmɑːtəʊ", "təˈmeɪtəʊ", "təˈmeɪtoʊ") == "/təˈmɑːtəʊ/");
-    REQUIRE(FormatPhonetic("both", "təˈmɑːtəʊ", "təˈmeɪtəʊ", "") == "英 /təˈmɑːtəʊ/  美 /təˈmeɪtəʊ/");
-    // DR Dict 没给（没运行、查不到）：美式退回本地，英式不拿美式冒充。
-    REQUIRE(FormatPhonetic("us", "", "", "təˈmeɪtoʊ") == "/təˈmeɪtoʊ/");
-    REQUIRE(FormatPhonetic("uk", "", "", "təˈmeɪtoʊ").empty());
-    REQUIRE(FormatPhonetic("both", "", "", "təˈmeɪtoʊ") == "美 /təˈmeɪtoʊ/");
-    REQUIRE(FormatPhonetic("both", "təˈmɑːtəʊ", "", "") == "英 /təˈmɑːtəʊ/");
-    // 两边读音相同时只写一次。
-    REQUIRE(FormatPhonetic("both", "ðə", "ðə", "") == "/ðə/");
-    REQUIRE(FormatPhonetic("both", "", "", "").empty());
-    REQUIRE(FormatPhonetic("us", "", "", "").empty());
+    REQUIRE(EnglishIme::FormatDetail("ˈælgərɪðəm", "n. 算法") == "/ˈælgərɪðəm/  n. 算法");
+    REQUIRE(EnglishIme::FormatDetail("", "n. 算法") == "n. 算法");
+    REQUIRE(EnglishIme::FormatDetail("ˈælgərɪðəm", "") == "/ˈælgərɪðəm/");
+    REQUIRE(EnglishIme::FormatDetail("", "").empty());
 }
 
 TEST_CASE(english_spelling_merge_caps_each_source_and_the_total)

@@ -157,10 +157,8 @@ struct Task
     std::vector<EnglishIme::TranslationResult> translation_results;
     uint64_t translation_generation = 0;
     bool translation_merge = false;
-    // ApplyEnglishCandidateDetail：词库给的音标与释义，或 DR Dict 的答复（detail_from_dr_dict）。
+    // ApplyEnglishCandidateDetail：词库给的音标与释义。
     EnglishIme::EnglishDetail local_detail;
-    DrDictBrief::Answer dr_dict_detail;
-    bool detail_from_dr_dict = false;
     MixedCandidates::Result mixed_result;
     std::string mixed_input;
     uint64_t mixed_generation = 0;
@@ -576,10 +574,7 @@ void WorkerThread()
         }
 
         case TaskType::ApplyEnglishCandidateDetail: {
-            if (task.detail_from_dr_dict)
-                ApplyDrDictEnglishDetail(task.dr_dict_detail);
-            else
-                ApplyEnglishLocalDetail(task.local_detail);
+            ApplyEnglishLocalDetail(task.local_detail);
             break;
         }
 
@@ -1223,19 +1218,6 @@ void EnqueueEnglishCandidateDetail(EnglishIme::EnglishDetail detail)
         Task task;
         task.type = TaskType::ApplyEnglishCandidateDetail;
         task.local_detail = std::move(detail);
-        PushTaskLocked(std::move(task));
-    }
-    pipe_queueCv.notify_one();
-}
-
-void EnqueueDrDictEnglishDetail(DrDictBrief::Answer answer)
-{
-    {
-        std::lock_guard lock(queueMutex);
-        Task task;
-        task.type = TaskType::ApplyEnglishCandidateDetail;
-        task.dr_dict_detail = std::move(answer);
-        task.detail_from_dr_dict = true;
         PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();

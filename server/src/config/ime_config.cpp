@@ -91,11 +91,8 @@ bool g_escape_keeps_selected_word = false;
 bool g_enter_learns_english_word = true;
 // 英文候选模式下空格、数字键或鼠标上屏后自动补一个空格。默认开启。
 bool g_english_commit_with_space = true;
-// 英文候选模式下在高亮候选下方显示释义。默认开启。
+// 英文候选模式下在高亮候选下方显示音标与释义。默认开启。
 bool g_english_candidate_detail = true;
-// 英文候选模式下在高亮候选下方显示音标，以及用哪种口音。默认开启、美式。
-bool g_english_candidate_phonetic = true;
-std::string g_english_phonetic_accent = "us";
 // 五笔 z 键角色两态：off | wildcard。非法值回落 off（升级用户零变化）。
 std::string g_wubi_z_mode = "off";
 // 四码唯一自动上屏与顶字是两个独立开关，与混输、z 键角色都无关：前者决定第四键落下即上屏，
@@ -213,7 +210,7 @@ bool g_language_bar_show_punctuation = true;
 std::atomic<bool> g_dr_dict_enabled{false};
 std::atomic<bool> g_dr_dict_lookup_candidate_hotkey{false};
 std::atomic<bool> g_dr_dict_lookup_preedit_hotkey{false};
-std::atomic<bool> g_dr_dict_english_brief{true};
+std::atomic<bool> g_dr_dict_english_popup{true};
 bool g_paging_minus_equal_enabled = true;
 bool g_paging_comma_period_enabled = false;
 bool g_paging_brackets_enabled = false;
@@ -284,6 +281,8 @@ NiuTransConfig g_niutrans;
 BilibiliTranslateConfig g_bilibili_translate;
 std::string g_translation_provider = "tencent";
 std::string g_translation_english_target_language = "zh";
+std::string g_translation_english_provider = "tencent";
+bool g_translation_english_provider_explicit = false;
 std::mutex g_network_proxy_mutex;
 NetworkProxyConfig g_network_proxy;
 FrequencyAdjustmentConfig g_frequency_adjustment;
@@ -358,11 +357,6 @@ bool IsValidTranslationTargetLanguage(const std::string &language)
 {
     static constexpr std::string_view kLanguages[] = {"en", "fr", "ja", "es", "ru", "de", "ko", "th", "vi", "it"};
     return std::find(std::begin(kLanguages), std::end(kLanguages), language) != std::end(kLanguages);
-}
-
-bool IsValidEnglishPhoneticAccent(const std::string &accent)
-{
-    return accent == "us" || accent == "uk" || accent == "both";
 }
 } // namespace ime_config_detail
 
@@ -570,10 +564,6 @@ bool LoadImeConfig()
         g_enter_learns_english_word = tbl["input"]["enter_learns_english_word"].value_or(true);
         g_english_commit_with_space = tbl["input"]["english_commit_with_space"].value_or(true);
         g_english_candidate_detail = tbl["input"]["english_candidate_detail"].value_or(true);
-        g_english_candidate_phonetic = tbl["input"]["english_candidate_phonetic"].value_or(true);
-        g_english_phonetic_accent = tbl["input"]["english_phonetic_accent"].value_or(std::string("us"));
-        if (!IsValidEnglishPhoneticAccent(g_english_phonetic_accent))
-            g_english_phonetic_accent = "us";
         const std::string z_mode = tbl["input"]["wubi_z_mode"].value_or(std::string("off"));
         g_wubi_z_mode = z_mode == "wildcard" ? "wildcard" : "off";
         g_wubi_four_code_auto_commit = tbl["input"]["wubi_four_code_auto_commit"].value_or(true);
@@ -774,7 +764,7 @@ bool LoadImeConfig()
                                                 std::memory_order_relaxed);
         g_dr_dict_lookup_preedit_hotkey.store(tbl["dr_dict"]["lookup_preedit_ctrl_alt_enter"].value_or(false),
                                               std::memory_order_relaxed);
-        g_dr_dict_english_brief.store(tbl["dr_dict"]["english_brief"].value_or(true), std::memory_order_relaxed);
+        g_dr_dict_english_popup.store(tbl["dr_dict"]["english_popup"].value_or(true), std::memory_order_relaxed);
         const auto legacy_paging_mode = tbl["general"]["paging_mode"].value<std::string>();
         g_paging_minus_equal_enabled =
             tbl["general"]["paging_minus_equal"].value_or(!legacy_paging_mode || *legacy_paging_mode == "-/=");
@@ -1188,6 +1178,11 @@ bool LoadImeConfig()
         g_niutrans.enabled = g_translation_provider == "niutrans";
         g_aliyun_mt.enabled = g_translation_provider == "aliyun";
         g_custom_translation.enabled = g_translation_provider == "custom";
+        // 英文候选单独选的服务；没有（拆分之前的配置）就跟中文候选用同一家。
+        g_translation_english_provider = tbl["translation"]["english_provider"].value_or(std::string());
+        g_translation_english_provider_explicit = IsValidTranslationProvider(g_translation_english_provider);
+        if (!g_translation_english_provider_explicit)
+            g_translation_english_provider = g_translation_provider;
         PublishTranslationConfig();
         {
             NetworkProxyConfig proxy;

@@ -204,6 +204,10 @@ struct TranslationConfig
     // 英文候选（英文候选模式与中文里混输的英文）译成的语种，来自 [translation].english_target_language：
     // zh / fr / ja / es / ru / de / ko / th / vi / it。中文候选的目标语种仍是 tencent.target_language。
     std::string english_target_language = "zh";
+    // 英文候选用的在线翻译服务，来自 [translation].english_provider，取值同 provider。配置里没有或不合法时
+    // 跟着 provider 走（english_provider_explicit 为假，腾讯云的旧门禁也跟着中文那边）。
+    std::string english_provider = "tencent";
+    bool english_provider_explicit = false;
     TencentTmtConfig tencent;
     AliyunMtConfig aliyun;
     CustomTranslationConfig custom;
@@ -392,15 +396,9 @@ bool GetConfiguredEnterLearnsEnglishWord();
 bool SetConfiguredEnterLearnsEnglishWord(bool enabled);
 bool GetConfiguredEnglishCommitWithSpace();
 bool SetConfiguredEnglishCommitWithSpace(bool enabled);
-// 英文候选模式下高亮候选的释义（中文释义或 DR Dict 摘要）。音标单独由下面的开关管。
+// 英文候选模式下高亮候选下方的音标与中文释义（english.db）。
 bool GetConfiguredEnglishCandidateDetail();
 bool SetConfiguredEnglishCandidateDetail(bool enabled);
-// 英文候选模式下高亮候选显示音标。
-bool GetConfiguredEnglishCandidatePhonetic();
-bool SetConfiguredEnglishCandidatePhonetic(bool enabled);
-// 音标口音："us" | "uk" | "both"。英式取自 DR Dict；美式 DR Dict 查不到时用本地音标。
-const std::string &GetConfiguredEnglishPhoneticAccent();
-bool SetConfiguredEnglishPhoneticAccent(const std::string &accent);
 // 五笔 z 键角色："off" | "wildcard"。混输已拆成独立开关，这里只剩通配两态。
 const std::string &GetConfiguredWubiZMode();
 bool SetConfiguredWubiZMode(const std::string &mode);
@@ -698,10 +696,11 @@ bool GetConfiguredDrDictLookupPreeditHotkeySwitch();
 bool SetConfiguredDrDictLookupPreeditHotkey(bool enabled);
 bool GetConfiguredDrDictLookupCandidateHotkey();
 bool GetConfiguredDrDictLookupPreeditHotkey();
-// 英文候选模式里高亮候选的释义改由 DR Dict 提供；开关本身与总开关合起来的结果分开取，同上。
-bool GetConfiguredDrDictEnglishBriefSwitch();
-bool SetConfiguredDrDictEnglishBrief(bool enabled);
-bool GetConfiguredDrDictEnglishBrief();
+// 英文候选模式里把 DR Dict 弹窗停靠在候选窗旁，显示高亮候选的词典释义；开关本身与总开关合起来的结果
+// 分开取，同上。
+bool GetConfiguredDrDictEnglishPopupSwitch();
+bool SetConfiguredDrDictEnglishPopup(bool enabled);
+bool GetConfiguredDrDictEnglishPopup();
 bool GetConfiguredPagingMinusEqualEnabled();
 bool SetConfiguredPagingMinusEqualEnabled(bool enabled);
 bool GetConfiguredPagingCommaPeriodEnabled();
@@ -856,7 +855,7 @@ bool IsValidTranslationProvider(const std::string &provider);
 // 英文候选可选的目标语种：中文，加上中文候选可选的除英语外的那些。
 bool IsValidEnglishTranslationTargetLanguage(const std::string &language);
 std::shared_ptr<const TranslationConfig> GetConfiguredTranslation();
-// key 为 provider 或 english_target_language。
+// key 为 provider、english_provider 或 english_target_language。
 bool SetConfiguredTranslationString(const std::string &key, const std::string &value);
 // Snapshot by value: download threads and the cloud worker read it while the settings host rewrites it.
 NetworkProxyConfig GetConfiguredNetworkProxy();

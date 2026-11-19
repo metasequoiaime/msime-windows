@@ -433,8 +433,6 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"enter_learns_english_word", GetConfiguredEnterLearnsEnglishWord()},
             {"english_commit_with_space", GetConfiguredEnglishCommitWithSpace()},
             {"english_candidate_detail", GetConfiguredEnglishCandidateDetail()},
-            {"english_candidate_phonetic", GetConfiguredEnglishCandidatePhonetic()},
-            {"english_phonetic_accent", GetConfiguredEnglishPhoneticAccent()},
             {"wubi_z_mode", GetConfiguredWubiZMode()},
             {"wubi_four_code_auto_commit", GetConfiguredWubiFourCodeAutoCommit()},
             {"wubi_fifth_code_top_commit", GetConfiguredWubiFifthCodeTopCommit()},
@@ -588,7 +586,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
            {{"enabled", GetConfiguredDrDictEnabled()},
             {"lookup_candidate_ctrl_shift_enter", GetConfiguredDrDictLookupCandidateHotkeySwitch()},
             {"lookup_preedit_ctrl_alt_enter", GetConfiguredDrDictLookupPreeditHotkeySwitch()},
-            {"english_brief", GetConfiguredDrDictEnglishBriefSwitch()}}},
+            {"english_popup", GetConfiguredDrDictEnglishPopupSwitch()}}},
           {"appearance",
            {{"settings_window_linger", GetConfiguredSettingsWindowLinger()},
             {"settings_launch_animation", GetConfiguredSettingsLaunchAnimation()},
@@ -735,7 +733,9 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"niutrans", {{"enabled", niutrans.enabled}, {"app_id", niutrans.app_id}, {"apikey", niutrans.apikey}}},
           {"bilibili_translate", {{"model", bilibili_translate.model}}},
           {"translation",
-           {{"provider", translation->provider}, {"english_target_language", translation->english_target_language}}},
+           {{"provider", translation->provider},
+            {"english_provider", translation->english_provider},
+            {"english_target_language", translation->english_target_language}}},
           {"network", {{"proxy_mode", network_proxy.mode}, {"proxy_server", network_proxy.server}}},
           {"sync",
            {{"enabled", sync.enabled},
@@ -855,13 +855,6 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEnglishCommitWithSpace(json::value_to<bool>(data.at("value")));
     if (path == "input.english_candidate_detail")
         return SetConfiguredEnglishCandidateDetail(json::value_to<bool>(data.at("value")));
-    if (path == "input.english_candidate_phonetic")
-        return SetConfiguredEnglishCandidatePhonetic(json::value_to<bool>(data.at("value")));
-    if (path == "input.english_phonetic_accent")
-    {
-        const json::value &value = data.at("value");
-        return value.is_string() && SetConfiguredEnglishPhoneticAccent(json::value_to<std::string>(value));
-    }
     if (path == "input.wubi_z_mode")
         return SetConfiguredWubiZMode(json::value_to<std::string>(data.at("value")));
     if (path == "input.wubi_four_code_auto_commit")
@@ -1094,8 +1087,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredDrDictLookupCandidateHotkey(json::value_to<bool>(data.at("value")));
     if (path == "dr_dict.lookup_preedit_ctrl_alt_enter")
         return SetConfiguredDrDictLookupPreeditHotkey(json::value_to<bool>(data.at("value")));
-    if (path == "dr_dict.english_brief")
-        return SetConfiguredDrDictEnglishBrief(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.english_popup")
+        return SetConfiguredDrDictEnglishPopup(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_minus_equal")
         return SetConfiguredPagingMinusEqualEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_tab")
@@ -1211,7 +1204,8 @@ bool ApplyConfigUpdate(const json::object &data)
                SetConfiguredBilibiliTranslateString(path.substr(std::string("bilibili_translate.").size()),
                                                     json::value_to<std::string>(value));
     }
-    if (path == "translation.provider" || path == "translation.english_target_language")
+    if (path == "translation.provider" || path == "translation.english_provider" ||
+        path == "translation.english_target_language")
     {
         const json::value &value = data.at("value");
         return value.is_string() && SetConfiguredTranslationString(path.substr(std::string("translation.").size()),

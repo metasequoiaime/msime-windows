@@ -157,36 +157,15 @@ inline std::vector<WordItem> MergeEnglishPhrases(const std::string &prefix, std:
 }
 
 /**
- * 高亮英文候选下方的音标。accent 是 "us" | "uk" | "both"；uk / us 来自 DR Dict（牛津高阶），local 是
- * english.db 的音标（CMUdict 转写，美式）。都不带斜杠。
- * - us：DR Dict 的美式，没有时用本地音标。
- * - uk：只用 DR Dict 的英式；本地音标是美式，不拿来冒充。
- * - both：「英 /…/  美 /…/」，美式同样可退回本地；两种读音一样时只显示一个。
+ * 高亮英文候选下方显示的文字：「/音标/  释义」，都取自 english.db。两样都没有时为空，候选窗不显示这一行。
+ * 词典里的音标和释义不进候选窗，由停靠在候选窗旁的 DR Dict 弹窗显示（见 utils/dr_dict_dock.h）。
  */
-inline std::string FormatPhonetic(const std::string &accent, const std::string &uk, const std::string &us,
-                                  const std::string &local)
+inline std::string FormatDetail(const std::string &ipa, const std::string &gloss)
 {
-    const auto wrap = [](const std::string &ipa) { return ipa.empty() ? std::string() : "/" + ipa + "/"; };
-    const std::string &american = us.empty() ? local : us;
-    if (accent == "uk")
-        return wrap(uk);
-    if (accent != "both")
-        return wrap(american);
-    if (uk.empty() || uk == american)
-        return uk.empty() && american.empty() ? std::string() : (uk.empty() ? "美 " : "") + wrap(american);
-    if (american.empty())
-        return "英 " + wrap(uk);
-    return "英 " + wrap(uk) + "  美 " + wrap(american);
-}
-
-/**
- * 高亮英文候选下方显示的文字：「音标  释义」，phonetic 是 FormatPhonetic 排好的音标。DR Dict 给了摘要
- * 就用摘要，否则用词库释义；两样都没有时为空，候选窗不显示这一行。
- */
-inline std::string FormatDetail(const std::string &phonetic, const std::string &gloss, const std::string &brief)
-{
-    const std::string &text = brief.empty() ? gloss : brief;
-    std::string result = phonetic;
+    const std::string &text = gloss;
+    std::string result;
+    if (!ipa.empty())
+        result = "/" + ipa + "/";
     if (!text.empty())
     {
         if (!result.empty())

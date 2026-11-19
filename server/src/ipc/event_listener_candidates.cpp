@@ -536,6 +536,13 @@ FanyImeIpc::CandidatePage BuildCandidatePageValue(const std::wstring &candidate_
             snapshot->expanded_words.push_back(
                 string_to_wstring(FanyImeIpc::QuickPhraseDisplayText(CandidateOutputText(ui.items[i]))));
     }
+    if (!ui.page_words.empty())
+    {
+        const int highlighted = ui.current_page_start() + ui.selected_index_in_page;
+        if (highlighted >= 0 && static_cast<size_t>(highlighted) < ui.items.size())
+            snapshot->dr_dict_dock_word =
+                string_to_wstring(FanyNamedPipe::DrDictDockWord(ui.items[static_cast<size_t>(highlighted)]));
+    }
 
     FanyImeIpc::CandidatePage page;
     page.input = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};

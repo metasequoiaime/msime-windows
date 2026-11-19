@@ -62,22 +62,29 @@ class NullHost : public native_settings::HostServices
 class TranslationPageScene
 {
   public:
-    static TranslationPageScene &Open()
+    static TranslationPageScene &Open(bool chinese = false, bool english = true, const char *provider = "bilibili",
+                                      const char *englishProvider = "bilibili")
     {
         auto *scene = new TranslationPageScene();
-        scene->model.Receive(Json{
-            {"type", "configSnapshot"},
-            {"data",
-             {{"general", {{"candidate_translations", false}, {"english_candidate_translations", true}}},
-              {"translation", {{"provider", "bilibili"}, {"english_target_language", "ja"}}},
-              {"tencent_tmt", {{"target_language", "en"}}},
-              {"input",
-               {{"english_candidate_phonetic", true},
-                {"english_phonetic_accent", "both"},
-                {"english_candidate_detail",
-                 true}}}}}}.dump());
+        scene->model.Receive(
+            Json{{"type", "configSnapshot"},
+                 {"data",
+                  {{"general", {{"candidate_translations", chinese}, {"english_candidate_translations", english}}},
+                   {"translation",
+                    {{"provider", provider}, {"english_provider", englishProvider}, {"english_target_language", "ja"}}},
+                   {"tencent_tmt", {{"target_language", "en"}}},
+                   {"input", {{"english_candidate_detail", true}}}}}}
+                .dump());
         scene->harness.Layout();
         return *scene;
+    }
+
+    bool Shows(const std::wstring &text)
+    {
+        for (auto *label : Visible<native_settings::Label>())
+            if (label->GetText() == text)
+                return true;
+        return false;
     }
 
     template <class T> std::vector<T *> Visible()
@@ -149,7 +156,7 @@ class TranslationPageScene
 
     native_settings::Dimmable *EnglishTarget()
     {
-        return DimmableBetween(L"英文候选翻译", L"译文显示与在线翻译服务");
+        return DimmableBetween(L"英文候选翻译", L"译文显示与服务凭据");
     }
 
     void Click(native_settings::ToggleSwitch *toggle)
@@ -213,13 +220,16 @@ TEST_CASE(translation_page_keeps_chinese_and_english_translation_switches_apart)
     REQUIRE(!chineseTarget->IsDisabled());
 }
 
-TEST_CASE(translation_page_phonetic_switch_writes_its_own_key)
+TEST_CASE(translation_page_lists_credentials_for_both_selected_services)
 {
-    auto &scene = TranslationPageScene::Open();
-    auto *phonetic = scene.ToggleBeside(L"英文候选显示音标");
-    REQUIRE(phonetic->IsChecked());
-    scene.Click(phonetic);
-    const Json update = scene.LastUpdate();
-    REQUIRE(update["path"] == "input.english_candidate_phonetic");
-    REQUIRE(update["value"] == false);
+    // 中文候选用腾讯云、英文候选用阿里云，两边都开着：两家的凭据都要填。
+    auto &both = TranslationPageScene::Open(true, true, "tencent", "aliyun");
+    REQUIRE(both.Shows(L"腾讯云 API 凭据"));
+    REQUIRE(both.Shows(L"阿里云 API 凭据"));
+    REQUIRE(!both.Shows(L"小牛翻译 API 凭据"));
+
+    // 只开着英文候选那边：只列英文候选用的那家。
+    auto &english = TranslationPageScene::Open(false, true, "tencent", "aliyun");
+    REQUIRE(!english.Shows(L"腾讯云 API 凭据"));
+    REQUIRE(english.Shows(L"阿里云 API 凭据"));
 }

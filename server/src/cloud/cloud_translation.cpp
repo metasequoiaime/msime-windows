@@ -66,25 +66,32 @@ enum class Provider
     Bilibili,
 };
 
-// 当前生效的提供方由 [translation].provider 单一决定，服务端与页面不再各写一份优先级。
-Provider ActiveProvider(const TranslationConfig &config)
+Provider ProviderNamed(const std::string &name)
 {
-    if (config.provider == "bilibili")
+    if (name == "bilibili")
         return Provider::Bilibili;
-    if (config.provider == "ai")
+    if (name == "ai")
         return Provider::Ai;
-    if (config.provider == "niutrans")
+    if (name == "niutrans")
         return Provider::NiuTrans;
-    if (config.provider == "aliyun")
+    if (name == "aliyun")
         return Provider::Aliyun;
-    if (config.provider == "custom")
+    if (name == "custom")
         return Provider::Custom;
     return Provider::Tencent;
 }
 
-std::string ProviderScope(const TranslationConfig &config)
+// 中文候选的提供方由 [translation].provider 决定，英文候选的由 [translation].english_provider 决定；
+// 服务端与页面不再各写一份优先级。凭据（各家的段）两边共用。
+Provider ActiveProvider(const TranslationConfig &config, EnglishIme::TranslationDirection direction)
 {
-    switch (ActiveProvider(config))
+    return ProviderNamed(direction == EnglishIme::TranslationDirection::EnglishToChinese ? config.english_provider
+                                                                                         : config.provider);
+}
+
+std::string ProviderScope(const TranslationConfig &config, EnglishIme::TranslationDirection direction)
+{
+    switch (ActiveProvider(config, direction))
     {
     case Provider::Bilibili:
         // 不同模型的译文不同，按模型分缓存域，切换模型后能马上看到新模型的结果。
@@ -140,12 +147,13 @@ void RememberFailure(const std::string &identity)
     entry.retry_at = std::chrono::steady_clock::now() + CloudTranslation::FailureRetryDelay(++entry.failures);
 }
 
-TencentTmt::Credentials ResolveCredentials(const TencentTmtConfig &config)
+TencentTmt::Credentials ResolveCredentials(const TencentTmtConfig &config, bool chosen_explicitly)
 {
     TencentTmt::Credentials credentials;
     // provider 由设置页明确选成腾讯云时，加载配置会把 enabled 置为 true；只是从旧布尔推导出
-    // 腾讯云的配置仍要求 enabled，和旧版一样，不会因为升级就开始向腾讯云发送候选词。
-    if (!config.enabled)
+    // 腾讯云的配置仍要求 enabled，和旧版一样，不会因为升级就开始向腾讯云发送候选词。英文候选的
+    // english_provider 明确写成腾讯云时同样算选过。
+    if (!config.enabled && !chosen_explicitly)
         return credentials;
     credentials.region = config.region.empty() ? "ap-guangzhou" : config.region;
     credentials.secret_id = CloudTranslation::TrimSecret(config.secret_id);
@@ -168,10 +176,11 @@ struct ResolvedProvider
     BilibiliTranslation::Config bilibili;
 };
 
-std::optional<ResolvedProvider> ResolveActiveProvider(const TranslationConfig &config)
+std::optional<ResolvedProvider> ResolveActiveProvider(const TranslationConfig &config,
+                                                      EnglishIme::TranslationDirection direction)
 {
     ResolvedProvider resolved;
-    resolved.provider = ActiveProvider(config);
+    resolved.provider = ActiveProvider(config, direction);
     switch (resolved.provider)
     {
     case Provider::Bilibili:
@@ -205,7 +214,9 @@ std::optional<ResolvedProvider> ResolveActiveProvider(const TranslationConfig &c
         break;
     case Provider::Tencent:
     default:
-        resolved.tencent = ResolveCredentials(config.tencent);
+        resolved.tencent =
+            ResolveCredentials(config.tencent, direction == EnglishIme::TranslationDirection::EnglishToChinese &&
+                                                   config.english_provider_explicit);
         if (!CloudTranslation::IsUsableSecret(resolved.tencent.secret_id))
             return std::nullopt;
         break;
@@ -312,13 +323,18 @@ void WorkerLoop()
             continue;
 
         const auto config = GetConfiguredTranslation();
-        const auto resolved = ResolveActiveProvider(*config);
-        if (!resolved)
+        constexpr auto kEnglish = EnglishIme::TranslationDirection::EnglishToChinese;
+        constexpr auto kChinese = EnglishIme::TranslationDirection::ChineseToEnglish;
+        // 英文候选与中文候选各用自己选的服务；哪边的服务没配好，只是那一边不发请求。
+        const auto english_resolved = ResolveActiveProvider(*config, kEnglish);
+        const auto chinese_resolved = ResolveActiveProvider(*config, kChinese);
+        if (!english_resolved && !chinese_resolved)
             continue;
 
-        const std::string english_target = TargetLanguage(*config, EnglishIme::TranslationDirection::EnglishToChinese);
-        const std::string chinese_target = TargetLanguage(*config, EnglishIme::TranslationDirection::ChineseToEnglish);
-        const std::string provider_scope = ProviderScope(*config);
+        const std::string english_target = TargetLanguage(*config, kEnglish);
+        const std::string chinese_target = TargetLanguage(*config, kChinese);
+        const std::string english_scope = ProviderScope(*config, kEnglish);
+        const std::string chinese_scope = ProviderScope(*config, kChinese);
         std::vector<EnglishIme::TranslationQuery> en_target;
         std::vector<EnglishIme::TranslationQuery> zh_target;
         std::vector<EnglishIme::TranslationResult> results;
@@ -328,7 +344,9 @@ void WorkerLoop()
             {
                 if (TooLong(query.key))
                     continue;
-                const std::string identity = Identity(query, TargetLanguage(*config, query.direction), provider_scope);
+                const bool english = query.direction == kEnglish;
+                const std::string identity =
+                    Identity(query, english ? english_target : chinese_target, english ? english_scope : chinese_scope);
                 const auto cached = g_cache.find(identity);
                 if (cached != g_cache.end())
                 {
@@ -341,19 +359,17 @@ void WorkerLoop()
                 }
                 if (IsBackingOff(identity))
                     continue;
-                if (query.direction == EnglishIme::TranslationDirection::EnglishToChinese &&
-                    CloudTranslation::IsCloudTranslatableEnglish(query.key))
+                if (english && english_resolved && CloudTranslation::IsCloudTranslatableEnglish(query.key))
                     en_target.push_back(query);
-                else if (query.direction == EnglishIme::TranslationDirection::ChineseToEnglish &&
-                         CloudTranslation::IsCloudTranslatableChinese(query.key))
+                else if (!english && chinese_resolved && CloudTranslation::IsCloudTranslatableChinese(query.key))
                     zh_target.push_back(query);
             }
         }
 
         if (!en_target.empty())
-            TranslateGroup(*resolved, en_target, "en", english_target, english_target, provider_scope, results);
+            TranslateGroup(*english_resolved, en_target, "en", english_target, english_target, english_scope, results);
         if (!zh_target.empty())
-            TranslateGroup(*resolved, zh_target, "zh", chinese_target, chinese_target, provider_scope, results);
+            TranslateGroup(*chinese_resolved, zh_target, "zh", chinese_target, chinese_target, chinese_scope, results);
         if (results.empty() || !g_running || g_job.load() != observed_job ||
             !EnglishIme::IsTranslationCurrent(generation) || !g_callback)
             continue;
@@ -405,13 +421,16 @@ void Clear()
 
 std::string ActiveProviderScope()
 {
-    return ProviderScope(*GetConfiguredTranslation());
+    const auto config = GetConfiguredTranslation();
+    return ProviderScope(*config, EnglishIme::TranslationDirection::ChineseToEnglish) + "|" +
+           ProviderScope(*config, EnglishIme::TranslationDirection::EnglishToChinese);
 }
 
 std::string LookupCache(const std::string &key, EnglishIme::TranslationDirection direction)
 {
     const auto config = GetConfiguredTranslation();
-    const std::string identity = Identity({key, direction}, TargetLanguage(*config, direction), ProviderScope(*config));
+    const std::string identity =
+        Identity({key, direction}, TargetLanguage(*config, direction), ProviderScope(*config, direction));
     std::lock_guard lock(g_mutex);
     const auto found = g_cache.find(identity);
     return found == g_cache.end() ? std::string{} : found->second;

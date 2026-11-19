@@ -782,22 +782,22 @@ bool GetConfiguredDrDictLookupPreeditHotkey()
     return GetConfiguredDrDictEnabled() && GetConfiguredDrDictLookupPreeditHotkeySwitch();
 }
 
-bool GetConfiguredDrDictEnglishBriefSwitch()
+bool GetConfiguredDrDictEnglishPopupSwitch()
 {
-    return g_dr_dict_english_brief.load(std::memory_order_relaxed);
+    return g_dr_dict_english_popup.load(std::memory_order_relaxed);
 }
 
-bool SetConfiguredDrDictEnglishBrief(bool enabled)
+bool SetConfiguredDrDictEnglishPopup(bool enabled)
 {
-    if (!WriteConfiguredValue("dr_dict", "english_brief", enabled ? "true" : "false"))
+    if (!WriteConfiguredValue("dr_dict", "english_popup", enabled ? "true" : "false"))
     {
         return false;
     }
-    g_dr_dict_english_brief.store(enabled, std::memory_order_relaxed);
+    g_dr_dict_english_popup.store(enabled, std::memory_order_relaxed);
     return true;
 }
 
-bool GetConfiguredDrDictEnglishBrief()
+bool GetConfiguredDrDictEnglishPopup()
 {
-    return GetConfiguredDrDictEnabled() && GetConfiguredDrDictEnglishBriefSwitch();
+    return GetConfiguredDrDictEnabled() && GetConfiguredDrDictEnglishPopupSwitch();
 }

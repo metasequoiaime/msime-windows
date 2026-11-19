@@ -1326,18 +1326,19 @@ struct InputPage
     }
 };
 
-// 「翻译与英文候选」页的状态。这一块原先是「输入」页里的候选词翻译分区，后来单独成页；中文候选与
-// 英文候选的译文各有开关和目标语种，下面的翻译服务两边共用。
+// 「翻译与英文候选」页的状态。这一块原先是「输入」页里的候选词翻译分区，后来单独成页。中文候选与
+// 英文候选的译文各有开关、目标语种和在线翻译服务；各家服务的凭据、词性与单条释义两边共用。
 struct TranslationPage
 {
     PageContext *context = nullptr;
 
+    // 中文候选（translation.provider）与英文候选（translation.english_provider）各自选的服务。
     std::string provider = "bilibili";
+    std::string englishProvider = "bilibili";
     std::shared_ptr<ToggleSwitch> translationsToggle;
     std::shared_ptr<ToggleSwitch> englishTranslationsToggle;
-    std::shared_ptr<Dimmable> chineseTargetBlock;
-    std::shared_ptr<Dimmable> englishTargetBlock;
-    std::shared_ptr<Dimmable> accentBlock;
+    std::shared_ptr<Dimmable> chineseOptionsBlock;
+    std::shared_ptr<Dimmable> englishOptionsBlock;
     std::shared_ptr<OpacityBox> translationOptions;
     std::vector<std::shared_ptr<Dimmable>> translationInputs;
     std::shared_ptr<Dimmable> showPosBlock;
@@ -1348,6 +1349,34 @@ struct TranslationPage
     std::shared_ptr<Label> warning;
     std::shared_ptr<Hideable> warningBox;
     std::unique_ptr<CredentialTest> credentialTest;
+
+    static std::string KnownProvider(const std::string &value)
+    {
+        return value == "aliyun" || value == "niutrans" || value == "custom" || value == "ai" || value == "bilibili"
+                   ? value
+                   : "tencent";
+    }
+
+    // 下面要填凭据的服务：开着的那一边（两边都开着就两家都要）；都关着时两家都列出来，方便先填好。
+    std::vector<std::string> ProvidersInUse() const
+    {
+        const bool chinese = translationsToggle && translationsToggle->IsChecked();
+        const bool english = englishTranslationsToggle && englishTranslationsToggle->IsChecked();
+        std::vector<std::string> used;
+        if (chinese || !english)
+            used.push_back(provider);
+        if ((english || !chinese) && englishProvider != provider)
+            used.push_back(englishProvider);
+        return used;
+    }
+
+    // 「测试配置」测的服务：中文候选那边开着就测它，否则测英文候选那边的。
+    std::string TestedProvider() const
+    {
+        const bool chinese = translationsToggle && translationsToggle->IsChecked();
+        const bool english = englishTranslationsToggle && englishTranslationsToggle->IsChecked();
+        return !chinese && english ? englishProvider : provider;
+    }
 
     // 与「整句与云候选」页的 AI 联想共用同一份解析：分槽优先、单值键只在它就是当前服务商时作数，
     // 可用性判定与后端 AiTranslation::IsUsableConfig 同一口径。
@@ -1369,65 +1398,72 @@ struct TranslationPage
 
     ConfigMap TestConfig() const
     {
-        if (provider == "ai")
+        const std::string tested = TestedProvider();
+        if (tested == "ai")
             return {};
-        if (provider == "bilibili")
+        if (tested == "bilibili")
             return {{"model", context->model.GetString("bilibili_translate.model")}};
-        if (provider == "aliyun")
+        if (tested == "aliyun")
             return {{"accessKeyId", Field("aliyunAccessKeyId")}, {"accessKeySecret", Field("aliyunAccessKeySecret")}};
-        if (provider == "niutrans")
+        if (tested == "niutrans")
             return {{"appId", Field("niutransAppId")}, {"apiKey", Field("niutransApiKey")}};
-        if (provider == "custom")
+        if (tested == "custom")
             return {{"endpoint", Field("customTranslationEndpoint")}, {"apiKey", Field("customTranslationApiKey")}};
         return {{"secretId", Field("tencentTmtSecretId")}, {"secretKey", Field("tencentTmtSecretKey")}};
     }
 
-    void SyncWarning()
+    // name 这家服务的凭据齐不齐；不齐时 text 是提示。
+    bool CredentialsReady(const std::string &name, std::wstring &text) const
     {
-        std::wstring text;
-        bool ok = false;
-        if (provider == "bilibili")
+        if (name == "bilibili")
+            return true; // 免费接口不需要凭据，选中即可用。
+        if (name == "ai")
         {
-            // 免费接口不需要凭据，选中即可用。
-            ok = true;
-        }
-        else if (provider == "ai")
-        {
-            const voice_fields::ActiveAiConfig state = AiState();
             // 选择器模式下这里的 provider 已经解析成「生成式上次用的那家」，所以不再是 jev。
             // AI 联想总开关与这里无关，只要凭据齐就能用。
             text = L"请先在「整句与云候选」页面填写当前服务商的接口地址、模型和 Token（Ollama 不需要）";
-            ok = state.usable;
+            return AiState().usable;
         }
-        else if (provider == "custom")
+        if (name == "custom")
         {
             text = L"请填写以 http:// 或 https:// 开头的完整接口地址";
             static const std::regex url(R"(^https?://\S+$)", std::regex::icase);
-            ok = std::regex_match(Field("customTranslationEndpoint"), url);
+            return std::regex_match(Field("customTranslationEndpoint"), url);
         }
-        else if (provider == "aliyun")
+        if (name == "aliyun")
         {
             text = L"请填写 AccessKey ID 和 AccessKey Secret 后使用阿里云翻译";
-            ok = !Field("aliyunAccessKeyId").empty() && !Field("aliyunAccessKeySecret").empty();
+            return !Field("aliyunAccessKeyId").empty() && !Field("aliyunAccessKeySecret").empty();
         }
-        else if (provider == "niutrans")
+        if (name == "niutrans")
         {
             text = L"请填写 APP ID 和 API Key 后使用小牛翻译";
-            ok = !Field("niutransAppId").empty() && !Field("niutransApiKey").empty();
+            return !Field("niutransAppId").empty() && !Field("niutransApiKey").empty();
         }
-        else
+        text = L"请填写 SecretId 和 SecretKey 后使用云端翻译";
+        return !Field("tencentTmtSecretId").empty() && !Field("tencentTmtSecretKey").empty();
+    }
+
+    void SyncWarning()
+    {
+        for (const std::string &name : ProvidersInUse())
         {
-            text = L"请填写 SecretId 和 SecretKey 后使用云端翻译";
-            ok = !Field("tencentTmtSecretId").empty() && !Field("tencentTmtSecretKey").empty();
+            std::wstring text;
+            if (!CredentialsReady(name, text))
+            {
+                warning->SetText(text);
+                warningBox->SetVisible(true);
+                return;
+            }
         }
-        warning->SetText(text);
-        warningBox->SetVisible(!ok);
+        warningBox->SetVisible(false);
     }
 
     void SyncProviderView()
     {
+        const std::vector<std::string> used = ProvidersInUse();
         for (auto &[name, box] : providerFields)
-            box->SetVisible(name == provider);
+            box->SetVisible(std::find(used.begin(), used.end(), name) != used.end());
         const voice_fields::ActiveAiConfig state = AiState();
         // 摘要用显示名而不是内部 id。
         if (state.usable)
@@ -1441,14 +1477,15 @@ struct TranslationPage
 
     // setCandidateTranslationOptionsDisabled: the block greys out, its rows and fields stop
     // taking input (the test button keeps working), 显示词性 and 只显示单条释义 turn aria-disabled.
-    // 中文、英文两个开关各管自己的目标语种；翻译服务只要有一边开着就可用。
+    // 中文、英文两个开关各管自己的目标语种与服务；共用的设置只要有一边开着就可用。
     void SyncTranslationsEnabled()
     {
         const bool chinese = translationsToggle->IsChecked();
         const bool english = englishTranslationsToggle->IsChecked();
-        chineseTargetBlock->SetDisabled(!chinese);
-        englishTargetBlock->SetDisabled(!english);
+        chineseOptionsBlock->SetDisabled(!chinese);
+        englishOptionsBlock->SetDisabled(!english);
         SetTranslationsEnabled(chinese || english);
+        SyncProviderView();
     }
 
     void SetTranslationsEnabled(bool enabled)
@@ -2055,17 +2092,24 @@ VisualPtr BuildTranslationPage(PageContext &context)
         Dropdown::Options language;
         language.minWidth = 140.0f;
         language.menuMinWidth = 140.0f;
-        auto provider = BindDropdown(context, "translation.provider",
-                                     Options({{"bilibili", L"哔哩哔哩"},
-                                              {"tencent", L"腾讯云"},
-                                              {"aliyun", L"阿里云"},
-                                              {"niutrans", L"小牛翻译"},
-                                              {"custom", L"自定义 DeepLX"},
-                                              {"ai", L"AI 辅助"}}),
-                                     language, ValueKind::String, [s](const std::string &value) {
-                                         s->provider = value;
+        const auto providerOptions = [] {
+            return Options({{"bilibili", L"哔哩哔哩"},
+                            {"tencent", L"腾讯云"},
+                            {"aliyun", L"阿里云"},
+                            {"niutrans", L"小牛翻译"},
+                            {"custom", L"自定义 DeepLX"},
+                            {"ai", L"AI 辅助"}});
+        };
+        auto provider = BindDropdown(context, "translation.provider", providerOptions(), language, ValueKind::String,
+                                     [s](const std::string &value) {
+                                         s->provider = TranslationPage::KnownProvider(value);
                                          s->SyncProviderView();
                                      });
+        auto englishProvider = BindDropdown(context, "translation.english_provider", providerOptions(), language,
+                                            ValueKind::String, [s](const std::string &value) {
+                                                s->englishProvider = TranslationPage::KnownProvider(value);
+                                                s->SyncProviderView();
+                                            });
         auto target = BindDropdown(context, "tencent_tmt.target_language",
                                    Options({{"en", L"英语"},
                                             {"fr", L"法语"},
@@ -2091,11 +2135,16 @@ VisualPtr BuildTranslationPage(PageContext &context)
                                                    {"vi", L"越南语"},
                                                    {"it", L"意大利语"}}),
                                           language);
-        // 开关关着时变灰、不接收输入（Dimmable 的默认透明度）。
-        s->chineseTargetBlock = std::make_shared<Dimmable>(
-            LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用下方的在线翻译服务", target));
-        s->englishTargetBlock = std::make_shared<Dimmable>(
-            LanguageRow(L"目标语种", L"中文优先使用本地词库；本地未命中时使用下方的在线翻译服务", englishTarget));
+        // 目标语种与在线翻译服务跟着各自的开关：关着时变灰、不接收输入（Dimmable 的默认透明度）。
+        const std::wstring serviceHint = L"默认使用免费的哔哩哔哩 Index-Translate；也可使用腾讯云、阿里云、小牛翻译、"
+                                         L"自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置。凭据在下方填写";
+        s->chineseOptionsBlock = std::make_shared<Dimmable>(Col(
+            {LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用所选在线翻译服务", target),
+             std::make_shared<Divider>(Divider::Kind::Option), LanguageRow(L"在线翻译服务", serviceHint, provider)}));
+        s->englishOptionsBlock = std::make_shared<Dimmable>(
+            Col({LanguageRow(L"目标语种", L"中文优先使用本地词库；本地未命中时使用所选在线翻译服务", englishTarget),
+                 std::make_shared<Divider>(Divider::Kind::Option),
+                 LanguageRow(L"在线翻译服务", serviceHint, englishProvider)}));
         // pointer-events: none on the rows and grids while the master switch is off.
         auto blockInput = [s](VisualPtr visual) {
             auto dim = std::make_shared<Dimmable>(std::move(visual), 1.0f);
@@ -2184,9 +2233,9 @@ VisualPtr BuildTranslationPage(PageContext &context)
         s->warning->SetMargin({0.0f, 10.0f, 0.0f, 0.0f});
         s->warningBox = std::make_shared<Hideable>(s->warning, true);
         s->credentialTest = std::make_unique<CredentialTest>(
-            context, [s]() { return "translation." + s->provider; }, [s]() { return s->TestConfig(); },
+            context, [s]() { return "translation." + s->TestedProvider(); }, [s]() { return s->TestConfig(); },
             [s]() -> Json {
-                if (s->provider != "ai")
+                if (s->TestedProvider() != "ai")
                     return s->TestConfig();
                 // 把当前生效的服务商配置摊平成页面字段，凭据测试据此判断「测试期间配置是否改过」，
                 // 宿主再用同一份字段去发请求。
@@ -2203,11 +2252,6 @@ VisualPtr BuildTranslationPage(PageContext &context)
              std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"只显示单条释义", L"每个候选只显示第一条译文释义；Ctrl+Enter 仍可选择全部释义上屏",
                                     s->singleSenseBlock)),
-             std::make_shared<Divider>(Divider::Kind::Option),
-             blockInput(LanguageRow(L"在线翻译服务",
-                                    L"默认使用免费的哔哩哔哩 Index-Translate；也可使用腾讯云、阿里云、小牛翻译、"
-                                    L"自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置",
-                                    provider)),
              std::make_shared<Divider>(Divider::Kind::Option), s->providerFields["bilibili"],
              s->providerFields["tencent"], s->providerFields["aliyun"], s->providerFields["niutrans"],
              s->providerFields["custom"], s->providerFields["ai"], s->warningBox, s->credentialTest->View()});
@@ -2225,38 +2269,25 @@ VisualPtr BuildTranslationPage(PageContext &context)
         });
         page.AddSection(
             Col({MakeRow(L"中文候选翻译", L"在候选窗口中把中文候选译成所选语种，每项最多两个简短释义", master),
-                 std::make_shared<Divider>(Divider::Kind::Option), s->chineseTargetBlock}));
+                 std::make_shared<Divider>(Divider::Kind::Option), s->chineseOptionsBlock}));
         page.AddSection(
             Col({MakeRow(L"英文候选翻译", L"把英文候选模式（Ctrl+Shift+E）的候选和中文候选里混输的英文译成所选语种",
                          englishMaster),
-                 std::make_shared<Divider>(Divider::Kind::Option), s->englishTargetBlock}));
-        page.AddSection(Col({MakeTitleBlock(L"译文显示与在线翻译服务", L"中文候选与英文候选的译文共用以下设置"),
+                 std::make_shared<Divider>(Divider::Kind::Option), s->englishOptionsBlock}));
+        page.AddSection(Col({MakeTitleBlock(L"译文显示与服务凭据",
+                                            L"中文候选与英文候选共用以下设置；下方列出所选在线翻译服务需要的凭据"),
                              s->translationOptions}));
     }
 
     // ---- 英文候选模式 ----
-    {
-        auto accent = BindDropdown(context, "input.english_phonetic_accent",
-                                   Options({{"us", L"美式"}, {"uk", L"英式"}, {"both", L"英美都显示"}}));
-        s->accentBlock = std::make_shared<Dimmable>(
-            LanguageRow(L"音标口音",
-                        L"英式与美式音标取自 DR Dict 里的牛津高阶词典，需在「高级」开启 DR Dict 词典联动并运行 "
-                        L"DR Dict；美式查不到时用输入法自带的音标",
-                        accent));
-        Dimmable *accentBlock = s->accentBlock.get();
-        auto phonetic = BindToggle(context, "input.english_candidate_phonetic",
-                                   [accentBlock](bool on) { accentBlock->SetDisabled(!on); });
-        page.AddSection(Col({MakeRow(L"英文候选显示音标", L"英文候选模式下在高亮的候选下方显示音标", phonetic),
-                             std::make_shared<Divider>(Divider::Kind::Option), s->accentBlock}));
-        page.AddSection(MakeRow(L"英文候选显示释义",
-                                L"英文候选模式下在高亮的候选下方显示中文释义。开启「高级」里的 DR Dict "
-                                L"词典联动后，释义可改由 DR Dict 提供",
-                                Toggle(context, "input.english_candidate_detail")));
-        page.AddSection(MakeRow(L"英文上屏后自动补空格",
-                                L"英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文单词后自动补一个空格；"
-                                L"回车与标点上屏不补",
-                                Toggle(context, "input.english_commit_with_space")));
-    }
+    page.AddSection(MakeRow(L"英文候选显示音标与释义",
+                            L"英文候选模式下在高亮的候选下方显示输入法自带的音标和中文释义。词典里的音标与释义可由"
+                            L"停靠在候选窗旁的 DR Dict 弹窗显示，见「高级」里的 DR Dict 词典联动",
+                            Toggle(context, "input.english_candidate_detail")));
+    page.AddSection(MakeRow(L"英文上屏后自动补空格",
+                            L"英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文单词后自动补一个空格；"
+                            L"回车与标点上屏不补",
+                            Toggle(context, "input.english_commit_with_space")));
 
     context.OnConfig([s, state, model]() {
         (void)state;
@@ -2266,13 +2297,9 @@ VisualPtr BuildTranslationPage(PageContext &context)
         if (const Json *translations = model->Find("general.english_candidate_translations");
             translations && translations->is_boolean())
             s->englishTranslationsToggle->SetChecked(translations->get<bool>());
-        s->SyncTranslationsEnabled();
-        s->accentBlock->SetDisabled(!model->GetBool("input.english_candidate_phonetic"));
-        const std::string provider = model->GetString("translation.provider");
-        s->provider = provider == "aliyun" || provider == "niutrans" || provider == "custom" || provider == "ai" ||
-                              provider == "bilibili"
-                          ? provider
-                          : "tencent";
+        s->provider = TranslationPage::KnownProvider(model->GetString("translation.provider"));
+        const std::string englishProvider = model->GetString("translation.english_provider");
+        s->englishProvider = englishProvider.empty() ? s->provider : TranslationPage::KnownProvider(englishProvider);
         s->fields["tencentTmtSecretId"]->SetText(Widen(model->GetString("tencent_tmt.secret_id")));
         s->fields["tencentTmtSecretKey"]->SetText(Widen(model->GetString("tencent_tmt.secret_key")));
         s->fields["aliyunAccessKeyId"]->SetText(Widen(model->GetString("aliyun_mt.secret_id")));
@@ -2281,7 +2308,7 @@ VisualPtr BuildTranslationPage(PageContext &context)
         s->fields["niutransApiKey"]->SetText(Widen(model->GetString("niutrans.apikey")));
         s->fields["customTranslationEndpoint"]->SetText(Widen(model->GetString("custom_translation.endpoint")));
         s->fields["customTranslationApiKey"]->SetText(Widen(model->GetString("custom_translation.api_key")));
-        s->SyncProviderView();
+        s->SyncTranslationsEnabled();
     });
 
     return page.Build();

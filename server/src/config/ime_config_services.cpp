@@ -414,6 +414,8 @@ void ime_config_detail::PublishTranslationConfig()
     auto snapshot = std::make_shared<TranslationConfig>();
     snapshot->provider = g_translation_provider;
     snapshot->english_target_language = g_translation_english_target_language;
+    snapshot->english_provider = g_translation_english_provider;
+    snapshot->english_provider_explicit = g_translation_english_provider_explicit;
     snapshot->tencent = g_tencent_tmt;
     snapshot->aliyun = g_aliyun_mt;
     snapshot->custom = g_custom_translation;
@@ -456,6 +458,17 @@ bool SetConfiguredTranslationString(const std::string &key, const std::string &v
         PublishTranslationConfig();
         return true;
     }
+    if (key == "english_provider")
+    {
+        // 只换英文候选用的服务；各家凭据与旧版 enabled 布尔都跟着中文那边的 provider，不动。
+        if (!IsValidTranslationProvider(value) ||
+            !WriteConfiguredValue("translation", key, EscapeTomlBasicString(value)))
+            return false;
+        g_translation_english_provider = value;
+        g_translation_english_provider_explicit = true;
+        PublishTranslationConfig();
+        return true;
+    }
     if (key != "provider" || !IsValidTranslationProvider(value))
         return false;
     // 旧布尔与 provider 一次写入；旧版不认识的提供方对应布尔保持 false。
@@ -470,6 +483,8 @@ bool SetConfiguredTranslationString(const std::string &key, const std::string &v
                                 {"custom_translation", "enabled", custom ? "true" : "false"}}))
         return false;
     g_translation_provider = value;
+    if (!g_translation_english_provider_explicit)
+        g_translation_english_provider = value; // 英文候选还没单独选过：跟着走
     g_tencent_tmt.enabled = tencent;
     g_aliyun_mt.enabled = aliyun;
     g_niutrans.enabled = niutrans;

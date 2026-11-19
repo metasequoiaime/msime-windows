@@ -185,6 +185,8 @@ model = "Index-Translate-2B"
 provider = "bilibili"
 # 英文候选译成的语种：zh / fr / ja / es / ru / de / ko / th / vi / it。中文优先用本地词库
 english_target_language = "zh"
+# 英文候选用的在线翻译服务，取值同 provider；英文与中文候选可以选不同的服务，各家凭据共用
+english_provider = "bilibili"
 
 #
 # 网络代理：云输入、模型下载、AI 联想、翻译、语音识别等需要联网的功能共用。
@@ -411,13 +413,9 @@ enter_learns_english_word = true
 # 英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文候选后自动补一个空格；
 # 回车与标点上屏不补，数字开头或以撇号结尾的词也不补
 english_commit_with_space = true
-# 英文候选模式下在高亮候选下方显示中文释义（开启 DR Dict 词典联动后释义可改由 DR Dict 提供）
+# 英文候选模式下在高亮候选下方显示音标与中文释义（取自 english.db）；词典里的释义由停靠在候选窗旁的
+# DR Dict 弹窗显示，见 [dr_dict].english_popup
 english_candidate_detail = true
-# 英文候选模式下在高亮候选下方显示音标
-english_candidate_phonetic = true
-# 音标口音：us（美式）| uk（英式）| both（英美都显示）。音标取自 DR Dict 里的牛津高阶等词典（需开启
-# [dr_dict].enabled 且 DR Dict 在运行）；美式在 DR Dict 查不到时用输入法自带的音标
-english_phonetic_accent = "us"
 # 模糊音，全拼与双拼均生效；默认全部关闭，升级用户零行为变化
 # 总开关：关闭时所有规则不生效，已选规则保留，便于临时停用后恢复
 fuzzy_pinyin = false
@@ -681,7 +679,7 @@ v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，
 enabled = false # 候选右键菜单增加「查词典」
 lookup_candidate_ctrl_shift_enter = false # Ctrl+Shift+Enter 查询高亮候选；需先开启 enabled
 lookup_preedit_ctrl_alt_enter = false # Ctrl+Alt+Enter 查询当前预编辑；需先开启 enabled
-english_brief = true # 英文候选模式下高亮候选的释义改由 DR Dict 提供（DR Dict 没在运行时用本地释义）；需先开启 enabled
+english_popup = true # 英文候选模式下把 DR Dict 弹窗停靠在候选窗旁，显示高亮候选的词典释义（DR Dict 没在运行时不显示）；需先开启 enabled
 #
 # AI Assistant
 # AI 辅助

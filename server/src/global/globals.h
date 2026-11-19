@@ -595,6 +595,9 @@ struct CandidatePageSnapshot
     // 第一个的绝对下标是 expanded_start。点选时连同文字一起交回工作线程核对。
     std::vector<std::wstring> expanded_words;
     int expanded_start = 0;
+    // 英文候选模式里停靠在候选窗旁的 DR Dict 弹窗要显示的词（高亮的英文候选，小写）；为空时收起弹窗。
+    // 界面线程放好候选窗后连同卡片位置交给 DrDictDock。
+    std::wstring dr_dict_dock_word;
     // Generation stamped by the worker at publish time. The UI thread echoes this exact value back
     // after painting, which is what lets a selection distinguish "what the user sees" from "what
     // the worker has just rebuilt".

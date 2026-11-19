@@ -11,7 +11,6 @@
 #include "session/input_session.h"
 #include "english/english_ime.h"
 #include "mixed/mixed_candidates.h"
-#include "utils/dr_dict_brief.h"
 #include "engine/contracts/temporary_japanese_input.h"
 
 inline std::condition_variable pipe_queueCv;
@@ -61,9 +60,8 @@ void EnqueueEnglishCandidates(std::vector<WordItem> candidates, const std::strin
 void EnqueueCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation,
                                   bool merge = false);
 void EnqueueMixedCandidates(MixedCandidates::Result result, const std::string &input, uint64_t generation);
-// 英文候选模式高亮候选的音标与释义。词库一路给本地音标与中文释义，DR Dict 一路给摘要和英美音标。任意线程调用。
+// 英文候选模式高亮候选的音标与释义（english.db）。任意线程调用。
 void EnqueueEnglishCandidateDetail(EnglishIme::EnglishDetail detail);
-void EnqueueDrDictEnglishDetail(DrDictBrief::Answer answer);
 void EnqueueCandidateUiAction(CandidateUiAction action, int one_based_index, int fixed_position = 0);
 // 鼠标开始操作当前显示的候选页时，通知工作线程保持这批候选的顺序。界面线程调用，只记下页面
 // 代次，由工作线程在处理下一个任务前认领（见 LatchCandidateUiInteraction）。
