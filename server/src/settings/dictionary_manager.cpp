@@ -1160,11 +1160,11 @@ json::object ImportHans(const json::object &request)
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
 
-// 导入其他输入法的词库（Rime、搜狗、QQ、百度、LibIME、Mac）到拼音用户词库。
-// 文件由设置窗口选好后把路径交过来，在这里读：细胞词库动辄几十万条，不经消息通道搬内容。
+// 导入其他输入法的词库（Rime、LibIME）到拼音用户词库。
+// 文件由设置窗口选好后把路径交过来，在这里读：整套词库动辄几十万条，不经消息通道搬内容。
 // 解析见 foreign_dictionary.cpp；写库与「批量导入」同一套校验、去重和用户日志。
 // 外来词频与本词库不在一个量级，只取它在文件里的名次换算成权重（MapImportFrequencies）；
-// 没有词频的格式（scel、qcel、bdict、sgpy、plist）一律最低档。
+// 没写词频的词条一律最低档。
 json::object ImportForeign(const json::object &request)
 {
     const std::string format = StringValue(request, "format");

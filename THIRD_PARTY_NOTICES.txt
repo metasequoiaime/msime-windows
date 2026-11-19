@@ -1104,20 +1104,14 @@ That's all there is to it!
 ------------------------------------------------------------------------------
 
 The settings window's "导入其他词库" (import other dictionaries) feature reads
-Rime, Sogou (scel, text and backup bin), QQ (qcel and text), Baidu (bdict and
-text), LibIME (text and binary) and Mac plist dictionaries. Its format readers
-in server/src/settings/foreign_dictionary.cpp are a C++ port of the importers
-in the "深蓝词库转换" project imewlconverter, Copyright studyzy and
-contributors. The Sogou backup reader there was in turn translated from
-Sogou-User-Dict-Converter (Copyright h4x3rotab) and rose (Copyright nopdan).
-All three are licensed under the GNU General Public License version 3, the same
-license as this project; its full text is in the LICENSE file at the root of
-this repository.
+Rime and LibIME (text and binary) dictionaries. Its format readers in
+server/src/settings/foreign_dictionary.cpp are a C++ port of the importers in
+the "深蓝词库转换" project imewlconverter, Copyright studyzy and contributors,
+licensed under the GNU General Public License version 3, the same license as
+this project; its full text is in the LICENSE file at the root of this
+repository.
 
-Sources:
-  https://github.com/studyzy/imewlconverter
-  https://github.com/h4x3rotab/Sogou-User-Dict-Converter
-  https://github.com/nopdan/rose
+Source: https://github.com/studyzy/imewlconverter
 
 ------------------------------------------------------------------------------
 15. zstd - BSD License
