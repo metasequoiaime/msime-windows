@@ -563,7 +563,10 @@ struct AiPage : std::enable_shared_from_this<AiPage>
 
     VisualPtr Build()
     {
-        PageBuilder page(L"AI 与云联想");
+        PageBuilder page(L"整句与云候选");
+
+        // 整句模型与云候选在前：都是本地或无需配置就能用的候选来源，AI 联想要填服务商才能用，放在后面。
+        AddSentenceSection(page, context);
 
         // 状态区：总开关、当前配置摘要、数据去向。
         {
