@@ -137,6 +137,13 @@ def build_english(source: inputs.Inputs, path: Path, msime: Path, stage: Stages)
 
         stage("english-glosses", glosses)
 
+        def ipa():
+            entries = english_db.parse_hallelujah_ipa(source.hallelujah_ipa.read_bytes())
+            written = english_db.write_ipa(connection, entries)
+            return f"{written} of {len(entries)} hallelujahIM transcriptions match an English candidate"
+
+        stage("english-ipa", ipa)
+
         def cn_en():
             name = "sources/cn-en/machine-translations.txt"
             entries = english_db.parse_cn_en_translations(textutil.read(source.source(name)), name)

@@ -1875,6 +1875,14 @@ VisualPtr BuildInputPage(PageContext &context)
     page.AddSection(MakeRow(L"回车上屏英文时入库",
                             L"按回车上屏输入的英文时，把这个单词写入英文词库，之后可作为候选出现",
                             Toggle(context, "input.enter_learns_english_word")));
+    page.AddSection(MakeRow(L"英文上屏后自动补空格",
+                            L"英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文单词后自动补一个空格；"
+                            L"回车与标点上屏不补",
+                            Toggle(context, "input.english_commit_with_space")));
+    page.AddSection(MakeRow(L"英文候选显示音标与释义",
+                            L"英文候选模式下在高亮的候选下方显示音标和中文释义。开启「高级」里的 DR Dict "
+                            L"词典联动后，释义可改由 DR Dict 提供",
+                            Toggle(context, "input.english_candidate_detail")));
 
     // ---- 固定标点 ----
     {

@@ -91,6 +91,32 @@ bool EnglishDictionary::ready()
     return ensure_query_statement();
 }
 
+std::vector<WordItem> EnglishDictionary::query_distinct_words()
+{
+    if (!ensure_query_statement())
+        return {};
+    // SQLite 的聚合查询里，与 max() 同行的裸列取的就是取到最大值的那一行。
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT word,display,max(weight) FROM english_words GROUP BY word", -1, &statement,
+                           nullptr) != SQLITE_OK)
+    {
+        if (statement != nullptr)
+            sqlite3_finalize(statement);
+        return {};
+    }
+    std::vector<WordItem> words;
+    while (sqlite3_step(statement) == SQLITE_ROW)
+    {
+        const auto *word = reinterpret_cast<const char *>(sqlite3_column_text(statement, 0));
+        const auto *display = reinterpret_cast<const char *>(sqlite3_column_text(statement, 1));
+        if (word == nullptr || display == nullptr)
+            continue;
+        words.emplace_back(word, display, sqlite3_column_int64(statement, 2), CandidateSource::EnglishDictionary);
+    }
+    sqlite3_finalize(statement);
+    return words;
+}
+
 namespace
 {
 std::string QueryGloss(sqlite3_stmt *statement, const std::string &key)
@@ -125,6 +151,25 @@ std::string EnglishDictionary::query_english_gloss(const std::string &chinese)
     if (custom != custom_zh_en_.end())
         return custom->second;
     return chinese.empty() || !ensure_gloss_statements() ? std::string{} : QueryGloss(zh_en_statement_, chinese);
+}
+
+std::string EnglishDictionary::query_ipa(const std::string &english)
+{
+    if (english.empty() || ipa_unavailable_ || !ensure_query_statement())
+        return {};
+    if (ipa_statement_ == nullptr &&
+        sqlite3_prepare_v2(db_, "SELECT ipa FROM en_ipa WHERE english=?1", -1, &ipa_statement_, nullptr) != SQLITE_OK)
+    {
+        // 词库早于音标表：记下来，以后不再每次都试着准备语句；连接留着给别的查询用。
+        if (ipa_statement_ != nullptr)
+        {
+            sqlite3_finalize(ipa_statement_);
+            ipa_statement_ = nullptr;
+        }
+        ipa_unavailable_ = true;
+        return {};
+    }
+    return QueryGloss(ipa_statement_, english);
 }
 
 bool EnglishDictionary::upsert_gloss(const std::string &db_path, bool chinese_to_english, const std::string &key,
@@ -375,6 +420,11 @@ bool EnglishDictionary::ensure_gloss_statements()
 
 void EnglishDictionary::close_database()
 {
+    if (ipa_statement_ != nullptr)
+    {
+        sqlite3_finalize(ipa_statement_);
+        ipa_statement_ = nullptr;
+    }
     if (mixed_query_statement_ != nullptr)
     {
         sqlite3_finalize(mixed_query_statement_);

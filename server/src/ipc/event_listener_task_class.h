@@ -49,6 +49,8 @@ enum class TaskType
     RefreshWithEnrichment,
     // 横排固定宽度：候选窗量出当前页一行只放得下几个，回报给工作线程重新划页。
     UiCandidatePageFitted,
+    // 英文候选模式里高亮候选的音标与释义（词库或 DR Dict）查完了。
+    ApplyEnglishCandidateDetail,
 };
 
 // The worker keeps FIFO order within each class.

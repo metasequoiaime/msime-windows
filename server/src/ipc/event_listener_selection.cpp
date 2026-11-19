@@ -15,6 +15,7 @@
 #include "utils/common_utils.h"
 #include "global/globals.h"
 #include "config/ime_config.h"
+#include "english/english_candidate_text_policy.h"
 #include "engine/local_modes/date_time_query.h"
 #include "engine/local_modes/quick_phrase_query.h"
 #include "log/candidate_diag_log.h"
@@ -385,6 +386,16 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             const std::string committed_text = FanyImeIpc::CommitTextAfterCreatingWordPrefix(
                 prefix_chosen, curChosen, IsRadicalCandidateListActive(), FirstSpellingOfText);
             Global::candidate_ui.selected_text = string_to_wstring(committed_text);
+            // 英文候选模式：空格、数字键、鼠标上屏的英文词后面补一个空格，接着就能打下一个词。
+            // 回车（原文上屏）和标点（带标点上屏）不经过这里，不受影响。
+            if (g_english_input_mode && GetConfiguredEnglishCommitWithSpace() &&
+                (is_space || is_digit_selection || is_direct_selection) &&
+                (curWordItem.source == CandidateSource::EnglishDictionary ||
+                 curWordItem.source == CandidateSource::Generated) &&
+                prefix_chosen.word.empty() && EnglishIme::ShouldAppendCommitSpace(committed_text))
+            {
+                Global::candidate_ui.selected_text += L' ';
+            }
             // 整句候选走的是这条提前返回的捷径，到不了下面 creating_word 的收尾逻辑，
             // 因此造好的词必须在这里落库，否则前缀 + 整句只上屏、学不到。没有前缀时
             // 整句自己就是要落库的那条词：它在词库里没有行，下面的调频改不到它。

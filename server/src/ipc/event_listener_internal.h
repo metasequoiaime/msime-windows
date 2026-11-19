@@ -80,6 +80,18 @@ struct CandidateTranslationGloss
 };
 extern std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 extern std::string g_candidate_translation_signature;
+// 英文候选模式里高亮候选下方的音标与释义，按小写词缓存。工作线程独用。词库的音标和释义、
+// DR Dict 的摘要各自异步回来；done 置位后不再请求。
+constexpr size_t kMaxEnglishCandidateDetails = 2048;
+struct EnglishCandidateDetail
+{
+    std::string ipa;
+    std::string gloss;
+    std::string brief;
+    bool local_done = false;
+    bool brief_done = false;
+};
+extern std::unordered_map<std::string, EnglishCandidateDetail> g_english_candidate_details;
 extern bool g_translation_candidates_active;
 // 日期页：选中混输里的「📅日期」入口后，候选框换成整组日期时间格式。和译文页一样不动输入串，
 // 两者互斥，共用下面这份保存的候选与页码，退出时原样放回。
@@ -355,6 +367,12 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
                       const std::optional<metasequoia::OnlineQuery> &query);
 void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string &input, uint64_t generation);
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge);
+// 高亮英文候选的音标与释义回来了：from_dr_dict 为真时 gloss 是 DR Dict 的摘要（ipa 不用），否则是
+// 词库的音标与释义。写进缓存，正高亮着这个词就重画当前页。
+void ApplyEnglishCandidateDetail(const std::string &word, const std::string &ipa, const std::string &gloss,
+                                 bool from_dr_dict);
+// 组页时取高亮英文候选下方那一行；缓存里还没有的部分顺带发出请求。
+std::string EnglishCandidateDetailText(const WordItem &item);
 void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &input, uint64_t generation);
 void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &word, bool pinyin_is_canonical = false);
 bool ResolveCandidateItem(int one_based_index, WordItem &item);

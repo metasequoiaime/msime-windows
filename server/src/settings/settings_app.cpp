@@ -431,6 +431,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"wubi_mixed_pinyin", GetConfiguredWubiMixedPinyin()},
             {"escape_keeps_selected_word", GetConfiguredEscapeKeepsSelectedWord()},
             {"enter_learns_english_word", GetConfiguredEnterLearnsEnglishWord()},
+            {"english_commit_with_space", GetConfiguredEnglishCommitWithSpace()},
+            {"english_candidate_detail", GetConfiguredEnglishCandidateDetail()},
             {"wubi_z_mode", GetConfiguredWubiZMode()},
             {"wubi_four_code_auto_commit", GetConfiguredWubiFourCodeAutoCommit()},
             {"wubi_fifth_code_top_commit", GetConfiguredWubiFifthCodeTopCommit()},
@@ -582,7 +584,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"dr_dict",
            {{"enabled", GetConfiguredDrDictEnabled()},
             {"lookup_candidate_ctrl_shift_enter", GetConfiguredDrDictLookupCandidateHotkeySwitch()},
-            {"lookup_preedit_ctrl_alt_enter", GetConfiguredDrDictLookupPreeditHotkeySwitch()}}},
+            {"lookup_preedit_ctrl_alt_enter", GetConfiguredDrDictLookupPreeditHotkeySwitch()},
+            {"english_brief", GetConfiguredDrDictEnglishBriefSwitch()}}},
           {"appearance",
            {{"settings_window_linger", GetConfiguredSettingsWindowLinger()},
             {"settings_launch_animation", GetConfiguredSettingsLaunchAnimation()},
@@ -844,6 +847,10 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEscapeKeepsSelectedWord(json::value_to<bool>(data.at("value")));
     if (path == "input.enter_learns_english_word")
         return SetConfiguredEnterLearnsEnglishWord(json::value_to<bool>(data.at("value")));
+    if (path == "input.english_commit_with_space")
+        return SetConfiguredEnglishCommitWithSpace(json::value_to<bool>(data.at("value")));
+    if (path == "input.english_candidate_detail")
+        return SetConfiguredEnglishCandidateDetail(json::value_to<bool>(data.at("value")));
     if (path == "input.wubi_z_mode")
         return SetConfiguredWubiZMode(json::value_to<std::string>(data.at("value")));
     if (path == "input.wubi_four_code_auto_commit")
@@ -1074,6 +1081,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredDrDictLookupCandidateHotkey(json::value_to<bool>(data.at("value")));
     if (path == "dr_dict.lookup_preedit_ctrl_alt_enter")
         return SetConfiguredDrDictLookupPreeditHotkey(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.english_brief")
+        return SetConfiguredDrDictEnglishBrief(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_minus_equal")
         return SetConfiguredPagingMinusEqualEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_tab")

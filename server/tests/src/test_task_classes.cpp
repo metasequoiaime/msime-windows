@@ -121,6 +121,7 @@ TEST_CASE(task_classification_covers_every_task_type)
         {TaskType::ToolbarLanguageToggle, TaskClass::UserAction},
         {TaskType::ApplyRescoredOrder, TaskClass::Enrichment},
         {TaskType::RefreshWithEnrichment, TaskClass::Enrichment},
+        {TaskType::ApplyEnglishCandidateDetail, TaskClass::Enrichment},
     };
     for (const auto &[type, task_class] : expected)
     {

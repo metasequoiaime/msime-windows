@@ -347,6 +347,36 @@ bool SetConfiguredEnterLearnsEnglishWord(bool enabled)
     return true;
 }
 
+bool GetConfiguredEnglishCommitWithSpace()
+{
+    return g_english_commit_with_space;
+}
+
+bool SetConfiguredEnglishCommitWithSpace(bool enabled)
+{
+    if (!WriteConfiguredValue("input", "english_commit_with_space", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_english_commit_with_space = enabled;
+    return true;
+}
+
+bool GetConfiguredEnglishCandidateDetail()
+{
+    return g_english_candidate_detail;
+}
+
+bool SetConfiguredEnglishCandidateDetail(bool enabled)
+{
+    if (!WriteConfiguredValue("input", "english_candidate_detail", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_english_candidate_detail = enabled;
+    return true;
+}
+
 const std::string &GetConfiguredShuangpinPreeditMode()
 {
     return g_shuangpin_preedit_mode;

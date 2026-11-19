@@ -768,3 +768,23 @@ bool GetConfiguredDrDictLookupPreeditHotkey()
 {
     return GetConfiguredDrDictEnabled() && GetConfiguredDrDictLookupPreeditHotkeySwitch();
 }
+
+bool GetConfiguredDrDictEnglishBriefSwitch()
+{
+    return g_dr_dict_english_brief.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredDrDictEnglishBrief(bool enabled)
+{
+    if (!WriteConfiguredValue("dr_dict", "english_brief", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_dr_dict_english_brief.store(enabled, std::memory_order_relaxed);
+    return true;
+}
+
+bool GetConfiguredDrDictEnglishBrief()
+{
+    return GetConfiguredDrDictEnabled() && GetConfiguredDrDictEnglishBriefSwitch();
+}

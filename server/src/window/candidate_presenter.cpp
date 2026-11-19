@@ -333,7 +333,6 @@ void CandidatePresenter::ApplySkin()
 std::uint64_t CandidatePresenter::FillItemsFromUi()
 {
     const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
-    const bool translationsEnabled = GetConfiguredCandidateTranslationsEnabled();
     std::vector<msimeui::CandidateList::Item> items;
     items.reserve(page->page_views.size());
     std::vector<CandidateSkinScene::PageWord> words;
@@ -346,7 +345,9 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
         item.label = std::to_wstring(i + 1);
         item.text = words.back().text + words.back().badge;
         item.annotation = string_to_wstring(view.annotation);
-        if (translationsEnabled)
+        // 译文开关关着时工作线程不给候选填译文（见 PrepareCandidateTranslationRequest），这里有就画；
+        // 英文候选模式里高亮候选的音标与释义不受那个开关管，同样走这一栏。
+        if (!view.translation.empty())
         {
             // 逐段转成 UTF-16 再拼起来，区间按拼出来的串计。
             for (const auto &segment : FanyImeIpc::SegmentTranslationGloss(view.translation))

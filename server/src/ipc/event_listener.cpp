@@ -82,6 +82,7 @@ namespace event_listener_detail
 {
 std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 std::string g_candidate_translation_signature;
+std::unordered_map<std::string, EnglishCandidateDetail> g_english_candidate_details;
 
 // 副候选框：Ctrl+Enter 在高亮候选有多条译义时，把候选框整个换成那几条译义，让空格/
 // 数字键像选普通候选一样选一条上屏。输入串一个字都没动，所以退出这个子模式时把原来的
