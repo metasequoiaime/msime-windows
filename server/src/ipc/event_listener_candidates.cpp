@@ -310,6 +310,12 @@ std::string BuildCurrentCandidatePage()
 
     int maxCount = 0;
     std::string candidate_string;
+    bool fuzzy_pinyin_hint_shown = false;
+    const std::string typed_pinyin =
+        current_scheme == SchemeType::Shuangpin && GlobalIme::composition.has_shuangpin_forms()
+            ? GlobalIme::composition.shuangpin_quanpin_segmentation
+            : g_inputSession->get_pinyin_segmentation();
+    const auto typed_pinyin_segments = quanpin::split_segments(typed_pinyin);
     for (int i = 0; i < loop; i++)
     {
         const auto &item = ui.items[start + i];
@@ -329,6 +335,11 @@ std::string BuildCurrentCandidatePage()
             // pinned-position lookups read item.word / page_words and must never see
             // the marker suffix.
             view.text += "*";
+        }
+        if (item.fuzzy && ApplyFuzzyPinyinHint(view, !fuzzy_pinyin_hint_shown, typed_pinyin_segments,
+                                               quanpin::split_segments(FuzzyPinyinDisplayReading(item))))
+        {
+            fuzzy_pinyin_hint_shown = true;
         }
         if (radical_mode)
         {

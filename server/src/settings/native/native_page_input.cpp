@@ -1839,10 +1839,11 @@ VisualPtr BuildInputPage(PageContext &context)
         auto finalList = OptionList(finals);
         s->fuzzyRules = {std::make_shared<Dimmable>(initialList), std::make_shared<Dimmable>(finalList)};
         s->fuzzyHint = std::make_shared<Hideable>(DisabledHint(), false);
-        auto details =
-            Col({Description(L"开启后两个读音互相匹配，如输入 zhang 也可命中 zang 开头的词；全拼与双拼均生效", 0.0f),
-                 Padded(MakeSubTitle(L"声母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[0],
-                 Padded(MakeSubTitle(L"韵母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[1], s->fuzzyHint});
+        auto details = Col({Description(L"开启后两个读音互相匹配，如输入 zhang 也可命中 zang "
+                                        L"开头的词；全拼与双拼均生效。每页首个模糊音候选只在读音不同的字后显示正确拼写",
+                                        0.0f),
+                            Padded(MakeSubTitle(L"声母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[0],
+                            Padded(MakeSubTitle(L"韵母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[1], s->fuzzyHint});
         auto section = MakeToggleSection(L"模糊音", details);
         s->quanpinSections.push_back(
             AddHideableSection(page, Col({std::make_shared<SettingRow>(section.expander, master), section.details})));
