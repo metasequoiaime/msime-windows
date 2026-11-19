@@ -23,11 +23,6 @@
       "size": 185418,
       "sha256": "77a5cb437c45d1115f3b593802c20651d8c93803ed1073278dc1a1240016f10d"
     },
-    "hallelujah-words-ipa.json": {
-      "url": "https://raw.githubusercontent.com/dongyuwei/hallelujahIM/bce5580fecbdf88a80ce20f8393ceb346d251139/dictionary/words_with_frequency_and_translation_and_ipa.json",
-      "size": 14582125,
-      "sha256": "2342cca8ed2bf56ea4c82c157098d19719a5a8e643f7bac0392de288ba348830"
-    },
     "jp_sela.dict.yaml": {
       "url": "https://raw.githubusercontent.com/Selaube/rime-jp_sela/898e09cb5e0bd3e02216165e52fef67f5a597590/jp_sela.dict.yaml",
       "size": 78569,
