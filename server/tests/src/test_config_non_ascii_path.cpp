@@ -90,6 +90,37 @@ std::string ReadText(const std::filesystem::path &path)
 }
 } // namespace
 
+// 五笔调频（frequency_adjustment.wubi_mode）独立于拼音调频，出厂关闭。这个键必须写在出厂模板里：
+// 升级时按模板重建配置，模板里没有的键会被丢掉，用户改过的值就静默回到默认。
+TEST_CASE(wubi_frequency_mode_is_separate_from_pinyin_and_off_by_default)
+{
+    namespace fs = std::filesystem;
+    const fs::path unique_root = MakeProfileRoot() / L"五笔调频";
+    const fs::path local_app_data = unique_root / L"本地";
+    const fs::path data_dir = local_app_data / L"metasequoiaime";
+
+    std::error_code ec;
+    fs::remove_all(unique_root, ec);
+    SeedTemplate(data_dir);
+    {
+        ScopedConfigLocation local_app_data_env(local_app_data);
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredFrequencyAdjustment().wubi_mode, std::string("disabled"));
+        REQUIRE_EQ(GetConfiguredFrequencyAdjustment().mode, std::string("promote"));
+        REQUIRE(ReadText(data_dir / L"config.toml").find("wubi_mode = \"disabled\"") != std::string::npos);
+
+        REQUIRE(SetConfiguredFrequencyAdjustmentString("wubi_mode", "pin"));
+        REQUIRE(!SetConfiguredFrequencyAdjustmentString("wubi_mode", "sometimes"));
+        InitImeConfig();
+        REQUIRE_EQ(GetConfiguredFrequencyAdjustment().wubi_mode, std::string("pin"));
+        REQUIRE_EQ(GetConfiguredFrequencyAdjustment().mode, std::string("promote"));
+
+        // 进程内的配置是全局的，留回出厂值，免得后面的用例读到这里改过的五笔调频。
+        REQUIRE(SetConfiguredFrequencyAdjustmentString("wubi_mode", "disabled"));
+    }
+    fs::remove_all(unique_root, ec);
+}
+
 TEST_CASE(config_round_trips_under_non_ascii_profile_path)
 {
     namespace fs = std::filesystem;

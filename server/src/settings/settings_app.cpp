@@ -554,6 +554,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()}}},
           {"frequency_adjustment",
            {{"mode", frequency.mode},
+            {"wubi_mode", frequency.wubi_mode},
             {"trigger_count", frequency.trigger_count},
             {"linear_step", frequency.linear_step}}},
           {"utility",

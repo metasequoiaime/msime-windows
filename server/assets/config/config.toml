@@ -193,6 +193,8 @@ proxy_server = ""
 [frequency_adjustment]
 # disabled / pin / halve / linear / promote
 mode = "promote"
+# 五笔候选的调频方式，取值同上，默认关闭（保持码表固定码序）；触发频次与线性步长两边共用
+wubi_mode = "disabled"
 # 每选中几次执行一次调频，范围 1~10
 trigger_count = 1
 # 线性调频每次前移数量，范围 1~10

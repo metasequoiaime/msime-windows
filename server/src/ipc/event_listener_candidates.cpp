@@ -19,6 +19,7 @@
 #include <utf8.h>
 #include "global/globals.h"
 #include "engine/common/helpcode_utils.h"
+#include "engine/core/wubi_profile.h"
 #include "engine/quanpin/quanpin_query.h"
 #include "engine/user_dictionary/user_dictionary_journal.h"
 #include "cloud/cloud_translation.h"
@@ -753,16 +754,37 @@ std::string CandidateDatabaseKey(const WordItem &item, const std::string &contex
     return quanpin::join_segments(segments);
 }
 
+metasequoia::WubiProfile ConfiguredWubiProfile()
+{
+    // 配置读入时已把不认识的值归为 wubi86，这里的回退只防万一。
+    return metasequoia::wubi_profile_from_name(GetConfiguredWubiSchema()).value_or(metasequoia::WubiProfile::Wubi86);
+}
+
+user_dictionary::DictionaryKind ConfiguredWubiDictionaryKind()
+{
+    return user_dictionary::wubi_dictionary_kind(ConfiguredWubiProfile());
+}
+
+std::string WubiRankingContextKey(const std::string &code)
+{
+    // 与引擎 InputSession::position_context 同一规则：86 沿用码本身，98、新世纪同一个码对应另一组字，
+    // 加版本名前缀分开记，免得一版里的固定位置和调频计数串到另一版。
+    const auto profile = ConfiguredWubiProfile();
+    if (profile == metasequoia::WubiProfile::Wubi86)
+        return code;
+    return std::string(metasequoia::wubi_profile_name(profile)) + ":" + code;
+}
+
 std::pair<std::string, std::string> RankingKeysForCandidate(const WordItem &item)
 {
-    // 混输组合里五笔候选与拼音候选共存，按候选自己的方案选键：五笔候选写码表（context 与
-    // entry 都是码），拼音候选写拼音词典。此时 CurrentRankingContextKey() 从 get_quanpin()
+    // 混输组合里五笔候选与拼音候选共存，按候选自己的方案选键：五笔候选写码表（context 是带版本前缀的码，
+    // entry 是码表里的码），拼音候选写拼音词典。此时 CurrentRankingContextKey() 从 get_quanpin()
     // 取到的正是那串字母的拼音上下文，可以直接用。
     if (item.scheme == SchemeType::Wubi)
     {
         const std::string key =
             item.pinyin.empty() && g_inputSession ? g_inputSession->get_pinyin_sequence() : item.pinyin;
-        return {key, item.pinyin};
+        return {WubiRankingContextKey(key), item.pinyin};
     }
     const std::string context_key = CurrentRankingContextKey();
     return {context_key, CandidateDatabaseKey(item, context_key)};
@@ -829,6 +851,48 @@ std::vector<WordItem> PreservedMixedRowsForInput(const std::vector<WordItem> &cu
             return false;
         }
     });
+}
+
+// 普通候选的固定位置。五笔会话里五笔候选与（混输时追加的）拼音候选各按自己的上下文结算，分区规则与引擎
+// InputSession::apply_candidate_positions 一致：五笔候选的上下文是带版本前缀的码（与写入时
+// RankingKeysForCandidate 同一个键），不能拿码去按拼音切分；拼音候选照旧用拼音上下文。两区各自排好后按
+// 「五笔在前、拼音在后」拼回，同词只留五笔那份。
+static void ApplyFixedPositionsToQueriedCandidates(std::vector<WordItem> &items)
+{
+    const std::string user_db = user_dictionary::default_user_db_path();
+    const bool single_letter = g_inputSession->get_pinyin_sequence().size() == 1;
+    const bool helpcode = g_inputSession->has_active_helpcode();
+    const auto find_in_session = [](const std::string &key, const std::string &value) {
+        return g_inputSession->find_candidate(key, value);
+    };
+    if (g_inputSession->current_scheme_type() != SchemeType::Wubi)
+    {
+        user_dictionary::apply_fixed_positions(user_db, CurrentRankingContextKey(), items, single_letter,
+                                               find_in_session, helpcode);
+        return;
+    }
+
+    std::vector<WordItem> wubi_items;
+    std::vector<WordItem> pinyin_items;
+    for (auto &item : items)
+        (item.scheme == SchemeType::Wubi ? wubi_items : pinyin_items).push_back(std::move(item));
+    if (!wubi_items.empty())
+        user_dictionary::apply_fixed_positions(user_db, WubiRankingContextKey(g_inputSession->get_pinyin_sequence()),
+                                               wubi_items, single_letter, find_in_session, helpcode);
+    // 会话的 find_candidate 查的是五笔码表，拼音分区不能拿它补词，固定在拼音上下文却不在本次结果里的词不补回。
+    if (!pinyin_items.empty())
+        user_dictionary::apply_fixed_positions(user_db, CurrentRankingContextKey(), pinyin_items, false, {}, helpcode);
+    pinyin_items.erase(std::remove_if(pinyin_items.begin(), pinyin_items.end(),
+                                      [&wubi_items](const WordItem &pinyin_item) {
+                                          return std::any_of(wubi_items.begin(), wubi_items.end(),
+                                                             [&pinyin_item](const WordItem &wubi_item) {
+                                                                 return wubi_item.word == pinyin_item.word;
+                                                             });
+                                      }),
+                       pinyin_items.end());
+    items = std::move(wubi_items);
+    items.insert(items.end(), std::make_move_iterator(pinyin_items.begin()),
+                 std::make_move_iterator(pinyin_items.end()));
 }
 
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
@@ -942,11 +1006,7 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
             preserve_mixed_rows = !preserved_english.empty() || !preserved_mixed_rows.empty();
         }
         queryMs = segment.Split();
-        user_dictionary::apply_fixed_positions(
-            user_dictionary::default_user_db_path(), CurrentRankingContextKey(), items,
-            g_inputSession->get_pinyin_sequence().size() == 1,
-            [](const std::string &key, const std::string &value) { return g_inputSession->find_candidate(key, value); },
-            g_inputSession->has_active_helpcode());
+        ApplyFixedPositionsToQueriedCandidates(items);
         PlaceQuickPhrases(items, current_input);
         fixedPosMs = segment.Split();
         // 异步候选还没回来，字母词也要先在默认位置上；混输开关全关时这里就是它的最终位置。

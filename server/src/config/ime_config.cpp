@@ -826,11 +826,13 @@ bool LoadImeConfig()
             }
         }
         {
+            const auto valid_mode = [](const std::string &mode) {
+                return mode == "disabled" || mode == "pin" || mode == "halve" || mode == "linear" || mode == "promote";
+            };
             const std::string mode = tbl["frequency_adjustment"]["mode"].value_or(std::string("promote"));
-            g_frequency_adjustment.mode =
-                mode == "disabled" || mode == "pin" || mode == "halve" || mode == "linear" || mode == "promote"
-                    ? mode
-                    : "promote";
+            g_frequency_adjustment.mode = valid_mode(mode) ? mode : "promote";
+            const std::string wubi_mode = tbl["frequency_adjustment"]["wubi_mode"].value_or(std::string("disabled"));
+            g_frequency_adjustment.wubi_mode = valid_mode(wubi_mode) ? wubi_mode : "disabled";
             const int trigger = tbl["frequency_adjustment"]["trigger_count"].value_or(1);
             const int step = tbl["frequency_adjustment"]["linear_step"].value_or(1);
             g_frequency_adjustment.trigger_count = trigger >= 1 && trigger <= 10 ? trigger : 1;

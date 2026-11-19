@@ -859,7 +859,7 @@ void WorkerThread()
                         CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(),
                         context_key, FanyImeIpc::FirstVariantsOnly(Global::candidate_ui.items), entry_key, item.word,
                         "pin", 1, 1, true, nullptr,
-                        item.scheme == SchemeType::Wubi ? user_dictionary::DictionaryKind::Wubi
+                        item.scheme == SchemeType::Wubi ? ConfiguredWubiDictionaryKind()
                                                         : user_dictionary::DictionaryKind::Pinyin);
             }
             else if (task.type == TaskType::UiDeleteCandidate)
@@ -1298,28 +1298,32 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
         return;
     }
     const auto &frequency = GetConfiguredFrequencyAdjustment();
-    DictionaryWriter().Post([english, wubi, context_key,
-                             candidates = FanyImeIpc::FirstVariantsOnly(
-                                 ranking_candidates ? *ranking_candidates : Global::candidate_ui.items),
-                             entry_key, word, mode = frequency.mode, linear_step = frequency.linear_step,
-                             trigger_count = frequency.trigger_count] {
-        if (english)
-        {
-            (void)user_dictionary::adjust_english_candidate_ranking(
-                CommonUtils::get_ime_data_path() + "\\english.db", user_dictionary::default_user_db_path(), context_key,
-                candidates, entry_key, word, mode, linear_step, trigger_count, false);
-            return;
-        }
-        bool ranking_changed = false;
-        (void)user_dictionary::adjust_candidate_ranking(
-            CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), context_key,
-            candidates, entry_key, word, mode, linear_step, trigger_count, false, &ranking_changed,
-            wubi ? user_dictionary::DictionaryKind::Wubi : user_dictionary::DictionaryKind::Pinyin);
-        if (ranking_changed)
-        {
-            EnqueueResetInputSessionCacheTask();
-        }
-    });
+    // 五笔有自己的调频方式（默认关闭）：盲打靠固定码序，选一次就挪位置会打乱记忆。码表版本在调用线程上取，
+    // 写线程里不再读配置。
+    const std::string mode = wubi ? frequency.wubi_mode : frequency.mode;
+    const user_dictionary::DictionaryKind kind =
+        wubi ? ConfiguredWubiDictionaryKind() : user_dictionary::DictionaryKind::Pinyin;
+    DictionaryWriter().Post(
+        [english, kind, context_key,
+         candidates =
+             FanyImeIpc::FirstVariantsOnly(ranking_candidates ? *ranking_candidates : Global::candidate_ui.items),
+         entry_key, word, mode, linear_step = frequency.linear_step, trigger_count = frequency.trigger_count] {
+            if (english)
+            {
+                (void)user_dictionary::adjust_english_candidate_ranking(
+                    CommonUtils::get_ime_data_path() + "\\english.db", user_dictionary::default_user_db_path(),
+                    context_key, candidates, entry_key, word, mode, linear_step, trigger_count, false);
+                return;
+            }
+            bool ranking_changed = false;
+            (void)user_dictionary::adjust_candidate_ranking(
+                CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), context_key,
+                candidates, entry_key, word, mode, linear_step, trigger_count, false, &ranking_changed, kind);
+            if (ranking_changed)
+            {
+                EnqueueResetInputSessionCacheTask();
+            }
+        });
 }
 
 void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,
