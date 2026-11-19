@@ -7,6 +7,7 @@
 #include "CandidateListUIPresenter.h"
 #include "CompositionProcessorEngine.h"
 #include "Compartment.h"
+#include "LanguageBar.h"
 #include "define.h"
 #include <debugapi.h>
 #include <namedpipeapi.h>
@@ -105,6 +106,7 @@ class CCommitCandidateAndContinueEditSession : public CEditSessionBase
 
 void CMetasequoiaIME::_RefreshLanguageBarThemeIcons()
 {
+    InvalidateTaskbarThemeCache();
     CCompositionProcessorEngine *pEngine = GetCompositionProcessorEngine();
     if (pEngine)
     {
@@ -127,8 +129,7 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
         return;
     }
 
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0,
-                      KEY_NOTIFY, &_themeRegKey) != ERROR_SUCCESS)
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegKeyPersonalizeTheme, 0, KEY_NOTIFY, &_themeRegKey) != ERROR_SUCCESS)
     {
         return;
     }
@@ -150,26 +151,64 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
         return;
     }
 
+    // Accent color changes do not touch Personalize: the taskbar palette step
+    // lives in AccentColorMenu under Explorer\Accent, with DWM\AccentColor as
+    // the fallback IsTaskbarDark reads. Both keys are watched. Optional:
+    // failure here leaves the theme-only watch running, same coverage as
+    // before.
+    auto startOptionalKeyWatch = [](LPCWSTR subKey, HKEY *keyOut, HANDLE *eventOut) {
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, subKey, 0, KEY_NOTIFY, keyOut) != ERROR_SUCCESS)
+        {
+            return;
+        }
+        *eventOut = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!*eventOut ||
+            RegNotifyChangeKeyValue(*keyOut, FALSE, REG_NOTIFY_CHANGE_LAST_SET, *eventOut, TRUE) != ERROR_SUCCESS)
+        {
+            if (*eventOut)
+            {
+                CloseHandle(*eventOut);
+                *eventOut = nullptr;
+            }
+            RegCloseKey(*keyOut);
+            *keyOut = nullptr;
+        }
+    };
+    startOptionalKeyWatch(kRegKeyDwm, &_dwmRegKey, &_dwmRegEvent);
+    startOptionalKeyWatch(kRegKeyExplorerAccent, &_accentRegKey, &_accentRegEvent);
+
     _stopThemeWatcher.store(false);
     _pThemeWatcherThread = new (std::nothrow) std::thread([this]() {
         while (!_stopThemeWatcher.load(std::memory_order_acquire))
         {
-            const DWORD wait = WaitForSingleObject(_themeRegEvent, INFINITE);
+            HANDLE events[3] = {_themeRegEvent, nullptr, nullptr};
+            HKEY keys[3] = {_themeRegKey, nullptr, nullptr};
+            DWORD count = 1;
+            if (_dwmRegEvent)
+            {
+                events[count] = _dwmRegEvent;
+                keys[count] = _dwmRegKey;
+                ++count;
+            }
+            if (_accentRegEvent)
+            {
+                events[count] = _accentRegEvent;
+                keys[count] = _accentRegKey;
+                ++count;
+            }
+            const DWORD wait = WaitForMultipleObjects(count, events, FALSE, INFINITE);
             if (_stopThemeWatcher.load(std::memory_order_acquire))
             {
                 break;
             }
-            if (wait != WAIT_OBJECT_0)
+            if (wait == WAIT_FAILED || wait >= WAIT_OBJECT_0 + count)
             {
                 continue;
             }
-            if (_stopThemeWatcher.load(std::memory_order_acquire))
-            {
-                break;
-            }
 
-            ResetEvent(_themeRegEvent);
-            RegNotifyChangeKeyValue(_themeRegKey, FALSE, REG_NOTIFY_CHANGE_LAST_SET, _themeRegEvent, TRUE);
+            const DWORD fired = wait - WAIT_OBJECT_0;
+            ResetEvent(events[fired]);
+            RegNotifyChangeKeyValue(keys[fired], FALSE, REG_NOTIFY_CHANGE_LAST_SET, events[fired], TRUE);
 
             const HWND ownerWindow = _msgWndHandle;
             if (ownerWindow && IsWindow(ownerWindow))
@@ -181,6 +220,26 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
 
     if (!_pThemeWatcherThread)
     {
+        if (_dwmRegEvent)
+        {
+            CloseHandle(_dwmRegEvent);
+            _dwmRegEvent = nullptr;
+        }
+        if (_dwmRegKey)
+        {
+            RegCloseKey(_dwmRegKey);
+            _dwmRegKey = nullptr;
+        }
+        if (_accentRegEvent)
+        {
+            CloseHandle(_accentRegEvent);
+            _accentRegEvent = nullptr;
+        }
+        if (_accentRegKey)
+        {
+            RegCloseKey(_accentRegKey);
+            _accentRegKey = nullptr;
+        }
         CloseHandle(_themeRegEvent);
         _themeRegEvent = nullptr;
         RegCloseKey(_themeRegKey);
@@ -195,6 +254,14 @@ void CMetasequoiaIME::_StopThemeRegistryWatcher()
     {
         SetEvent(_themeRegEvent);
     }
+    if (_dwmRegEvent)
+    {
+        SetEvent(_dwmRegEvent);
+    }
+    if (_accentRegEvent)
+    {
+        SetEvent(_accentRegEvent);
+    }
 
     if (_pThemeWatcherThread)
     {
@@ -204,6 +271,30 @@ void CMetasequoiaIME::_StopThemeRegistryWatcher()
         }
         delete _pThemeWatcherThread;
         _pThemeWatcherThread = nullptr;
+    }
+
+    if (_dwmRegEvent)
+    {
+        CloseHandle(_dwmRegEvent);
+        _dwmRegEvent = nullptr;
+    }
+
+    if (_dwmRegKey)
+    {
+        RegCloseKey(_dwmRegKey);
+        _dwmRegKey = nullptr;
+    }
+
+    if (_accentRegEvent)
+    {
+        CloseHandle(_accentRegEvent);
+        _accentRegEvent = nullptr;
+    }
+
+    if (_accentRegKey)
+    {
+        RegCloseKey(_accentRegKey);
+        _accentRegKey = nullptr;
     }
 
     if (_themeRegEvent)

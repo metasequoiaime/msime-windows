@@ -13,28 +13,140 @@
 #include "Globals.h"
 #include "Compartment.h"
 #include "Ipc.h"
+#include "CommonUtils.h"
 #include "fmt/xchar.h"
 
 #include <atomic>
+#include <cmath>
 
 namespace
 {
-// Taskbar/system tray follows SystemUsesLightTheme (0 = dark).
+// SystemUsesLightTheme (0 = dark) describes the system UI theme only. It does
+// NOT describe the taskbar when an accent color is shown on it -- do not use
+// this for taskbar-related decisions; use IsTaskbarDark instead.
 bool IsSystemDarkMode()
 {
-    DWORD value = 1; // default to light
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                     L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
+    return ReadHkcuDword(kRegKeyPersonalizeTheme, L"SystemUsesLightTheme", 1) == 0;
+}
+
+// "Show accent color on Start and taskbar" only colors the taskbar in dark
+// mode until the November 2024 cumulative updates (KB5046617 / 26100.2314 on
+// 24H2, KB5046633 / 22631.4460 on 23H2 and 22H2): from there the shell also
+// honors ColorPrevalence in light mode. The build number alone is not
+// enough -- early 26100.1xxx predates the change -- so the patch revision
+// (UBR, which RtlGetVersion does not report) is read from HKLM as well. In
+// light mode on builds before the change, ColorPrevalence may be a leftover
+// from dark mode while the taskbar itself is light, so the accent path must
+// stay off there.
+bool SupportsLightModeAccentTaskbar()
+{
+    using RtlGetVersionFn = LONG(WINAPI *)(OSVERSIONINFOEXW *);
+    HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll)
     {
         return false;
     }
-    return value == 0;
+    auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(::GetProcAddress(ntdll, "RtlGetVersion"));
+    if (!rtlGetVersion)
+    {
+        return false;
+    }
+    OSVERSIONINFOEXW info{};
+    info.dwOSVersionInfoSize = sizeof(info);
+    if (rtlGetVersion(&info) != 0)
+    {
+        return false;
+    }
+    const DWORD build = info.dwBuildNumber;
+    if (build > 26100)
+    {
+        return true;
+    }
+    const DWORD ubr = ReadHklmDword(kRegKeyNtCurrentVersion, L"UBR", 0);
+    if (build == 26100)
+    {
+        return ubr >= 2314; // KB5046617, 2024-11
+    }
+    // 22H2/23H2 share the servicing branch; the same November 2024 update
+    // landed as 22621.4460 / 22631.4460.
+    if (build == 22631 || build == 22621)
+    {
+        return ubr >= 4460; // KB5046633, 2024-11
+    }
+    return false;
+}
+
+double LinearizeSrgbChannel(double channel)
+{
+    const double c = channel / 255.0;
+    return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+}
+
+// SystemUsesLightTheme alone does not describe the taskbar: in light mode the
+// user can still get a dark taskbar by enabling "show accent color on Start
+// and taskbar" (ColorPrevalence != 0) with a dark accent color, in which case
+// the light-mode (black glyph) icons become unreadable. Approximate the real
+// taskbar appearance with the accent color's luminance in that case.
+bool IsTaskbarDark()
+{
+    if (IsSystemDarkMode())
+    {
+        return true;
+    }
+    if (!SupportsLightModeAccentTaskbar())
+    {
+        return false;
+    }
+    if (ReadHkcuDword(kRegKeyPersonalizeTheme, L"ColorPrevalence", 0) == 0)
+    {
+        return false;
+    }
+
+    // The taskbar paints the palette step stored in AccentColorMenu, not the
+    // raw accent color; fall back to DWM\AccentColor. Both are AABBGGRR.
+    DWORD abgr = ReadHkcuDword(kRegKeyExplorerAccent, L"AccentColorMenu", ReadHkcuDword(kRegKeyDwm, L"AccentColor", 0));
+    // With transparency effects on, the taskbar is an acrylic blend and ends up
+    // darker than the palette step. There is no documented way to read the
+    // blended result; approximate it with a fixed darken so borderline colors
+    // still land on white glyphs like the shell's own taskbar text.
+    if (ReadHkcuDword(kRegKeyPersonalizeTheme, L"EnableTransparency", 1) != 0)
+    {
+        const DWORD r = (abgr & 0xFF) * 3 / 4;
+        const DWORD g = ((abgr >> 8) & 0xFF) * 3 / 4;
+        const DWORD b = ((abgr >> 16) & 0xFF) * 3 / 4;
+        abgr = (abgr & 0xFF000000) | (b << 16) | (g << 8) | r;
+    }
+    // WCAG relative luminance (linear-light Rec.709 primaries).
+    const double luminance = 0.2126 * LinearizeSrgbChannel(abgr & 0xFF) +
+                             0.7152 * LinearizeSrgbChannel((abgr >> 8) & 0xFF) +
+                             0.0722 * LinearizeSrgbChannel((abgr >> 16) & 0xFF);
+    // Pick the glyph color the way the shell picks its own taskbar text color:
+    // whichever of white/black has the higher WCAG contrast against the taskbar.
+    const double contrastForWhiteGlyph = (1.0 + 0.05) / (luminance + 0.05);
+    const double contrastForBlackGlyph = (luminance + 0.05) / 0.05;
+    return contrastForWhiteGlyph > contrastForBlackGlyph;
+}
+
+// GetIcon runs on the host's UI thread for every mode / Caps Lock / OnUpdate,
+// so the registry reads above are cached. The theme watcher invalidates the
+// cache through InvalidateTaskbarThemeCache before refreshing the icons.
+// -1 = unknown, 0 = light taskbar, 1 = dark taskbar.
+std::atomic<int> s_taskbarDarkCache{-1};
+
+bool IsTaskbarDarkCached()
+{
+    int cached = s_taskbarDarkCache.load(std::memory_order_acquire);
+    if (cached < 0)
+    {
+        cached = IsTaskbarDark() ? 1 : 0;
+        s_taskbarDarkCache.store(cached, std::memory_order_release);
+    }
+    return cached == 1;
 }
 
 DWORD ResolveThemeIconIndex(DWORD lightIconIndex)
 {
-    if (!IsSystemDarkMode())
+    if (!IsTaskbarDarkCached())
     {
         return lightIconIndex;
     }
@@ -110,6 +222,13 @@ SetThreadDpiAwarenessCtxFn ResolveSetThreadDpiAwarenessContext()
                   : nullptr;
 }
 } // namespace
+
+// Called by the theme watcher (CMetasequoiaIME::_RefreshLanguageBarThemeIcons)
+// before refreshing the icons, so the next GetIcon re-reads the theme state.
+void InvalidateTaskbarThemeCache()
+{
+    s_taskbarDarkCache.store(-1, std::memory_order_release);
+}
 
 //+---------------------------------------------------------------------------
 //

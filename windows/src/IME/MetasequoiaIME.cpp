@@ -251,6 +251,10 @@ CMetasequoiaIME::CMetasequoiaIME()
     _msgWndHandle = nullptr;
     _themeRegKey = nullptr;
     _themeRegEvent = nullptr;
+    _dwmRegKey = nullptr;
+    _dwmRegEvent = nullptr;
+    _accentRegKey = nullptr;
+    _accentRegEvent = nullptr;
     _pThemeWatcherThread = nullptr;
     _stopThemeWatcher = false;
 
