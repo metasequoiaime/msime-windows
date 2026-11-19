@@ -338,7 +338,7 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
         candidates.insert(candidates.begin(), WordItem("", input, 0, CandidateSource::Generated));
     }
     else if (!input.empty() && std::none_of(candidates.begin(), candidates.end(), [](const WordItem &item) {
-                 return item.source == CandidateSource::EnglishDictionary;
+                 return item.source == CandidateSource::EnglishDictionary || item.english_phrase;
              }))
     {
         // A raw fallback is selectable, but it is not an english.db row
@@ -350,7 +350,8 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
     // 固定排位都按它找行；原文那一行本来就是用户敲的字，不用改。
     for (auto &candidate : candidates)
     {
-        if (candidate.source == CandidateSource::Generated && candidate.corrected_from.empty())
+        if (candidate.source == CandidateSource::Generated && candidate.corrected_from.empty() &&
+            !candidate.english_phrase)
             continue;
         std::string cased = EnglishIme::WithTypedCase(input, candidate.word);
         if (cased != candidate.word)
@@ -373,6 +374,8 @@ std::string EnglishCandidateDetailKey(const WordItem &item)
 {
     if (item.source != CandidateSource::EnglishDictionary && item.source != CandidateSource::Generated)
         return {};
+    if (item.english_phrase)
+        return EnglishIme::PhraseDetailKey(item.word);
     return EnglishIme::DetailKey(item.source == CandidateSource::EnglishDictionary && !item.pinyin.empty(), item.pinyin,
                                  item.word);
 }

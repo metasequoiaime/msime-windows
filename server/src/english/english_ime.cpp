@@ -21,6 +21,7 @@ namespace
 // character.
 constexpr size_t kDefaultMixedMinPrefix = 2;
 constexpr size_t kDedicatedCandidateLimit = 1000;
+constexpr size_t kDedicatedPhraseLimit = 1000;
 // 纠错候选：同读音的词库词最多 4 个，再用系统拼写检查补到 8 个（同 hallelujahIM）。
 constexpr size_t kSpellingPerSource = 4;
 constexpr size_t kSpellingLimit = 8;
@@ -208,6 +209,10 @@ void WorkerLoop()
 
         auto candidates = dedicated_mode ? dictionary.query_prefix(prefix, kDedicatedCandidateLimit)
                                          : dictionary.query_mixed_prefix(prefix);
+        // 短语只进英文候选模式的整页列表，中文里混输的英文不带短语。
+        if (dedicated_mode && g_running && g_generation.load() == observed_generation)
+            candidates = EnglishIme::MergeEnglishPhrases(prefix, std::move(candidates),
+                                                         dictionary.query_phrase_prefix(prefix, kDedicatedPhraseLimit));
         if (dedicated_mode && candidates.empty() && g_running && g_generation.load() == observed_generation)
             candidates = corrector.correct(prefix, input);
         if (!g_running || g_generation.load() != observed_generation)

@@ -29,6 +29,9 @@ class EnglishDictionary
     std::string query_english_gloss(const std::string &chinese);
     // en_ipa 表里的音标（不带斜线或方括号）。旧词库没有这张表时返回空串，不影响其他查询。
     std::string query_ipa(const std::string &english);
+    // english_phrases 表里键以 prefix 开头的短语，键等于 prefix 的排最前，其余按权重。来源记 Generated、
+    // english_phrase 置位。旧词库没有这张表时返回空。
+    std::vector<WordItem> query_phrase_prefix(const std::string &prefix, size_t limit);
     bool ready();
     static bool ensure_schema(const std::string &db_path);
     static bool upsert_gloss(const std::string &db_path, bool chinese_to_english, const std::string &key,
@@ -51,6 +54,8 @@ class EnglishDictionary
     sqlite3_stmt *zh_en_statement_ = nullptr;
     sqlite3_stmt *ipa_statement_ = nullptr;
     bool ipa_unavailable_ = false;
+    sqlite3_stmt *phrase_statement_ = nullptr;
+    bool phrases_unavailable_ = false;
     std::unordered_map<std::string, std::string> custom_en_zh_;
     std::unordered_map<std::string, std::string> custom_zh_en_;
 };

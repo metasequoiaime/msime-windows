@@ -282,6 +282,47 @@ TEST_CASE(EnglishDictionaryQueriesIpaAndToleratesDictionariesWithoutIt)
     }
 }
 
+TEST_CASE(EnglishDictionaryQueriesPhrasesAndToleratesDictionariesWithoutThem)
+{
+    // 旧词库没有 english_phrases 表：短语查不到，单词查询照常。
+    {
+        TemporaryEnglishDatabase database;
+        EnglishDictionary dictionary(test::Utf8(database.path()));
+        REQUIRE(dictionary.query_phrase_prefix("according", 10).empty());
+        REQUIRE(dictionary.query_phrase_prefix("according", 10).empty());
+        REQUIRE(dictionary.ready());
+    }
+    {
+        TemporaryEnglishDatabase database;
+        sqlite3 *db = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(database.path()).c_str(), &db), SQLITE_OK);
+        REQUIRE_EQ(sqlite3_exec(db,
+                                "CREATE TABLE english_phrases(word TEXT COLLATE BINARY NOT NULL,display TEXT NOT NULL,"
+                                "weight INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(word,display)) WITHOUT ROWID;"
+                                "INSERT INTO english_phrases VALUES('accordingas','according as',3);"
+                                "INSERT INTO english_phrases VALUES('accordingto','according to',2);"
+                                "INSERT INTO english_phrases VALUES('according','ac-cording',1);"
+                                "INSERT INTO english_phrases VALUES('alot','a lot',4);",
+                                nullptr, nullptr, nullptr),
+                   SQLITE_OK);
+        sqlite3_close(db);
+        EnglishDictionary dictionary(test::Utf8(database.path()));
+        const auto phrases = dictionary.query_phrase_prefix("according", 10);
+        REQUIRE_EQ(phrases.size(), size_t{3});
+        // 键正好等于输入的排第一，其余按权重。
+        REQUIRE_EQ(phrases[0].word, std::string("ac-cording"));
+        REQUIRE_EQ(phrases[1].word, std::string("according as"));
+        REQUIRE_EQ(phrases[2].word, std::string("according to"));
+        REQUIRE_EQ(phrases[2].pinyin, std::string("accordingto"));
+        REQUIRE(phrases[2].source == CandidateSource::Generated);
+        REQUIRE(phrases[2].english_phrase);
+        REQUIRE_EQ(dictionary.query_phrase_prefix("accordingt", 10).size(), size_t{1});
+        REQUIRE_EQ(dictionary.query_phrase_prefix("according", 1).size(), size_t{1});
+        REQUIRE(dictionary.query_phrase_prefix("According", 10).empty());
+        REQUIRE(dictionary.query_phrase_prefix("", 10).empty());
+    }
+}
+
 TEST_CASE(EnglishDictionaryPrefersSiblingCustomTranslations)
 {
     TemporaryEnglishDatabase database;

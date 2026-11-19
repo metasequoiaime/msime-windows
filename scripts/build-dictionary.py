@@ -6,7 +6,7 @@
 
     msime.db           全拼表与字母词（sources/pinyin-next/base/ 整理好的拼音基础词库，不含 packs/ 专业词库，含自定义词条、读音纠错）、86/98/新世纪三张五笔表、空的快捷短语表（出厂不带内置短语）、japanese_lexicon
     english.db         英文候选、中英双向释义（ECDICT）、sources/cn-en/ 的中译英释义（全部义项）、custom/translations.txt 覆盖、
-                       音标（hallelujahIM 的 ipa 字段）
+                       音标（hallelujahIM 的 ipa 字段）、短语表 english_phrases（ECDICT 里带空格或连字符的条目）
     others.db          emoji、颜文字、符号（sources/symbols/ 的万象符号表，剔除 wanxiang-unrenderable.txt 列出的）
     dict_japanese.dat  日文整句模型（sources/japanese/ 的 Mozc 词库）
     以及 Mozc 与 SCOWL 的声明、dictionary-manifest.json、SHA256SUMS.txt、local-dictionary.json

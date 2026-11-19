@@ -144,6 +144,12 @@ def build_english(source: inputs.Inputs, path: Path, msime: Path, stage: Stages)
 
         stage("english-ipa", ipa)
 
+        def phrases():
+            total, glosses_added = english_db.write_phrases(connection, english_db.parse_ecdict_phrases(source.ecdict))
+            return f"{total} ECDICT phrases, {glosses_added} phrase glosses"
+
+        stage("english-phrases", phrases)
+
         def cn_en():
             name = "sources/cn-en/machine-translations.txt"
             entries = english_db.parse_cn_en_translations(textutil.read(source.source(name)), name)
