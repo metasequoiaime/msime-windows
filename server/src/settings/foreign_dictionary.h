@@ -1,12 +1,11 @@
 #pragma once
 
-// 其他输入法词库格式（Rime、搜狗、QQ、百度、LibIME、Mac 等）的读取。
+// 其他输入法词库格式的读取，只支持 Rime 与 LibIME（fcitx5）两种开源输入法的开放格式；
+// 商业输入法的私有格式（搜狗、QQ、百度、Mac 等）有意不支持。
 //
 // 各格式的解析逻辑移植自「深蓝词库转换」imewlconverter：
 //   https://github.com/studyzy/imewlconverter
 //   Copyright studyzy and contributors, licensed under the GNU General Public License v3.0.
-// 搜狗备份词库（sgpybin）部分在 imewlconverter 中又译自 h4x3rotab 的 Sogou-User-Dict-Converter
-// 与 nopdan 的 rose，二者同为 GPL-3.0。
 //
 // 这里只负责「文件字节 -> 词条 + 全拼」，不碰词库：校验、去重、写库和用户日志都由
 // dictionary_manager.cpp 按拼音批量导入的同一条路走。
@@ -24,14 +23,13 @@ struct Entry
     // 用 ' 分隔的全拼音节（例如 ni'hao）。为空表示文件没给出读音，交给调用方自动注音。
     std::string pinyin;
     // 文件里给的词频，越大越常用；量纲随格式而定（次数、libime 的对数概率……），调用方只该
-    // 拿来比高低。没有词频的格式或词条为空：scel、qcel 的扩展字段实测是每条各异的编号，
-    // 不是词频，按「只有位置」处理。
+    // 拿来比高低。文件没写词频的词条为空，按「只有位置」处理。
     std::optional<double> frequency;
 };
 
 struct Format
 {
-    // 协议里用的格式标识，与 imewlconverter 的命令行名称一致（rime、scel……）。
+    // 协议里用的格式标识，与 imewlconverter 的命令行名称一致（rime、libimetxt、libimebin）。
     const char *id;
     // 下拉框里的名字。
     const wchar_t *label;

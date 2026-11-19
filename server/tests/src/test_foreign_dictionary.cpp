@@ -48,24 +48,12 @@ std::string Le16(uint16_t value)
     return {static_cast<char>(value & 0xFF), static_cast<char>(value >> 8)};
 }
 
-std::string Le32(uint32_t value)
-{
-    return Le16(static_cast<uint16_t>(value & 0xFFFF)) + Le16(static_cast<uint16_t>(value >> 16));
-}
-
 std::string Utf16(const std::wstring &text)
 {
     std::string out;
     for (const wchar_t ch : text)
         out += Le16(static_cast<uint16_t>(ch));
     return out;
-}
-
-void Put(std::string &buffer, size_t offset, const std::string &bytes)
-{
-    if (buffer.size() < offset + bytes.size())
-        buffer.resize(offset + bytes.size(), '\0');
-    buffer.replace(offset, bytes.size(), bytes);
 }
 } // namespace
 
@@ -75,15 +63,18 @@ TEST_CASE(ForeignDictionaryFormatsMatchTheContract)
     std::vector<std::string> ids;
     for (const auto &format : ForeignDictionary::Formats())
         ids.push_back(format.id);
-    REQUIRE_EQ(ids, (std::vector<std::string>{"rime", "scel", "sgpy", "sgpybin", "qqpy", "qcel", "bdpy", "bdict",
-                                              "libimetxt", "libimebin", "plist"}));
-    REQUIRE(ForeignDictionary::FindFormat("scel") != nullptr);
+    REQUIRE_EQ(ids, (std::vector<std::string>{"rime", "libimetxt", "libimebin"}));
     REQUIRE(ForeignDictionary::FindFormat("zip") == nullptr);
 
-    std::vector<Entry> entries;
-    std::string error;
-    REQUIRE(!ForeignDictionary::Parse("zip", "abc", entries, error));
-    REQUIRE(!error.empty());
+    // 商业输入法的私有格式有意不支持：不在下拉框里，宿主也不解析。
+    for (const char *format : {"scel", "sgpy", "sgpybin", "qqpy", "qcel", "bdpy", "bdict", "plist"})
+    {
+        REQUIRE(ForeignDictionary::FindFormat(format) == nullptr);
+        std::vector<Entry> entries;
+        std::string error;
+        REQUIRE(!ForeignDictionary::Parse(format, "abc", entries, error));
+        REQUIRE_EQ(error, std::string("不支持的词库格式"));
+    }
 }
 
 TEST_CASE(ForeignDictionaryReadsTextFormats)
@@ -93,70 +84,16 @@ TEST_CASE(ForeignDictionaryReadsTextFormats)
                                      "你好\tni hao\t100\r\n世界\t200\n略\tlve\n")),
                (std::vector<std::string>{"你好|ni'hao", "世界|", "略|lve"}));
 
-    // 搜狗文本：GBK、行首单引号。
-    REQUIRE_EQ(Pairs(ParseOk("sgpy", "'ni'hao \xC4\xE3\xBA\xC3\r\nnot a word line\r\n")),
+    // 经 Windows 工具转存过的文本：UTF-16LE（带或不带 BOM）、GBK 都能认。
+    REQUIRE_EQ(Pairs(ParseOk("rime", "\xFF\xFE" + Utf16(L"你好\tni hao\r\n"))),
                (std::vector<std::string>{"你好|ni'hao"}));
-
-    // QQ 文本：UTF-16LE 带 BOM，逗号后面是别的字段。
-    REQUIRE_EQ(Pairs(ParseOk("qqpy", "\xFF\xFE" + Utf16(L"ni'hao 你好 1, 2\r\nhao 好 3\r\n"))),
-               (std::vector<std::string>{"你好|ni'hao", "好|hao"}));
-
-    // 百度文本：UTF-16LE 没有 BOM；两列的英文词条不进拼音词库。
-    REQUIRE_EQ(Pairs(ParseOk("bdpy", Utf16(L"你好\tni'hao\t3\r\nhello\t5\r\n"))),
-               (std::vector<std::string>{"你好|ni'hao"}));
+    REQUIRE_EQ(Pairs(ParseOk("rime", Utf16(L"你好\tni hao\r\n"))), (std::vector<std::string>{"你好|ni'hao"}));
+    REQUIRE_EQ(Pairs(ParseOk("rime", "\xC4\xE3\xBA\xC3\tni hao\r\n")), (std::vector<std::string>{"你好|ni'hao"}));
 
     // LibIME 文本：引号包裹的词面按 fcitx 规则还原；只认两列或三列。
     REQUIRE_EQ(Pairs(ParseOk("libimetxt", "你好 ni'hao 0\n\"你\\\"好\" ni'hao\nbad a b c\n")),
                (std::vector<std::string>{"你好|ni'hao", "你\"好|ni'hao"}));
-
-    // Mac plist：按 phrase / shortcut 取值，实体要还原。
-    const std::string plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><array>\n"
-                              "<dict><key>phrase</key><string>你好</string><key>shortcut</key><string>ni hao</string>"
-                              "</dict>\n<dict><key>shortcut</key><string>nh</string><key>phrase</key>"
-                              "<string>&#x4F60;&amp;好</string></dict>\n</array></plist>\n";
-    REQUIRE_EQ(Pairs(ParseOk("plist", plist)), (std::vector<std::string>{"你好|ni'hao", "你&好|nh"}));
 }
-
-TEST_CASE(ForeignDictionaryReadsCellDictionaries)
-{
-    // 搜狗细胞词库：0x120 处是同音组数，0x1540 起是拼音表，随后是词条区。
-    std::string scel(0x1540, '\0');
-    Put(scel, 0x120, Le32(2));
-    scel += Le32(2);
-    scel += Le16(0) + Le16(4) + Utf16(L"ni");
-    scel += Le16(1) + Le16(6) + Utf16(L"hao");
-    scel += Le16(2) + Le16(4) + Le16(0) + Le16(1); // 两个同音词，拼音 ni'hao
-    scel += Le16(4) + Utf16(L"你好") + Le16(10) + std::string(10, '\0');
-    scel += Le16(4) + Utf16(L"拟好") + Le16(10) + std::string(10, '\0');
-    scel += Le16(1) + Le16(2) + Le16(2); // 超出拼音表的序号是字母 a
-    scel += Le16(2) + Utf16(L"A") + Le16(10) + std::string(10, '\0');
-    REQUIRE_EQ(Pairs(ParseOk("scel", scel)), (std::vector<std::string>{"你好|ni'hao", "拟好|ni'hao", "A|a"}));
-
-    // 截断的词条区保留已经读出的部分。
-    REQUIRE_EQ(Pairs(ParseOk("scel", scel.substr(0, scel.size() - 8))),
-               (std::vector<std::string>{"你好|ni'hao", "拟好|ni'hao"}));
-
-    // 百度分类词库：旧版头部（0x60 为 0）用 0x44 的长度推算词条区结尾。
-    std::string word = Le32(2) + std::string("\x0B\x1D\x05\x0D", 4) + Utf16(L"你好");
-    std::string bdict(0x350, '\0');
-    Put(bdict, 0x44, Le32(static_cast<uint32_t>(word.size())));
-    bdict += word;
-    REQUIRE_EQ(Pairs(ParseOk("bdict", bdict)), (std::vector<std::string>{"你好|ni'hao"}));
-
-    // 搜狗备份词库新版（"SGPU"）：索引区给出每个词的偏移。
-    std::string bin(0x120, '\0');
-    Put(bin, 0, "SGPU");
-    Put(bin, 0x38, Le32(0x100) + Le32(4) + Le32(1) + Le32(0x120));
-    Put(bin, 0x100, Le32(0));
-    bin += Le16(5) + std::string(2 + 5, '\0') + Le16(4) + Le16(0) + Le16(1) + std::string(2, '\0') + Le16(4) +
-           Utf16(L"啊哎");
-    REQUIRE_EQ(Pairs(ParseOk("sgpybin", bin)), (std::vector<std::string>{"啊哎|a'ai"}));
-    REQUIRE_EQ(ParseOk("sgpybin", bin).front().frequency, std::optional<double>(5.0));
-    // 细胞词库没有词频（扩展字段是编号）。
-    for (const auto &entry : ParseOk("scel", scel))
-        REQUIRE(!entry.frequency);
-}
-
 TEST_CASE(ForeignDictionaryReadsLibimeBinary)
 {
     // imewlconverter 生成的 fcitx5 词库（第 2 版，zstd 压缩的 DATrie），源文本：
@@ -213,24 +150,21 @@ TEST_CASE(ForeignDictionaryReadsLibimeBinary)
 
 TEST_CASE(ForeignDictionaryRejectsFilesOfAnotherFormat)
 {
-    // 把文本文件当成二进制格式选进来：报格式不对，不崩。
-    for (const char *format : {"scel", "qcel", "bdict", "sgpybin", "libimebin"})
-    {
-        std::vector<Entry> entries;
-        std::string error;
-        REQUIRE(!ForeignDictionary::Parse(format, "你好\tni hao\t1\n", entries, error));
-        REQUIRE(!error.empty());
-    }
-    // 随机字节当作搜狗备份词库：索引越界要报错，不能越界读。
-    std::string garbage(0x400, '\x7F');
+    // 把文本文件当成二进制词库选进来：报格式不对，不崩。
     std::vector<Entry> entries;
     std::string error;
-    REQUIRE(!ForeignDictionary::Parse("sgpybin", garbage, entries, error));
+    REQUIRE(!ForeignDictionary::Parse("libimebin", "你好\tni hao\t1\n", entries, error));
+    REQUIRE(!error.empty());
+    // 文件头对、内容是乱码（未压缩的第 1 版）：trie 越界要报错，不能越界读。
+    std::string garbage("\x00\x0f\xc6\x13\x00\x00\x00\x01", 8);
+    garbage += std::string(0x400, '\x7F');
+    REQUIRE(!ForeignDictionary::Parse("libimebin", garbage, entries, error));
+    REQUIRE(entries.empty());
 }
 
 // 用真实词库核对条数。默认不跑：设 MSIME_FOREIGN_DICTIONARY_SAMPLES 指向样本目录才跑，
-// 目录里放 imewlconverter 测试资源里的 唐诗300首【官方推荐】.scel、星际战甲.qcel、travel.bdict、
-// 搜狗备份.bin，以及由前者经 imewlconverter 转出的 tangshi.<格式>.<扩展名>。
+// 目录里放经 imewlconverter 转出的 tangshi.<格式>.<扩展名>（源是它测试资源里的
+// 唐诗300首【官方推荐】.scel，3563 条）。
 TEST_CASE(ForeignDictionaryMatchesImewlconverterOnRealSamples)
 {
     const wchar_t *root = _wgetenv(L"MSIME_FOREIGN_DICTIONARY_SAMPLES");
@@ -249,27 +183,14 @@ TEST_CASE(ForeignDictionaryMatchesImewlconverterOnRealSamples)
         size_t count;
     };
     const Sample samples[] = {
-        {"scel", L"唐诗300首【官方推荐】.scel", 3563},
-        {"qcel", L"星际战甲.qcel", 4675},
-        {"bdict", L"travel.bdict", 300},
-        {"sgpybin", L"搜狗备份.bin", 30},
         {"rime", L"tangshi.rime.txt", 3563},
-        {"sgpy", L"tangshi.sgpy.txt", 3563},
-        {"qqpy", L"tangshi.qqpy.txt", 3563},
-        {"bdpy", L"tangshi.bdpy.txt", 3563},
         {"libimetxt", L"tangshi.libimetxt.txt", 3563},
         {"libimebin", L"tangshi.libimebin.dict", 3563},
-        {"plist", L"tangshi.plist.plist", 3563},
-        {"scel", L"tangshi.scel.scel", 3563},
     };
     for (const auto &sample : samples)
     {
         const auto entries = ParseOk(sample.format, read(sample.file));
-        // bdict 的样本条数是下限（与 imewlconverter 测试一致），其余要精确相等。
-        if (std::string(sample.format) == "bdict")
-            REQUIRE(entries.size() >= sample.count);
-        else
-            REQUIRE_EQ(entries.size(), sample.count);
+        REQUIRE_EQ(entries.size(), sample.count);
         size_t withPinyin = 0;
         for (const auto &entry : entries)
         {
@@ -380,13 +301,8 @@ TEST_CASE(ForeignDictionaryReportsTheFrequencyEachFormatCarries)
     const std::optional<double> none;
     REQUIRE_EQ(frequencies("rime", "你好\tni hao\t100\n世界\t200\n略\tlve\n单\tdan\t50%\n"),
                (std::vector<std::optional<double>>{100.0, 200.0, none, 50.0}));
-    REQUIRE_EQ(frequencies("qqpy", Utf16(L"ni'hao 你好 7, 2\r\nhao 好\r\n")),
-               (std::vector<std::optional<double>>{7.0, none}));
-    REQUIRE_EQ(frequencies("bdpy", Utf16(L"你好\tni'hao\t3\r\n")), (std::vector<std::optional<double>>{3.0}));
     REQUIRE_EQ(frequencies("libimetxt", "你好 ni'hao -4.25\n好 hao\n"),
                (std::vector<std::optional<double>>{-4.25, none}));
-    // 没有词频的格式。
-    REQUIRE_EQ(frequencies("sgpy", "'ni'hao \xC4\xE3\xBA\xC3\r\n"), (std::vector<std::optional<double>>{none}));
 }
 
 TEST_CASE(ForeignDictionaryImportWritesThroughThePinyinImportPath)
@@ -418,10 +334,11 @@ TEST_CASE(ForeignDictionaryImportWritesThroughThePinyinImportPath)
     // 只进拼音词库；未知格式、文件不存在都给出明确原因。
     REQUIRE(!request("wubi", "rime").at("ok").as_bool());
     REQUIRE_EQ(std::string(request("quanpin", "zip").at("message").as_string()), std::string("不支持的词库格式"));
+    REQUIRE_EQ(std::string(request("quanpin", "scel").at("message").as_string()), std::string("不支持的词库格式"));
     const auto missing = SettingsDictionary::HandleRequest({{"dictionary", "quanpin"},
                                                             {"action", "importForeign"},
-                                                            {"format", "scel"},
-                                                            {"path", test::Utf8(data.path() / L"不存在.scel")}});
+                                                            {"format", "libimebin"},
+                                                            {"path", test::Utf8(data.path() / L"不存在.dict")}});
     REQUIRE_EQ(std::string(missing.at("message").as_string()), std::string("读取文件失败"));
 }
 
