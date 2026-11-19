@@ -29,10 +29,15 @@ bool IsSystemDarkMode()
     return ReadHkcuDword(kRegKeyPersonalizeTheme, L"SystemUsesLightTheme", 1) == 0;
 }
 
-// "Show accent color on Start and taskbar" only colors the taskbar in dark mode
-// before Windows 11 24H2 (build 26100). In light mode on older builds
-// ColorPrevalence may be a leftover from dark mode while the taskbar itself is
-// light, so the accent path must stay off there.
+// "Show accent color on Start and taskbar" only colors the taskbar in dark
+// mode until the November 2024 cumulative updates (KB5046617 / 26100.2314 on
+// 24H2, KB5046633 / 22631.4460 on 23H2 and 22H2): from there the shell also
+// honors ColorPrevalence in light mode. The build number alone is not
+// enough -- early 26100.1xxx predates the change -- so the patch revision
+// (UBR, which RtlGetVersion does not report) is read from HKLM as well. In
+// light mode on builds before the change, ColorPrevalence may be a leftover
+// from dark mode while the taskbar itself is light, so the accent path must
+// stay off there.
 bool SupportsLightModeAccentTaskbar()
 {
     using RtlGetVersionFn = LONG(WINAPI *)(OSVERSIONINFOEXW *);
@@ -52,7 +57,23 @@ bool SupportsLightModeAccentTaskbar()
     {
         return false;
     }
-    return info.dwBuildNumber >= 26100;
+    const DWORD build = info.dwBuildNumber;
+    if (build > 26100)
+    {
+        return true;
+    }
+    const DWORD ubr = ReadHklmDword(kRegKeyNtCurrentVersion, L"UBR", 0);
+    if (build == 26100)
+    {
+        return ubr >= 2314; // KB5046617, 2024-11
+    }
+    // 22H2/23H2 share the servicing branch; the same November 2024 update
+    // landed as 22621.4460 / 22631.4460.
+    if (build == 22631 || build == 22621)
+    {
+        return ubr >= 4460; // KB5046633, 2024-11
+    }
+    return false;
 }
 
 double LinearizeSrgbChannel(double channel)

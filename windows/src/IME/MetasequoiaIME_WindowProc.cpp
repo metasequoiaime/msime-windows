@@ -151,31 +151,51 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
         return;
     }
 
-    // Accent color changes (the taskbar palette step lives in AccentColorMenu
-    // under DWM) do not touch Personalize. Optional: failure here leaves the
-    // theme-only watch running, same coverage as before.
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegKeyDwm, 0, KEY_NOTIFY, &_dwmRegKey) == ERROR_SUCCESS)
-    {
-        _dwmRegEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        if (!_dwmRegEvent ||
-            RegNotifyChangeKeyValue(_dwmRegKey, FALSE, REG_NOTIFY_CHANGE_LAST_SET, _dwmRegEvent, TRUE) != ERROR_SUCCESS)
+    // Accent color changes do not touch Personalize: the taskbar palette step
+    // lives in AccentColorMenu under Explorer\Accent, with DWM\AccentColor as
+    // the fallback IsTaskbarDark reads. Both keys are watched. Optional:
+    // failure here leaves the theme-only watch running, same coverage as
+    // before.
+    auto startOptionalKeyWatch = [](LPCWSTR subKey, HKEY *keyOut, HANDLE *eventOut) {
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, subKey, 0, KEY_NOTIFY, keyOut) != ERROR_SUCCESS)
         {
-            if (_dwmRegEvent)
-            {
-                CloseHandle(_dwmRegEvent);
-                _dwmRegEvent = nullptr;
-            }
-            RegCloseKey(_dwmRegKey);
-            _dwmRegKey = nullptr;
+            return;
         }
-    }
+        *eventOut = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!*eventOut ||
+            RegNotifyChangeKeyValue(*keyOut, FALSE, REG_NOTIFY_CHANGE_LAST_SET, *eventOut, TRUE) != ERROR_SUCCESS)
+        {
+            if (*eventOut)
+            {
+                CloseHandle(*eventOut);
+                *eventOut = nullptr;
+            }
+            RegCloseKey(*keyOut);
+            *keyOut = nullptr;
+        }
+    };
+    startOptionalKeyWatch(kRegKeyDwm, &_dwmRegKey, &_dwmRegEvent);
+    startOptionalKeyWatch(kRegKeyExplorerAccent, &_accentRegKey, &_accentRegEvent);
 
     _stopThemeWatcher.store(false);
     _pThemeWatcherThread = new (std::nothrow) std::thread([this]() {
         while (!_stopThemeWatcher.load(std::memory_order_acquire))
         {
-            HANDLE events[2] = {_themeRegEvent, _dwmRegEvent};
-            const DWORD count = _dwmRegEvent ? 2 : 1;
+            HANDLE events[3] = {_themeRegEvent, nullptr, nullptr};
+            HKEY keys[3] = {_themeRegKey, nullptr, nullptr};
+            DWORD count = 1;
+            if (_dwmRegEvent)
+            {
+                events[count] = _dwmRegEvent;
+                keys[count] = _dwmRegKey;
+                ++count;
+            }
+            if (_accentRegEvent)
+            {
+                events[count] = _accentRegEvent;
+                keys[count] = _accentRegKey;
+                ++count;
+            }
             const DWORD wait = WaitForMultipleObjects(count, events, FALSE, INFINITE);
             if (_stopThemeWatcher.load(std::memory_order_acquire))
             {
@@ -188,8 +208,7 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
 
             const DWORD fired = wait - WAIT_OBJECT_0;
             ResetEvent(events[fired]);
-            RegNotifyChangeKeyValue(fired == 0 ? _themeRegKey : _dwmRegKey, FALSE, REG_NOTIFY_CHANGE_LAST_SET,
-                                    events[fired], TRUE);
+            RegNotifyChangeKeyValue(keys[fired], FALSE, REG_NOTIFY_CHANGE_LAST_SET, events[fired], TRUE);
 
             const HWND ownerWindow = _msgWndHandle;
             if (ownerWindow && IsWindow(ownerWindow))
@@ -211,6 +230,16 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
             RegCloseKey(_dwmRegKey);
             _dwmRegKey = nullptr;
         }
+        if (_accentRegEvent)
+        {
+            CloseHandle(_accentRegEvent);
+            _accentRegEvent = nullptr;
+        }
+        if (_accentRegKey)
+        {
+            RegCloseKey(_accentRegKey);
+            _accentRegKey = nullptr;
+        }
         CloseHandle(_themeRegEvent);
         _themeRegEvent = nullptr;
         RegCloseKey(_themeRegKey);
@@ -228,6 +257,10 @@ void CMetasequoiaIME::_StopThemeRegistryWatcher()
     if (_dwmRegEvent)
     {
         SetEvent(_dwmRegEvent);
+    }
+    if (_accentRegEvent)
+    {
+        SetEvent(_accentRegEvent);
     }
 
     if (_pThemeWatcherThread)
@@ -250,6 +283,18 @@ void CMetasequoiaIME::_StopThemeRegistryWatcher()
     {
         RegCloseKey(_dwmRegKey);
         _dwmRegKey = nullptr;
+    }
+
+    if (_accentRegEvent)
+    {
+        CloseHandle(_accentRegEvent);
+        _accentRegEvent = nullptr;
+    }
+
+    if (_accentRegKey)
+    {
+        RegCloseKey(_accentRegKey);
+        _accentRegKey = nullptr;
     }
 
     if (_themeRegEvent)
