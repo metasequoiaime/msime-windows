@@ -2,8 +2,9 @@
 
 仓外文件有三类：msime 仓库 resources/dictionary-sources/ 下人工维护的读音纠错、emoji 和颜文字
 （固定在 Release 所用的 msime 提交；符号表改在 msime-dictionary 的 sources/symbols/）；ECDICT 与 SCOWL Aspell 包（Rust 构建器的锁文件同样固定它们）；
-rime-jp_sela 的 jp_sela.dict.yaml（旧 msime.db 的 japanese_lexicon 来源）；hallelujahIM 的
-words_with_frequency_and_translation_and_ipa.json（只取其中的 ipa，英文候选的音标）。
+rime-jp_sela 的 jp_sela.dict.yaml（旧 msime.db 的 japanese_lexicon 来源）。
+英文的音标和短语不在这里下载：它们由 scripts/generate-english-extras.py 生成进 msime-dictionary 的
+sources/english/，构建时和其他源数据一样从 checkout 读。
 """
 
 from __future__ import annotations
@@ -61,7 +62,6 @@ class Inputs:
     ecdict: Path
     scowl: Path
     jp_sela: Path
-    hallelujah_ipa: Path
 
     def source(self, relative: str) -> Path:
         path = self.dictionary / relative
@@ -91,8 +91,7 @@ def fetch(dictionary: Path, cache: Path, resources: Path | None) -> Inputs:
     external = {name: _ensure(cache / name, entry["url"], entry["size"], entry["sha256"], name)
                 for name, entry in lock["external"].items()}
     return Inputs(dictionary, msime["commit"], files, external["ecdict.csv"],
-                  external["aspell6-en-2026.02.25-0.tar.bz2"], external["jp_sela.dict.yaml"],
-                  external["hallelujah-words-ipa.json"])
+                  external["aspell6-en-2026.02.25-0.tar.bz2"], external["jp_sela.dict.yaml"])
 
 
 def git_state(checkout: Path) -> tuple[str, bool]:

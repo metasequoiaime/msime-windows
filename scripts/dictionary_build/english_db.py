@@ -622,7 +622,8 @@ def parse_ecdict_phrases(ecdict: Path) -> list[EnglishPhrase]:
         if word_column >= len(record):
             continue
         display = _WHITESPACE.sub(" ", record[word_column]).strip()
-        if not display.isascii() or not _PHRASE_SEPARATOR.search(display):
+        # 以 # 开头的会被当成文件里的注释行，不收。
+        if not display.isascii() or not _PHRASE_SEPARATOR.search(display) or display.startswith("#"):
             continue
         key = phrase_key(display)
         if len(key) < 2 or display in phrases:
@@ -631,10 +632,41 @@ def parse_ecdict_phrases(ecdict: Path) -> list[EnglishPhrase]:
         gloss = choose_chinese_gloss(extract_gloss_terms(translation), {}) if translation else ""
         if not gloss and translation:
             gloss = _fallback_phrase_gloss(translation)
+        gloss = _WHITESPACE.sub(" ", gloss).strip()
         phrases[display] = EnglishPhrase(key, display, gloss)
     if not phrases:
         raise ValueError("ECDICT has no phrases")
     return list(phrases.values())
+
+
+PHRASES_FILE = "sources/english/ecdict-phrases.txt"
+
+
+def format_phrases(phrases: list[EnglishPhrase]) -> list[str]:
+    """ecdict-phrases.txt 的数据行：`写法<TAB>释义`（没有释义时只有写法），按字典序。"""
+    ordered = sorted(phrases, key=lambda phrase: (phrase.display.lower(), phrase.display))
+    return [f"{phrase.display}\t{phrase.gloss}" if phrase.gloss else phrase.display for phrase in ordered]
+
+
+def parse_phrases(text: str, name: str) -> list[EnglishPhrase]:
+    """msime-dictionary 的 sources/english/ecdict-phrases.txt（由 scripts/generate-english-extras.py 生成）。"""
+    phrases: list[EnglishPhrase] = []
+    seen = set()
+    for number, line in enumerate(textutil.without_bom(text).splitlines(), start=1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        display, _, gloss = line.partition("\t")
+        key = phrase_key(display)
+        if (display != display.strip() or not display.isascii() or not _PHRASE_SEPARATOR.search(display)
+                or len(key) < 2):
+            raise ValueError(f"{name}:{number}: {display!r} is not an ASCII phrase with a space or a hyphen")
+        if display in seen:
+            raise ValueError(f"{name}:{number}: duplicate phrase {display!r}")
+        seen.add(display)
+        phrases.append(EnglishPhrase(key, display, gloss.strip()))
+    if not phrases:
+        raise ValueError(f"{name}: no phrases found")
+    return phrases
 
 
 def write_phrases(connection: sqlite3.Connection, phrases: list[EnglishPhrase]) -> tuple[int, int]:
@@ -662,10 +694,11 @@ def write_phrases(connection: sqlite3.Connection, phrases: list[EnglishPhrase]) 
 
 # ---- 音标 ----
 
+IPA_FILE = "sources/english/hallelujahim-ipa.txt"
 IPA_NOTICE_SOURCE = "hallelujahIM IPA"
 IPA_NOTICE = (
-    "The en_ipa table is taken from the ipa field of hallelujahIM's "
-    "dictionary/words_with_frequency_and_translation_and_ipa.json "
+    "The en_ipa table is read from msime-dictionary's sources/english/hallelujahim-ipa.txt, which is the ipa field "
+    "of hallelujahIM's dictionary/words_with_frequency_and_translation_and_ipa.json "
     "(https://github.com/dongyuwei/hallelujahIM, GPL-3.0, by Dong Yuwei). hallelujahIM generated it with "
     "English-to-IPA (eng_to_ipa, https://github.com/mphilli/English-to-IPA, MIT), which transcribes the "
     "Carnegie Mellon Pronouncing Dictionary (CMUdict, BSD-2-Clause). Only the ipa field is used; the word "
@@ -692,6 +725,28 @@ def parse_hallelujah_ipa(data: bytes) -> dict[str, str]:
         if not ipa or "*" in ipa or " " in ipa or not _is_ascii_word(key):
             continue
         result[key] = ipa
+    return result
+
+
+def format_ipa(ipa: dict[str, str]) -> list[str]:
+    """hallelujahim-ipa.txt 的数据行：`小写单词<TAB>音标`，按单词排序。"""
+    return [f"{word}\t{ipa[word]}" for word in sorted(ipa)]
+
+
+def parse_ipa(text: str, name: str) -> dict[str, str]:
+    """msime-dictionary 的 sources/english/hallelujahim-ipa.txt（由 scripts/generate-english-extras.py 生成）。"""
+    result: dict[str, str] = {}
+    for number, line in enumerate(textutil.without_bom(text).splitlines(), start=1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        word, separator, ipa = line.partition("\t")
+        if not separator or not textutil.is_ascii_lower_word(word) or not ipa.strip() or " " in ipa:
+            raise ValueError(f"{name}:{number}: expected a lowercase word<TAB>IPA, got {line!r}")
+        if word in result:
+            raise ValueError(f"{name}:{number}: duplicate word {word!r}")
+        result[word] = ipa.strip()
+    if not result:
+        raise ValueError(f"{name}: no transcriptions found")
     return result
 
 

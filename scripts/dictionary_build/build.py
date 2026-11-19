@@ -138,14 +138,16 @@ def build_english(source: inputs.Inputs, path: Path, msime: Path, stage: Stages)
         stage("english-glosses", glosses)
 
         def ipa():
-            entries = english_db.parse_hallelujah_ipa(source.hallelujah_ipa.read_bytes())
+            entries = english_db.parse_ipa(textutil.read(source.source(english_db.IPA_FILE)), english_db.IPA_FILE)
             written = english_db.write_ipa(connection, entries)
             return f"{written} of {len(entries)} hallelujahIM transcriptions match an English candidate"
 
         stage("english-ipa", ipa)
 
         def phrases():
-            total, glosses_added = english_db.write_phrases(connection, english_db.parse_ecdict_phrases(source.ecdict))
+            entries = english_db.parse_phrases(textutil.read(source.source(english_db.PHRASES_FILE)),
+                                               english_db.PHRASES_FILE)
+            total, glosses_added = english_db.write_phrases(connection, entries)
             return f"{total} ECDICT phrases, {glosses_added} phrase glosses"
 
         stage("english-phrases", phrases)
