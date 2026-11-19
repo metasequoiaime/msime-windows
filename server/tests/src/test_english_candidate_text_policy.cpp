@@ -37,6 +37,40 @@ TEST_CASE(english_typed_case_capitalizes_corrections_that_do_not_share_the_prefi
     REQUIRE(WithTypedCase("KERRAGE", "courage") == "COURAGE");
 }
 
+TEST_CASE(english_typed_case_maps_letters_onto_phrases)
+{
+    REQUIRE(WithTypedCase("accordingt", "according to") == "according to");
+    REQUIRE(WithTypedCase("Accordingt", "according to") == "According to");
+    REQUIRE(WithTypedCase("AccordingTo", "according to") == "According To");
+    REQUIRE(WithTypedCase("ALOT", "a lot") == "A LOT");
+    REQUIRE(WithTypedCase("WellK", "well-known") == "Well-Known");
+    REQUIRE(WithTypedCase("Babys", "a baby's dozen") == "A baby's dozen");
+}
+
+TEST_CASE(english_phrases_follow_exact_words_and_precede_the_other_phrases)
+{
+    using EnglishIme::MergeEnglishPhrases;
+    const auto word = [](const char *key) { return WordItem(key, key, 0, CandidateSource::EnglishDictionary); };
+    const auto phrase = [](const char *key, const char *display) {
+        WordItem item(key, display, 0, CandidateSource::Generated);
+        item.english_phrase = true;
+        return item;
+    };
+    const auto merged = MergeEnglishPhrases("alot", {word("alot"), word("alots")},
+                                            {phrase("alotof", "a lot of"), phrase("alot", "a lot")});
+    REQUIRE(merged.size() == 4);
+    REQUIRE(merged[0].word == "alot");
+    REQUIRE(merged[1].word == "a lot");
+    REQUIRE(merged[2].word == "alots");
+    REQUIRE(merged[3].word == "a lot of");
+
+    const auto only_phrases = MergeEnglishPhrases("accordingt", {}, {phrase("accordingto", "according to")});
+    REQUIRE(only_phrases.size() == 1);
+    REQUIRE(only_phrases[0].english_phrase);
+    REQUIRE(MergeEnglishPhrases("air", {word("air")}, {}).size() == 1);
+    REQUIRE(EnglishIme::PhraseDetailKey("A Level") == "a level");
+}
+
 TEST_CASE(english_commit_space_skips_digits_apostrophes_and_whitespace)
 {
     REQUIRE(ShouldAppendCommitSpace("hello"));

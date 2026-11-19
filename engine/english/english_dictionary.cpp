@@ -172,6 +172,36 @@ std::string EnglishDictionary::query_ipa(const std::string &english)
     return QueryGloss(ipa_statement_, english);
 }
 
+std::vector<WordItem> EnglishDictionary::query_phrase_prefix(const std::string &prefix, size_t limit)
+{
+    if (!IsLowerAsciiWord(prefix) || limit == 0 || phrases_unavailable_ || !ensure_query_statement())
+        return {};
+    constexpr const char *query_sql =
+        "SELECT word,display,weight FROM english_phrases "
+        "WHERE word >= ?1 AND word < ?2 "
+        "ORDER BY CASE WHEN word = ?1 THEN 0 ELSE 1 END, weight DESC, length(word), word, display "
+        "LIMIT ?3";
+    if (phrase_statement_ == nullptr &&
+        sqlite3_prepare_v2(db_, query_sql, -1, &phrase_statement_, nullptr) != SQLITE_OK)
+    {
+        // 词库早于短语表：同音标表，记下来不再重试，连接留给别的查询。
+        if (phrase_statement_ != nullptr)
+        {
+            sqlite3_finalize(phrase_statement_);
+            phrase_statement_ = nullptr;
+        }
+        phrases_unavailable_ = true;
+        return {};
+    }
+    auto phrases = QueryPrefix(phrase_statement_, prefix, limit);
+    for (auto &phrase : phrases)
+    {
+        phrase.source = CandidateSource::Generated;
+        phrase.english_phrase = true;
+    }
+    return phrases;
+}
+
 bool EnglishDictionary::upsert_gloss(const std::string &db_path, bool chinese_to_english, const std::string &key,
                                      const std::string &gloss)
 {
@@ -424,6 +454,11 @@ void EnglishDictionary::close_database()
     {
         sqlite3_finalize(ipa_statement_);
         ipa_statement_ = nullptr;
+    }
+    if (phrase_statement_ != nullptr)
+    {
+        sqlite3_finalize(phrase_statement_);
+        phrase_statement_ = nullptr;
     }
     if (mixed_query_statement_ != nullptr)
     {

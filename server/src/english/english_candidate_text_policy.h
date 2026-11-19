@@ -4,9 +4,12 @@
 // 规则参照 hallelujahIM（https://github.com/dongyuwei/hallelujahIM，GPL-3.0，作者 Dong Yuwei）
 // 的 ConversionEngine / InputController，按本仓的候选模型改写。
 
+#include "engine/core/word_item.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -71,7 +74,25 @@ inline std::string WithTypedCase(const std::string &typed, const std::string &di
     if (typed.size() <= display.size() &&
         detail::AsciiLower(display.substr(0, typed.size())) == detail::AsciiLower(typed))
         return typed + display.substr(typed.size());
+    // 短语的键去掉了空格和标点（Accordingt → According to）：敲的字母逐个对到写法里的字母上，
+    // 中间的空格、连字符、撇号照原样留着。
     std::string result = display;
+    std::size_t matched = 0;
+    for (std::size_t at = 0; at < result.size() && matched < typed.size(); ++at)
+    {
+        const unsigned char shown = static_cast<unsigned char>(result[at]);
+        if (!detail::IsAsciiUpper(shown) && !detail::IsAsciiLower(shown))
+            continue;
+        const unsigned char letter = static_cast<unsigned char>(typed[matched]);
+        const auto lower = [](unsigned char ch) { return detail::IsAsciiUpper(ch) ? ch + ('a' - 'A') : ch; };
+        if (lower(letter) != lower(shown))
+            break;
+        result[at] = static_cast<char>(letter);
+        ++matched;
+    }
+    if (matched == typed.size())
+        return result;
+    result = display;
     if (detail::IsAsciiUpper(static_cast<unsigned char>(typed.front())) &&
         detail::IsAsciiLower(static_cast<unsigned char>(result.front())))
         result.front() = static_cast<char>(result.front() - ('a' - 'A'));
@@ -104,6 +125,35 @@ inline std::string DetailKey(bool dictionary_row, const std::string &key, const 
         }))
         return {};
     return detail::AsciiLower(text);
+}
+
+/**
+ * 短语候选那一行的查询键：小写的短语写法（according to）。短语释义在 en_zh_glosses 里就按它存。
+ */
+inline std::string PhraseDetailKey(const std::string &display)
+{
+    return detail::AsciiLower(display);
+}
+
+/**
+ * 英文候选模式的单词与短语合并成一张列表：键正好等于输入的单词、键正好等于输入的短语、其余单词、
+ * 其余短语。两边各自已经按「键相等的在前、再按权重」排好，这里只按键是否相等切开拼接。
+ */
+inline std::vector<WordItem> MergeEnglishPhrases(const std::string &prefix, std::vector<WordItem> words,
+                                                 std::vector<WordItem> phrases)
+{
+    if (phrases.empty())
+        return words;
+    const auto exact = [&](const WordItem &item) { return item.pinyin == prefix; };
+    const auto words_split = std::stable_partition(words.begin(), words.end(), exact);
+    const auto phrases_split = std::stable_partition(phrases.begin(), phrases.end(), exact);
+    std::vector<WordItem> merged;
+    merged.reserve(words.size() + phrases.size());
+    merged.insert(merged.end(), std::make_move_iterator(words.begin()), std::make_move_iterator(words_split));
+    merged.insert(merged.end(), std::make_move_iterator(phrases.begin()), std::make_move_iterator(phrases_split));
+    merged.insert(merged.end(), std::make_move_iterator(words_split), std::make_move_iterator(words.end()));
+    merged.insert(merged.end(), std::make_move_iterator(phrases_split), std::make_move_iterator(phrases.end()));
+    return merged;
 }
 
 /**
