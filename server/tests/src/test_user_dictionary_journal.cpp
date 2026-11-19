@@ -492,9 +492,7 @@ TEST_CASE(TemporaryPinyinWordsAreConfirmedOnSecondUseAndExpireAfterThirtyDays)
         TestDatabase db(main_path);
         TestDatabase journal(user_path);
         REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_3_b WHERE value='宝民路'"), 0);
-        REQUIRE_EQ(journal.scalar_int("SELECT COUNT(*) FROM user_dictionary_operations WHERE value='宝民路'"
-                                      " AND operation='delete' AND learning_count=0"),
-                   1);
+        REQUIRE_EQ(journal.scalar_int("SELECT COUNT(*) FROM user_dictionary_operations WHERE value='宝民路'"), 0);
     }
 
     // 手动新增即使带有旧时间也永久保留；老日志新增的两列默认 0，同样不会进入清理。

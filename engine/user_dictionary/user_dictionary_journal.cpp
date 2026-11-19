@@ -977,7 +977,9 @@ bool adjust_english_candidate_ranking(const std::string &english_db_path, const 
 bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::string &user_db_path,
                                    const std::string &key, const std::string &value)
 {
-    if (key.empty() || value.empty() || !ensure_user_database(user_db_path))
+    // 普通候选确认是纯读取快路径：日志库尚不存在就不可能有临时词，不能因此创建一个空库。
+    if (key.empty() || value.empty() || !std::filesystem::exists(metasequoia::path_from_utf8(user_db_path.c_str())) ||
+        !ensure_user_database(user_db_path))
         return false;
     const std::string table = pinyin_table(key);
     if (table.empty())
@@ -1017,7 +1019,8 @@ bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::s
         refresh.reset();
         if (!refreshed || !execute_sql(database.get(), "COMMIT"))
             return rollback();
-        return false;
+        // 本次仍按临时学习处理；调用方据此跳过普通调频，避免重新开始保留期时权重先突破 1000。
+        return true;
     }
     auto promote = prepare(database.get(), "UPDATE main.\"" + table + "\" SET weight=?1 WHERE key=?2 AND value=?3");
     if (!promote || sqlite3_bind_int64(promote.get(), 1, kFormalPinyinWordWeight) != SQLITE_OK ||
@@ -1044,14 +1047,24 @@ int expire_temporary_pinyin_words(const std::string &main_db_path, const std::st
 {
     if (now <= kTemporaryWordRetentionSeconds)
         return 0;
-    UserDatabase db(user_db_path);
-    if (!db)
+    auto database = open_database(main_db_path, SQLITE_OPEN_READWRITE);
+    auto attach = database ? prepare(database.get(), "ATTACH DATABASE ?1 AS candidate_journal") : Stmt{};
+    if (!attach || !bind_text(attach.get(), 1, user_db_path) || sqlite3_step(attach.get()) != SQLITE_DONE)
         return 0;
-    auto expired = prepare(db.get(), "SELECT key,value FROM user_dictionary_operations WHERE dictionary='pinyin'"
-                                     " AND operation='upsert' AND learning_count=1 AND last_learned_at>0"
-                                     " AND last_learned_at<=?1");
+    attach.reset();
+    if (!execute_sql(database.get(), "BEGIN IMMEDIATE") ||
+        !execute_sql(database.get(), "UPDATE candidate_journal.user_dictionary_operations"
+                                     " SET learning_count=learning_count WHERE 0"))
+        return 0;
+    const auto rollback = [&]() { (void)execute_sql(database.get(), "ROLLBACK"); };
+    auto expired = prepare(database.get(), "SELECT key,value FROM candidate_journal.user_dictionary_operations"
+                                           " WHERE dictionary='pinyin' AND operation='upsert' AND learning_count=1"
+                                           " AND last_learned_at>0 AND last_learned_at<=?1");
     if (!expired || sqlite3_bind_int64(expired.get(), 1, now - kTemporaryWordRetentionSeconds) != SQLITE_OK)
+    {
+        rollback();
         return 0;
+    }
     std::vector<std::pair<std::string, std::string>> words;
     while (sqlite3_step(expired.get()) == SQLITE_ROW)
     {
@@ -1061,11 +1074,39 @@ int expire_temporary_pinyin_words(const std::string &main_db_path, const std::st
             words.emplace_back(reinterpret_cast<const char *>(key), reinterpret_cast<const char *>(value));
     }
     expired.reset();
+
     int removed = 0;
     for (const auto &[key, value] : words)
     {
-        if (delete_dictionary_candidate(main_db_path, user_db_path, DictionaryKind::Pinyin, key, value))
-            ++removed;
+        const std::string table = pinyin_table(key);
+        auto journal =
+            table.empty() ? Stmt{}
+                          : prepare(database.get(),
+                                    "DELETE FROM candidate_journal.user_dictionary_operations WHERE dictionary='pinyin'"
+                                    " AND key=?1 AND value=?2 AND operation='upsert' AND learning_count=1"
+                                    " AND last_learned_at>0 AND last_learned_at<=?3");
+        if (!journal || !bind_text(journal.get(), 1, key) || !bind_text(journal.get(), 2, value) ||
+            sqlite3_bind_int64(journal.get(), 3, now - kTemporaryWordRetentionSeconds) != SQLITE_OK ||
+            sqlite3_step(journal.get()) != SQLITE_DONE)
+        {
+            rollback();
+            return 0;
+        }
+        removed += sqlite3_changes(database.get());
+        journal.reset();
+        auto remove = prepare(database.get(), "DELETE FROM main.\"" + table + "\" WHERE key=?1 AND value=?2");
+        if (!remove || !bind_text(remove.get(), 1, key) || !bind_text(remove.get(), 2, value) ||
+            sqlite3_step(remove.get()) != SQLITE_DONE)
+        {
+            rollback();
+            return 0;
+        }
+        remove.reset();
+    }
+    if (!execute_sql(database.get(), "COMMIT"))
+    {
+        rollback();
+        return 0;
     }
     return removed;
 }

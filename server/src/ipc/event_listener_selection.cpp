@@ -322,6 +322,12 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         const auto ranking_keys = RankingKeysForCandidate(curWordItem);
         const std::string ranking_context_key = ranking_keys.first;
         const std::string ranking_entry_key = ranking_keys.second;
+        // Server 直接编排选词与异步调频，不经过 InputSession::learn_candidate。只对已经存在于
+        // 词典中的候选确认：云/AI/整句首次落库不在同一事件里被误算成第二次使用。
+        const bool can_confirm_temporary_word =
+            (curWordItem.source == CandidateSource::Database || curWordItem.source == CandidateSource::UserDatabase) &&
+            (curWordItem.scheme == SchemeType::Quanpin || curWordItem.scheme == SchemeType::Shuangpin) &&
+            !curWordItem.canonical_pinyin.empty();
         // 繁体写法记录的判定条件，同样要在组合推进之前取。
         const FanyImeIpc::VariantChoiceScope variant_choice_scope = CurrentVariantChoiceScope(curWordItem);
         // First-page first slot is already the default commit; space/mouse/digit
@@ -343,8 +349,9 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         // 字母词（T恤）也不调频：拼音分表里没有它的行，调频改不到，只会白记选择计数（#1340）。
         // 长词前缀补全（#1343）的键比首选长，和同页候选不是一个读音，不按排位挪位置，选中时只在它自己的
         // 键下加权（见下面 EnqueueBumpPinyinWeightTask）。
-        isNeedUpdateWeight = !japanese_candidate && !curWordItem.latin_word && !curWordItem.prefix_completion &&
-                             (mid_sentence_ranking || !is_first_page_first);
+        bool needs_ranking_update = !japanese_candidate && !curWordItem.latin_word && !curWordItem.prefix_completion &&
+                                    (mid_sentence_ranking || !is_first_page_first);
+        isNeedUpdateWeight = can_confirm_temporary_word || needs_ranking_update;
         if (curWordItem.prefix_completion && !curWordItem.canonical_pinyin.empty())
         {
             EnqueueBumpPinyinWeightTask(curWordItem.canonical_pinyin, curWordItem.word, client_id, activation_epoch);
@@ -420,7 +427,8 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             if (curWordItem.source == CandidateSource::EnglishDictionary && isNeedUpdateWeight)
             {
                 EnqueueAdjustCandidateRankingTask(/*english=*/true, /*wubi=*/false, EnglishRankingContextKey(),
-                                                  curWordItem.pinyin, curWordItem.word, client_id, activation_epoch);
+                                                  curWordItem.pinyin, curWordItem.word, client_id, activation_epoch, "",
+                                                  false, true);
             }
             // 日期时间按格式调频：Shift+T 模式、日期页和混输选中哪种格式，都往同一份顺序里记。
             // 已经排在首位的格式由引擎侧直接跳过，所以这里不看 isNeedUpdateWeight。
@@ -557,8 +565,9 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         // 详细处理一下造词的逻辑
         if (GlobalIme::composition.creating_word.active)
         {
-            /* 造词的时候，不可以更新词频 */
-            isNeedUpdateWeight = false;
+            /* 造词的时候，不可以更新词频；现存临时词的第二次确认仍然独立生效 */
+            needs_ranking_update = false;
+            isNeedUpdateWeight = can_confirm_temporary_word;
 
             const auto creating_word_progress = g_inputSession->update_creating_word_progress(
                 GlobalIme::composition.creating_word.pinyin, GlobalIme::composition.creating_word.word, curWord,
@@ -696,10 +705,11 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
             // changes the order, the worker drops its candidate cache and the next lookup sees
             // the new order; a lookup that lands before the write finishes still shows the old
             // one.
-            EnqueueAdjustCandidateRankingTask(/*english=*/false, /*wubi=*/curWordItem.scheme == SchemeType::Wubi,
-                                              ranking_context_key, ranking_entry_key, curWord, client_id,
-                                              activation_epoch,
-                                              mid_sentence_ranking ? &mid_sentence_ranking_candidates : nullptr);
+            EnqueueAdjustCandidateRankingTask(
+                /*english=*/false, /*wubi=*/curWordItem.scheme == SchemeType::Wubi, ranking_context_key,
+                ranking_entry_key, curWord, client_id, activation_epoch, curWordItem.canonical_pinyin,
+                can_confirm_temporary_word, needs_ranking_update,
+                mid_sentence_ranking ? &mid_sentence_ranking_candidates : nullptr);
         }
     }
     else

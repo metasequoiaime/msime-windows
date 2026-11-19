@@ -72,7 +72,7 @@ inline constexpr std::int64_t kFormalPinyinWordWeight = 10000;
 inline constexpr std::int64_t kTemporaryWordRetentionSeconds = 30 * 24 * 60 * 60;
 bool record_automatic_pinyin_insert(const std::string &user_db_path, const std::string &key, const std::string &value,
                                     std::int64_t now);
-// 只确认仍处于临时状态的词；正式词、手动词条和不存在的行不产生写入。主库权重与日志同事务转正。
+// true 表示命中临时状态且本次学习已处理：未过期就同事务转正，过期则刷新保留期；false 表示正式词或不存在。
 bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::string &user_db_path,
                                    const std::string &key, const std::string &value);
 // 清理超过保留期仍未第二次选用的自动新词。now 由调用方注入，便于测试时间边界。
