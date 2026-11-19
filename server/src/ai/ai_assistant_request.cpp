@@ -29,6 +29,10 @@ nlohmann::json BuildRequestBody(const Request &request)
         body["response_format"] = {{"type", "json_object"}};
     if (!openai_reasoning)
         body["temperature"] = 0.2;
+    // Qwen3 on SiliconFlow may spend more than the eight-second IME budget thinking before it emits
+    // any content. Suggestions need the direct answer; the connection test uses this body too.
+    if (vendor == VoiceInput::ChatVendor::SiliconFlow)
+        body["enable_thinking"] = false;
     // Reasoning tokens count against the output limit and can leave no room for JSON.
     ChatCompletions::SetTokenLimit(body, config.provider, thinking || openai_reasoning ? 8192 : 512);
     if (thinking)

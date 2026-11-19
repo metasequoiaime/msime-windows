@@ -64,6 +64,24 @@ TEST_CASE(ai_request_ignores_thinking_level_for_other_providers)
     REQUIRE_EQ(AiAssistant::detail::RequestTimeoutMs(request.config), 8000L);
 }
 
+TEST_CASE(ai_request_disables_siliconflow_thinking_by_endpoint)
+{
+    // 默认 Qwen3 可能先推理十几秒，超过联想和连接测试共用的 8 秒上限（issue #1475）。
+    for (const char *provider : {"siliconflow", "custom"})
+    {
+        const auto request = MakeRequest(provider, "disabled", "https://api.siliconflow.cn/v1/chat/completions");
+        const auto body = AiAssistant::detail::BuildRequestBody(request);
+        REQUIRE(body.contains("enable_thinking"));
+        REQUIRE_EQ(body["enable_thinking"].get<bool>(), false);
+        REQUIRE_EQ(body["max_tokens"].get<int>(), 512);
+        REQUIRE_EQ(AiAssistant::detail::RequestTimeoutMs(request.config), 8000L);
+        REQUIRE_EQ(body, ApiCredentialTest::detail::BuildChatProbeRequestBody(request.config));
+    }
+
+    const auto other = MakeRequest("openai", "disabled", "https://api.openai.com/v1/chat/completions");
+    REQUIRE(!AiAssistant::detail::BuildRequestBody(other).contains("enable_thinking"));
+}
+
 TEST_CASE(ai_request_follows_the_endpoint_not_the_provider_label)
 {
     // 标签写着 deepseek、地址却是别的服务：带着 thinking.type 会被对方直接拒绝
