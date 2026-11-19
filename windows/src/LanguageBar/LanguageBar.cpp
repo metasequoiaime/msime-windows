@@ -32,9 +32,46 @@ bool IsSystemDarkMode()
     return value == 0;
 }
 
+// SystemUsesLightTheme alone does not describe the taskbar: in light mode the
+// user can still get a dark taskbar by enabling "show accent color on Start
+// and taskbar" (ColorPrevalence != 0) with a dark accent color, in which case
+// the light-mode (black glyph) icons become unreadable. Approximate the real
+// taskbar appearance with the accent color's luminance in that case.
+bool IsTaskbarDark()
+{
+    if (IsSystemDarkMode())
+    {
+        return true;
+    }
+
+    DWORD prevalence = 0;
+    DWORD size = sizeof(prevalence);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                     L"ColorPrevalence", RRF_RT_REG_DWORD, nullptr, &prevalence, &size) != ERROR_SUCCESS ||
+        prevalence == 0)
+    {
+        return false;
+    }
+
+    DWORD accent = 0;
+    size = sizeof(accent);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", L"AccentColor", RRF_RT_REG_DWORD,
+                     nullptr, &accent, &size) != ERROR_SUCCESS)
+    {
+        return false;
+    }
+
+    // AccentColor is stored as AABBGGRR.
+    const double r = static_cast<double>(accent & 0xFF);
+    const double g = static_cast<double>((accent >> 8) & 0xFF);
+    const double b = static_cast<double>((accent >> 16) & 0xFF);
+    const double luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    return luminance < 128.0;
+}
+
 DWORD ResolveThemeIconIndex(DWORD lightIconIndex)
 {
-    if (!IsSystemDarkMode())
+    if (!IsTaskbarDark())
     {
         return lightIconIndex;
     }
