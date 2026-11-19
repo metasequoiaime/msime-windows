@@ -1113,11 +1113,11 @@ const FrequencyAdjustmentConfig &GetConfiguredFrequencyAdjustment()
 
 bool SetConfiguredFrequencyAdjustmentString(const std::string &key, const std::string &value)
 {
-    if (key != "mode" ||
+    if ((key != "mode" && key != "wubi_mode") ||
         (value != "disabled" && value != "pin" && value != "halve" && value != "linear" && value != "promote") ||
         !WriteConfiguredValue("frequency_adjustment", key, EscapeTomlBasicString(value)))
         return false;
-    g_frequency_adjustment.mode = value;
+    (key == "mode" ? g_frequency_adjustment.mode : g_frequency_adjustment.wubi_mode) = value;
     return true;
 }
 

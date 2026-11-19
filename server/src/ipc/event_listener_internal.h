@@ -27,6 +27,7 @@
 #include "ipc/event_listener.h"
 #include "ipc/traditional_variant_choice_policy.h"
 #include "engine/contracts/v_mode_input.h"
+#include "engine/user_dictionary/user_dictionary_journal.h"
 #include "window/caret_state_indicator_policy.h"
 
 // IPC logging is compiled out. The macros still have to *mention* their arguments, otherwise every
@@ -256,6 +257,10 @@ PageMoveResult MoveCandidatePage(int offset);
 // 把当前页挪到卷轴展开面板里点中的那个候选所在的页，返回它在页内的下标；核对不上返回 -1。
 int MoveToExpandedCandidate(int absolute_index, const std::wstring &expected_text);
 std::pair<std::string, std::string> RankingKeysForCandidate(const WordItem &item);
+// 当前码表版本（input.wubi_schema）对应的调频词库：98、新世纪写自己的表，不能落到 86 表上。
+user_dictionary::DictionaryKind ConfiguredWubiDictionaryKind();
+// 五笔候选的调频与固定位置上下文：86 是码本身，98、新世纪加版本名前缀（wubi98:code）。
+std::string WubiRankingContextKey(const std::string &code);
 
 // event_listener_worker.cpp
 void NoteTopCommitPushed(uint64_t client_id, uint64_t activation_epoch);

@@ -297,8 +297,8 @@ ApiCredentialTest::Result TestTranslationOnce(const ApiCredentialTest::Request &
     if (!AiTranslation::IsUsableConfig(config))
     {
         if (config.provider == "jev")
-            return {false, "Jev 只能从已有候选中挑选，不能用于翻译；请在「AI 与云联想」页换成生成式服务商。"};
-        return {false, "请先在「AI 与云联想」页面填写有效的接口地址、Token（Ollama 不需要）和模型。"};
+            return {false, "Jev 只能从已有候选中挑选，不能用于翻译；请在「整句与云候选」页换成生成式服务商。"};
+        return {false, "请先在「整句与云候选」页面填写有效的接口地址、Token（Ollama 不需要）和模型。"};
     }
     std::string failure;
     const auto translated = AiTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en", &failure);

@@ -1310,7 +1310,27 @@ struct InputPage
     std::vector<std::shared_ptr<ToggleSwitch>> smartOptions;
     std::shared_ptr<Hideable> smartHint;
 
-    // Translation
+    void SyncSections()
+    {
+        const bool japanese = mode == "japanese";
+        for (auto &section : chineseSections)
+            section->SetVisible(!japanese);
+        const auto show = [japanese, this](std::vector<std::shared_ptr<Hideable>> &sections, const char *id) {
+            for (auto &section : sections)
+                section->SetVisible(!japanese && schema == id);
+        };
+        show(quanpinSections, "quanpin");
+        show(shuangpinSections, "shuangpin");
+        show(wubiSections, "wubi");
+        japaneseSection->SetVisible(japanese);
+    }
+};
+
+// 「翻译」页的状态。这一块原先是「输入」页里的候选词翻译分区，现在单独成页。
+struct TranslationPage
+{
+    PageContext *context = nullptr;
+
     std::string provider = "bilibili";
     std::shared_ptr<ToggleSwitch> translationsToggle;
     std::shared_ptr<OpacityBox> translationOptions;
@@ -1324,23 +1344,7 @@ struct InputPage
     std::shared_ptr<Hideable> warningBox;
     std::unique_ptr<CredentialTest> credentialTest;
 
-    // Models
-    ModelRow lattice;
-    std::shared_ptr<ToggleSwitch> latticeToggle;
-    UINT_PTR latticePoll = 0;
-    bool latticeLinkShown = false;
-    std::string latticeUrl;
-    ModelRow neural;
-    std::shared_ptr<ToggleSwitch> neuralToggle;
-    UINT_PTR neuralPoll = 0;
-    bool neuralLinkShown = false;
-    std::string neuralUrl;
-    std::shared_ptr<Column> collocationList;
-    std::vector<ModelRow> collocationRows;
-    std::shared_ptr<ToggleSwitch> collocationToggle;
-    UINT_PTR collocationPoll = 0;
-
-    // 与「AI 与云联想」页共用同一份解析：分槽优先、单值键只在它就是当前服务商时作数，
+    // 与「整句与云候选」页的 AI 联想共用同一份解析：分槽优先、单值键只在它就是当前服务商时作数，
     // 可用性判定与后端 AiTranslation::IsUsableConfig 同一口径。
     voice_fields::ActiveAiConfig AiState() const
     {
@@ -1387,7 +1391,7 @@ struct InputPage
             const voice_fields::ActiveAiConfig state = AiState();
             // 选择器模式下这里的 provider 已经解析成「生成式上次用的那家」，所以不再是 jev。
             // AI 联想总开关与这里无关，只要凭据齐就能用。
-            text = L"请先在「AI 与云联想」页面填写当前服务商的接口地址、模型和 Token（Ollama 不需要）";
+            text = L"请先在「整句与云候选」页面填写当前服务商的接口地址、模型和 Token（Ollama 不需要）";
             ok = state.usable;
         }
         else if (provider == "custom")
@@ -1440,21 +1444,25 @@ struct InputPage
         showPosBlock->SetDisabled(!enabled);
         singleSenseBlock->SetDisabled(!enabled);
     }
+};
 
-    void SyncSections()
-    {
-        const bool japanese = mode == "japanese";
-        for (auto &section : chineseSections)
-            section->SetVisible(!japanese);
-        const auto show = [japanese, this](std::vector<std::shared_ptr<Hideable>> &sections, const char *id) {
-            for (auto &section : sections)
-                section->SetVisible(!japanese && schema == id);
-        };
-        show(quanpinSections, "quanpin");
-        show(shuangpinSections, "shuangpin");
-        show(wubiSections, "wubi");
-        japaneseSection->SetVisible(japanese);
-    }
+// 「整句与云候选」页上整句模型与云候选分区的状态。这一块原先在「输入」页，现在挂在 AI 联想的前面。
+struct SentenceSection
+{
+    ModelRow lattice;
+    std::shared_ptr<ToggleSwitch> latticeToggle;
+    UINT_PTR latticePoll = 0;
+    bool latticeLinkShown = false;
+    std::string latticeUrl;
+    ModelRow neural;
+    std::shared_ptr<ToggleSwitch> neuralToggle;
+    UINT_PTR neuralPoll = 0;
+    bool neuralLinkShown = false;
+    std::string neuralUrl;
+    std::shared_ptr<Column> collocationList;
+    std::vector<ModelRow> collocationRows;
+    std::shared_ptr<ToggleSwitch> collocationToggle;
+    UINT_PTR collocationPoll = 0;
 };
 
 // Section card that can be hidden (`hidden` attribute) without leaving its margin behind.
@@ -1623,6 +1631,51 @@ VisualPtr BuildInputPage(PageContext &context)
         s->chineseSections.push_back(AddHideableSection(page, Col({MakeTitle(L"输入方案"), options})));
     }
 
+    // ---- 候选词调频 ----
+    // 每个输入方案一块，跟在该方案自己的分区后面、只在选中它时显示。全拼与双拼查的是同一份拼音词库，
+    // 共用拼音的调频方式（frequency_adjustment.mode）；五笔用自己的（wubi_mode，默认关闭）。触发频次
+    // 与线性调频步长三个方案共用，同一个配置项在三块里各有一个控件，改一处另外两处跟着变。
+    // 触发频次只在调频开着时有用，线性调频步长只在线性调频下有用：两行随这一块自己的调频方式显隐，
+    // 连同各自上面的分隔线一起收起。
+    const auto frequencySection = [&context](std::wstring title, std::wstring description, const char *modePath) {
+        Dropdown::Options frequency;
+        frequency.minWidth = 110.0f;
+        frequency.menuMinWidth = 110.0f;
+        auto trigger = std::make_shared<Hideable>(
+            Col({std::make_shared<Divider>(Divider::Kind::Option),
+                 FrequencyRow(MakeSubTitle(L"触发频次(第几次上屏触发)"),
+                              BindDropdown(context, "frequency_adjustment.trigger_count", NumberOptions(1, 6),
+                                           frequency, ValueKind::Integer))}),
+            false);
+        auto step = std::make_shared<Hideable>(
+            Col({std::make_shared<Divider>(Divider::Kind::Option),
+                 FrequencyRow(MakeSubTitle(L"线性调频步长"),
+                              BindDropdown(context, "frequency_adjustment.linear_step", NumberOptions(1, 6), frequency,
+                                           ValueKind::Integer))}),
+            false);
+        const auto sync = [weakTrigger = std::weak_ptr<Hideable>(trigger),
+                           weakStep = std::weak_ptr<Hideable>(step)](const std::string &mode) {
+            if (auto box = weakTrigger.lock())
+                box->SetVisible(!mode.empty() && mode != "disabled");
+            if (auto box = weakStep.lock())
+                box->SetVisible(mode == "linear");
+        };
+        auto mode = BindDropdown(context, modePath,
+                                 Options({{"disabled", L"关闭"},
+                                          {"pin", L"一次置顶"},
+                                          {"halve", L"折半调频"},
+                                          {"linear", L"线性调频"},
+                                          {"promote", L"一次置前"}}),
+                                 frequency, ValueKind::String, sync);
+        context.OnConfig(
+            [sync, model = &context.model, path = std::string(modePath)]() { sync(model->GetString(path)); });
+        auto content = Col({FrequencyRow(MakeSubTitle(L"调频方式"), mode), trigger, step});
+        content->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
+        return Col({MakeTitleBlock(std::move(title), std::move(description)), content});
+    };
+    const std::wstring pinyinFrequencyNote =
+        L"选中非首选的候选后怎样调整它的位置；全拼与双拼共用同一种调频方式，触发频次与线性调频步长三个方案共用";
+
     // ---- 双拼方案 ----
     {
         Dropdown::Options settings;
@@ -1680,6 +1733,10 @@ VisualPtr BuildInputPage(PageContext &context)
         s->shuangpinSections.push_back(AddHideableSection(page, row, false));
     }
 
+    // ---- 双拼候选词调频 ----
+    s->shuangpinSections.push_back(AddHideableSection(
+        page, frequencySection(L"双拼候选词调频", pinyinFrequencyNote, "frequency_adjustment.mode"), false));
+
     // ---- 五笔方案 ----
     {
         Dropdown::Options settings;
@@ -1714,6 +1771,15 @@ VisualPtr BuildInputPage(PageContext &context)
             false));
     }
 
+    // ---- 五笔候选词调频 ----
+    s->wubiSections.push_back(AddHideableSection(
+        page,
+        frequencySection(L"五笔候选词调频",
+                         L"选中非首选的五笔候选后怎样调整码表顺序；默认关闭，保持固定码序便于盲打。拼音混输追加的"
+                         L"拼音候选按全拼、双拼的调频方式；触发频次与线性调频步长三个方案共用",
+                         "frequency_adjustment.wubi_mode"),
+        false));
+
     // ---- 日语方案 ----
     {
         auto romaji = s->japaneseGroup->Add(L"罗马音", "romaji");
@@ -1732,11 +1798,12 @@ VisualPtr BuildInputPage(PageContext &context)
     }
 
     // ---- 输入纠错 ----
-    s->quanpinSections.push_back(AddHideableSection(
-        page,
-        Col({MakeTitleBlock(
-                 L"输入纠错",
-                 L"全拼输错时按误键类型给出纠正候选，默认关闭；开启后预编辑始终显示原始输入，纠正结果仅出现在候选中"),
+    // 与模糊音同一种折叠标题，默认收起；它没有总开关，五个开关都在展开的内容里。
+    {
+        auto details = Col(
+            {Description(
+                 L"全拼输错时按误键类型给出纠正候选，默认关闭；开启后预编辑始终显示原始输入，纠正结果仅出现在候选中",
+                 0.0f),
              ItemSetting(L"乱序纠错", L"相邻字母顺序打错时纠正，如 sahng → shang（上）；默认关闭",
                          Toggle(context, "quanpin.autocorrect_transposition"), true, false),
              ItemSetting(L"邻键纠错", L"误触相邻按键时纠正，如 shabg → shang（上）；默认关闭",
@@ -1746,7 +1813,10 @@ VisualPtr BuildInputPage(PageContext &context)
              ItemSetting(L"多字纠错", L"多敲一个相邻按键时纠正，如 sjhang → shang（上）；默认关闭",
                          Toggle(context, "quanpin.autocorrect_insertion"), false, false),
              ItemSetting(L"显示纠错标记", L"纠错得到的候选末尾显示 * 号，便于和正常候选区分；不影响上屏文字",
-                         Toggle(context, "quanpin.autocorrect_marker"), false, true)})));
+                         Toggle(context, "quanpin.autocorrect_marker"), false, true)});
+        auto section = MakeToggleSection(L"输入纠错", details);
+        s->quanpinSections.push_back(AddHideableSection(page, Col({section.expander, section.details})));
+    }
 
     // ---- 模糊音 ----
     {
@@ -1777,6 +1847,185 @@ VisualPtr BuildInputPage(PageContext &context)
         s->quanpinSections.push_back(
             AddHideableSection(page, Col({std::make_shared<SettingRow>(section.expander, master), section.details})));
     }
+
+    // ---- 全拼候选词调频 ----
+    s->quanpinSections.push_back(AddHideableSection(
+        page, frequencySection(L"全拼候选词调频", pinyinFrequencyNote, "frequency_adjustment.mode")));
+
+    // ---- 以词定字 ----
+    {
+        s->wordKeysBrackets = PaddedRadio(s->wordKeys->Add(L"[ / ]", "brackets"));
+        s->wordKeysMinusEqual = PaddedRadio(s->wordKeys->Add(L"- / =", "minus_equal"));
+        s->wordKeys->SetValue("brackets");
+        s->wordKeysMinusEqual->SetDisabled(true);
+        s->wordKeys->SetOnChanged(
+            [model](const std::string &value) { model->Update("input.word_to_character_keys", value); });
+        auto keys = std::make_shared<TopRuled>(
+            Col({MakeSubTitle(L"以词定字快捷键"), OptionList({s->wordKeysBrackets, s->wordKeysMinusEqual})}), 16.0f);
+        keys->SetMargin({0.0f, 18.0f, 0.0f, 0.0f});
+        page.AddSection(Col({MakeRow(L"以词定字", L"开启后，按所选键组的左键上屏高亮候选的首个汉字，右键上屏末个汉字",
+                                     Toggle(context, "input.word_to_character")),
+                             keys}));
+    }
+
+    page.AddSection(MakeRow(L"Esc 保留已选词",
+                            L"造词时按 Esc 只清除还没选的拼音、保留已选的词，再按一次 Esc 整体取消（小狼毫风格）",
+                            Toggle(context, "input.escape_keeps_selected_word")));
+    page.AddSection(MakeRow(L"回车上屏英文时入库",
+                            L"按回车上屏输入的英文时，把这个单词写入英文词库，之后可作为候选出现",
+                            Toggle(context, "input.enter_learns_english_word")));
+
+    // ---- 固定标点 ----
+    {
+        auto follow = PaddedRadio(s->punctuationLock->Add(L"跟随中英文状态", "follow"));
+        auto chinese = PaddedRadio(s->punctuationLock->Add(L"始终使用中文标点", "chinese"));
+        auto english = PaddedRadio(s->punctuationLock->Add(L"始终使用英文标点", "english"));
+        s->punctuationLock->SetValue("follow");
+        s->punctuationLock->SetOnChanged(
+            [model](const std::string &value) { model->Update("input.punctuation_lock", value); });
+        page.AddSection(Col({MakeTitle(L"固定标点"), Description(L"切换中英文时的标点形态，三者互斥"),
+                             OptionList({follow, chinese, english})}));
+    }
+
+    // ---- 顿号自定义 ----
+    {
+        std::vector<VisualPtr> keys;
+        for (auto &check : AtLeastOneChecks(context, {{L"\\ 反斜杠", "input.enumeration_comma_backslash"},
+                                                      {L"/ 斜杠", "input.enumeration_comma_slash"}}))
+            keys.push_back(check);
+        page.AddSection(Col({MakeTitle(L"顿号自定义"),
+                             Description(L"中文标点状态下用哪些键输出顿号「、」，至少保留一个；未勾选的键按原样输出"),
+                             OptionList(keys)}));
+    }
+
+    // ---- 智能标点 ----
+    {
+        auto master = BindToggle(context, "input.smart_punctuation");
+        auto option = [s, &context](const char *path) {
+            auto toggle = BindToggle(context, path);
+            s->smartOptions.push_back(toggle);
+            return toggle;
+        };
+        s->smartHint = std::make_shared<Hideable>(DisabledHint(), false);
+        auto details = Col({Description(L"中文标点模式下的标点自动转换", 0.0f),
+                            DetailsRow(L"中文标点后按空格转换",
+                                       L"。，！？；：、 以及单独出现的 “ ” 【 】 《 》 （ ） 转为对应英文标点",
+                                       option("input.smart_punctuation_space_convert")),
+                            DetailsRow(L"同键转回中文", L"转换或直出的英文标点，2 秒内再按同一标点键转回中文",
+                                       option("input.smart_punctuation_repeat_to_chinese")),
+                            DetailsRow(L"数字后直出", L"数字后输入 , . : 直接输出英文标点（如 3.14）",
+                                       option("input.smart_punctuation_direct_digit")),
+                            DetailsRow(L"字母后直出", L"字母后输入 , . : 直接输出英文标点",
+                                       option("input.smart_punctuation_direct_letter")),
+                            s->smartHint});
+        auto section = MakeToggleSection(L"智能标点", details);
+        page.AddSection(Col({std::make_shared<SettingRow>(section.expander, master), section.details}));
+    }
+
+    page.AddSection(MakeRow(L"成对标点自动补全", L"输入左侧符号时自动补全右侧符号，并将光标置于中间",
+                            Toggle(context, "input.paired_punctuation")));
+    page.AddSection(MakeRow(
+        L"默认中英文", L"",
+        BindDropdown(context, "input.default_ime_mode", Options({{"chinese", L"中文"}, {"english", L"英文"}}))));
+    page.AddSection(MakeRow(
+        L"中英文状态", L"",
+        BindDropdown(context, "input.ime_mode_scope", Options({{"app", L"按应用记忆"}, {"global", L"全局统一"}}))));
+    page.AddSection(MakeRow(
+        L"简繁输入", L"",
+        BindDropdown(context, "input.character_set", Options({{"simplified", L"简体"}, {"traditional", L"繁体"}}))));
+
+    // ---- Snapshot -> page (config-sync.ts) ----
+    context.OnConfig([s, state, model, host]() {
+        (void)state;
+        const std::string mode = model->GetString("input.mode") == "japanese" ? "japanese" : "chinese";
+        s->modeGroup->SetValue(mode);
+        s->mode = mode;
+        const std::string schema = model->GetString("input.schema");
+        if (schema == "quanpin" || schema == "shuangpin" || schema == "wubi")
+        {
+            s->schemeGroup->SetValue(schema);
+            s->schema = schema;
+        }
+        s->SyncSections();
+        s->japaneseGroup->SetValue("romaji");
+
+        // Custom shuangpin schemas follow the built-in ones; broken ones are listed greyed out.
+        if (const Json *schemas = model->Find("input.custom_shuangpin_schemas"); schemas && schemas->is_array())
+        {
+            std::vector<DropdownOption> options = BuiltinShuangpin();
+            size_t broken = 0;
+            size_t count = 0;
+            for (const Json &entry : *schemas)
+            {
+                if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string() ||
+                    !entry.contains("name") || !entry["name"].is_string())
+                    continue;
+                ++count;
+                const bool error = !entry.value("error", std::string()).empty();
+                broken += error ? 1 : 0;
+                options.push_back({Widen(entry["name"].get<std::string>()), entry["id"].get<std::string>(), error, {}});
+            }
+            if (options.size() != s->shuangpin->GetOptions().size() || count > 0)
+            {
+                s->shuangpin->SetOptions(std::move(options));
+                s->shuangpin->SetValue(model->GetString("input.shuangpin_schema"));
+            }
+            if (s->shuangpinRefreshPending)
+            {
+                s->shuangpinRefreshPending = false;
+                PageTimers::Stop(s->shuangpinRefreshTimer);
+                if (count == 0)
+                    host->ShowToast(L"刷新成功，文件夹里还没有自定义双拼方案", true);
+                else if (broken > 0)
+                    host->ShowToast(L"找到 " + std::to_wstring(count) + L" 个自定义方案，其中 " +
+                                        std::to_wstring(broken) + L" 个有错误，悬停在灰色方案上可查看原因",
+                                    false);
+                else
+                    host->ShowToast(L"刷新成功，找到 " + std::to_wstring(count) + L" 个自定义方案", true);
+            }
+        }
+        if (const Json *directory = model->Find("input.custom_shuangpin_directory");
+            directory && directory->is_string())
+        {
+            s->shuangpinDirectory->SetText(L"文件夹：" + Widen(directory->get<std::string>()));
+            s->shuangpinDirectoryBox->SetVisible(true);
+        }
+
+        // 以词定字: a key pair that pages candidates cannot also pick characters.
+        if (const Json *paging = model->Find("general.paging_brackets"); paging && paging->is_boolean())
+            s->wordKeysBrackets->SetDisabled(paging->get<bool>());
+        if (const Json *paging = model->Find("general.paging_minus_equal"); paging && paging->is_boolean())
+            s->wordKeysMinusEqual->SetDisabled(paging->get<bool>());
+        if (const Json *keys = model->Find("input.word_to_character_keys"); keys && keys->is_string())
+            s->wordKeys->SetValue(keys->get<std::string>());
+        const std::string lock = model->GetString("input.punctuation_lock");
+        if (lock == "follow" || lock == "chinese" || lock == "english")
+            s->punctuationLock->SetValue(lock);
+
+        if (const Json *smart = model->Find("input.smart_punctuation"); smart && smart->is_boolean())
+        {
+            for (auto &toggle : s->smartOptions)
+                toggle->SetDisabled(!smart->get<bool>());
+            s->smartHint->SetVisible(!smart->get<bool>());
+        }
+        if (const Json *fuzzy = model->Find("input.fuzzy_pinyin"); fuzzy && fuzzy->is_boolean())
+        {
+            for (auto &rules : s->fuzzyRules)
+                rules->SetDisabled(!fuzzy->get<bool>());
+            s->fuzzyHint->SetVisible(!fuzzy->get<bool>());
+        }
+    });
+
+    return page.Build();
+}
+
+VisualPtr BuildTranslationPage(PageContext &context)
+{
+    auto state = std::make_shared<TranslationPage>();
+    state->context = &context;
+    TranslationPage *s = state.get();
+    SettingsModel *model = &context.model;
+    PageBuilder page(L"翻译");
 
     // ---- 候选词翻译 ----
     {
@@ -1879,11 +2128,12 @@ VisualPtr BuildInputPage(PageContext &context)
              std::make_shared<Divider>(Divider::Kind::Option),
              blockInput(LanguageRow(L"翻译模型", L"默认 2B；更大的模型译文通常更准确，响应可能稍慢", bilibiliModel))});
         s->aiSummary = std::make_shared<ApiField>(L"当前服务商与模型", L"未配置", false, true);
-        auto ai = Col({heading(L"复用 AI 辅助配置",
-                               L"使用「AI 与云联想」页生成式服务商的接口地址、Token 与模型，无需在此重复填写。"
-                               L"那边选了「从候选里挑」也照样能用，翻译会用生成式那一家。"
-                               L"不依赖「启用 AI 联想」开关，凭据填好就能用于翻译。"),
-                       blockInput(grid({{s->aiSummary, true}}))});
+        auto ai =
+            Col({heading(L"复用 AI 辅助配置",
+                         L"使用「整句与云候选」页 AI 联想里生成式服务商的接口地址、Token 与模型，无需在此重复填写。"
+                         L"那边选了「从候选里挑」也照样能用，翻译会用生成式那一家。"
+                         L"不依赖「启用 AI 联想」开关，凭据填好就能用于翻译。"),
+                 blockInput(grid({{s->aiSummary, true}}))});
         s->providerFields["bilibili"] = std::make_shared<Hideable>(bilibili, true);
         s->providerFields["tencent"] = std::make_shared<Hideable>(tencent, false);
         s->providerFields["aliyun"] = std::make_shared<Hideable>(aliyun, false);
@@ -1939,87 +2189,39 @@ VisualPtr BuildInputPage(PageContext &context)
         s->translationsToggle = master;
     }
 
-    // ---- 以词定字 ----
-    {
-        s->wordKeysBrackets = PaddedRadio(s->wordKeys->Add(L"[ / ]", "brackets"));
-        s->wordKeysMinusEqual = PaddedRadio(s->wordKeys->Add(L"- / =", "minus_equal"));
-        s->wordKeys->SetValue("brackets");
-        s->wordKeysMinusEqual->SetDisabled(true);
-        s->wordKeys->SetOnChanged(
-            [model](const std::string &value) { model->Update("input.word_to_character_keys", value); });
-        auto keys = std::make_shared<TopRuled>(
-            Col({MakeSubTitle(L"以词定字快捷键"), OptionList({s->wordKeysBrackets, s->wordKeysMinusEqual})}), 16.0f);
-        keys->SetMargin({0.0f, 18.0f, 0.0f, 0.0f});
-        page.AddSection(Col({MakeRow(L"以词定字", L"开启后，按所选键组的左键上屏高亮候选的首个汉字，右键上屏末个汉字",
-                                     Toggle(context, "input.word_to_character")),
-                             keys}));
-    }
+    context.OnConfig([s, state, model]() {
+        (void)state;
+        if (const Json *translations = model->Find("general.candidate_translations");
+            translations && translations->is_boolean())
+        {
+            s->translationsToggle->SetChecked(translations->get<bool>());
+            s->SetTranslationsEnabled(translations->get<bool>());
+        }
+        const std::string provider = model->GetString("translation.provider");
+        s->provider = provider == "aliyun" || provider == "niutrans" || provider == "custom" || provider == "ai" ||
+                              provider == "bilibili"
+                          ? provider
+                          : "tencent";
+        s->fields["tencentTmtSecretId"]->SetText(Widen(model->GetString("tencent_tmt.secret_id")));
+        s->fields["tencentTmtSecretKey"]->SetText(Widen(model->GetString("tencent_tmt.secret_key")));
+        s->fields["aliyunAccessKeyId"]->SetText(Widen(model->GetString("aliyun_mt.secret_id")));
+        s->fields["aliyunAccessKeySecret"]->SetText(Widen(model->GetString("aliyun_mt.secret_key")));
+        s->fields["niutransAppId"]->SetText(Widen(model->GetString("niutrans.app_id")));
+        s->fields["niutransApiKey"]->SetText(Widen(model->GetString("niutrans.apikey")));
+        s->fields["customTranslationEndpoint"]->SetText(Widen(model->GetString("custom_translation.endpoint")));
+        s->fields["customTranslationApiKey"]->SetText(Widen(model->GetString("custom_translation.api_key")));
+        s->SyncProviderView();
+    });
 
-    page.AddSection(MakeRow(L"Esc 保留已选词",
-                            L"造词时按 Esc 只清除还没选的拼音、保留已选的词，再按一次 Esc 整体取消（小狼毫风格）",
-                            Toggle(context, "input.escape_keeps_selected_word")));
-    page.AddSection(MakeRow(L"回车上屏英文时入库",
-                            L"按回车上屏输入的英文时，把这个单词写入英文词库，之后可作为候选出现",
-                            Toggle(context, "input.enter_learns_english_word")));
+    return page.Build();
+}
 
-    // ---- 固定标点 ----
-    {
-        auto follow = PaddedRadio(s->punctuationLock->Add(L"跟随中英文状态", "follow"));
-        auto chinese = PaddedRadio(s->punctuationLock->Add(L"始终使用中文标点", "chinese"));
-        auto english = PaddedRadio(s->punctuationLock->Add(L"始终使用英文标点", "english"));
-        s->punctuationLock->SetValue("follow");
-        s->punctuationLock->SetOnChanged(
-            [model](const std::string &value) { model->Update("input.punctuation_lock", value); });
-        page.AddSection(Col({MakeTitle(L"固定标点"), Description(L"切换中英文时的标点形态，三者互斥"),
-                             OptionList({follow, chinese, english})}));
-    }
-
-    // ---- 顿号自定义 ----
-    {
-        std::vector<VisualPtr> keys;
-        for (auto &check : AtLeastOneChecks(context, {{L"\\ 反斜杠", "input.enumeration_comma_backslash"},
-                                                      {L"/ 斜杠", "input.enumeration_comma_slash"}}))
-            keys.push_back(check);
-        page.AddSection(Col({MakeTitle(L"顿号自定义"),
-                             Description(L"中文标点状态下用哪些键输出顿号「、」，至少保留一个；未勾选的键按原样输出"),
-                             OptionList(keys)}));
-    }
-
-    // ---- 智能标点 ----
-    {
-        auto master = BindToggle(context, "input.smart_punctuation");
-        auto option = [s, &context](const char *path) {
-            auto toggle = BindToggle(context, path);
-            s->smartOptions.push_back(toggle);
-            return toggle;
-        };
-        s->smartHint = std::make_shared<Hideable>(DisabledHint(), false);
-        auto details = Col({Description(L"中文标点模式下的标点自动转换", 0.0f),
-                            DetailsRow(L"中文标点后按空格转换",
-                                       L"。，！？；：、 以及单独出现的 “ ” 【 】 《 》 （ ） 转为对应英文标点",
-                                       option("input.smart_punctuation_space_convert")),
-                            DetailsRow(L"同键转回中文", L"转换或直出的英文标点，2 秒内再按同一标点键转回中文",
-                                       option("input.smart_punctuation_repeat_to_chinese")),
-                            DetailsRow(L"数字后直出", L"数字后输入 , . : 直接输出英文标点（如 3.14）",
-                                       option("input.smart_punctuation_direct_digit")),
-                            DetailsRow(L"字母后直出", L"字母后输入 , . : 直接输出英文标点",
-                                       option("input.smart_punctuation_direct_letter")),
-                            s->smartHint});
-        auto section = MakeToggleSection(L"智能标点", details);
-        page.AddSection(Col({std::make_shared<SettingRow>(section.expander, master), section.details}));
-    }
-
-    page.AddSection(MakeRow(L"成对标点自动补全", L"输入左侧符号时自动补全右侧符号，并将光标置于中间",
-                            Toggle(context, "input.paired_punctuation")));
-    page.AddSection(MakeRow(
-        L"默认中英文", L"",
-        BindDropdown(context, "input.default_ime_mode", Options({{"chinese", L"中文"}, {"english", L"英文"}}))));
-    page.AddSection(MakeRow(
-        L"中英文状态", L"",
-        BindDropdown(context, "input.ime_mode_scope", Options({{"app", L"按应用记忆"}, {"global", L"全局统一"}}))));
-    page.AddSection(MakeRow(
-        L"简繁输入", L"",
-        BindDropdown(context, "input.character_set", Options({{"simplified", L"简体"}, {"traditional", L"繁体"}}))));
+void AddSentenceSection(PageBuilder &page, PageContext &context)
+{
+    auto state = std::make_shared<SentenceSection>();
+    SentenceSection *s = state.get();
+    SettingsModel *model = &context.model;
+    HostServices *host = &context.host;
 
     // ---- 整句候选 ----
     {
@@ -2121,132 +2323,8 @@ VisualPtr BuildInputPage(PageContext &context)
             Col({MakeTitleBlock(L"整句与云候选", L"输入多个拼音音节时，额外提供整句或云端给出的候选"), content}));
     }
 
-    // ---- 拼音方案调频 ----
-    {
-        Dropdown::Options frequency;
-        frequency.minWidth = 110.0f;
-        frequency.menuMinWidth = 110.0f;
-        auto content = Col({FrequencyRow(MakeSubTitle(L"调频方式"), BindDropdown(context, "frequency_adjustment.mode",
-                                                                                 Options({{"disabled", L"关闭"},
-                                                                                          {"pin", L"一次置顶"},
-                                                                                          {"halve", L"折半调频"},
-                                                                                          {"linear", L"线性调频"},
-                                                                                          {"promote", L"一次置前"}}),
-                                                                                 frequency)),
-                            std::make_shared<Divider>(Divider::Kind::Option),
-                            FrequencyRow(MakeSubTitle(L"触发频次(第几次上屏触发)"),
-                                         BindDropdown(context, "frequency_adjustment.trigger_count",
-                                                      NumberOptions(1, 6), frequency, ValueKind::Integer)),
-                            std::make_shared<Divider>(Divider::Kind::Option),
-                            FrequencyRow(MakeSubTitle(L"线性调频步长"),
-                                         BindDropdown(context, "frequency_adjustment.linear_step", NumberOptions(1, 6),
-                                                      frequency, ValueKind::Integer))});
-        content->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
-        page.AddSection(Col({MakeTitle(L"拼音方案调频"), content}));
-    }
-
-    // ---- Snapshot -> page (config-sync.ts) ----
     context.OnConfig([s, state, model, host, &context]() {
         (void)state;
-        const std::string mode = model->GetString("input.mode") == "japanese" ? "japanese" : "chinese";
-        s->modeGroup->SetValue(mode);
-        s->mode = mode;
-        const std::string schema = model->GetString("input.schema");
-        if (schema == "quanpin" || schema == "shuangpin" || schema == "wubi")
-        {
-            s->schemeGroup->SetValue(schema);
-            s->schema = schema;
-        }
-        s->SyncSections();
-        s->japaneseGroup->SetValue("romaji");
-
-        // Custom shuangpin schemas follow the built-in ones; broken ones are listed greyed out.
-        if (const Json *schemas = model->Find("input.custom_shuangpin_schemas"); schemas && schemas->is_array())
-        {
-            std::vector<DropdownOption> options = BuiltinShuangpin();
-            size_t broken = 0;
-            size_t count = 0;
-            for (const Json &entry : *schemas)
-            {
-                if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string() ||
-                    !entry.contains("name") || !entry["name"].is_string())
-                    continue;
-                ++count;
-                const bool error = !entry.value("error", std::string()).empty();
-                broken += error ? 1 : 0;
-                options.push_back({Widen(entry["name"].get<std::string>()), entry["id"].get<std::string>(), error, {}});
-            }
-            if (options.size() != s->shuangpin->GetOptions().size() || count > 0)
-            {
-                s->shuangpin->SetOptions(std::move(options));
-                s->shuangpin->SetValue(model->GetString("input.shuangpin_schema"));
-            }
-            if (s->shuangpinRefreshPending)
-            {
-                s->shuangpinRefreshPending = false;
-                PageTimers::Stop(s->shuangpinRefreshTimer);
-                if (count == 0)
-                    host->ShowToast(L"刷新成功，文件夹里还没有自定义双拼方案", true);
-                else if (broken > 0)
-                    host->ShowToast(L"找到 " + std::to_wstring(count) + L" 个自定义方案，其中 " +
-                                        std::to_wstring(broken) + L" 个有错误，悬停在灰色方案上可查看原因",
-                                    false);
-                else
-                    host->ShowToast(L"刷新成功，找到 " + std::to_wstring(count) + L" 个自定义方案", true);
-            }
-        }
-        if (const Json *directory = model->Find("input.custom_shuangpin_directory");
-            directory && directory->is_string())
-        {
-            s->shuangpinDirectory->SetText(L"文件夹：" + Widen(directory->get<std::string>()));
-            s->shuangpinDirectoryBox->SetVisible(true);
-        }
-
-        // 以词定字: a key pair that pages candidates cannot also pick characters.
-        if (const Json *paging = model->Find("general.paging_brackets"); paging && paging->is_boolean())
-            s->wordKeysBrackets->SetDisabled(paging->get<bool>());
-        if (const Json *paging = model->Find("general.paging_minus_equal"); paging && paging->is_boolean())
-            s->wordKeysMinusEqual->SetDisabled(paging->get<bool>());
-        if (const Json *keys = model->Find("input.word_to_character_keys"); keys && keys->is_string())
-            s->wordKeys->SetValue(keys->get<std::string>());
-        const std::string lock = model->GetString("input.punctuation_lock");
-        if (lock == "follow" || lock == "chinese" || lock == "english")
-            s->punctuationLock->SetValue(lock);
-
-        if (const Json *smart = model->Find("input.smart_punctuation"); smart && smart->is_boolean())
-        {
-            for (auto &toggle : s->smartOptions)
-                toggle->SetDisabled(!smart->get<bool>());
-            s->smartHint->SetVisible(!smart->get<bool>());
-        }
-        if (const Json *fuzzy = model->Find("input.fuzzy_pinyin"); fuzzy && fuzzy->is_boolean())
-        {
-            for (auto &rules : s->fuzzyRules)
-                rules->SetDisabled(!fuzzy->get<bool>());
-            s->fuzzyHint->SetVisible(!fuzzy->get<bool>());
-        }
-
-        if (const Json *translations = model->Find("general.candidate_translations");
-            translations && translations->is_boolean())
-        {
-            s->translationsToggle->SetChecked(translations->get<bool>());
-            s->SetTranslationsEnabled(translations->get<bool>());
-        }
-        const std::string provider = model->GetString("translation.provider");
-        s->provider = provider == "aliyun" || provider == "niutrans" || provider == "custom" || provider == "ai" ||
-                              provider == "bilibili"
-                          ? provider
-                          : "tencent";
-        s->fields["tencentTmtSecretId"]->SetText(Widen(model->GetString("tencent_tmt.secret_id")));
-        s->fields["tencentTmtSecretKey"]->SetText(Widen(model->GetString("tencent_tmt.secret_key")));
-        s->fields["aliyunAccessKeyId"]->SetText(Widen(model->GetString("aliyun_mt.secret_id")));
-        s->fields["aliyunAccessKeySecret"]->SetText(Widen(model->GetString("aliyun_mt.secret_key")));
-        s->fields["niutransAppId"]->SetText(Widen(model->GetString("niutrans.app_id")));
-        s->fields["niutransApiKey"]->SetText(Widen(model->GetString("niutrans.apikey")));
-        s->fields["customTranslationEndpoint"]->SetText(Widen(model->GetString("custom_translation.endpoint")));
-        s->fields["customTranslationApiKey"]->SetText(Widen(model->GetString("custom_translation.api_key")));
-        s->SyncProviderView();
-
         // Lattice language model row. Server 映射着 sc.lm 时删除只留标记（deletePending），
         // 下载按钮换成「重启输入法」，重启后 Server 在映射前把文件删掉。
         {
@@ -2393,7 +2471,5 @@ VisualPtr BuildInputPage(PageContext &context)
                 PageTimers::Stop(s->collocationPoll);
         }
     });
-
-    return page.Build();
 }
 } // namespace native_settings

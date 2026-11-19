@@ -227,6 +227,9 @@ struct NetworkProxyConfig
 struct FrequencyAdjustmentConfig
 {
     std::string mode = "promote"; // disabled | pin | halve | linear | promote
+    // 五笔候选单独的调频方式，取值同 mode，默认关闭：五笔靠固定码序盲打，选一次就挪位置会打乱记忆。
+    // trigger_count 与 linear_step 两边共用。
+    std::string wubi_mode = "disabled";
     int trigger_count = 1;
     int linear_step = 1;
 };
