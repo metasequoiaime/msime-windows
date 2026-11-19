@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 
 using Microsoft::WRL::ComPtr;
@@ -451,23 +452,82 @@ VisualPtr MakeDialogField(const std::wstring &label, const std::shared_ptr<DictI
 // ---------------------------------------------------------------------------------
 std::array<float, 7> DictColumns::Edges(float width) const
 {
-    const float percentSum = percents[0] + percents[1] + percents[2];
-    const float fixed = kDictCheckColumn + 64.0f + 124.0f;
-    // 窗口收窄时百分比列先让出空间：操作列固定 124px 且排在最后，把它挤出表格右边界的话，
-    // 滚动区会裁掉「删除」，既看不见也点不到。固定列的总宽 228px 无论如何都要留住。
-    const float percent = std::min(percentSum * width, std::max(width - fixed, 0.0f));
-    const float leftover = std::max(width - fixed - percent, 0.0f);
-    const float index = 64.0f + leftover * 64.0f / 188.0f;
-    const float action = 124.0f + leftover * 124.0f / 188.0f;
-    const float unit = percentSum > 0.0f ? percent / percentSum : 0.0f;
+    // 窄窗口下先让出百分比列，再整列收起，绝不把文字列压成空白。固定列（勾选 / 序号 / 操作）
+    // 必须留在表格右边界以内：溢出部分会被滚动区裁掉，「删除」既看不见也点不到。
+    std::array<bool, 3> shown = {percents[0] > 0.0f, percents[1] > 0.0f, percents[2] > 0.0f};
+    const size_t liveColumns =
+        static_cast<size_t>(shown[0]) + static_cast<size_t>(shown[1]) + static_cast<size_t>(shown[2]);
+    size_t columns = liveColumns;
+    bool showIndex = true;
+
+    const auto textBudget = [&]() {
+        const float fixed = kDictCheckColumn + (showIndex ? kDictIndexWidth : 0.0f) + kDictActionWidth;
+        return std::max(width - fixed, 0.0f);
+    };
+    const auto percentSum = [&]() {
+        float sum = 0.0f;
+        for (size_t i = 0; i < 3; ++i)
+            sum += shown[i] ? percents[i] : 0.0f;
+        return sum;
+    };
+    // 正常宽度按原百分比排版，剩下的空白按 64:124 分给序号列和操作列（table-layout: fixed）；
+    // 收起过列之后剩下的列把预算吃满，省下来的宽度不白留在操作列里。
+    const auto budget = [&]() {
+        const float available = textBudget();
+        const float sum = percentSum();
+        return columns < liveColumns ? available : std::min(available, sum * width);
+    };
+    const auto narrowest = [&]() {
+        const float sum = percentSum();
+        if (sum <= 0.0f)
+            return 0.0f;
+        float smallest = std::numeric_limits<float>::max();
+        for (size_t i = 0; i < 3; ++i)
+        {
+            if (shown[i])
+                smallest = std::min(smallest, percents[i] * budget() / sum);
+        }
+        return smallest;
+    };
+    // 收起的顺序：权重 → 序号 → 编码；词条最能说明这一行是什么，留到最后。
+    while (narrowest() < kDictMinTextColumn)
+    {
+        bool changed = false;
+        if (columns > 1 && shown[2])
+        {
+            shown[2] = false;
+            changed = true;
+        }
+        else if (columns > 1 && shown[0])
+        {
+            shown[0] = false;
+            changed = true;
+        }
+        else if (showIndex)
+        {
+            showIndex = false;
+            changed = true;
+        }
+        if (!changed)
+            break;
+        columns = static_cast<size_t>(shown[0]) + static_cast<size_t>(shown[1]) + static_cast<size_t>(shown[2]);
+    }
+
+    const float sum = percentSum();
+    const float unit = sum > 0.0f ? budget() / sum : 0.0f;
+    const float leftover =
+        std::max(width - kDictCheckColumn - (showIndex ? kDictIndexWidth : 0.0f) - kDictActionWidth - budget(), 0.0f);
+    const float indexWidth = showIndex ? kDictIndexWidth + leftover * 64.0f / 188.0f : 0.0f;
+    const float actionWidth = kDictActionWidth + leftover * (showIndex ? 124.0f / 188.0f : 1.0f);
+
     std::array<float, 7> edges{};
     edges[0] = 0.0f;
     edges[1] = kDictCheckColumn;
-    edges[2] = edges[1] + index;
-    edges[3] = edges[2] + percents[0] * unit;
-    edges[4] = edges[3] + percents[1] * unit;
-    edges[5] = edges[4] + percents[2] * unit;
-    edges[6] = std::max(edges[5] + action, width);
+    edges[2] = edges[1] + indexWidth;
+    // 收起的列把右边界停在上一条边上，单元格宽度成了 0 或负值，DrawCell 直接不画。
+    for (size_t i = 0; i < 3; ++i)
+        edges[i + 3] = edges[i + 2] + (shown[i] ? percents[i] * unit : 0.0f);
+    edges[6] = std::max(edges[5] + actionWidth, width);
     return edges;
 }
 
@@ -900,6 +960,14 @@ SizeF DictTableScroll::Measure(const SizeF &availableSize)
         scroll_->SetAppearance(TableScrollbar());
     }
     scroll_->MeasureInLayout({availableSize.width, height});
+    // 内容超出可视高度时滚动条会占掉 8px：表头得留出同样的宽度，否则表头和表体的列错开。
+    const float reserve = contentHeight_ > height + 0.5f ? TableScrollbar().reservedWidth : 0.0f;
+    if (reserve != appliedReserve_)
+    {
+        appliedReserve_ = reserve;
+        if (onScrollbarReserve_)
+            onScrollbarReserve_(reserve);
+    }
     return {availableSize.width, height};
 }
 
@@ -917,6 +985,11 @@ void DictTableScroll::Render(msimeui::DeviceResources &dr)
 void DictTableScroll::SetOnAttach(std::function<void()> handler)
 {
     onAttach_ = std::move(handler);
+}
+
+void DictTableScroll::SetOnScrollbarReserve(std::function<void(float)> handler)
+{
+    onScrollbarReserve_ = std::move(handler);
 }
 
 void DictTableScroll::Attach(msimeui::Window *window)
@@ -1116,6 +1189,7 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
         });
     });
     scroll_ = std::make_shared<DictTableScroll>(body_, context_.host);
+    scroll_->SetOnScrollbarReserve([this](float reserve) { header_->SetScrollbarReserve(reserve); });
 
     TextStyle status;
     status.size = kFontDefault;
@@ -1168,20 +1242,28 @@ void DictionaryPanel::AddTo(Column &column)
         if (const auto panel = weak.lock())
             panel->EnsureLoaded();
     });
-    auto toolbar = std::make_shared<Row>(10.0f);
+    // `.dict-toolbar` 拆成两行：搜索框和「查询」一行，表格级操作一行。原来五个控件挤在一行，
+    // 最窄窗口（设置窗最小 600 DIP，工具栏内宽只剩 260 出头）放不下，`Row` 又不裁剪，
+    // 末尾的按钮会被压成 0 宽或越过卡片边框。操作那一行还允许换行，再窄也不会溢出去。
+    auto toolbar = std::make_shared<Column>(10.0f);
     // .dict-toolbar { padding: 20px 22px 10px }
     toolbar->SetPadding({22.0f, 20.0f, 22.0f, 10.0f});
-    toolbar->Add(search_, 1.0f);
+    auto searchRow = std::make_shared<Row>(10.0f);
     auto searchButton = std::make_shared<Button>(L"查询", ButtonKind::Neutral);
     searchButton->SetOnClick([this]() { Query(0, true); });
+    searchRow->Add(search_, 1.0f);
+    searchRow->Add(searchButton);
+    auto actions = std::make_shared<Row>(10.0f);
+    actions->SetWrap(true, 10.0f);
     auto importButton = std::make_shared<Button>(L"批量导入", ButtonKind::Neutral);
     importButton->SetOnClick([this]() { Import("import"); });
     auto addButton = std::make_shared<Button>(kind_ == Kind::Quick ? L"新增短语" : L"新增词条", ButtonKind::Primary);
     addButton->SetOnClick([this]() { OpenDialog(nullptr); });
-    toolbar->Add(searchButton);
-    toolbar->Add(importButton);
-    toolbar->Add(removeSelected_);
-    toolbar->Add(addButton);
+    actions->Add(importButton);
+    actions->Add(removeSelected_);
+    actions->Add(addButton);
+    toolbar->Add(searchRow);
+    toolbar->Add(actions);
     column.Add(toolbar);
     column.Add(hint_);
     column.Add(header_);

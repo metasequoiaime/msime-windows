@@ -70,11 +70,16 @@ class StubHost : public HostServices
 class PanelHarness
 {
   public:
-    explicit PanelHarness(DictionaryPanel::Kind kind)
-        : window_(96.0f, {800.0f, 1600.0f}), host_(window_.Window()),
+    explicit PanelHarness(DictionaryPanel::Kind kind, float viewportWidth = 800.0f)
+        : window_(96.0f, {viewportWidth, 1600.0f}), host_(window_.Window()),
           model_([this](const std::string &text) { sent_.push_back(Json::parse(text)); }), context_(model_, host_),
           panel_(std::make_shared<DictionaryPanel>(context_, kind))
     {
+    }
+
+    Column &Root()
+    {
+        return *column_;
     }
 
     DictionaryPanel &Panel()
@@ -482,11 +487,12 @@ TEST_CASE(DictionaryHeaderSelectsEveryRowOnThePage)
 }
 
 // 设置窗口能缩到 600 DIP 宽，表格过窄时左右两侧的固定列（勾选、序号、操作）不能被挤出右边界：
-// 被挤出去的部分会被滚动区裁掉，删除链接既看不见也点不到。百分比列先让出空间。
+// 被挤出去的部分会被滚动区裁掉，删除链接既看不见也点不到。百分比列先让出空间，
+// 让不动了就整列收起——留下的文字列必须还放得下内容，不能压成 0 宽的空白列。
 TEST_CASE(DictionaryColumnsKeepTheActionColumnInsideANarrowTable)
 {
     native_settings::DictColumns columns;
-    for (const float width : {900.0f, 650.0f, 590.0f, 518.0f, 458.0f, 300.0f, 240.0f})
+    for (const float width : {900.0f, 650.0f, 590.0f, 518.0f, 458.0f, 380.0f, 300.0f, 240.0f})
     {
         const auto edges = columns.Edges(width);
         REQUIRE(edges[1] >= native_settings::kDictCheckColumn - 0.01f);
@@ -495,7 +501,40 @@ TEST_CASE(DictionaryColumnsKeepTheActionColumnInsideANarrowTable)
         REQUIRE(edges[4] >= edges[3]);
         REQUIRE(edges[5] >= edges[4]);
         // 操作列固定 124px，它的右边界必须留在表内（正常宽度下还要加上剩余空白）。
-        REQUIRE(edges[5] + 124.0f <= width + 0.01f);
+        REQUIRE(edges[5] + native_settings::kDictActionWidth <= width + 0.01f);
+
+        float widest = 0.0f;
+        for (size_t i = 0; i < 3; ++i)
+        {
+            const float cell = edges[i + 3] - edges[i + 2];
+            REQUIRE(cell >= 0.0f);
+            widest = (std::max)(widest, cell);
+        }
+        // 至少有一列文字撑得下 76px 内容和左右各 18px 的内边距。
+        REQUIRE(widest >= native_settings::kDictMinTextColumn);
+    }
+}
+
+// 设置窗口最小 600 DIP，扣掉侧栏和两层留白后卡片只剩 300 出头：工具栏里五个控件排不进一行，
+// 而 Row 不裁剪，末尾按钮会越过卡片边框。工具栏因此分成两行，操作那一行还能继续换行。
+TEST_CASE(DictionaryToolbarFitsTheNarrowestSettingsWindow)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary, 340.0f);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 2, false, 2));
+
+    SettingsWindowHarness &window = harness.Window();
+    window.Layout();
+    const msimeui::RectF root = harness.Root().GetBounds();
+    const auto buttons = Visible<native_settings::Button>(window, 400.0f);
+    REQUIRE(buttons.size() >= size_t{4});
+    for (native_settings::Button *button : buttons)
+    {
+        const msimeui::RectF bounds = button->GetBounds();
+        // 每个按钮都要有可见宽度，且右缘留在页面内。
+        REQUIRE(bounds.width > 20.0f);
+        REQUIRE(bounds.x + bounds.width <= root.x + root.width + 0.01f);
     }
 }
 

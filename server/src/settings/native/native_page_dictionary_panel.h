@@ -85,11 +85,18 @@ std::shared_ptr<Label> MakeDialogTitle(const std::wstring &title);
 // a 124px action column; what the percentages leave goes to the two fixed text columns in
 // proportion (table-layout: fixed).
 constexpr float kDictCheckColumn = 40.0f;
+constexpr float kDictIndexWidth = 64.0f;
+constexpr float kDictActionWidth = 124.0f;
+// A text column keeps this much before its 18px cell padding: below it the cell shows a
+// couple of characters at most, so the column is dropped instead.
+constexpr float kDictMinTextColumn = 76.0f;
 
 struct DictColumns
 {
     std::array<float, 3> percents = {0.22f, 0.25f, 0.18f};
     // 0 check column | 1 index | 2..4 text cells | 5 action start | 6 table right edge.
+    // Narrow tables drop whole columns (weight, then the code column, then the index) by
+    // collapsing their edges; a collapsed cell measures zero or less and draws nothing.
     std::array<float, 7> Edges(float width) const;
 };
 
@@ -191,6 +198,8 @@ class DictTableScroll : public msimeui::Visual
     void ScrollToTop();
     // Runs once per attach, i.e. when the page it belongs to is actually shown.
     void SetOnAttach(std::function<void()> handler);
+    // 滚动条出现或消失时把占用的宽度告诉表头：表体让出了 8px，表头得跟着让，否则两边的列错开。
+    void SetOnScrollbarReserve(std::function<void(float)> handler);
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
@@ -207,7 +216,9 @@ class DictTableScroll : public msimeui::Visual
     HostServices &host_;
     float contentHeight_ = 0.0f;
     int appliedLight_ = -1;
+    float appliedReserve_ = -1.0f;
     std::function<void()> onAttach_;
+    std::function<void(float)> onScrollbarReserve_;
 };
 
 // `.dict-export-row`: 16px label, 导出 button (min-width 68px), divider on top.
