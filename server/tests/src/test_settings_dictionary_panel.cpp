@@ -144,6 +144,7 @@ class PanelHarness
                         {"dictionary", request.at("dictionary")}};
         message.update(fields);
         model_.Receive(message.dump());
+        window_.Layout();
     }
 
   private:
