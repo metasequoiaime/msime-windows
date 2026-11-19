@@ -1282,7 +1282,13 @@ struct InputPage
 
     // Input mode
     std::vector<std::shared_ptr<Hideable>> chineseSections;
+    // 只在中文模式且选中对应输入方案时显示的分区。
+    std::vector<std::shared_ptr<Hideable>> quanpinSections;
+    std::vector<std::shared_ptr<Hideable>> shuangpinSections;
+    std::vector<std::shared_ptr<Hideable>> wubiSections;
     std::shared_ptr<Hideable> japaneseSection;
+    std::string mode = "chinese";
+    std::string schema = "quanpin";
     std::shared_ptr<RadioGroup> modeGroup = std::make_shared<RadioGroup>();
     std::shared_ptr<RadioGroup> schemeGroup = std::make_shared<RadioGroup>();
     std::shared_ptr<RadioGroup> japaneseGroup = std::make_shared<RadioGroup>();
@@ -1435,11 +1441,18 @@ struct InputPage
         singleSenseBlock->SetDisabled(!enabled);
     }
 
-    void SyncMode(const std::string &mode)
+    void SyncSections()
     {
         const bool japanese = mode == "japanese";
         for (auto &section : chineseSections)
             section->SetVisible(!japanese);
+        const auto show = [japanese, this](std::vector<std::shared_ptr<Hideable>> &sections, const char *id) {
+            for (auto &section : sections)
+                section->SetVisible(!japanese && schema == id);
+        };
+        show(quanpinSections, "quanpin");
+        show(shuangpinSections, "shuangpin");
+        show(wubiSections, "wubi");
         japaneseSection->SetVisible(japanese);
     }
 };
@@ -1582,7 +1595,8 @@ VisualPtr BuildInputPage(PageContext &context)
         auto japanese = s->modeGroup->Add(L"日文", "japanese");
         s->modeGroup->SetValue("chinese");
         s->modeGroup->SetOnChanged([s, model](const std::string &mode) {
-            s->SyncMode(mode);
+            s->mode = mode;
+            s->SyncSections();
             model->Update("input.mode", mode);
         });
         auto grid = std::make_shared<TwoColumns>(chinese, japanese);
@@ -1596,7 +1610,11 @@ VisualPtr BuildInputPage(PageContext &context)
         auto shuangpin = s->schemeGroup->Add(L"双拼", "shuangpin");
         auto wubi = s->schemeGroup->Add(L"五笔", "wubi");
         s->schemeGroup->SetValue("quanpin");
-        s->schemeGroup->SetOnChanged([model](const std::string &value) { model->Update("input.schema", value); });
+        s->schemeGroup->SetOnChanged([s, model](const std::string &value) {
+            s->schema = value;
+            s->SyncSections();
+            model->Update("input.schema", value);
+        });
         // .input-option-content: margin-top 12px, gap 8px
         auto options = Col({quanpin, std::make_shared<Divider>(Divider::Kind::Option), shuangpin,
                             std::make_shared<Divider>(Divider::Kind::Option), wubi},
@@ -1612,7 +1630,7 @@ VisualPtr BuildInputPage(PageContext &context)
         settings.minWidth = 110.0f;
         settings.menuMinWidth = 110.0f;
         s->shuangpin = BindDropdown(context, "input.shuangpin_schema", BuiltinShuangpin(), settings);
-        s->chineseSections.push_back(AddHideableSection(page, MakeRow(L"双拼方案", L"", s->shuangpin)));
+        s->shuangpinSections.push_back(AddHideableSection(page, MakeRow(L"双拼方案", L"", s->shuangpin), false));
     }
 
     // ---- 自定义双拼 ----
@@ -1659,7 +1677,7 @@ VisualPtr BuildInputPage(PageContext &context)
         row->SetAlign(Row::Align::Start);
         row->Add(left, 1.0f);
         row->Add(actions);
-        s->chineseSections.push_back(AddHideableSection(page, row));
+        s->shuangpinSections.push_back(AddHideableSection(page, row, false));
     }
 
     // ---- 五笔方案 ----
@@ -1679,7 +1697,7 @@ VisualPtr BuildInputPage(PageContext &context)
             if (auto toggle = weakZ.lock())
                 toggle->SetChecked(model->GetString("input.wubi_z_mode") == "wildcard");
         });
-        s->chineseSections.push_back(AddHideableSection(
+        s->wubiSections.push_back(AddHideableSection(
             page,
             Col({MakeRow(L"五笔方案", L"", scheme),
                  ItemSetting(L"拼音混输", L"同一串字母同时给五笔码表和全拼，五笔候选在前",
@@ -1692,7 +1710,8 @@ VisualPtr BuildInputPage(PageContext &context)
                  ItemSetting(L"第五码将首选上屏",
                              L"完整四码后再敲字母时上屏首选，并把该字母留作下一组合开头；关闭只在拼音混输开启时生效，"
                              L"这个字母并入混输串；混输关闭时仍按顶字上屏，不会丢字",
-                             Toggle(context, "input.wubi_fifth_code_top_commit"), false, true)})));
+                             Toggle(context, "input.wubi_fifth_code_top_commit"), false, true)}),
+            false));
     }
 
     // ---- 日语方案 ----
@@ -1713,7 +1732,8 @@ VisualPtr BuildInputPage(PageContext &context)
     }
 
     // ---- 输入纠错 ----
-    page.AddSection(
+    s->quanpinSections.push_back(AddHideableSection(
+        page,
         Col({MakeTitleBlock(
                  L"输入纠错",
                  L"全拼输错时按误键类型给出纠正候选，默认关闭；开启后预编辑始终显示原始输入，纠正结果仅出现在候选中"),
@@ -1726,7 +1746,7 @@ VisualPtr BuildInputPage(PageContext &context)
              ItemSetting(L"多字纠错", L"多敲一个相邻按键时纠正，如 sjhang → shang（上）；默认关闭",
                          Toggle(context, "quanpin.autocorrect_insertion"), false, false),
              ItemSetting(L"显示纠错标记", L"纠错得到的候选末尾显示 * 号，便于和正常候选区分；不影响上屏文字",
-                         Toggle(context, "quanpin.autocorrect_marker"), false, true)}));
+                         Toggle(context, "quanpin.autocorrect_marker"), false, true)})));
 
     // ---- 模糊音 ----
     {
@@ -1754,7 +1774,8 @@ VisualPtr BuildInputPage(PageContext &context)
                  Padded(MakeSubTitle(L"声母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[0],
                  Padded(MakeSubTitle(L"韵母"), {0.0f, 2.0f, 0.0f, 2.0f}), s->fuzzyRules[1], s->fuzzyHint});
         auto section = MakeToggleSection(L"模糊音", details);
-        page.AddSection(Col({std::make_shared<SettingRow>(section.expander, master), section.details}));
+        s->quanpinSections.push_back(
+            AddHideableSection(page, Col({std::make_shared<SettingRow>(section.expander, master), section.details})));
     }
 
     // ---- 候选词翻译 ----
@@ -2129,10 +2150,14 @@ VisualPtr BuildInputPage(PageContext &context)
         (void)state;
         const std::string mode = model->GetString("input.mode") == "japanese" ? "japanese" : "chinese";
         s->modeGroup->SetValue(mode);
-        s->SyncMode(mode);
+        s->mode = mode;
         const std::string schema = model->GetString("input.schema");
         if (schema == "quanpin" || schema == "shuangpin" || schema == "wubi")
+        {
             s->schemeGroup->SetValue(schema);
+            s->schema = schema;
+        }
+        s->SyncSections();
         s->japaneseGroup->SetValue("romaji");
 
         // Custom shuangpin schemas follow the built-in ones; broken ones are listed greyed out.
