@@ -92,7 +92,7 @@ TEST_CASE(dictionary_pages_cover_ties_without_duplicates_or_unbounded_results)
     for (int offset : {0, 100, 200})
     {
         json::object request{{"offset", offset}, {"limit", 100}};
-        const auto sql = "SELECT code,word,weight FROM words ORDER BY weight DESC,code,word" +
+        const auto sql = "SELECT code,word,weight,COUNT(*) OVER() FROM words ORDER BY weight DESC,code,word" +
                          SettingsDictionary::Paging::Sql(request);
         sqlite3_stmt *stmt = nullptr;
         REQUIRE(sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK);
@@ -102,6 +102,7 @@ TEST_CASE(dictionary_pages_cover_ties_without_duplicates_or_unbounded_results)
         REQUIRE_EQ(result.at("offset").as_int64(), offset);
         REQUIRE_EQ(result.at("hasMore").as_bool(), offset < 200);
         REQUIRE_EQ(result.at("rows").as_array().size(), offset < 200 ? size_t{100} : size_t{5});
+        REQUIRE_EQ(result.at("total").as_int64(), 205);
         for (const auto &row : result.at("rows").as_array())
             REQUIRE(seen.insert(json::value_to<std::string>(row.at("word"))).second);
     }

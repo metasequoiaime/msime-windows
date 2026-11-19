@@ -27,6 +27,7 @@ inline boost::json::object Read(sqlite3_stmt *statement, const boost::json::obje
 {
     namespace json = boost::json;
     json::array rows;
+    int64_t total = 0;
     int status;
     while ((status = sqlite3_step(statement)) == SQLITE_ROW)
     {
@@ -37,16 +38,14 @@ inline boost::json::object Read(sqlite3_stmt *statement, const boost::json::obje
         rows.push_back({{english ? "word" : "code", text(0)},
                         {english ? "display" : "word", text(1)},
                         {"weight", sqlite3_column_int(statement, 2)}});
+        total = sqlite3_column_int64(statement, 3);
     }
     if (status != SQLITE_DONE)
         return {{"ok", false}, {"message", "查询失败，请重试"}, {"rows", json::array{}}};
     const bool more = rows.size() > static_cast<size_t>(Limit(request));
     if (more)
         rows.pop_back();
-    return {{"ok", true},
-            {"message", rows.empty() ? "没有找到词条" : "查询成功"},
-            {"rows", std::move(rows)},
-            {"hasMore", more},
-            {"offset", Integer(request, "offset", 0, 2147483647)}};
+    return {{"ok", true},      {"message", rows.empty() ? "没有找到词条" : "查询成功"}, {"rows", std::move(rows)},
+            {"hasMore", more}, {"offset", Integer(request, "offset", 0, 2147483647)},   {"total", total}};
 }
 } // namespace SettingsDictionary::Paging

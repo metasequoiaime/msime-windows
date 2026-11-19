@@ -376,6 +376,7 @@ json::object QueryUserEntries(const std::string &dictionary, const json::object 
         json::object empty = Result(true, "没有找到词条");
         empty["hasMore"] = false;
         empty["offset"] = Paging::Integer(request, "offset", 0, 2147483647);
+        empty["total"] = 0;
         return empty;
     }
     if (!user_dictionary::ensure_user_database(path))
@@ -388,17 +389,19 @@ json::object QueryUserEntries(const std::string &dictionary, const json::object 
 
     Stmt stmt;
     if (latin)
-        stmt = Prepare(db.get(),
-                       "SELECT key,value,weight FROM user_latin_words ORDER BY updated_at DESC,key,value" +
-                           Paging::Sql(request),
-                       error);
+        stmt =
+            Prepare(db.get(),
+                    "SELECT key,value,weight,COUNT(*) OVER() FROM user_latin_words ORDER BY updated_at DESC,key,value" +
+                        Paging::Sql(request),
+                    error);
     else
-        stmt = Prepare(db.get(),
-                       "SELECT key,value,weight FROM user_dictionary_operations WHERE dictionary=?1 AND "
-                       "operation='upsert' AND (user_inserted=1 OR weight_edited=1) "
-                       "ORDER BY updated_at DESC,key,value" +
-                           Paging::Sql(request),
-                       error);
+        stmt =
+            Prepare(db.get(),
+                    "SELECT key,value,weight,COUNT(*) OVER() FROM user_dictionary_operations WHERE dictionary=?1 AND "
+                    "operation='upsert' AND (user_inserted=1 OR weight_edited=1) "
+                    "ORDER BY updated_at DESC,key,value" +
+                        Paging::Sql(request),
+                    error);
     if (!stmt || (!latin && !BindText(stmt.get(), 1, journal_kind)))
         return Result(false, "查询用户词库失败：" + error);
     return Paging::Read(stmt.get(), request, dictionary == "english");
@@ -472,8 +475,8 @@ json::object QueryChinese(const std::string &mode, const std::string &search, co
     {
         const std::string table = quanpin::build_table_name(segments);
         Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM \"" + table + "\" WHERE key=?1 ORDER BY weight DESC,value" +
-                                Paging::Sql(request),
+                            "SELECT key,value,weight,COUNT(*) OVER() FROM \"" + table +
+                                "\" WHERE key=?1 ORDER BY weight DESC,value" + Paging::Sql(request),
                             error);
         if (!stmt || !BindText(stmt.get(), 1, normalized))
             return Result(false, "查询失败：" + error);
@@ -885,13 +888,14 @@ json::object QueryLatin(const json::object &request)
         json::object result = Result(true, "没有找到词条");
         result["hasMore"] = false;
         result["offset"] = 0;
+        result["total"] = 0;
         return result;
     }
     exists.reset();
     std::string upper = code;
     ++upper.back(); // 只有 a-z，加一就是前缀的上界
     Stmt stmt = Prepare(db.get(),
-                        "SELECT \"key\",\"value\",\"weight\" FROM latin_words "
+                        "SELECT \"key\",\"value\",\"weight\",COUNT(*) OVER() FROM latin_words "
                         "WHERE replace(\"key\",'''','')>=?1 AND replace(\"key\",'''','')<?2 "
                         "ORDER BY CASE WHEN replace(\"key\",'''','')=?1 THEN 0 ELSE 1 END,\"weight\" DESC,\"key\","
                         "\"value\"" +
@@ -1594,7 +1598,7 @@ json::object HandleEnglish(const json::object &request)
         std::string upper = word;
         ++upper.back(); // ASCII prefix upper bound, compatible with the BINARY primary key.
         Stmt stmt = Prepare(db.get(),
-                            "SELECT word,display,weight FROM english_words WHERE word>=?1 AND word<?3 "
+                            "SELECT word,display,weight,COUNT(*) OVER() FROM english_words WHERE word>=?1 AND word<?3 "
                             "ORDER BY CASE WHEN word=?2 THEN 0 ELSE 1 END,weight DESC,length(word),word,display" +
                                 Paging::Sql(request),
                             error);
@@ -1775,7 +1779,7 @@ json::object HandleWubi(const json::object &request, const WubiTable &wubi)
             !std::all_of(code.begin(), code.end(), [](unsigned char ch) { return ch >= 'a' && ch <= 'z'; }))
             return Result(false, "请输入合法的五笔编码");
         Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM " + table +
+                            "SELECT key,value,weight,COUNT(*) OVER() FROM " + table +
                                 " WHERE key LIKE ?1 ORDER BY weight DESC,key,value" + Paging::Sql(request),
                             error);
         if (!stmt || !BindText(stmt.get(), 1, code + "%"))
@@ -2011,7 +2015,7 @@ json::object HandleQuickPhrase(const json::object &request)
         // 默认按编码前缀查；精确匹配只认编码完全相同的行。编码留空时两种方式都列出全部。
         const bool exact = !code.empty() && StringValue(request, "match") == "exact";
         Stmt stmt = Prepare(db.get(),
-                            std::string("SELECT key,value,weight FROM quick_parases WHERE ") +
+                            std::string("SELECT key,value,weight,COUNT(*) OVER() FROM quick_parases WHERE ") +
                                 (exact ? "key = ?1 " : "key LIKE ?1 ") + "ORDER BY weight DESC,key,value" +
                                 Paging::Sql(request),
                             error);
