@@ -337,7 +337,7 @@ std::string BuildCurrentCandidatePage()
             view.text += "*";
         }
         if (item.fuzzy && ApplyFuzzyPinyinHint(view, !fuzzy_pinyin_hint_shown, typed_pinyin_segments,
-                                               quanpin::split_segments(item.pinyin)))
+                                               quanpin::split_segments(FuzzyPinyinDisplayReading(item))))
         {
             fuzzy_pinyin_hint_shown = true;
         }

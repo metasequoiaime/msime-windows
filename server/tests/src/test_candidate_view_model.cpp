@@ -1,6 +1,19 @@
 #include "window/candidate_view_model.h"
 #include "tests/includes/test_framework.h"
 
+TEST_CASE(fuzzy_pinyin_hint_uses_canonical_quanpin_instead_of_the_typed_code)
+{
+    WordItem quanpin("qin'dian", "亲电", 100, CandidateSource::Database, "qing'dian");
+    CandidateViewItem quanpin_view;
+    quanpin_view.text = quanpin.word;
+    REQUIRE_EQ(FuzzyPinyinDisplayReading(quanpin), std::string("qing'dian"));
+    REQUIRE(ApplyFuzzyPinyinHint(quanpin_view, true, {"qin", "dian"}, {"qing", "dian"}));
+    REQUIRE_EQ(quanpin_view.text, std::string("亲(qing)电"));
+
+    WordItem shuangpin("qidi", "亲电", 100, CandidateSource::Database, "qing'dian");
+    REQUIRE_EQ(FuzzyPinyinDisplayReading(shuangpin), std::string("qing'dian"));
+}
+
 TEST_CASE(fuzzy_pinyin_hint_marks_only_the_characters_with_changed_readings)
 {
     CandidateViewItem item;
