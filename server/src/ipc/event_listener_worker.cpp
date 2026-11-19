@@ -2,6 +2,8 @@
 #include "ipc/event_listener_internal.h"
 #include <Windows.h>
 #include <array>
+#include <atomic>
+#include <ctime>
 #include <string>
 #include <chrono>
 #include <functional>
@@ -1274,7 +1276,18 @@ SerialTaskRunner &DictionaryWriter()
             // The checkpoint copies the journal's write-ahead log back into the database, which SQLite would otherwise
             // do on whichever commit crosses its threshold -- inside a selection the user is waiting for. Here it runs
             // once the queue is empty, i.e. after the user stops typing.
-            runner.SetIdleHandler([] { user_dictionary::checkpoint_user_journal_if_needed(); });
+            runner.SetIdleHandler([] {
+                static std::atomic<std::int64_t> last_expiry_day = 0;
+                const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+                const std::int64_t day = now / 86400;
+                std::int64_t observed = last_expiry_day.load();
+                if (observed != day && last_expiry_day.compare_exchange_strong(observed, day))
+                {
+                    (void)user_dictionary::expire_temporary_pinyin_words(
+                        CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), now);
+                }
+                user_dictionary::checkpoint_user_journal_if_needed();
+            });
         }
         SerialTaskRunner runner{/*below_normal_priority=*/true};
     };

@@ -17,6 +17,7 @@
 #include <utility>
 #include <cstdlib>
 #include <climits>
+#include <ctime>
 #include <boost/algorithm/string.hpp>
 #include <fmt/xchar.h>
 #include <utf8/cpp17.h>
@@ -771,8 +772,13 @@ int ShuangpinDictionary::create_word_from_quanpin(string pinyin, string word)
     {
         return ERROR_CODE;
     }
-    (void)user_dictionary::record_user_insert(metasequoia::path_to_utf8(paths_.user(metasequoia::assets::user_journal)),
-                                              user_dictionary::DictionaryKind::Pinyin, pinyin, word, 10000);
+    if (!user_dictionary::record_automatic_pinyin_insert(
+            metasequoia::path_to_utf8(paths_.user(metasequoia::assets::user_journal)), pinyin, word,
+            static_cast<std::int64_t>(std::time(nullptr))))
+    {
+        (void)delete_data(quanpin_db_, build_quanpin_sql_for_deleting_canonical_word(pinyin, word));
+        return ERROR_CODE;
+    }
     /* 插入新词之后要清理缓存 */
     reset_cache();
     return OK;
@@ -1087,7 +1093,8 @@ std::string ShuangpinDictionary::build_quanpin_sql_for_inserting_word(const std:
     }
     const std::string table = quanpin::build_table_name(cuts.front());
     return fmt::format("insert into {} (key, jp, value, weight) values ('{}', '{}', '{}', '{}');", table,
-                       escape_sql_text(key), escape_sql_text(jp), escape_sql_text(value), 10000);
+                       escape_sql_text(key), escape_sql_text(jp), escape_sql_text(value),
+                       user_dictionary::kTemporaryPinyinWordWeight);
 }
 
 std::string ShuangpinDictionary::build_quanpin_sql_for_updating_word(const std::string &word) const

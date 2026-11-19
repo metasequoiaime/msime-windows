@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -192,6 +193,8 @@ bool ensure_schema(sqlite3 *db)
         "display TEXT NOT NULL DEFAULT '',"
         "user_inserted INTEGER NOT NULL DEFAULT 0,"
         "weight_edited INTEGER NOT NULL DEFAULT 0,"
+        "learning_count INTEGER NOT NULL DEFAULT 0,"
+        "last_learned_at INTEGER NOT NULL DEFAULT 0,"
         "updated_at INTEGER NOT NULL DEFAULT(unixepoch()),"
         "PRIMARY KEY(dictionary,key,value));"
         "CREATE TABLE IF NOT EXISTS personal_dictionary_receipts( request_id TEXT PRIMARY KEY, payload TEXT NOT NULL);"
@@ -238,13 +241,28 @@ bool ensure_schema(sqlite3 *db)
                      "ADD COLUMN weight_edited INTEGER NOT NULL DEFAULT 0",
                      nullptr, nullptr, nullptr) != SQLITE_OK)
         return false;
+    if (!has_column(db, "user_dictionary_operations", "learning_count") &&
+        sqlite3_exec(db,
+                     "ALTER TABLE user_dictionary_operations "
+                     "ADD COLUMN learning_count INTEGER NOT NULL DEFAULT 0",
+                     nullptr, nullptr, nullptr) != SQLITE_OK)
+        return false;
+    if (!has_column(db, "user_dictionary_operations", "last_learned_at") &&
+        sqlite3_exec(db,
+                     "ALTER TABLE user_dictionary_operations "
+                     "ADD COLUMN last_learned_at INTEGER NOT NULL DEFAULT 0",
+                     nullptr, nullptr, nullptr) != SQLITE_OK)
+        return false;
+    if (!execute_sql(db, "CREATE INDEX IF NOT EXISTS temporary_pinyin_words_expiry "
+                         "ON user_dictionary_operations(dictionary,learning_count,last_learned_at)"))
+        return false;
     // Setting user_version is a write, even to the same value. Skip it when it is
     // already current, so opening a connection never waits for another writer.
     auto version = prepare(db, "PRAGMA user_version");
-    if (version && sqlite3_step(version.get()) == SQLITE_ROW && sqlite3_column_int(version.get(), 0) == 3)
+    if (version && sqlite3_step(version.get()) == SQLITE_ROW && sqlite3_column_int(version.get(), 0) == 4)
         return true;
     version.reset();
-    return sqlite3_exec(db, "PRAGMA user_version=3", nullptr, nullptr, nullptr) == SQLITE_OK;
+    return sqlite3_exec(db, "PRAGMA user_version=4", nullptr, nullptr, nullptr) == SQLITE_OK;
 }
 
 std::vector<std::string> pinyin_segments(const std::string &key)
@@ -709,11 +727,12 @@ bool record_weight_edit(const std::string &user_db_path, DictionaryKind kind, co
     if (!db)
         return false;
     auto stmt =
-        prepare(db.get(), "INSERT INTO user_dictionary_operations("
-                          "dictionary,key,value,operation,weight,display,weight_edited)"
-                          " VALUES(?1,?2,?3,'upsert',?4,?5,1)"
-                          " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',weight=excluded.weight,"
-                          " display=excluded.display,weight_edited=1,updated_at=unixepoch()");
+        prepare(db.get(),
+                "INSERT INTO user_dictionary_operations("
+                "dictionary,key,value,operation,weight,display,weight_edited)"
+                " VALUES(?1,?2,?3,'upsert',?4,?5,1)"
+                " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',weight=excluded.weight,"
+                " display=excluded.display,weight_edited=1,learning_count=0,last_learned_at=0,updated_at=unixepoch()");
     return stmt && bind_text(stmt.get(), 1, kind_name(kind)) && bind_text(stmt.get(), 2, key) &&
            bind_text(stmt.get(), 3, value) && sqlite3_bind_int64(stmt.get(), 4, weight) == SQLITE_OK &&
            bind_text(stmt.get(), 5, display) && sqlite3_step(stmt.get()) == SQLITE_DONE;
@@ -726,14 +745,35 @@ bool record_user_insert(const std::string &user_db_path, DictionaryKind kind, co
     if (!db)
         return false;
     auto stmt =
-        prepare(db.get(), "INSERT INTO user_dictionary_operations("
-                          "dictionary,key,value,operation,weight,display,user_inserted)"
-                          " VALUES(?1,?2,?3,'upsert',?4,?5,1)"
-                          " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',weight=excluded.weight,"
-                          " display=excluded.display,user_inserted=1,updated_at=unixepoch()");
+        prepare(db.get(),
+                "INSERT INTO user_dictionary_operations("
+                "dictionary,key,value,operation,weight,display,user_inserted)"
+                " VALUES(?1,?2,?3,'upsert',?4,?5,1)"
+                " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',weight=excluded.weight,"
+                " display=excluded.display,user_inserted=1,learning_count=0,last_learned_at=0,updated_at=unixepoch()");
     return stmt && bind_text(stmt.get(), 1, kind_name(kind)) && bind_text(stmt.get(), 2, key) &&
            bind_text(stmt.get(), 3, value) && sqlite3_bind_int64(stmt.get(), 4, weight) == SQLITE_OK &&
            bind_text(stmt.get(), 5, display) && sqlite3_step(stmt.get()) == SQLITE_DONE;
+}
+
+bool record_automatic_pinyin_insert(const std::string &user_db_path, const std::string &key, const std::string &value,
+                                    const std::int64_t now)
+{
+    if (key.empty() || value.empty() || now <= 0)
+        return false;
+    UserDatabase db(user_db_path);
+    if (!db)
+        return false;
+    auto stmt =
+        prepare(db.get(), "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display,"
+                          "user_inserted,learning_count,last_learned_at) VALUES('pinyin',?1,?2,'upsert',?3,'',1,1,?4)"
+                          " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',weight=excluded.weight,"
+                          " display='',user_inserted=1,weight_edited=0,learning_count=1,last_learned_at=?4,"
+                          " updated_at=unixepoch() WHERE learning_count=1 OR operation='delete'");
+    return stmt && bind_text(stmt.get(), 1, key) && bind_text(stmt.get(), 2, value) &&
+           sqlite3_bind_int64(stmt.get(), 3, kTemporaryPinyinWordWeight) == SQLITE_OK &&
+           sqlite3_bind_int64(stmt.get(), 4, now) == SQLITE_OK && sqlite3_step(stmt.get()) == SQLITE_DONE &&
+           sqlite3_changes(db.get()) == 1;
 }
 
 bool record_delete(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
@@ -746,7 +786,7 @@ bool record_delete(const std::string &user_db_path, DictionaryKind kind, const s
         prepare(db.get(), "INSERT INTO user_dictionary_operations(dictionary,key,value,operation)"
                           " VALUES(?1,?2,?3,'delete')"
                           " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='delete',weight=0,display='',"
-                          " updated_at=unixepoch()");
+                          " learning_count=0,last_learned_at=0,updated_at=unixepoch()");
     return stmt && bind_text(stmt.get(), 1, kind_name(kind)) && bind_text(stmt.get(), 2, key) &&
            bind_text(stmt.get(), 3, value) && sqlite3_step(stmt.get()) == SQLITE_DONE;
 }
@@ -934,6 +974,102 @@ bool adjust_english_candidate_ranking(const std::string &english_db_path, const 
     return ok;
 }
 
+bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                   const std::string &key, const std::string &value)
+{
+    if (key.empty() || value.empty() || !ensure_user_database(user_db_path))
+        return false;
+    const std::string table = pinyin_table(key);
+    if (table.empty())
+        return false;
+    auto database = open_database(main_db_path, SQLITE_OPEN_READWRITE);
+    auto attach = database ? prepare(database.get(), "ATTACH DATABASE ?1 AS candidate_journal") : Stmt{};
+    if (!attach || !bind_text(attach.get(), 1, user_db_path) || sqlite3_step(attach.get()) != SQLITE_DONE)
+        return false;
+    attach.reset();
+    if (!execute_sql(database.get(), "BEGIN IMMEDIATE"))
+        return false;
+    const auto rollback = [&]() {
+        (void)execute_sql(database.get(), "ROLLBACK");
+        return false;
+    };
+    auto temporary = prepare(database.get(), "SELECT last_learned_at FROM candidate_journal.user_dictionary_operations"
+                                             " WHERE dictionary='pinyin' AND key=?1 AND value=?2 AND operation='upsert'"
+                                             " AND learning_count=1");
+    if (!temporary || !bind_text(temporary.get(), 1, key) || !bind_text(temporary.get(), 2, value) ||
+        sqlite3_step(temporary.get()) != SQLITE_ROW)
+    {
+        rollback();
+        return false;
+    }
+    const std::int64_t learned_at = sqlite3_column_int64(temporary.get(), 0);
+    temporary.reset();
+    const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+    if (learned_at <= now - kTemporaryWordRetentionSeconds)
+    {
+        auto refresh =
+            prepare(database.get(), "UPDATE candidate_journal.user_dictionary_operations SET last_learned_at=?1,"
+                                    "updated_at=unixepoch() WHERE dictionary='pinyin' AND key=?2 AND value=?3"
+                                    " AND operation='upsert' AND learning_count=1");
+        const bool refreshed = refresh && sqlite3_bind_int64(refresh.get(), 1, now) == SQLITE_OK &&
+                               bind_text(refresh.get(), 2, key) && bind_text(refresh.get(), 3, value) &&
+                               sqlite3_step(refresh.get()) == SQLITE_DONE && sqlite3_changes(database.get()) == 1;
+        refresh.reset();
+        if (!refreshed || !execute_sql(database.get(), "COMMIT"))
+            return rollback();
+        return false;
+    }
+    auto promote = prepare(database.get(), "UPDATE main.\"" + table + "\" SET weight=?1 WHERE key=?2 AND value=?3");
+    if (!promote || sqlite3_bind_int64(promote.get(), 1, kFormalPinyinWordWeight) != SQLITE_OK ||
+        !bind_text(promote.get(), 2, key) || !bind_text(promote.get(), 3, value) ||
+        sqlite3_step(promote.get()) != SQLITE_DONE || sqlite3_changes(database.get()) == 0)
+        return rollback();
+    promote.reset();
+    auto journal = prepare(database.get(),
+                           "UPDATE candidate_journal.user_dictionary_operations SET weight=?1,learning_count=0,"
+                           "last_learned_at=0,updated_at=unixepoch() WHERE dictionary='pinyin' AND key=?2 AND value=?3"
+                           " AND operation='upsert' AND learning_count=1");
+    if (!journal || sqlite3_bind_int64(journal.get(), 1, kFormalPinyinWordWeight) != SQLITE_OK ||
+        !bind_text(journal.get(), 2, key) || !bind_text(journal.get(), 3, value) ||
+        sqlite3_step(journal.get()) != SQLITE_DONE || sqlite3_changes(database.get()) != 1)
+        return rollback();
+    journal.reset();
+    if (!execute_sql(database.get(), "COMMIT"))
+        return rollback();
+    return true;
+}
+
+int expire_temporary_pinyin_words(const std::string &main_db_path, const std::string &user_db_path,
+                                  const std::int64_t now)
+{
+    if (now <= kTemporaryWordRetentionSeconds)
+        return 0;
+    UserDatabase db(user_db_path);
+    if (!db)
+        return 0;
+    auto expired = prepare(db.get(), "SELECT key,value FROM user_dictionary_operations WHERE dictionary='pinyin'"
+                                     " AND operation='upsert' AND learning_count=1 AND last_learned_at>0"
+                                     " AND last_learned_at<=?1");
+    if (!expired || sqlite3_bind_int64(expired.get(), 1, now - kTemporaryWordRetentionSeconds) != SQLITE_OK)
+        return 0;
+    std::vector<std::pair<std::string, std::string>> words;
+    while (sqlite3_step(expired.get()) == SQLITE_ROW)
+    {
+        const unsigned char *key = sqlite3_column_text(expired.get(), 0);
+        const unsigned char *value = sqlite3_column_text(expired.get(), 1);
+        if (key && value)
+            words.emplace_back(reinterpret_cast<const char *>(key), reinterpret_cast<const char *>(value));
+    }
+    expired.reset();
+    int removed = 0;
+    for (const auto &[key, value] : words)
+    {
+        if (delete_dictionary_candidate(main_db_path, user_db_path, DictionaryKind::Pinyin, key, value))
+            ++removed;
+    }
+    return removed;
+}
+
 bool delete_dictionary_candidate(const std::string &dictionary_db_path, const std::string &user_db_path,
                                  DictionaryKind kind, const std::string &entry_key, const std::string &value)
 {
@@ -982,7 +1118,7 @@ bool delete_dictionary_candidate(const std::string &dictionary_db_path, const st
                            "INSERT INTO candidate_journal.user_dictionary_operations(dictionary,key,value,operation)"
                            " VALUES(?1,?2,?3,'delete')"
                            " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='delete',weight=0,display='',"
-                           " updated_at=unixepoch()");
+                           " learning_count=0,last_learned_at=0,updated_at=unixepoch()");
     if (!journal || !bind_text(journal.get(), 1, kind_name(kind)) || !bind_text(journal.get(), 2, entry_key) ||
         !bind_text(journal.get(), 3, value) || sqlite3_step(journal.get()) != SQLITE_DONE)
         return rollback();
@@ -2357,8 +2493,13 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
     const bool rebase =
         dictionary_identity.has_value() && replayed_dictionary_identity(journal.get()) != dictionary_identity;
     std::vector<RebasedOperation> rebased;
+    const bool has_learning_count = has_column(journal.get(), "user_dictionary_operations", "learning_count");
+    const bool has_last_learned_at = has_column(journal.get(), "user_dictionary_operations", "last_learned_at");
+    const std::string learning_count = has_learning_count ? "learning_count" : "0";
+    const std::string last_learned_at = has_last_learned_at ? "last_learned_at" : "0";
     auto rows = prepare(journal.get(), "SELECT dictionary,key,value,operation,weight,display," + learned_kana + ",(" +
-                                           user_owned + ") FROM user_dictionary_operations ORDER BY updated_at,rowid");
+                                           user_owned + ")," + learning_count + "," + last_learned_at +
+                                           " FROM user_dictionary_operations ORDER BY updated_at,rowid");
     if (!rows)
     {
         result.error = "invalid user dictionary database";
@@ -2381,7 +2522,12 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         const std::string display = reinterpret_cast<const char *>(sqlite3_column_text(rows.get(), 5));
         const bool learned_kana_pinyin = sqlite3_column_int(rows.get(), 6) != 0;
         const bool user_owned_row = sqlite3_column_int(rows.get(), 7) != 0;
-        if ((kind == "pinyin" && operation == "upsert" && weight < 1) || learned_kana_pinyin)
+        const int learning_state = sqlite3_column_int(rows.get(), 8);
+        const std::int64_t learned_at = sqlite3_column_int64(rows.get(), 9);
+        const bool expired_temporary =
+            kind == "pinyin" && operation == "upsert" && learning_state == 1 && learned_at > 0 &&
+            learned_at <= static_cast<std::int64_t>(std::time(nullptr)) - kTemporaryWordRetentionSeconds;
+        if (expired_temporary || (kind == "pinyin" && operation == "upsert" && weight < 1) || learned_kana_pinyin)
         {
             ++result.skipped;
             continue;
@@ -2502,7 +2648,8 @@ bool apply_personal_edit(sqlite3 *db, const PersonalDictionaryEntry &entry, bool
         db, "INSERT INTO "
             "personal_journal.user_dictionary_operations(dictionary,key,value,operation,weight,display,user_inserted)"
             " VALUES(?1,?2,?3,?4,?5,?6,1) ON CONFLICT(dictionary,key,value) DO UPDATE SET operation=excluded.operation,"
-            " weight=excluded.weight,display=excluded.display,user_inserted=1,updated_at=unixepoch()");
+            " weight=excluded.weight,display=excluded.display,user_inserted=1,learning_count=0,last_learned_at=0,"
+            " updated_at=unixepoch()");
     return journal && bind_text(journal.get(), 1, kind_name(journal_kind(entry.kind))) &&
            bind_text(journal.get(), 2, entry.key) && bind_text(journal.get(), 3, entry.value) &&
            bind_text(journal.get(), 4, operation) &&

@@ -454,6 +454,68 @@ TEST_CASE(UserDictionaryTracksOnlyExplicitUserInsertionsForExport)
     std::filesystem::remove_all(directory);
 }
 
+TEST_CASE(TemporaryPinyinWordsAreConfirmedOnSecondUseAndExpireAfterThirtyDays)
+{
+    ScopedTempDirectory directory("msime-temporary-pinyin-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const auto main_path = directory.path() / "msime.db";
+    const std::string user = test::Utf8(user_path);
+    const std::string main = test::Utf8(main_path);
+    constexpr std::int64_t now = 2000000000;
+    {
+        TestDatabase db(main_path);
+        db.exec("CREATE TABLE tbl_3_b(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                "INSERT INTO tbl_3_b VALUES('bao''min''li','bml','宝民里',1000);"
+                "INSERT INTO tbl_3_b VALUES('bao''min''lu','bml','宝民路',1000);");
+    }
+    REQUIRE(user_dictionary::record_automatic_pinyin_insert(user, "bao'min'li", "宝民里", now));
+    {
+        TestDatabase journal(user_path);
+        REQUIRE_EQ(journal.scalar_int("SELECT learning_count FROM user_dictionary_operations WHERE value='宝民里'"), 1);
+        REQUIRE_EQ(journal.scalar_int64("SELECT last_learned_at FROM user_dictionary_operations WHERE value='宝民里'"),
+                   now);
+    }
+    REQUIRE(user_dictionary::confirm_temporary_pinyin_word(main, user, "bao'min'li", "宝民里"));
+    REQUIRE(!user_dictionary::confirm_temporary_pinyin_word(main, user, "bao'min'li", "宝民里"));
+    {
+        TestDatabase db(main_path);
+        TestDatabase journal(user_path);
+        REQUIRE_EQ(db.scalar_int("SELECT weight FROM tbl_3_b WHERE value='宝民里'"), 10000);
+        REQUIRE_EQ(journal.scalar_int("SELECT learning_count FROM user_dictionary_operations WHERE value='宝民里'"), 0);
+        REQUIRE_EQ(journal.scalar_int("SELECT weight FROM user_dictionary_operations WHERE value='宝民里'"), 10000);
+    }
+
+    REQUIRE(user_dictionary::record_automatic_pinyin_insert(user, "bao'min'lu", "宝民路", now));
+    REQUIRE_EQ(user_dictionary::expire_temporary_pinyin_words(main, user, now + 30 * 24 * 60 * 60 - 1), 0);
+    REQUIRE_EQ(user_dictionary::expire_temporary_pinyin_words(main, user, now + 30 * 24 * 60 * 60), 1);
+    {
+        TestDatabase db(main_path);
+        TestDatabase journal(user_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_3_b WHERE value='宝民路'"), 0);
+        REQUIRE_EQ(journal.scalar_int("SELECT COUNT(*) FROM user_dictionary_operations WHERE value='宝民路'"
+                                      " AND operation='delete' AND learning_count=0"),
+                   1);
+    }
+
+    // 手动新增即使带有旧时间也永久保留；老日志新增的两列默认 0，同样不会进入清理。
+    REQUIRE(user_dictionary::record_user_insert(user, user_dictionary::DictionaryKind::Pinyin, "bao'min'lu", "宝民路",
+                                                10000));
+    REQUIRE_EQ(user_dictionary::expire_temporary_pinyin_words(main, user, now + 365 * 24 * 60 * 60), 0);
+
+    // 即使尚未走到启动清理，安装升级的回放也不能把已过期的 upsert 重新写入新主库。
+    REQUIRE(user_dictionary::record_automatic_pinyin_insert(user, "bao'min'xin", "宝民心", 1));
+    const auto replay_main_path = directory.path() / "replay.db";
+    {
+        TestDatabase replay_db(replay_main_path);
+        replay_db.exec("CREATE TABLE tbl_3_b(key TEXT,jp TEXT,value TEXT,weight INTEGER);");
+    }
+    const auto replay =
+        user_dictionary::replay(user, test::Utf8(replay_main_path), test::Utf8(directory.path() / "replay-english.db"));
+    REQUIRE_EQ(replay.failed, 0);
+    TestDatabase replay_db(replay_main_path);
+    REQUIRE_EQ(replay_db.scalar_int("SELECT COUNT(*) FROM tbl_3_b WHERE value='宝民心'"), 0);
+}
+
 TEST_CASE(EnterLearnedEnglishWordsAreValidatedPersistedAndIdempotent)
 {
     const auto directory = test::TempRoot() / ("msime-enter-english-" + std::to_string(GetCurrentProcessId()));

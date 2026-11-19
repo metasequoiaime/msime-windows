@@ -99,17 +99,23 @@ struct OperationRow
     std::string display;
     bool user_inserted = false;
     bool weight_edited = false;
+    int learning_count = 0;
+    std::int64_t last_learned_at = 0;
     std::int64_t updated_at = 0;
 };
 
 bool ReadOperations(sqlite3 *db, std::vector<OperationRow> &rows, std::string &message)
 {
-    // 老版本的日志没有 user_inserted / weight_edited 两列；缺列时按默认值读，不能因此失败。
+    // 老版本缺列时按永久词条处理，避免升级或导入旧备份后误删老词。
     const bool has_user_inserted = HasColumn(db, "user_dictionary_operations", "user_inserted");
     const bool has_weight_edited = HasColumn(db, "user_dictionary_operations", "weight_edited");
+    const bool has_learning_count = HasColumn(db, "user_dictionary_operations", "learning_count");
+    const bool has_last_learned_at = HasColumn(db, "user_dictionary_operations", "last_learned_at");
     std::string sql = "SELECT dictionary,key,value,operation,weight,display,";
     sql += has_user_inserted ? "user_inserted," : "0,";
     sql += has_weight_edited ? "weight_edited," : "0,";
+    sql += has_learning_count ? "learning_count," : "0,";
+    sql += has_last_learned_at ? "last_learned_at," : "0,";
     sql += "updated_at FROM user_dictionary_operations";
 
     sqlite3_stmt *statement = nullptr;
@@ -134,7 +140,9 @@ bool ReadOperations(sqlite3 *db, std::vector<OperationRow> &rows, std::string &m
         row.display = text(5);
         row.user_inserted = sqlite3_column_int(statement, 6) != 0;
         row.weight_edited = sqlite3_column_int(statement, 7) != 0;
-        row.updated_at = sqlite3_column_int64(statement, 8);
+        row.learning_count = sqlite3_column_int(statement, 8);
+        row.last_learned_at = sqlite3_column_int64(statement, 9);
+        row.updated_at = sqlite3_column_int64(statement, 10);
         rows.push_back(std::move(row));
     }
     // 读到一半出错（SQLITE_CORRUPT、IO 错误）时只拿到了部分行。拿它去合并，远端的旧行会
@@ -221,12 +229,21 @@ std::string OperationId(const OperationRow &row)
 // 让本机行为可预期比让远端覆盖更稳妥）。
 bool RemoteWins(const OperationRow &local, const OperationRow &remote, int &conflicts)
 {
+    // 任一设备已经第二次确认的词保持正式状态，不能被另一台设备的临时快照降级。
+    if (local.operation == "upsert" && remote.operation == "upsert" && local.learning_count != remote.learning_count)
+    {
+        if (local.learning_count == 0)
+            return false;
+        if (remote.learning_count == 0)
+            return true;
+    }
     if (remote.updated_at > local.updated_at)
         return true;
     if (remote.updated_at < local.updated_at)
         return false;
     if (remote.operation != local.operation || remote.weight != local.weight || remote.display != local.display ||
-        remote.user_inserted != local.user_inserted || remote.weight_edited != local.weight_edited)
+        remote.user_inserted != local.user_inserted || remote.weight_edited != local.weight_edited ||
+        remote.learning_count != local.learning_count || remote.last_learned_at != local.last_learned_at)
     {
         ++conflicts;
     }
@@ -398,17 +415,27 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     // 保持那些行的默认值，不能因为缺列而合并失败。
     const bool has_user_inserted = HasColumn(local.get(), "user_dictionary_operations", "user_inserted");
     const bool has_weight_edited = HasColumn(local.get(), "user_dictionary_operations", "weight_edited");
+    const bool has_learning_count = HasColumn(local.get(), "user_dictionary_operations", "learning_count");
+    const bool has_last_learned_at = HasColumn(local.get(), "user_dictionary_operations", "last_learned_at");
 
     std::string insert_sql = "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display";
     if (has_user_inserted)
         insert_sql += ",user_inserted";
     if (has_weight_edited)
         insert_sql += ",weight_edited";
+    if (has_learning_count)
+        insert_sql += ",learning_count";
+    if (has_last_learned_at)
+        insert_sql += ",last_learned_at";
     insert_sql += ",updated_at) VALUES(?1,?2,?3,?4,?5,?6";
     int next_parameter = 7;
     if (has_user_inserted)
         insert_sql += ",?" + std::to_string(next_parameter++);
     if (has_weight_edited)
+        insert_sql += ",?" + std::to_string(next_parameter++);
+    if (has_learning_count)
+        insert_sql += ",?" + std::to_string(next_parameter++);
+    if (has_last_learned_at)
         insert_sql += ",?" + std::to_string(next_parameter++);
     insert_sql += ",?" + std::to_string(next_parameter) + ")";
     insert_sql +=
@@ -421,9 +448,16 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
         insert_sql += ",user_inserted=MAX(user_inserted,excluded.user_inserted)";
     if (has_weight_edited)
         insert_sql += ",weight_edited=excluded.weight_edited";
+    if (has_learning_count)
+        insert_sql += ",learning_count=excluded.learning_count";
+    if (has_last_learned_at)
+        insert_sql += ",last_learned_at=excluded.last_learned_at";
     insert_sql += ",updated_at=excluded.updated_at";
     // RemoteWins 已经只放行更新的行，这里在数据库层再守一道，防止本地快照与表不一致时用旧行盖新行。
     insert_sql += " WHERE excluded.updated_at>user_dictionary_operations.updated_at";
+    if (has_learning_count)
+        insert_sql += " OR (excluded.operation='upsert' AND user_dictionary_operations.operation='upsert'"
+                      " AND user_dictionary_operations.learning_count=1 AND excluded.learning_count=0)";
 
     sqlite3_stmt *statement = nullptr;
     if (sqlite3_prepare_v2(local.get(), insert_sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
@@ -455,6 +489,10 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
             bound = bound && sqlite3_bind_int(statement, next++, row.user_inserted ? 1 : 0) == SQLITE_OK;
         if (has_weight_edited)
             bound = bound && sqlite3_bind_int(statement, next++, row.weight_edited ? 1 : 0) == SQLITE_OK;
+        if (has_learning_count)
+            bound = bound && sqlite3_bind_int(statement, next++, row.learning_count) == SQLITE_OK;
+        if (has_last_learned_at)
+            bound = bound && sqlite3_bind_int64(statement, next++, row.last_learned_at) == SQLITE_OK;
         bound = bound && sqlite3_bind_int64(statement, next, row.updated_at) == SQLITE_OK;
         if (!bound || sqlite3_step(statement) != SQLITE_DONE)
         {
