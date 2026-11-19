@@ -194,7 +194,7 @@ class AiPageScene
     std::string ProviderValue()
     {
         const auto label = LabelBounds(L"服务提供商");
-        auto *dropdown = dynamic_cast<native_settings::voice_fields::Dropdown *>(
+        auto *dropdown = dynamic_cast<native_settings::Dropdown *>(
             harness.VisualAt(label.x + 20.0f, label.y + label.height + 20.0f));
         REQUIRE(dropdown != nullptr);
         return dropdown->GetValue();
