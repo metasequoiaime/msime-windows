@@ -409,9 +409,9 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         mode = AiModeOf(stored);
         modeGroup->SetValue(mode);
         RefreshChoices();
-        // 生成式用 generate_provider 恢复上次选的服务商；它缺失或非法时退回 provider 本身。
-        const std::string remembered = m.GetString("ai_assistant.generate_provider");
-        provider = AiProviderForMode(mode, remembered.empty() ? stored : remembered);
+        // provider 是当前选择。generate_provider 记录进入 Jev 前的生成式服务商，普通生成式快照里
+        // 它可能仍是旧值；优先读它会撤销刚完成的供应商切换，让用户必须再点一次。
+        provider = AiProviderForMode(mode, stored);
         providerDropdown->SetValue(provider);
         ApplyProviderFields();
         limit->SetText(std::to_wstring(m.GetInt("ai_assistant.candidate_limit", 3)));
