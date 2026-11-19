@@ -3,6 +3,7 @@
 #include "tests/includes/test_framework.h"
 
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -35,11 +36,12 @@ class StubHost : public HostServices
     {
         toasts.emplace_back(message, success);
     }
-    void Confirm(const std::wstring &, std::function<void(bool)> done, const std::wstring &, const std::wstring &,
-                 const std::wstring &) override
+    void Confirm(const std::wstring &message, std::function<void(bool)> done, const std::wstring &,
+                 const std::wstring &, const std::wstring &) override
     {
+        confirmations.push_back(message);
         if (done)
-            done(false);
+            done(confirm);
     }
     void ShowModal(VisualPtr, std::function<void()>) override
     {
@@ -55,6 +57,9 @@ class StubHost : public HostServices
     }
 
     std::vector<std::pair<std::wstring, bool>> toasts;
+    std::vector<std::wstring> confirmations;
+    // 真实宿主弹框等用户点确认；这里直接给答案。
+    bool confirm = true;
 
   private:
     msimeui::Window &window_;
@@ -80,6 +85,11 @@ class PanelHarness
     SettingsWindowHarness &Window()
     {
         return window_;
+    }
+
+    StubHost &Host()
+    {
+        return host_;
     }
 
     void Build()
@@ -352,4 +362,117 @@ TEST_CASE(AnEmptiedPageStepsBackTowardsTheFirstPage)
     const auto queries = harness.Queries();
     REQUIRE_EQ(queries.size(), size_t{2});
     REQUIRE_EQ(queries.at(1).at("offset").get<size_t>(), size_t{100});
+}
+
+namespace
+{
+template <class T> std::set<T *> Visible(SettingsWindowHarness &window, float bottom)
+{
+    std::set<T *> found;
+    for (float y = 0.0f; y < bottom; y += 6.0f)
+    {
+        for (float x = 0.0f; x < 800.0f; x += 6.0f)
+        {
+            for (msimeui::Visual *visual = window.VisualAt(x, y); visual != nullptr; visual = visual->GetParentVisual())
+            {
+                if (auto *target = dynamic_cast<T *>(visual))
+                {
+                    found.insert(target);
+                    break;
+                }
+            }
+        }
+    }
+    return found;
+}
+
+native_settings::Button *FindToolbarButton(SettingsWindowHarness &window, const std::wstring &prefix)
+{
+    for (native_settings::Button *button : Visible<native_settings::Button>(window, 120.0f))
+    {
+        if (button->Text().rfind(prefix, 0) == 0)
+            return button;
+    }
+    return nullptr;
+}
+} // namespace
+
+// 勾选若干行之后，工具栏的「删除选中」从禁用变成带计数的可用按钮；点它先问一句总数，
+// 确认后只发一条 deleteMany，把这一页选中的条目一起交给后端——不是逐条发 delete。
+TEST_CASE(DictionaryRowsCanBeSelectedAndDeletedInOneRequest)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    REQUIRE_EQ(harness.Queries().size(), size_t{1});
+    harness.Respond(harness.Queries().front(), QueryPage(0, 3, false, 3));
+
+    SettingsWindowHarness &window = harness.Window();
+    // 视口里的几何是上一次布局的结果，响应注入之后要重新排一次才能拿到行高。
+    window.Layout();
+    const auto bodies = Visible<native_settings::DictTableBody>(window, 1600.0f);
+    REQUIRE_EQ(bodies.size(), size_t{1});
+    const msimeui::RectF body = (*bodies.begin())->GetBounds();
+    // 三行平分表体高度：勾选框在行左端 40px 的列里居中。
+    const float rowHeight = body.height / 3.0f;
+    const float checkX = body.x + 20.0f;
+
+    native_settings::Button *remove = FindToolbarButton(window, L"删除选中");
+    REQUIRE(remove != nullptr);
+    REQUIRE(remove->IsDisabled());
+
+    window.Click(checkX, body.y + rowHeight * 0.5f);
+    window.Click(checkX, body.y + rowHeight * 2.5f);
+    REQUIRE_EQ(remove->Text(), std::wstring(L"删除选中 (2)"));
+    REQUIRE(!remove->IsDisabled());
+
+    const msimeui::RectF area = remove->GetBounds();
+    window.Click(area.x + area.width * 0.5f, area.y + area.height * 0.5f);
+    REQUIRE_EQ(harness.Host().confirmations.size(), size_t{1});
+    REQUIRE(harness.Host().confirmations.front().find(L"2 条词条") != std::wstring::npos);
+
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    const Json &request = queries.at(1);
+    REQUIRE_EQ(request.at("action").get<std::string>(), std::string("deleteMany"));
+    const auto &entries = request.at("entries");
+    REQUIRE_EQ(entries.size(), size_t{2});
+    REQUIRE_EQ(entries.at(0).at("word").get<std::string>(), std::string("词0"));
+    REQUIRE_EQ(entries.at(1).at("word").get<std::string>(), std::string("词2"));
+
+    // 删完之后列表会重查，勾选不该跟着旧行号留下来：新的一页从干净状态开始。
+    harness.Respond(request, Json{{"ok", true}, {"message", "已删除 2 条词条"}});
+    REQUIRE_EQ(harness.Queries().size(), size_t{3});
+    harness.Respond(harness.Queries().at(2), QueryPage(0, 1, false, 1));
+    const auto refreshed = Visible<native_settings::DictTableBody>(window, 1600.0f);
+    REQUIRE_EQ(refreshed.size(), size_t{1});
+    REQUIRE((*refreshed.begin())->Selection().empty());
+    REQUIRE(remove->IsDisabled());
+    REQUIRE_EQ(remove->Text(), std::wstring(L"删除选中"));
+}
+
+// 表头的全选框勾上当前页全部行，再点一次全取消；勾选本身不产生请求。
+TEST_CASE(DictionaryHeaderSelectsEveryRowOnThePage)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 3, false, 3));
+
+    SettingsWindowHarness &window = harness.Window();
+    const auto headers = Visible<native_settings::DictTableHeader>(window, 1600.0f);
+    REQUIRE_EQ(headers.size(), size_t{1});
+    const msimeui::RectF header = (*headers.begin())->GetBounds();
+    const float x = header.x + 20.0f;
+    const float y = header.y + header.height * 0.5f;
+
+    window.Click(x, y);
+    native_settings::Button *remove = FindToolbarButton(window, L"删除选中");
+    REQUIRE(remove != nullptr);
+    REQUIRE_EQ(remove->Text(), std::wstring(L"删除选中 (3)"));
+
+    window.Click(x, y);
+    REQUIRE(remove->IsDisabled());
+    REQUIRE_EQ(remove->Text(), std::wstring(L"删除选中"));
+    REQUIRE_EQ(harness.Queries().size(), size_t{1});
 }

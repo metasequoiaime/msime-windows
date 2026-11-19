@@ -329,6 +329,49 @@
     "direction": "client"
   },
   {
+    "name": "dictionary batch delete",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-4",
+        "dictionary": "quanpin",
+        "action": "deleteMany",
+        "entries": [
+          {
+            "code": "ni'hao",
+            "word": "你好"
+          },
+          {
+            "code": "shi'jie",
+            "word": "世界"
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "dictionary batch delete without word",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-5",
+        "dictionary": "quanpin",
+        "action": "deleteMany",
+        "entries": [
+          {
+            "code": "ni'hao"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
     "name": "negative context size",
     "message": {
       "type": "contextMenuResize",

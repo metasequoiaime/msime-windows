@@ -81,13 +81,16 @@ VisualPtr MakeDialogField(const std::wstring &label, const std::shared_ptr<DictI
 // `.dict-dialog-title`
 std::shared_ptr<Label> MakeDialogTitle(const std::wstring &title);
 
-// `.dict-table` column layout: a 64px index column, percentage columns and a 124px action
-// column; what the percentages leave goes to the two fixed columns in proportion
-// (table-layout: fixed).
+// `.dict-table` column layout: a 40px check column, a 64px index column, percentage columns and
+// a 124px action column; what the percentages leave goes to the two fixed text columns in
+// proportion (table-layout: fixed).
+constexpr float kDictCheckColumn = 40.0f;
+
 struct DictColumns
 {
     std::array<float, 3> percents = {0.22f, 0.25f, 0.18f};
-    std::array<float, 6> Edges(float width) const;
+    // 0 check column | 1 index | 2..4 text cells | 5 action start | 6 table right edge.
+    std::array<float, 7> Edges(float width) const;
 };
 
 // The `<thead>` of `.dict-table-header-wrap`.
@@ -98,27 +101,52 @@ class DictTableHeader : public msimeui::Visual
     void SetLabels(std::array<std::wstring, 4> labels);
     // padding-right of the header wrap: the body's scrollbar width.
     void SetScrollbarReserve(float width);
+    // 表头的全选框：点它一次勾上当前页全部，再点一次全取消。
+    void SetOnSelectAll(std::function<void()> handler);
+    void SetAllSelected(bool selected);
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
     void Render(msimeui::DeviceResources &dr) override;
+    bool OnMouseMove(const POINT &point, WPARAM keyState) override;
+    void OnMouseLeave() override;
+    bool OnMouseDown(const POINT &point, WPARAM keyState) override;
+    bool OnMouseUp(const POINT &point, WPARAM keyState) override;
+    HCURSOR GetCursor() const override;
 
   private:
+    RectF CheckRect() const;
+    bool HitCheck(const PointF &point) const;
+
     DictColumns columns_;
     std::array<std::wstring, 4> labels_;
     float reserve_ = 0.0f;
+    bool allSelected_ = false;
+    bool hovered_ = false;
+    bool pressed_ = false;
+    std::function<void()> onSelectAll_;
 };
 
-// The `<tbody>`: rows of index + three text cells + 编辑 / 删除 actions, or one empty row.
+// The `<tbody>`: rows of checkbox + index + three text cells + 编辑 / 删除 actions, or one empty row.
 class DictTableBody : public msimeui::Visual
 {
   public:
     using ActionHandler = std::function<void(size_t row, bool remove)>;
+    using SelectionHandler = std::function<void()>;
 
     explicit DictTableBody(DictColumns columns);
     void SetRows(std::vector<std::array<std::wstring, 3>> rows, size_t firstIndex);
     void SetEmpty(std::wstring message);
     void SetOnAction(ActionHandler handler);
+    // 勾选只按当前页的行号记，翻页、换词库、重新查询都清空。
+    const std::vector<size_t> &Selection() const
+    {
+        return selection_;
+    }
+    bool AllSelected() const;
+    void SetAllSelected(bool selected);
+    void ClearSelection();
+    void SetOnSelectionChanged(SelectionHandler handler);
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
@@ -132,8 +160,13 @@ class DictTableBody : public msimeui::Visual
   private:
     float RowHeight() const;
     RectF ActionRect(size_t row, bool remove) const;
+    RectF CheckRect(size_t row) const;
     // (row, remove) under the point, or row = -1.
     std::pair<size_t, bool> HitAction(const PointF &point) const;
+    // Row whose checkbox is under the point, or kNone.
+    size_t HitCheck(const PointF &point) const;
+    void NotifySelection();
+    bool IsSelected(size_t row) const;
 
     DictColumns columns_;
     std::vector<std::array<std::wstring, 3>> rows_;
@@ -142,6 +175,10 @@ class DictTableBody : public msimeui::Visual
     std::pair<size_t, bool> hovered_ = {static_cast<size_t>(-1), false};
     std::pair<size_t, bool> pressed_ = {static_cast<size_t>(-1), false};
     ActionHandler onAction_;
+    std::vector<size_t> selection_;
+    size_t hoveredCheck_ = static_cast<size_t>(-1);
+    size_t pressedCheck_ = static_cast<size_t>(-1);
+    SelectionHandler onSelectionChanged_;
 };
 
 // `.dict-table-wrap`: shows the body up to max-height: clamp(180px, 100vh - 350px, 550px)
@@ -254,6 +291,9 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     void EnsureLoaded();
     void OpenDialog(const Entry *row);
     void SaveDialog();
+    // 勾选状态变了：表头全选框、删除按钮和条数都要跟着走。
+    void SyncSelection();
+    void DeleteSelected();
     void OnResponse(const Json &message);
     void RenderRows();
     void SyncPager();
@@ -299,6 +339,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     std::shared_ptr<Button> previous_;
     std::shared_ptr<Button> next_;
     std::shared_ptr<Button> last_;
+    std::shared_ptr<Button> removeSelected_;
     std::function<void()> onModeChanged_;
 };
 } // namespace native_settings

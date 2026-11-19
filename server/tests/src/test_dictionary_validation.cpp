@@ -958,3 +958,82 @@ TEST_CASE(QuickPhraseOtherConstraintsKeepTheirErrorDetails)
     REQUIRE_EQ(std::string(response.at("message").as_string()), std::string("新增失败：test rejection"));
     REQUIRE_EQ(data.rows(), before);
 }
+
+// 批量删除没有「部分成功等于失败」这回事：删掉的条目要留下，删不掉的要说清楚是哪一条、
+// 为什么没删掉，否则用户点完只看到一句「删除失败」，还得自己一条条找。
+TEST_CASE(QuickPhraseBatchDeleteKeepsDeletionsAndReportsTheRest)
+{
+    ScopedQuickPhraseDataDir data;
+    const auto response =
+        SettingsDictionary::HandleRequest({{"dictionary", "quick"},
+                                           {"action", "deleteMany"},
+                                           {"entries", boost::json::array{{{"code", "abc"}, {"word", "测试短语"}},
+                                                                          {{"code", "abc"}, {"word", "没有这条"}}}}});
+
+    REQUIRE(response.at("ok").as_bool());
+    REQUIRE_EQ(Message(response).rfind("已删除 1 条快捷短语，1 条未删除：", 0), size_t{0});
+    const auto rows = data.rows().as_array();
+    REQUIRE_EQ(rows.size(), size_t{1});
+    REQUIRE_EQ(std::string(rows.front().as_object().at("word").as_string()), std::string("另一短语"));
+
+    // 空列表和缺字段都不该走到删除路径上。
+    const auto empty = SettingsDictionary::HandleRequest(
+        {{"dictionary", "quick"}, {"action", "deleteMany"}, {"entries", boost::json::array()}});
+    REQUIRE(!empty.at("ok").as_bool());
+    REQUIRE_EQ(Message(empty), std::string("没有选中要删除的条目"));
+    const auto missing = SettingsDictionary::HandleRequest({{"dictionary", "quick"}, {"action", "deleteMany"}});
+    REQUIRE(!missing.at("ok").as_bool());
+    REQUIRE_EQ(Message(missing), std::string("没有选中要删除的条目"));
+    REQUIRE_EQ(data.rows().as_array().size(), size_t{1});
+}
+
+// 拼音用户词库页的批量删除：每条都按自己的键走一次普通删除，删完的从用户视图里消失。
+TEST_CASE(PinyinBatchDeleteRemovesEverySelectedEntry)
+{
+    const ScopedTempDir dir(L"msime-batch-delete-quanpin");
+    const ScopedDataDir scoped(dir.path());
+    sqlite3 *raw = nullptr;
+    REQUIRE_EQ(sqlite3_open(test::Utf8(dir.path() / L"msime.db").c_str(), &raw), SQLITE_OK);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+    REQUIRE_EQ(sqlite3_exec(db.get(),
+                            "CREATE TABLE tbl_2_n(key TEXT NOT NULL,jp TEXT NOT NULL,value TEXT NOT NULL,"
+                            "weight INTEGER NOT NULL,UNIQUE(key,value))",
+                            nullptr, nullptr, nullptr),
+               SQLITE_OK);
+
+    struct Entry
+    {
+        const char *code;
+        const char *key;
+        const char *word;
+    };
+    const Entry entries[] = {{"ni hao", "ni'hao", "你好"}, {"ni men", "ni'men", "你们"}};
+    for (const auto &entry : entries)
+        REQUIRE(SettingsDictionary::HandleRequest({{"dictionary", "quanpin"},
+                                                   {"action", "create"},
+                                                   {"code", entry.code},
+                                                   {"word", entry.word},
+                                                   {"weight", 10}})
+                    .at("ok")
+                    .as_bool());
+    user_dictionary::close_default_user_database();
+
+    const auto listed =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}});
+    REQUIRE_EQ(listed.at("rows").as_array().size(), size_t{2});
+
+    // 面板按查询结果里的编码（也就是规范化后的 key）回填，这里照抄同一种形状。
+    boost::json::array selected;
+    for (const auto &entry : entries)
+        selected.push_back({{"code", entry.key}, {"word", entry.word}});
+    const auto deleted =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "deleteMany"}, {"entries", selected}});
+    REQUIRE(deleted.at("ok").as_bool());
+    REQUIRE_EQ(Message(deleted), std::string("已删除 2 条词条"));
+    REQUIRE_EQ(CountRows(db.get(), "SELECT count(*) FROM tbl_2_n"), 0);
+
+    user_dictionary::close_default_user_database();
+    const auto after =
+        SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}});
+    REQUIRE(after.at("rows").as_array().empty());
+}
