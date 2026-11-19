@@ -239,67 +239,69 @@ float half_to_f32(std::uint16_t bits)
     return result;
 }
 
+// One decoded UTF-8 character: the code point and how many bytes it consumed.
+struct Decoded
+{
+    char32_t code = 0xFFFD;
+    std::size_t length = 1;
+};
+
+// Decodes the character starting at text[i]. Malformed bytes map to U+FFFD and consume one byte,
+// except a sequence cut off by the end of the string, whose remainder is consumed at once.
+Decoded decode_one(const std::string &text, std::size_t i)
+{
+    unsigned char c = static_cast<unsigned char>(text[i]);
+    char32_t code;
+    std::size_t extra;
+    if (c < 0x80)
+    {
+        code = c;
+        extra = 0;
+    }
+    else if ((c & 0xE0) == 0xC0)
+    {
+        code = c & 0x1F;
+        extra = 1;
+    }
+    else if ((c & 0xF0) == 0xE0)
+    {
+        code = c & 0x0F;
+        extra = 2;
+    }
+    else if ((c & 0xF8) == 0xF0)
+    {
+        code = c & 0x07;
+        extra = 3;
+    }
+    else
+    {
+        return {0xFFFD, 1};
+    }
+    if (i + extra >= text.size())
+    {
+        return {0xFFFD, text.size() - i};
+    }
+    for (std::size_t j = 1; j <= extra; ++j)
+    {
+        unsigned char cc = static_cast<unsigned char>(text[i + j]);
+        if ((cc & 0xC0) != 0x80)
+        {
+            return {0xFFFD, 1};
+        }
+        code = (code << 6) | (cc & 0x3F);
+    }
+    return {code, extra + 1};
+}
+
 // Decodes UTF-8 text into Unicode code points. Malformed bytes map to U+FFFD.
 std::vector<char32_t> decode_utf8(const std::string &text)
 {
     std::vector<char32_t> out;
-    std::size_t i = 0;
-    const std::size_t n = text.size();
-    while (i < n)
+    for (std::size_t i = 0; i < text.size();)
     {
-        unsigned char c = static_cast<unsigned char>(text[i]);
-        char32_t code;
-        std::size_t extra;
-        if (c < 0x80)
-        {
-            code = c;
-            extra = 0;
-        }
-        else if ((c & 0xE0) == 0xC0)
-        {
-            code = c & 0x1F;
-            extra = 1;
-        }
-        else if ((c & 0xF0) == 0xE0)
-        {
-            code = c & 0x0F;
-            extra = 2;
-        }
-        else if ((c & 0xF8) == 0xF0)
-        {
-            code = c & 0x07;
-            extra = 3;
-        }
-        else
-        {
-            out.push_back(0xFFFD);
-            ++i;
-            continue;
-        }
-        if (i + extra >= n)
-        {
-            out.push_back(0xFFFD);
-            break;
-        }
-        bool ok = true;
-        for (std::size_t j = 1; j <= extra; ++j)
-        {
-            unsigned char cc = static_cast<unsigned char>(text[i + j]);
-            if ((cc & 0xC0) != 0x80)
-            {
-                ok = false;
-                break;
-            }
-            code = (code << 6) | (cc & 0x3F);
-        }
-        if (!ok)
-        {
-            out.push_back(0xFFFD);
-            ++i;
-            continue;
-        }
-        out.push_back(code);
-        i += extra + 1;
+        const Decoded decoded = decode_one(text, i);
+        out.push_back(decoded.code);
+        i += decoded.length;
     }
     return out;
 }
@@ -739,6 +741,36 @@ std::optional<std::uint32_t> SentenceModel::token(char32_t character) const
         return std::nullopt;
     }
     return it->second;
+}
+
+bool SentenceModel::knows(const std::string &text) const
+{
+    for (std::size_t i = 0; i < text.size();)
+    {
+        const Decoded decoded = decode_one(text, i);
+        if (index_.find(decoded.code) == index_.end())
+        {
+            return false;
+        }
+        i += decoded.length;
+    }
+    return true;
+}
+
+std::string SentenceModel::known_characters(const std::string &text) const
+{
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size();)
+    {
+        const Decoded decoded = decode_one(text, i);
+        if (index_.find(decoded.code) != index_.end())
+        {
+            out.append(text, i, decoded.length);
+        }
+        i += decoded.length;
+    }
+    return out;
 }
 
 std::vector<std::uint32_t> SentenceModel::encode(const std::string &text) const

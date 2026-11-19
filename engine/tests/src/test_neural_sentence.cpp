@@ -19,6 +19,7 @@
 #include "neural/rescore_worker.h"
 #include "neural/sentence_model.h"
 #include "quanpin/quanpin_dictionary.h"
+#include "quanpin/lattice_rerank.h"
 #include "shuangpin/shuangpin_dictionary.h"
 
 #include <algorithm>
@@ -544,6 +545,146 @@ int run_test()
                        row.fixed_position == before->fixed_position,
                    "reranking must preserve dictionary metadata and stored weights");
         }
+    }
+
+    // 词表外的字符（异体字、扩展区汉字）会被编码成 <unk>，自归一化模型给它们一个固定的原始分数，
+    // 曾经在「的/得/地」这一档把「惪」「悳」抬到常用字前面，上文是 emoji 时甚至排到第二、三位。
+    // 这些行必须原样留在自己的位置上，模型读不懂的上文则不该触发任何重排。
+    {
+        // 嘚 词表内、惪 词表外；「冬天会下大」下惪（<unk>）的 combined 是 -8.56，高过嘚的
+        // -12.93，所以少一道候选侧过滤，它就会顶到嘚前面——这正是断言要抓的位移。
+        std::vector<WordItem> with_rare = {
+            {"xue", "学", 10000, CandidateSource::Database, "xue"},
+            {"xue", "雪", 8000, CandidateSource::Database, "xue"},
+            {"xue", "嘚", 100, CandidateSource::Database, "xue"},
+            {"xue", "惪", 1, CandidateSource::Database, "xue"},
+        };
+        std::vector<WordItem> rows;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        do
+        {
+            rows = with_rare;
+            quanpin::rerank_dictionary_candidates(rows, "xue", model, "冬天会下大");
+            if (rows.front().word == "雪")
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() < deadline);
+        expect(rows.front().word == "雪", "readable rows should still be reranked around an unreadable one");
+        expect(rows[2].word == "嘚" && rows[3].word == "惪",
+               "an unreadable row must keep its slot instead of outscoring a readable one");
+
+        // 上文整段都读不懂时按「没有前文」处理。这批候选全部可读，所以只有「先剔除上文里的不可读
+        // 字符」这一半能让它通过：只做候选侧过滤的话，emoji 上文照样会触发重排。
+        const std::vector<WordItem> readable_only = {
+            {"e", "饿", 606677, CandidateSource::Database, "e"},
+            {"e", "呃", 535105, CandidateSource::Database, "e"},
+            {"e", "恶", 450813, CandidateSource::Database, "e"},
+            {"e", "额", 164812, CandidateSource::Database, "e"},
+        };
+        std::vector<WordItem> static_rows = readable_only;
+        bool unreadable_context_held = true;
+        int unreadable_attempts = 0;
+        const auto same_order = [](const std::vector<WordItem> &left, const std::vector<WordItem> &right) {
+            if (left.size() != right.size())
+                return false;
+            for (std::size_t i = 0; i < left.size(); ++i)
+            {
+                if (left[i].word != right[i].word || left[i].weight != right[i].weight)
+                    return false;
+            }
+            return true;
+        };
+        const auto guard_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        do
+        {
+            static_rows = readable_only;
+            quanpin::rerank_dictionary_candidates(static_rows, "e", model, "😀");
+            ++unreadable_attempts;
+            if (!same_order(static_rows, readable_only))
+            {
+                unreadable_context_held = false;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        } while (std::chrono::steady_clock::now() < guard_deadline);
+        expect(unreadable_context_held && unreadable_attempts >= 20,
+               "a context the model cannot read must leave the frequency order alone");
+
+        // 同一批候选配可读上文时必须真的动：否则上面那条断言靠「什么都不做」也能过。
+        std::vector<WordItem> with_context = readable_only;
+        const auto context_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        do
+        {
+            with_context = readable_only;
+            quanpin::rerank_dictionary_candidates(with_context, "e", model, "我饿");
+            if (with_context[1].word == "额")
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() < context_deadline);
+        expect(with_context[1].word == "额" && with_context[3].word == "恶",
+               "a readable context must still reorder these rows");
+    }
+
+    // 重排不能被这次修复削弱：常见字该提前的仍然提前。人 的词频远高于 认，只靠词频它永远在前面。
+    {
+        const std::vector<WordItem> original = {
+            {"ren", "人", 18435295, CandidateSource::Database, "ren"},
+            {"ren", "任", 1353727, CandidateSource::Database, "ren"},
+            {"ren", "认", 1184729, CandidateSource::Database, "ren"},
+        };
+        std::vector<WordItem> rows;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        do
+        {
+            rows = original;
+            quanpin::rerank_dictionary_candidates(rows, "ren", model, "我们");
+            if (rows.front().word == "认")
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() < deadline);
+        expect(rows.front().word == "认",
+               "reranking must still promote a contextually better character over a far more frequent one");
+    }
+
+    // 整句重排：前文整段读不懂时按「没有前文」处理，而不是丢掉重排器本身。丢掉会让
+    // NeuralKeyboard 记账成「已启用、无路径」，连带压掉 desktop 行，无前文组合里整行候选消失。
+    {
+        const auto paths = [] {
+            // 词格给的是它自己的顺序：血（-2.6）在学（-3.0）前面。重排必须真的把它翻过来。
+            std::vector<quanpin::LatticePath> out(2);
+            out[0].sentence = "血";
+            out[0].key = "xue";
+            out[0].log_prob = -2.6;
+            out[1].sentence = "学";
+            out[1].key = "xue";
+            out[1].log_prob = -3.0;
+            return out;
+        };
+        const auto reranker = quanpin::make_neural_reranker(model, "😀");
+        expect(static_cast<bool>(reranker), "an unreadable context must still produce a reranker");
+        expect(!static_cast<bool>(quanpin::make_neural_reranker(nullptr, "冬天会下大")),
+               "a missing model must produce no reranker");
+
+        // 剔掉 emoji 后前文为空，顺序应与「没有前文」一致：模型给「学」-5.89、「血」-8.33，
+        // 换算成 nats 与词格分插值后学反超血约 0.76 nat。不剔字符时模型给血 -7.26、学 -7.88，
+        // 血反过来领先约 0.77 nat——这条断言就会失败。
+        // `reranked` 必须在循环里置位：每轮都重建路径，一个从不重排的重排器（恒返回 false）
+        // 会让静态顺序原样留下，只比最终顺序抓不住它。
+        bool reranked = false;
+        std::vector<quanpin::LatticePath> rows = paths();
+        const auto sentence_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        do
+        {
+            rows = paths();
+            if (reranker && reranker(rows) && rows.front().sentence == "学")
+            {
+                reranked = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() < sentence_deadline);
+        expect(reranked, "the reranker must actually reorder, not just stay silent");
+        expect(rows.front().sentence == "学", "a context the model cannot read must score like no context at all");
     }
 
     // Real dictionary paths: both full pinyin and shuangpin, including a cached requery.

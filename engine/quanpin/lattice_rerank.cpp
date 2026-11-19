@@ -21,7 +21,11 @@ LatticeReranker make_neural_reranker(const neural::SentenceModel *model, const s
     }
     // 在这里就把前文裁到模型真正会看的那几十个字：后台重排的结果表以「前文 + 候选句」为键，
     // 拿没裁过的整段历史当键的话，每上屏一个字键就变了，缓存永远打不中。
-    const std::string trimmed = neural::last_characters(context, options.context_chars);
+    //
+    // 顺手剔掉模型词表里没有的字符（emoji、制表符）：它们编码成 <unk>，在自归一化模型上拿到一个
+    // 与上下文无关的固定分数，会把整批候选的排序带偏。剔完什么都不剩时按「没有前文」处理，
+    // 照旧逐句评分——那正是新组合开始时的既有行为，不该因为历史里有 emoji 就丢掉这一行。
+    const std::string trimmed = neural::last_characters(model->known_characters(context), options.context_chars);
     return [model, context = trimmed, options](std::vector<LatticePath> &paths) -> bool {
         if (paths.size() < 2)
         {
@@ -67,14 +71,28 @@ void rerank_dictionary_candidates(std::vector<WordItem> &candidates, const std::
     options.max_paths = 32;
     // Dictionary frequency is already the initial order; context needs room to overturn common homophones.
     options.lambda = 0.8;
+    // Characters outside the model's vocabulary encode as <unk>, and a self-normalized model gives
+    // every <unk> the same fixed logit -- frequently above that of a real but uncommon character.
+    // Left in, a rare or extended-plane character outscores common homophones and a context ending
+    // in an emoji distorts the whole batch. Score only what the model can actually read.
+    const std::string readable_context =
+        neural::last_characters(model->known_characters(context), options.context_chars);
+    if (readable_context.empty())
+        return;
     std::vector<std::size_t> slots;
     std::vector<std::string> texts;
     std::vector<double> priors;
-    for (std::size_t i = 0; i < candidates.size() && slots.size() < options.max_paths; ++i)
+    // The window is the first 32 eligible rows, as documented; unreadable rows occupy a slot of the
+    // window but not of `slots`, so the filter never reaches past what the window already covered.
+    std::size_t window = 0;
+    for (std::size_t i = 0; i < candidates.size() && window < options.max_paths; ++i)
     {
         const WordItem &item = candidates[i];
         if ((item.source != CandidateSource::Database && item.source != CandidateSource::UserDatabase) ||
             item.canonical_pinyin != key || item.fuzzy || !item.corrected_from.empty() || item.word.empty())
+            continue;
+        ++window;
+        if (!model->knows(item.word))
             continue;
         slots.push_back(i);
         texts.push_back(item.word);
@@ -83,8 +101,7 @@ void rerank_dictionary_candidates(std::vector<WordItem> &candidates, const std::
     }
     if (slots.size() < 2)
         return;
-    const auto order = neural::RescoreWorker::instance().order_for(
-        *model, neural::last_characters(context, options.context_chars), texts, priors, options);
+    const auto order = neural::RescoreWorker::instance().order_for(*model, readable_context, texts, priors, options);
     if (!order || order->size() != slots.size())
         return;
     std::vector<WordItem> ranked;

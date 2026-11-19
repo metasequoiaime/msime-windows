@@ -124,6 +124,22 @@ class SentenceModel
     // The token id this model uses for a character (a Unicode code point), if any.
     std::optional<std::uint32_t> token(char32_t character) const;
 
+    // Whether every character in `text` has a token in this model's vocabulary. Characters without
+    // one are encoded as <unk>, which a self-normalized model scores with a single fixed logit --
+    // often above the logit of a real but uncommon character. Callers that rank text by this model
+    // should drop what it cannot read rather than let the placeholder vote.
+    //
+    // "Has a token" is the whole test, not "is valid UTF-8". Ill-formed input can decode to a
+    // replacement (U+FFFD) or to a technically invalid code point (U+0000 for an overlong pair, a
+    // surrogate for `ED A0 80`), and a trained vocabulary may well contain any of those, so such
+    // text counts as known. The one thing guaranteed is that anything this returns true for is
+    // scored from its own tokens rather than from <unk>.
+    bool knows(const std::string &text) const;
+
+    // `text` with every character this model has no token for removed; the remaining bytes are
+    // copied verbatim. Empty when nothing in `text` is readable.
+    std::string known_characters(const std::string &text) const;
+
     // log P(next character | text), over the whole vocabulary. Index by token id. For a
     // self-normalized model these are the raw logits, the same reading score_sentences uses.
     std::vector<float> next_log_probabilities(const std::string &text) const;

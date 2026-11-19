@@ -177,6 +177,30 @@ int main()
     expect(neural::SentenceModel::load(build_model(",\"self_normalized\":1")) == nullptr,
            "a non-boolean self_normalized must be rejected");
 
+    // 词表里只有 a、b、c 三个字符（<pad>/<unk>/<end> 是多字符保留 token，不进字符表）。模型对词表外的
+    // 字符没有判别力，编码成 <unk> 后只会给出一个与上下文无关的固定分数，调用方必须能把它筛掉。
+    {
+        const auto model = neural::SentenceModel::load(build_model(",\"gelu_tanh\":true,\"self_normalized\":true"));
+        expect(model != nullptr, "vocabulary filter: model should load");
+        if (model != nullptr)
+        {
+            expect(model->knows("abc"), "vocabulary filter: a known text must pass");
+            expect(!model->knows("abx"), "vocabulary filter: a word holding an unknown character must fail");
+            expect(!model->knows("雪"), "vocabulary filter: a character outside the vocabulary must fail");
+            expect(!model->knows("a😀"), "vocabulary filter: an emoji must fail");
+            expect(model->known_characters("abx") == "ab", "vocabulary filter: unknown tail character is dropped");
+            expect(model->known_characters("ax雪b") == "ab", "vocabulary filter: only readable characters survive");
+            expect(model->known_characters("😀").empty(), "vocabulary filter: nothing readable leaves an empty text");
+            expect(model->known_characters("abc") == "abc", "vocabulary filter: a known text is unchanged");
+            // 尾部被截断的多字节序列解码成 U+FFFD。这个测试词表只有 a/b/c，U+FFFD 没有 token，
+            // 所以它被当作读不懂的字符丢掉，前面的可读字符不受牵连。
+            expect(model->known_characters("ab\xE4") == "ab", "vocabulary filter: a truncated sequence is dropped");
+            expect(!model->knows("ab\xE4"), "vocabulary filter: a truncated sequence makes the text unreadable");
+            expect(model->knows("") && model->known_characters("").empty(),
+                   "vocabulary filter: an empty text is readable and stays empty");
+        }
+    }
+
     if (failures != 0)
     {
         std::fprintf(stderr, "%d failure(s)\n", failures);
