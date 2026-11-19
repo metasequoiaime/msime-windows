@@ -28,19 +28,25 @@ HWND g_window = nullptr;
 bool g_started = false;
 bool g_thread_ready = false;
 Callback g_callback;
-std::string g_latest_word;
+struct PendingRequest
+{
+    std::string word;
+    bool brief = false;
+    bool phonetics = false;
+};
+PendingRequest g_latest;
 // 只在本模块的线程上读写。
 std::uint64_t g_next_id = 0;
-std::unordered_map<std::uint64_t, std::string> g_pending;
+std::unordered_map<std::uint64_t, PendingRequest> g_pending;
 
 void SendLatest(HWND window)
 {
-    std::string word;
+    PendingRequest request;
     {
         std::lock_guard lock(g_mutex);
-        word = std::exchange(g_latest_word, std::string());
+        request = std::exchange(g_latest, PendingRequest());
     }
-    if (word.empty())
+    if (request.word.empty() || (!request.brief && !request.phonetics))
         return;
     HWND popup = FindWindowW(DrDictLookup::kPopupWindowClass, nullptr);
     if (popup == nullptr)
@@ -49,7 +55,8 @@ void SendLatest(HWND window)
         g_pending.clear();
     const std::uint64_t id = ++g_next_id;
     const std::string payload =
-        BuildRequestPayload(word, static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(window)), id);
+        BuildRequestPayload(request.word, static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(window)), id,
+                            kMaxChars, request.brief, request.phonetics);
     COPYDATASTRUCT data{static_cast<ULONG_PTR>(kBriefRequest), static_cast<DWORD>(payload.size()),
                         const_cast<char *>(payload.data())};
     DWORD_PTR handled = 0;
@@ -59,7 +66,7 @@ void SendLatest(HWND window)
                             SMTO_ABORTIFHUNG | SMTO_BLOCK, 300, &handled) &&
         handled)
     {
-        g_pending.emplace(id, std::move(word));
+        g_pending.emplace(id, std::move(request));
     }
 }
 
@@ -72,17 +79,24 @@ void ReceiveReply(const COPYDATASTRUCT &data)
         return;
     // 只认自己发出去、还没回过的请求，词也要对得上：别的程序冒充的回复不显示。
     const auto pending = g_pending.find(reply->id);
-    if (pending == g_pending.end() || pending->second != reply->word)
+    if (pending == g_pending.end() || pending->second.word != reply->word)
         return;
-    std::string word = std::move(pending->second);
+    Answer answer;
+    answer.word = std::move(pending->second.word);
+    answer.asked_brief = pending->second.brief;
+    answer.asked_phonetics = pending->second.phonetics;
     g_pending.erase(pending);
+    answer.text = reply->text;
+    answer.has_phonetics = reply->has_phonetics;
+    answer.uk = reply->uk;
+    answer.us = reply->us;
     Callback callback;
     {
         std::lock_guard lock(g_mutex);
         callback = g_callback;
     }
     if (callback)
-        callback(std::move(word), reply->text);
+        callback(std::move(answer));
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
@@ -175,14 +189,14 @@ void Stop()
         g_thread.join();
 }
 
-void Request(const std::string &word)
+void Request(const std::string &word, bool brief, bool phonetics)
 {
     HWND window = nullptr;
     {
         std::lock_guard lock(g_mutex);
-        if (!g_started || g_window == nullptr || word.empty())
+        if (!g_started || g_window == nullptr || word.empty() || (!brief && !phonetics))
             return;
-        g_latest_word = word;
+        g_latest = {word, brief, phonetics};
         window = g_window;
     }
     PostMessageW(window, kSendLatest, 0, 0);

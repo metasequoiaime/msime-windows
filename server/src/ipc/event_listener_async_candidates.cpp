@@ -382,8 +382,38 @@ std::string EnglishCandidateDetailKey(const WordItem &item)
 
 bool EnglishCandidateDetailShown()
 {
-    return g_english_input_mode && GetConfiguredEnglishCandidateDetail() && !IsUiLessMode() &&
-           !IsCandidateSubPageActive();
+    return g_english_input_mode && (GetConfiguredEnglishCandidateDetail() || GetConfiguredEnglishCandidatePhonetic()) &&
+           !IsUiLessMode() && !IsCandidateSubPageActive();
+}
+
+// 按当前开关拼出那一行：音标开关管音标，释义开关管释义（DR Dict 摘要优先）。DR Dict 的音标只在开了词典联动时用。
+std::string ComposeEnglishCandidateDetail(const EnglishCandidateDetail &detail)
+{
+    std::string phonetic;
+    if (GetConfiguredEnglishCandidatePhonetic())
+    {
+        const bool dr_dict = GetConfiguredDrDictEnabled();
+        phonetic = EnglishIme::FormatPhonetic(GetConfiguredEnglishPhoneticAccent(), dr_dict ? detail.uk : std::string(),
+                                              dr_dict ? detail.us : std::string(), detail.ipa);
+    }
+    if (!GetConfiguredEnglishCandidateDetail())
+        return EnglishIme::FormatDetail(phonetic, {}, {});
+    return EnglishIme::FormatDetail(phonetic, detail.gloss, GetConfiguredDrDictEnglishBrief() ? detail.brief : "");
+}
+
+// 答复写进缓存之后：那一行变了、而且正高亮着这个词，就重画当前页。
+void RefreshEnglishCandidateDetailIfShown(const std::string &word, const std::string &before,
+                                          const EnglishCandidateDetail &detail)
+{
+    if (!EnglishCandidateDetailShown() || g_inputSession == nullptr || ComposeEnglishCandidateDetail(detail) == before)
+        return;
+    const auto &ui = Global::candidate_ui;
+    const int highlighted = ui.current_page_start() + ui.selected_index_in_page;
+    if (highlighted < 0 || static_cast<size_t>(highlighted) >= ui.items.size() ||
+        EnglishCandidateDetailKey(ui.items[static_cast<size_t>(highlighted)]) != word)
+        return;
+    RefreshCandidatePageUiAsync();
+    PushUiLessCandidatesToOwner();
 }
 } // namespace
 
@@ -405,46 +435,54 @@ std::string EnglishCandidateDetailText(const WordItem &item)
     // 两边都只保留最后一次请求：高亮移得快时跳过的词还没有答复，下次高亮到它时再请求一次。
     if (!detail.local_done)
         EnglishIme::RequestDetail(key);
-    if (!detail.brief_done && GetConfiguredDrDictEnglishBrief())
-        DrDictBrief::Request(key);
-    return EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief);
+    const bool want_brief =
+        !detail.brief_done && GetConfiguredEnglishCandidateDetail() && GetConfiguredDrDictEnglishBrief();
+    const bool want_phonetics =
+        !detail.phonetics_done && GetConfiguredEnglishCandidatePhonetic() && GetConfiguredDrDictEnabled();
+    if (want_brief || want_phonetics)
+        DrDictBrief::Request(key, want_brief, want_phonetics);
+    return ComposeEnglishCandidateDetail(detail);
 }
 
-void ApplyEnglishCandidateDetail(const std::string &word, const std::string &ipa, const std::string &gloss,
-                                 bool from_dr_dict)
+void ApplyEnglishLocalDetail(const EnglishIme::EnglishDetail &answer)
 {
-    auto found = g_english_candidate_details.find(word);
+    auto found = g_english_candidate_details.find(answer.word);
     if (found == g_english_candidate_details.end())
         return; // 缓存满了被清掉：下次组页会重新请求
     EnglishCandidateDetail &detail = found->second;
-    const std::string before = EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief);
-    if (from_dr_dict)
+    const std::string before = ComposeEnglishCandidateDetail(detail);
+    detail.ipa = answer.ipa;
+    detail.gloss = answer.gloss;
+    detail.local_done = true;
+    RefreshEnglishCandidateDetailIfShown(answer.word, before, detail);
+}
+
+void ApplyDrDictEnglishDetail(const DrDictBrief::Answer &answer)
+{
+    auto found = g_english_candidate_details.find(answer.word);
+    if (found == g_english_candidate_details.end())
+        return;
+    EnglishCandidateDetail &detail = found->second;
+    const std::string before = ComposeEnglishCandidateDetail(detail);
+    if (answer.asked_brief)
     {
-        detail.brief = gloss;
+        detail.brief = answer.text;
         detail.brief_done = true;
     }
-    else
+    if (answer.asked_phonetics)
     {
-        detail.ipa = ipa;
-        detail.gloss = gloss;
-        detail.local_done = true;
+        // 旧版 DR Dict 不认音标请求：同样记为答过，不再追问，显示时退回本地音标。
+        detail.uk = answer.has_phonetics ? answer.uk : std::string();
+        detail.us = answer.has_phonetics ? answer.us : std::string();
+        detail.phonetics_done = true;
     }
-    if (!EnglishCandidateDetailShown() || g_inputSession == nullptr ||
-        EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief) == before)
-        return;
-    const auto &ui = Global::candidate_ui;
-    const int highlighted = ui.current_page_start() + ui.selected_index_in_page;
-    if (highlighted < 0 || static_cast<size_t>(highlighted) >= ui.items.size() ||
-        EnglishCandidateDetailKey(ui.items[static_cast<size_t>(highlighted)]) != word)
-        return;
-    RefreshCandidatePageUiAsync();
-    PushUiLessCandidatesToOwner();
+    RefreshEnglishCandidateDetailIfShown(answer.word, before, detail);
 }
 
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge)
 {
-    if (!EnglishIme::IsTranslationCurrent(generation) || !GetConfiguredCandidateTranslationsEnabled() ||
-        IsUiLessMode() || g_candidate_translation_signature.empty() || IsCandidateSubPageActive() ||
+    if (!EnglishIme::IsTranslationCurrent(generation) || !AnyCandidateTranslationsEnabled() || IsUiLessMode() ||
+        g_candidate_translation_signature.empty() || IsCandidateSubPageActive() ||
         (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji))
         return;
 

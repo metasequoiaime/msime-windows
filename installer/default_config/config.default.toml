@@ -58,8 +58,10 @@ cn_en_mixed_input = true
 cn_en_mixed_input_min_chars = 5
 # 首页最多展示的英文候选数，范围 1–3；保留中文首选，小候选页会减少英文项
 cn_en_mixed_input_first_page_count = 1
-# 在竖排候选窗口中显示中英文互译（每项最多两个简短释义）
+# 在竖排候选窗口中把中文候选译成 [tencent_tmt].target_language 所选语种（每项最多两个简短释义）
 candidate_translations = false
+# 把英文候选（英文候选模式与中文里混输的英文）译成 [translation].english_target_language 所选语种
+english_candidate_translations = false
 # 在候选译文中显示 n.、v. 等词性标记，关闭后仅显示释义
 candidate_translation_show_pos = true
 # 候选译文只显示第一条释义，关闭时最多显示两条
@@ -181,6 +183,8 @@ model = "Index-Translate-2B"
 #
 [translation]
 provider = "bilibili"
+# 英文候选译成的语种：zh / fr / ja / es / ru / de / ko / th / vi / it。中文优先用本地词库
+english_target_language = "zh"
 
 #
 # 网络代理：云输入、模型下载、AI 联想、翻译、语音识别等需要联网的功能共用。
@@ -406,8 +410,13 @@ enter_learns_english_word = true
 # 英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文候选后自动补一个空格；
 # 回车与标点上屏不补，数字开头或以撇号结尾的词也不补
 english_commit_with_space = true
-# 英文候选模式下在高亮候选下方显示音标与中文释义（开启 DR Dict 词典联动后释义可改由 DR Dict 提供）
+# 英文候选模式下在高亮候选下方显示中文释义（开启 DR Dict 词典联动后释义可改由 DR Dict 提供）
 english_candidate_detail = true
+# 英文候选模式下在高亮候选下方显示音标
+english_candidate_phonetic = true
+# 音标口音：us（美式）| uk（英式）| both（英美都显示）。音标取自 DR Dict 里的牛津高阶等词典（需开启
+# [dr_dict].enabled 且 DR Dict 在运行）；美式在 DR Dict 查不到时用输入法自带的音标
+english_phonetic_accent = "us"
 # 模糊音，全拼与双拼均生效；默认全部关闭，升级用户零行为变化
 # 总开关：关闭时所有规则不生效，已选规则保留，便于临时停用后恢复
 fuzzy_pinyin = false

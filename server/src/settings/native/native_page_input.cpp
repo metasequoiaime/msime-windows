@@ -1326,13 +1326,18 @@ struct InputPage
     }
 };
 
-// 「翻译」页的状态。这一块原先是「输入」页里的候选词翻译分区，现在单独成页。
+// 「翻译与英文候选」页的状态。这一块原先是「输入」页里的候选词翻译分区，后来单独成页；中文候选与
+// 英文候选的译文各有开关和目标语种，下面的翻译服务两边共用。
 struct TranslationPage
 {
     PageContext *context = nullptr;
 
     std::string provider = "bilibili";
     std::shared_ptr<ToggleSwitch> translationsToggle;
+    std::shared_ptr<ToggleSwitch> englishTranslationsToggle;
+    std::shared_ptr<Dimmable> chineseTargetBlock;
+    std::shared_ptr<Dimmable> englishTargetBlock;
+    std::shared_ptr<Dimmable> accentBlock;
     std::shared_ptr<OpacityBox> translationOptions;
     std::vector<std::shared_ptr<Dimmable>> translationInputs;
     std::shared_ptr<Dimmable> showPosBlock;
@@ -1436,6 +1441,16 @@ struct TranslationPage
 
     // setCandidateTranslationOptionsDisabled: the block greys out, its rows and fields stop
     // taking input (the test button keeps working), 显示词性 and 只显示单条释义 turn aria-disabled.
+    // 中文、英文两个开关各管自己的目标语种；翻译服务只要有一边开着就可用。
+    void SyncTranslationsEnabled()
+    {
+        const bool chinese = translationsToggle->IsChecked();
+        const bool english = englishTranslationsToggle->IsChecked();
+        chineseTargetBlock->SetDisabled(!chinese);
+        englishTargetBlock->SetDisabled(!english);
+        SetTranslationsEnabled(chinese || english);
+    }
+
     void SetTranslationsEnabled(bool enabled)
     {
         translationOptions->SetDimmed(!enabled);
@@ -1875,14 +1890,7 @@ VisualPtr BuildInputPage(PageContext &context)
     page.AddSection(MakeRow(L"回车上屏英文时入库",
                             L"按回车上屏输入的英文时，把这个单词写入英文词库，之后可作为候选出现",
                             Toggle(context, "input.enter_learns_english_word")));
-    page.AddSection(MakeRow(L"英文上屏后自动补空格",
-                            L"英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文单词后自动补一个空格；"
-                            L"回车与标点上屏不补",
-                            Toggle(context, "input.english_commit_with_space")));
-    page.AddSection(MakeRow(L"英文候选显示音标与释义",
-                            L"英文候选模式下在高亮的候选下方显示音标和中文释义。开启「高级」里的 DR Dict "
-                            L"词典联动后，释义可改由 DR Dict 提供",
-                            Toggle(context, "input.english_candidate_detail")));
+    // 英文候选模式的补空格、音标与释义在「翻译与英文候选」页。
 
     // ---- 固定标点 ----
     {
@@ -2034,11 +2042,12 @@ VisualPtr BuildTranslationPage(PageContext &context)
     state->context = &context;
     TranslationPage *s = state.get();
     SettingsModel *model = &context.model;
-    PageBuilder page(L"翻译");
+    PageBuilder page(L"翻译与英文候选");
 
     // ---- 候选词翻译 ----
     {
         auto master = std::make_shared<ToggleSwitch>(false);
+        auto englishMaster = std::make_shared<ToggleSwitch>(false);
         auto showPos = BindToggle(context, "general.candidate_translation_show_pos");
         s->showPosBlock = std::make_shared<Dimmable>(showPos, 1.0f);
         auto singleSense = BindToggle(context, "general.candidate_translation_single_sense");
@@ -2069,6 +2078,24 @@ VisualPtr BuildTranslationPage(PageContext &context)
                                             {"vi", L"越南语"},
                                             {"it", L"意大利语"}}),
                                    language);
+        // 英文候选可选的目标语种：中文，加上中文候选那边除英语外的语种。
+        auto englishTarget = BindDropdown(context, "translation.english_target_language",
+                                          Options({{"zh", L"中文"},
+                                                   {"fr", L"法语"},
+                                                   {"ja", L"日语"},
+                                                   {"es", L"西班牙语"},
+                                                   {"ru", L"俄语"},
+                                                   {"de", L"德语"},
+                                                   {"ko", L"韩语"},
+                                                   {"th", L"泰语"},
+                                                   {"vi", L"越南语"},
+                                                   {"it", L"意大利语"}}),
+                                          language);
+        // 开关关着时变灰、不接收输入（Dimmable 的默认透明度）。
+        s->chineseTargetBlock = std::make_shared<Dimmable>(
+            LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用下方的在线翻译服务", target));
+        s->englishTargetBlock = std::make_shared<Dimmable>(
+            LanguageRow(L"目标语种", L"中文优先使用本地词库；本地未命中时使用下方的在线翻译服务", englishTarget));
         // pointer-events: none on the rows and grids while the master switch is off.
         auto blockInput = [s](VisualPtr visual) {
             auto dim = std::make_shared<Dimmable>(std::move(visual), 1.0f);
@@ -2181,31 +2208,66 @@ VisualPtr BuildTranslationPage(PageContext &context)
                                     L"默认使用免费的哔哩哔哩 Index-Translate；也可使用腾讯云、阿里云、小牛翻译、"
                                     L"自己部署的 DeepLX 兼容接口，或复用 AI 辅助的配置",
                                     provider)),
-             std::make_shared<Divider>(Divider::Kind::Option),
-             blockInput(LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用所选在线服务", target)),
              std::make_shared<Divider>(Divider::Kind::Option), s->providerFields["bilibili"],
              s->providerFields["tencent"], s->providerFields["aliyun"], s->providerFields["niutrans"],
              s->providerFields["custom"], s->providerFields["ai"], s->warningBox, s->credentialTest->View()});
         s->translationOptions = std::make_shared<OpacityBox>(options);
         s->translationOptions->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
+        s->translationsToggle = master;
+        s->englishTranslationsToggle = englishMaster;
         master->SetOnChanged([s, model](bool on) {
             model->Update("general.candidate_translations", on);
-            s->SetTranslationsEnabled(on);
+            s->SyncTranslationsEnabled();
+        });
+        englishMaster->SetOnChanged([s, model](bool on) {
+            model->Update("general.english_candidate_translations", on);
+            s->SyncTranslationsEnabled();
         });
         page.AddSection(
-            Col({MakeRow(L"候选词翻译", L"在候选窗口中显示中文与所选语种的互译，每项最多两个简短释义", master),
-                 s->translationOptions}));
-        s->translationsToggle = master;
+            Col({MakeRow(L"中文候选翻译", L"在候选窗口中把中文候选译成所选语种，每项最多两个简短释义", master),
+                 std::make_shared<Divider>(Divider::Kind::Option), s->chineseTargetBlock}));
+        page.AddSection(
+            Col({MakeRow(L"英文候选翻译", L"把英文候选模式（Ctrl+Shift+E）的候选和中文候选里混输的英文译成所选语种",
+                         englishMaster),
+                 std::make_shared<Divider>(Divider::Kind::Option), s->englishTargetBlock}));
+        page.AddSection(Col({MakeTitleBlock(L"译文显示与在线翻译服务", L"中文候选与英文候选的译文共用以下设置"),
+                             s->translationOptions}));
+    }
+
+    // ---- 英文候选模式 ----
+    {
+        auto accent = BindDropdown(context, "input.english_phonetic_accent",
+                                   Options({{"us", L"美式"}, {"uk", L"英式"}, {"both", L"英美都显示"}}));
+        s->accentBlock = std::make_shared<Dimmable>(
+            LanguageRow(L"音标口音",
+                        L"英式与美式音标取自 DR Dict 里的牛津高阶词典，需在「高级」开启 DR Dict 词典联动并运行 "
+                        L"DR Dict；美式查不到时用输入法自带的音标",
+                        accent));
+        Dimmable *accentBlock = s->accentBlock.get();
+        auto phonetic = BindToggle(context, "input.english_candidate_phonetic",
+                                   [accentBlock](bool on) { accentBlock->SetDisabled(!on); });
+        page.AddSection(Col({MakeRow(L"英文候选显示音标", L"英文候选模式下在高亮的候选下方显示音标", phonetic),
+                             std::make_shared<Divider>(Divider::Kind::Option), s->accentBlock}));
+        page.AddSection(MakeRow(L"英文候选显示释义",
+                                L"英文候选模式下在高亮的候选下方显示中文释义。开启「高级」里的 DR Dict "
+                                L"词典联动后，释义可改由 DR Dict 提供",
+                                Toggle(context, "input.english_candidate_detail")));
+        page.AddSection(MakeRow(L"英文上屏后自动补空格",
+                                L"英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文单词后自动补一个空格；"
+                                L"回车与标点上屏不补",
+                                Toggle(context, "input.english_commit_with_space")));
     }
 
     context.OnConfig([s, state, model]() {
         (void)state;
         if (const Json *translations = model->Find("general.candidate_translations");
             translations && translations->is_boolean())
-        {
             s->translationsToggle->SetChecked(translations->get<bool>());
-            s->SetTranslationsEnabled(translations->get<bool>());
-        }
+        if (const Json *translations = model->Find("general.english_candidate_translations");
+            translations && translations->is_boolean())
+            s->englishTranslationsToggle->SetChecked(translations->get<bool>());
+        s->SyncTranslationsEnabled();
+        s->accentBlock->SetDisabled(!model->GetBool("input.english_candidate_phonetic"));
         const std::string provider = model->GetString("translation.provider");
         s->provider = provider == "aliyun" || provider == "niutrans" || provider == "custom" || provider == "ai" ||
                               provider == "bilibili"

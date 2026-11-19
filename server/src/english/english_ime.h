@@ -8,6 +8,9 @@
 
 namespace EnglishIme
 {
+// 名字沿用中英互译时代：实际表示源语言。EnglishToChinese 是英文候选，译成
+// translation.english_target_language（默认中文）；ChineseToEnglish 是中文候选，译成
+// tencent_tmt.target_language（默认英语）。
 enum class TranslationDirection
 {
     EnglishToChinese,
@@ -39,9 +42,10 @@ bool IsRunning();
 void OnInputChanged(const std::string &input, bool dedicated_mode = false, size_t mixed_min_prefix = 2);
 void Clear();
 bool IsCurrent(const std::string &input, uint64_t generation, bool dedicated_mode = false);
-// Non-English target languages have no local dictionary and must go directly
-// to cloud translation.
-void RequestTranslations(std::vector<TranslationQuery> queries, bool use_local_dictionary = true);
+// english.db 只有英→中、中→英两张释义表：英文候选的目标语种不是中文、中文候选的目标语种不是英语时，
+// 对应那一边不查本地词库，回空释义让云端补。
+void RequestTranslations(std::vector<TranslationQuery> queries, bool local_english_source = true,
+                         bool local_chinese_source = true);
 void ClearTranslations();
 bool IsTranslationCurrent(uint64_t generation);
 

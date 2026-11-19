@@ -56,7 +56,15 @@ void PrepareCandidateTranslationRequest();
 
 std::string g_candidate_translation_scope;
 
+bool BuildTranslationQueryForAnySource(const WordItem &item, EnglishIme::TranslationQuery &query);
+
+// 只认开关打开的那一边：英文候选的译文由英文候选那边的开关管，中文里混输的英文也一样。
 bool BuildTranslationQuery(const WordItem &item, EnglishIme::TranslationQuery &query)
+{
+    return BuildTranslationQueryForAnySource(item, query) && CandidateTranslationsEnabledFor(query.direction);
+}
+
+bool BuildTranslationQueryForAnySource(const WordItem &item, EnglishIme::TranslationQuery &query)
 {
     // Dictionary keys remain simplified even when the visible candidate is
     // converted to traditional Chinese at render/commit time.
@@ -443,7 +451,7 @@ std::string BuildCurrentCandidatePage()
 void PrepareCandidateTranslationRequest()
 {
     const bool japanese = g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji;
-    const bool enabled = GetConfiguredCandidateTranslationsEnabled() && !IsUiLessMode() && !japanese;
+    const bool enabled = AnyCandidateTranslationsEnabled() && !IsUiLessMode() && !japanese;
     auto &ui = Global::candidate_ui;
     if (IsCandidateSubPageActive())
     {
@@ -495,7 +503,9 @@ void PrepareCandidateTranslationRequest()
         return;
     g_candidate_translation_signature = std::move(signature);
     CloudTranslation::Clear();
-    EnglishIme::RequestTranslations(std::move(queries), GetConfiguredTencentTmt().target_language == "en");
+    EnglishIme::RequestTranslations(
+        std::move(queries), TranslationTargetLanguage(EnglishIme::TranslationDirection::EnglishToChinese) == "zh",
+        TranslationTargetLanguage(EnglishIme::TranslationDirection::ChineseToEnglish) == "en");
 }
 
 // Copy the page the worker just finished into an immutable value for the CandidatePages module. This is the single

@@ -34,7 +34,8 @@ std::atomic<uint64_t> g_generation{0};
 std::atomic<uint64_t> g_translation_generation{0};
 std::string g_latest_input;
 std::vector<EnglishIme::TranslationQuery> g_latest_translation_queries;
-bool g_use_local_translation_dictionary = true;
+bool g_local_english_source = true;
+bool g_local_chinese_source = true;
 bool g_dedicated_mode = false;
 size_t g_mixed_min_prefix = kDefaultMixedMinPrefix;
 std::string g_db_path;
@@ -155,7 +156,8 @@ void WorkerLoop()
         observed_detail_generation = next_detail_generation;
         const std::string input = g_latest_input;
         const auto translation_queries = g_latest_translation_queries;
-        const bool use_local_translation_dictionary = g_use_local_translation_dictionary;
+        const bool local_english_source = g_local_english_source;
+        const bool local_chinese_source = g_local_chinese_source;
         const bool dedicated_mode = g_dedicated_mode;
         const size_t mixed_min_prefix = g_mixed_min_prefix;
         const std::string detail_word = g_latest_detail_word;
@@ -177,11 +179,14 @@ void WorkerLoop()
                 if (!g_running || g_translation_generation.load() != observed_translation_generation)
                     break;
                 std::string gloss;
-                if (use_local_translation_dictionary)
+                if (query.direction == EnglishIme::TranslationDirection::EnglishToChinese)
                 {
-                    gloss = query.direction == EnglishIme::TranslationDirection::EnglishToChinese
-                                ? dictionary.query_chinese_gloss(query.key)
-                                : dictionary.query_english_gloss(query.key);
+                    if (local_english_source)
+                        gloss = dictionary.query_chinese_gloss(query.key);
+                }
+                else if (local_chinese_source)
+                {
+                    gloss = dictionary.query_english_gloss(query.key);
                 }
                 results.push_back({query.key, query.direction, std::move(gloss)});
             }
@@ -290,12 +295,13 @@ bool IsCurrent(const std::string &input, uint64_t generation, bool dedicated_mod
            g_dedicated_mode == dedicated_mode;
 }
 
-void RequestTranslations(std::vector<TranslationQuery> queries, bool use_local_dictionary)
+void RequestTranslations(std::vector<TranslationQuery> queries, bool local_english_source, bool local_chinese_source)
 {
     {
         std::lock_guard lock(g_mutex);
         g_latest_translation_queries = std::move(queries);
-        g_use_local_translation_dictionary = use_local_dictionary;
+        g_local_english_source = local_english_source;
+        g_local_chinese_source = local_chinese_source;
         g_translation_generation.fetch_add(1);
     }
     g_cv.notify_one();

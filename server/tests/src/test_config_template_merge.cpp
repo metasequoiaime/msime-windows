@@ -362,6 +362,34 @@ TEST_CASE(config_merge_lets_new_defaults_win_for_untouched_keys)
                "[appearance]\npage_size = 9\nfont_size = 20\n");
 }
 
+// 候选词翻译拆成中文、英文两个开关，音标从「音标与释义」里拆出来：老配置没有新键时跟着原来那个开关走。
+TEST_CASE(split_translation_and_phonetic_switches_inherit_the_old_switch_on_upgrade)
+{
+    std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string installed((std::istreambuf_iterator<char>(input)), {});
+
+    const std::string translating = "[general]\ncandidate_translations = true\n"
+                                    "[input]\nenglish_candidate_detail = false\n";
+    const auto upgraded = toml::parse(MergeConfigIntoTemplate(installed, translating, ""));
+    REQUIRE(upgraded["general"]["candidate_translations"].value_or(false));
+    REQUIRE(!upgraded["input"]["english_candidate_detail"].value_or(true));
+    REQUIRE(upgraded["general"]["english_candidate_translations"].value_or(false));
+    REQUIRE(!upgraded["input"]["english_candidate_phonetic"].value_or(true));
+    REQUIRE_EQ(upgraded["translation"]["english_target_language"].value_or(std::string()), std::string("zh"));
+    REQUIRE_EQ(upgraded["input"]["english_phonetic_accent"].value_or(std::string()), std::string("us"));
+
+    // 用户已经分别设过就不再继承。
+    const std::string split = "[general]\ncandidate_translations = true\nenglish_candidate_translations = false\n";
+    const auto kept = toml::parse(MergeConfigIntoTemplate(installed, split, ""));
+    REQUIRE(!kept["general"]["english_candidate_translations"].value_or(true));
+
+    // 新装（没有用户配置）用模板默认。
+    const auto fresh = toml::parse(MergeConfigIntoTemplate(installed, "", ""));
+    REQUIRE(!fresh["general"]["english_candidate_translations"].value_or(true));
+    REQUIRE(fresh["input"]["english_candidate_phonetic"].value_or(false));
+}
+
 // 0.10.0 把这些键的出厂值改成了新装用户的默认。从 0.9.5 升级上来、一直用着旧默认值的用户，升级后
 // 必须还是原来的行为：辅助码不能被关掉，横竖排和皮肤不能被换掉。
 TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)

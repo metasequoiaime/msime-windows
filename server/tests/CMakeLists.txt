@@ -374,6 +374,7 @@ set(SETTINGS_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/settings_ui_main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_dropdown_scroll.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_ai_model_list_scroll.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_translation_page.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_voice_local_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_page_build.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_settings_dictionary_panel.cpp"

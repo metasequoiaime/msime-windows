@@ -211,14 +211,11 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
         [](std::vector<EnglishIme::TranslationResult> results, uint64_t generation) {
             FanyNamedPipe::EnqueueCandidateTranslations(std::move(results), generation);
         });
-    // 英文候选模式里高亮候选下方的音标与释义：词库一路，DR Dict 摘要一路（DR Dict 没运行时不会回）。
-    EnglishIme::SetDetailCallback([](EnglishIme::EnglishDetail detail) {
-        FanyNamedPipe::EnqueueEnglishCandidateDetail(std::move(detail.word), std::move(detail.ipa),
-                                                     std::move(detail.gloss), /*from_dr_dict=*/false);
-    });
-    DrDictBrief::Start([](std::string word, std::string text) {
-        FanyNamedPipe::EnqueueEnglishCandidateDetail(std::move(word), {}, std::move(text), /*from_dr_dict=*/true);
-    });
+    // 英文候选模式里高亮候选下方的音标与释义：词库一路，DR Dict 摘要与英美音标一路（DR Dict 没运行时不会回）。
+    EnglishIme::SetDetailCallback(
+        [](EnglishIme::EnglishDetail detail) { FanyNamedPipe::EnqueueEnglishCandidateDetail(std::move(detail)); });
+    DrDictBrief::Start(
+        [](DrDictBrief::Answer answer) { FanyNamedPipe::EnqueueDrDictEnglishDetail(std::move(answer)); });
     CloudTranslation::Start(CommonUtils::get_ime_data_path() + "\\english.db",
                             [](std::vector<EnglishIme::TranslationResult> results, uint64_t generation) {
                                 FanyNamedPipe::EnqueueCandidateTranslations(std::move(results), generation, true);

@@ -201,6 +201,9 @@ struct TranslationConfig
 {
     // tencent | aliyun | niutrans | custom | ai | bilibili
     std::string provider = "tencent";
+    // 英文候选（英文候选模式与中文里混输的英文）译成的语种，来自 [translation].english_target_language：
+    // zh / fr / ja / es / ru / de / ko / th / vi / it。中文候选的目标语种仍是 tencent.target_language。
+    std::string english_target_language = "zh";
     TencentTmtConfig tencent;
     AliyunMtConfig aliyun;
     CustomTranslationConfig custom;
@@ -389,8 +392,15 @@ bool GetConfiguredEnterLearnsEnglishWord();
 bool SetConfiguredEnterLearnsEnglishWord(bool enabled);
 bool GetConfiguredEnglishCommitWithSpace();
 bool SetConfiguredEnglishCommitWithSpace(bool enabled);
+// 英文候选模式下高亮候选的释义（中文释义或 DR Dict 摘要）。音标单独由下面的开关管。
 bool GetConfiguredEnglishCandidateDetail();
 bool SetConfiguredEnglishCandidateDetail(bool enabled);
+// 英文候选模式下高亮候选显示音标。
+bool GetConfiguredEnglishCandidatePhonetic();
+bool SetConfiguredEnglishCandidatePhonetic(bool enabled);
+// 音标口音："us" | "uk" | "both"。英式取自 DR Dict；美式 DR Dict 查不到时用本地音标。
+const std::string &GetConfiguredEnglishPhoneticAccent();
+bool SetConfiguredEnglishPhoneticAccent(const std::string &accent);
 // 五笔 z 键角色："off" | "wildcard"。混输已拆成独立开关，这里只剩通配两态。
 const std::string &GetConfiguredWubiZMode();
 bool SetConfiguredWubiZMode(const std::string &mode);
@@ -569,8 +579,12 @@ bool GetConfiguredFloatingToolbarShadow();
 bool SetConfiguredFloatingToolbarShadow(bool enabled);
 bool GetConfiguredEnglishCandidatesEnabled();
 bool SetConfiguredEnglishCandidatesEnabled(bool enabled);
+// 中文候选的译文（译成 tencent_tmt.target_language）。
 bool GetConfiguredCandidateTranslationsEnabled();
 bool SetConfiguredCandidateTranslationsEnabled(bool enabled);
+// 英文候选的译文（英文候选模式与中文里混输的英文，译成 translation.english_target_language）。
+bool GetConfiguredEnglishCandidateTranslationsEnabled();
+bool SetConfiguredEnglishCandidateTranslationsEnabled(bool enabled);
 bool GetConfiguredCandidateTranslationShowPos();
 bool SetConfiguredCandidateTranslationShowPos(bool show);
 bool GetConfiguredCandidateTranslationSingleSense();
@@ -839,7 +853,10 @@ bool SetConfiguredNiuTransString(const std::string &key, const std::string &valu
 const BilibiliTranslateConfig &GetConfiguredBilibiliTranslate();
 bool SetConfiguredBilibiliTranslateString(const std::string &key, const std::string &value);
 bool IsValidTranslationProvider(const std::string &provider);
+// 英文候选可选的目标语种：中文，加上中文候选可选的除英语外的那些。
+bool IsValidEnglishTranslationTargetLanguage(const std::string &language);
 std::shared_ptr<const TranslationConfig> GetConfiguredTranslation();
+// key 为 provider 或 english_target_language。
 bool SetConfiguredTranslationString(const std::string &key, const std::string &value);
 // Snapshot by value: download threads and the cloud worker read it while the settings host rewrites it.
 NetworkProxyConfig GetConfiguredNetworkProxy();

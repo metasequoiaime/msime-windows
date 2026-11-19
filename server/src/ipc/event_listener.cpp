@@ -95,10 +95,29 @@ int g_translation_saved_page_index = 0;
 int g_translation_saved_selected_index = 0;
 bool g_translation_saved_selection_started = false;
 
+std::string TranslationTargetLanguage(EnglishIme::TranslationDirection direction)
+{
+    return direction == EnglishIme::TranslationDirection::EnglishToChinese
+               ? GetConfiguredTranslation()->english_target_language
+               : GetConfiguredTencentTmt().target_language;
+}
+
 std::string TranslationIdentity(const EnglishIme::TranslationQuery &query)
 {
-    return GetConfiguredTencentTmt().target_language + ":" +
+    return TranslationTargetLanguage(query.direction) + ":" +
            (query.direction == EnglishIme::TranslationDirection::EnglishToChinese ? "e:" : "z:") + query.key;
+}
+
+bool CandidateTranslationsEnabledFor(EnglishIme::TranslationDirection direction)
+{
+    return direction == EnglishIme::TranslationDirection::EnglishToChinese
+               ? GetConfiguredEnglishCandidateTranslationsEnabled()
+               : GetConfiguredCandidateTranslationsEnabled();
+}
+
+bool AnyCandidateTranslationsEnabled()
+{
+    return GetConfiguredCandidateTranslationsEnabled() || GetConfiguredEnglishCandidateTranslationsEnabled();
 }
 
 bool IsCandidateSubPageActive()

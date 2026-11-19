@@ -69,6 +69,7 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
     static const std::set<std::string> kIds = {
         MakeTomlAssignmentId("general", "emoji_mixed_input"),
         MakeTomlAssignmentId("general", "candidate_translations"),
+        MakeTomlAssignmentId("general", "english_candidate_translations"),
         MakeTomlAssignmentId("general", "floating_toolbar_font_size"),
         // 0.14.0 起新装默认把符号、快捷短语、日期时间混进候选，并去掉候选第三位的「📅日期」入口；
         // 老用户的候选列表不因升级多出或少掉东西。
@@ -127,6 +128,17 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
     {
         user_values[enumeration_comma_slash_id] = "false";
     }
+    // 候选词翻译拆成中文、英文两个开关，音标从「音标与释义」里拆成独立开关。老配置没有新键：跟着
+    // 原来管它的那个开关走，打开过翻译的用户升级后英文候选照旧有译文，关掉过释义的也不会多出音标。
+    const auto inherit = [&user_values](const std::string &section, const std::string &key,
+                                        const std::string &from_section, const std::string &from_key) {
+        const auto id = MakeTomlAssignmentId(section, key);
+        const auto from = user_values.find(MakeTomlAssignmentId(from_section, from_key));
+        if (from != user_values.end() && user_values.find(id) == user_values.end())
+            user_values[id] = from->second;
+    };
+    inherit("general", "english_candidate_translations", "general", "candidate_translations");
+    inherit("input", "english_candidate_phonetic", "input", "english_candidate_detail");
     // 很老的配置没有 [translation].provider，靠各家 enabled 布尔推导服务商。模板里的新默认不能替它
     // 补上，否则推导结果被 bilibili 盖掉；补成空串，加载时照旧推导。
     const auto translation_provider_id = MakeTomlAssignmentId("translation", "provider");

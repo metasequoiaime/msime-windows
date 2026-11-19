@@ -47,8 +47,11 @@ struct FailureBackoff
 };
 std::unordered_map<std::string, FailureBackoff> g_failures;
 
-std::string TargetLanguage(const TranslationConfig &config)
+// 英文候选与中文候选各有自己的目标语种。
+std::string TargetLanguage(const TranslationConfig &config, EnglishIme::TranslationDirection direction)
 {
+    if (direction == EnglishIme::TranslationDirection::EnglishToChinese)
+        return config.english_target_language.empty() ? "zh" : config.english_target_language;
     const auto &language = config.tencent.target_language;
     return language.empty() ? "en" : language;
 }
@@ -213,11 +216,12 @@ std::optional<ResolvedProvider> ResolveActiveProvider(const TranslationConfig &c
 void PersistGloss(const EnglishIme::TranslationQuery &query, const std::string &gloss,
                   const std::string &target_language)
 {
-    // english.db is language-specific. Other target languages remain in the
-    // in-memory cloud cache only.
-    if (target_language != "en" || g_db_path.empty() || !CloudTranslation::ShouldPersistGloss(query.key, gloss))
-        return;
+    // english.db only holds English→Chinese and Chinese→English glosses. Other
+    // target languages remain in the in-memory cloud cache only.
     const bool chinese_to_english = query.direction == EnglishIme::TranslationDirection::ChineseToEnglish;
+    if (target_language != (chinese_to_english ? "en" : "zh") || g_db_path.empty() ||
+        !CloudTranslation::ShouldPersistGloss(query.key, gloss))
+        return;
     EnglishDictionary::upsert_gloss(g_db_path, chinese_to_english, query.key, gloss);
 }
 
@@ -312,9 +316,10 @@ void WorkerLoop()
         if (!resolved)
             continue;
 
-        const std::string target_language = TargetLanguage(*config);
+        const std::string english_target = TargetLanguage(*config, EnglishIme::TranslationDirection::EnglishToChinese);
+        const std::string chinese_target = TargetLanguage(*config, EnglishIme::TranslationDirection::ChineseToEnglish);
         const std::string provider_scope = ProviderScope(*config);
-        std::vector<EnglishIme::TranslationQuery> en_zh;
+        std::vector<EnglishIme::TranslationQuery> en_target;
         std::vector<EnglishIme::TranslationQuery> zh_target;
         std::vector<EnglishIme::TranslationResult> results;
         {
@@ -323,7 +328,7 @@ void WorkerLoop()
             {
                 if (TooLong(query.key))
                     continue;
-                const std::string identity = Identity(query, target_language, provider_scope);
+                const std::string identity = Identity(query, TargetLanguage(*config, query.direction), provider_scope);
                 const auto cached = g_cache.find(identity);
                 if (cached != g_cache.end())
                 {
@@ -338,17 +343,17 @@ void WorkerLoop()
                     continue;
                 if (query.direction == EnglishIme::TranslationDirection::EnglishToChinese &&
                     CloudTranslation::IsCloudTranslatableEnglish(query.key))
-                    en_zh.push_back(query);
+                    en_target.push_back(query);
                 else if (query.direction == EnglishIme::TranslationDirection::ChineseToEnglish &&
                          CloudTranslation::IsCloudTranslatableChinese(query.key))
                     zh_target.push_back(query);
             }
         }
 
-        if (!en_zh.empty())
-            TranslateGroup(*resolved, en_zh, "en", "zh", target_language, provider_scope, results);
+        if (!en_target.empty())
+            TranslateGroup(*resolved, en_target, "en", english_target, english_target, provider_scope, results);
         if (!zh_target.empty())
-            TranslateGroup(*resolved, zh_target, "zh", target_language, target_language, provider_scope, results);
+            TranslateGroup(*resolved, zh_target, "zh", chinese_target, chinese_target, provider_scope, results);
         if (results.empty() || !g_running || g_job.load() != observed_job ||
             !EnglishIme::IsTranslationCurrent(generation) || !g_callback)
             continue;
@@ -406,7 +411,7 @@ std::string ActiveProviderScope()
 std::string LookupCache(const std::string &key, EnglishIme::TranslationDirection direction)
 {
     const auto config = GetConfiguredTranslation();
-    const std::string identity = Identity({key, direction}, TargetLanguage(*config), ProviderScope(*config));
+    const std::string identity = Identity({key, direction}, TargetLanguage(*config, direction), ProviderScope(*config));
     std::lock_guard lock(g_mutex);
     const auto found = g_cache.find(identity);
     return found == g_cache.end() ? std::string{} : found->second;

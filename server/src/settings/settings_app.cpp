@@ -433,6 +433,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"enter_learns_english_word", GetConfiguredEnterLearnsEnglishWord()},
             {"english_commit_with_space", GetConfiguredEnglishCommitWithSpace()},
             {"english_candidate_detail", GetConfiguredEnglishCandidateDetail()},
+            {"english_candidate_phonetic", GetConfiguredEnglishCandidatePhonetic()},
+            {"english_phonetic_accent", GetConfiguredEnglishPhoneticAccent()},
             {"wubi_z_mode", GetConfiguredWubiZMode()},
             {"wubi_four_code_auto_commit", GetConfiguredWubiFourCodeAutoCommit()},
             {"wubi_fifth_code_top_commit", GetConfiguredWubiFifthCodeTopCommit()},
@@ -480,6 +482,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"floating_toolbar_shadow", GetConfiguredFloatingToolbarShadow()},
             {"cn_en_mixed_input", GetConfiguredEnglishCandidatesEnabled()},
             {"candidate_translations", GetConfiguredCandidateTranslationsEnabled()},
+            {"english_candidate_translations", GetConfiguredEnglishCandidateTranslationsEnabled()},
             {"candidate_translation_show_pos", GetConfiguredCandidateTranslationShowPos()},
             {"candidate_translation_single_sense", GetConfiguredCandidateTranslationSingleSense()},
             {"cn_en_mixed_input_min_chars", GetConfiguredEnglishMixedInputMinChars()},
@@ -731,7 +734,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"api_key", custom_translation.api_key}}},
           {"niutrans", {{"enabled", niutrans.enabled}, {"app_id", niutrans.app_id}, {"apikey", niutrans.apikey}}},
           {"bilibili_translate", {{"model", bilibili_translate.model}}},
-          {"translation", {{"provider", translation->provider}}},
+          {"translation",
+           {{"provider", translation->provider}, {"english_target_language", translation->english_target_language}}},
           {"network", {{"proxy_mode", network_proxy.mode}, {"proxy_server", network_proxy.server}}},
           {"sync",
            {{"enabled", sync.enabled},
@@ -851,6 +855,13 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEnglishCommitWithSpace(json::value_to<bool>(data.at("value")));
     if (path == "input.english_candidate_detail")
         return SetConfiguredEnglishCandidateDetail(json::value_to<bool>(data.at("value")));
+    if (path == "input.english_candidate_phonetic")
+        return SetConfiguredEnglishCandidatePhonetic(json::value_to<bool>(data.at("value")));
+    if (path == "input.english_phonetic_accent")
+    {
+        const json::value &value = data.at("value");
+        return value.is_string() && SetConfiguredEnglishPhoneticAccent(json::value_to<std::string>(value));
+    }
     if (path == "input.wubi_z_mode")
         return SetConfiguredWubiZMode(json::value_to<std::string>(data.at("value")));
     if (path == "input.wubi_four_code_auto_commit")
@@ -999,6 +1010,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEnglishCandidatesEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.candidate_translations")
         return SetConfiguredCandidateTranslationsEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "general.english_candidate_translations")
+        return SetConfiguredEnglishCandidateTranslationsEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.candidate_translation_show_pos")
         return SetConfiguredCandidateTranslationShowPos(json::value_to<bool>(data.at("value")));
     if (path == "general.candidate_translation_single_sense")
@@ -1198,10 +1211,11 @@ bool ApplyConfigUpdate(const json::object &data)
                SetConfiguredBilibiliTranslateString(path.substr(std::string("bilibili_translate.").size()),
                                                     json::value_to<std::string>(value));
     }
-    if (path == "translation.provider")
+    if (path == "translation.provider" || path == "translation.english_target_language")
     {
         const json::value &value = data.at("value");
-        return value.is_string() && SetConfiguredTranslationString("provider", json::value_to<std::string>(value));
+        return value.is_string() && SetConfiguredTranslationString(path.substr(std::string("translation.").size()),
+                                                                   json::value_to<std::string>(value));
     }
     if (path.rfind("network.", 0) == 0)
     {

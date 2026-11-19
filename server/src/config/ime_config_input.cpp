@@ -377,6 +377,37 @@ bool SetConfiguredEnglishCandidateDetail(bool enabled)
     return true;
 }
 
+bool GetConfiguredEnglishCandidatePhonetic()
+{
+    return g_english_candidate_phonetic;
+}
+
+bool SetConfiguredEnglishCandidatePhonetic(bool enabled)
+{
+    if (!WriteConfiguredValue("input", "english_candidate_phonetic", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_english_candidate_phonetic = enabled;
+    return true;
+}
+
+const std::string &GetConfiguredEnglishPhoneticAccent()
+{
+    return g_english_phonetic_accent;
+}
+
+bool SetConfiguredEnglishPhoneticAccent(const std::string &accent)
+{
+    if (!IsValidEnglishPhoneticAccent(accent) ||
+        !WriteConfiguredValue("input", "english_phonetic_accent", EscapeTomlBasicString(accent)))
+    {
+        return false;
+    }
+    g_english_phonetic_accent = accent;
+    return true;
+}
+
 const std::string &GetConfiguredShuangpinPreeditMode()
 {
     return g_shuangpin_preedit_mode;

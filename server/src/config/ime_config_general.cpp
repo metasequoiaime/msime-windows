@@ -92,6 +92,19 @@ bool SetConfiguredCandidateTranslationsEnabled(bool enabled)
     return true;
 }
 
+bool GetConfiguredEnglishCandidateTranslationsEnabled()
+{
+    return g_english_candidate_translations_enabled.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredEnglishCandidateTranslationsEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "english_candidate_translations", enabled ? "true" : "false"))
+        return false;
+    g_english_candidate_translations_enabled.store(enabled, std::memory_order_relaxed);
+    return true;
+}
+
 bool GetConfiguredCandidateTranslationShowPos()
 {
     return g_candidate_translation_show_pos.load(std::memory_order_relaxed);

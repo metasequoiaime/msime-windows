@@ -81,15 +81,19 @@ struct CandidateTranslationGloss
 extern std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 extern std::string g_candidate_translation_signature;
 // 英文候选模式里高亮候选下方的音标与释义，按小写词缓存。工作线程独用。词库的音标和释义、
-// DR Dict 的摘要各自异步回来；done 置位后不再请求。
+// DR Dict 的摘要和英美音标各自异步回来；done 置位后不再请求。
 constexpr size_t kMaxEnglishCandidateDetails = 2048;
 struct EnglishCandidateDetail
 {
     std::string ipa;
     std::string gloss;
     std::string brief;
+    // DR Dict 的英式、美式音标（不带斜杠）。旧版 DR Dict 不回音标，phonetics_done 照样置位，两边留空。
+    std::string uk;
+    std::string us;
     bool local_done = false;
     bool brief_done = false;
+    bool phonetics_done = false;
 };
 extern std::unordered_map<std::string, EnglishCandidateDetail> g_english_candidate_details;
 extern bool g_translation_candidates_active;
@@ -104,7 +108,12 @@ extern bool g_translation_saved_selection_started;
 extern bool g_dedicated_english_answer_pending;
 extern int g_authoritative_cn_mode;
 
+// 英文候选译成 translation.english_target_language，中文候选译成 tencent_tmt.target_language。
+std::string TranslationTargetLanguage(EnglishIme::TranslationDirection direction);
 std::string TranslationIdentity(const EnglishIme::TranslationQuery &query);
+// 英文候选（英文候选模式与中文里混输的英文）和中文候选的译文各有开关。
+bool CandidateTranslationsEnabledFor(EnglishIme::TranslationDirection direction);
+bool AnyCandidateTranslationsEnabled();
 // 译文页或日期页正占着候选框：items 不是这次输入的候选，异步结果不能往里合并，也不能按会话扩展。
 bool IsCandidateSubPageActive();
 // 把界面线程记下的鼠标操作落到 candidate_ui.selection_started。工作线程每取一个任务先调一次，
@@ -369,8 +378,9 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge);
 // 高亮英文候选的音标与释义回来了：from_dr_dict 为真时 gloss 是 DR Dict 的摘要（ipa 不用），否则是
 // 词库的音标与释义。写进缓存，正高亮着这个词就重画当前页。
-void ApplyEnglishCandidateDetail(const std::string &word, const std::string &ipa, const std::string &gloss,
-                                 bool from_dr_dict);
+void ApplyEnglishLocalDetail(const EnglishIme::EnglishDetail &detail);
+// DR Dict 的摘要与英美音标。同上。
+void ApplyDrDictEnglishDetail(const DrDictBrief::Answer &answer);
 // 组页时取高亮英文候选下方那一行；缓存里还没有的部分顺带发出请求。
 std::string EnglishCandidateDetailText(const WordItem &item);
 void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &input, uint64_t generation);

@@ -157,10 +157,9 @@ struct Task
     std::vector<EnglishIme::TranslationResult> translation_results;
     uint64_t translation_generation = 0;
     bool translation_merge = false;
-    // ApplyEnglishCandidateDetail：哪个词、音标、释义（或 DR Dict 摘要）、是否来自 DR Dict。
-    std::string detail_word;
-    std::string detail_ipa;
-    std::string detail_gloss;
+    // ApplyEnglishCandidateDetail：词库给的音标与释义，或 DR Dict 的答复（detail_from_dr_dict）。
+    EnglishIme::EnglishDetail local_detail;
+    DrDictBrief::Answer dr_dict_detail;
     bool detail_from_dr_dict = false;
     MixedCandidates::Result mixed_result;
     std::string mixed_input;
@@ -577,7 +576,10 @@ void WorkerThread()
         }
 
         case TaskType::ApplyEnglishCandidateDetail: {
-            ApplyEnglishCandidateDetail(task.detail_word, task.detail_ipa, task.detail_gloss, task.detail_from_dr_dict);
+            if (task.detail_from_dr_dict)
+                ApplyDrDictEnglishDetail(task.dr_dict_detail);
+            else
+                ApplyEnglishLocalDetail(task.local_detail);
             break;
         }
 
@@ -1214,16 +1216,26 @@ void EnqueueEnglishCandidates(std::vector<WordItem> candidates, const std::strin
     pipe_queueCv.notify_one();
 }
 
-void EnqueueEnglishCandidateDetail(std::string word, std::string ipa, std::string gloss, bool from_dr_dict)
+void EnqueueEnglishCandidateDetail(EnglishIme::EnglishDetail detail)
 {
     {
         std::lock_guard lock(queueMutex);
         Task task;
         task.type = TaskType::ApplyEnglishCandidateDetail;
-        task.detail_word = std::move(word);
-        task.detail_ipa = std::move(ipa);
-        task.detail_gloss = std::move(gloss);
-        task.detail_from_dr_dict = from_dr_dict;
+        task.local_detail = std::move(detail);
+        PushTaskLocked(std::move(task));
+    }
+    pipe_queueCv.notify_one();
+}
+
+void EnqueueDrDictEnglishDetail(DrDictBrief::Answer answer)
+{
+    {
+        std::lock_guard lock(queueMutex);
+        Task task;
+        task.type = TaskType::ApplyEnglishCandidateDetail;
+        task.dr_dict_detail = std::move(answer);
+        task.detail_from_dr_dict = true;
         PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();

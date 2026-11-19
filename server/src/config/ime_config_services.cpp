@@ -398,6 +398,11 @@ bool IsValidTranslationProvider(const std::string &provider)
            provider == "ai" || provider == "bilibili";
 }
 
+bool IsValidEnglishTranslationTargetLanguage(const std::string &language)
+{
+    return language == "zh" || (language != "en" && IsValidTranslationTargetLanguage(language));
+}
+
 namespace
 {
 std::mutex g_translation_snapshot_mutex;
@@ -408,6 +413,7 @@ void ime_config_detail::PublishTranslationConfig()
 {
     auto snapshot = std::make_shared<TranslationConfig>();
     snapshot->provider = g_translation_provider;
+    snapshot->english_target_language = g_translation_english_target_language;
     snapshot->tencent = g_tencent_tmt;
     snapshot->aliyun = g_aliyun_mt;
     snapshot->custom = g_custom_translation;
@@ -441,6 +447,15 @@ std::shared_ptr<const TranslationConfig> GetConfiguredTranslation()
 
 bool SetConfiguredTranslationString(const std::string &key, const std::string &value)
 {
+    if (key == "english_target_language")
+    {
+        if (!IsValidEnglishTranslationTargetLanguage(value) ||
+            !WriteConfiguredValue("translation", key, EscapeTomlBasicString(value)))
+            return false;
+        g_translation_english_target_language = value;
+        PublishTranslationConfig();
+        return true;
+    }
     if (key != "provider" || !IsValidTranslationProvider(value))
         return false;
     // 旧布尔与 provider 一次写入；旧版不认识的提供方对应布尔保持 false。
