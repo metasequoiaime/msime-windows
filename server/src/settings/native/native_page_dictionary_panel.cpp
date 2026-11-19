@@ -451,18 +451,22 @@ VisualPtr MakeDialogField(const std::wstring &label, const std::shared_ptr<DictI
 // ---------------------------------------------------------------------------------
 std::array<float, 7> DictColumns::Edges(float width) const
 {
-    const float percent = (percents[0] + percents[1] + percents[2]) * width;
+    const float percentSum = percents[0] + percents[1] + percents[2];
     const float fixed = kDictCheckColumn + 64.0f + 124.0f;
+    // 窗口收窄时百分比列先让出空间：操作列固定 124px 且排在最后，把它挤出表格右边界的话，
+    // 滚动区会裁掉「删除」，既看不见也点不到。固定列的总宽 228px 无论如何都要留住。
+    const float percent = std::min(percentSum * width, std::max(width - fixed, 0.0f));
     const float leftover = std::max(width - fixed - percent, 0.0f);
     const float index = 64.0f + leftover * 64.0f / 188.0f;
     const float action = 124.0f + leftover * 124.0f / 188.0f;
+    const float unit = percentSum > 0.0f ? percent / percentSum : 0.0f;
     std::array<float, 7> edges{};
     edges[0] = 0.0f;
     edges[1] = kDictCheckColumn;
     edges[2] = edges[1] + index;
-    edges[3] = edges[2] + percents[0] * width;
-    edges[4] = edges[3] + percents[1] * width;
-    edges[5] = edges[4] + percents[2] * width;
+    edges[3] = edges[2] + percents[0] * unit;
+    edges[4] = edges[3] + percents[1] * unit;
+    edges[5] = edges[4] + percents[2] * unit;
     edges[6] = std::max(edges[5] + action, width);
     return edges;
 }

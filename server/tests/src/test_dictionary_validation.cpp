@@ -1022,10 +1022,14 @@ TEST_CASE(PinyinBatchDeleteRemovesEverySelectedEntry)
         SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}});
     REQUIRE_EQ(listed.at("rows").as_array().size(), size_t{2});
 
-    // 面板按查询结果里的编码（也就是规范化后的 key）回填，这里照抄同一种形状。
+    // 面板把用户视图里的 code 原样当删除键用，这里也从查询结果里取，而不是另写一份期望值：
+    // 两边的形状一旦对不上（比如误把词面当编码），只有这条路径会红。
     boost::json::array selected;
-    for (const auto &entry : entries)
-        selected.push_back({{"code", entry.key}, {"word", entry.word}});
+    for (const auto &row : listed.at("rows").as_array())
+    {
+        const auto &item = row.as_object();
+        selected.push_back({{"code", item.at("code")}, {"word", item.at("word")}});
+    }
     const auto deleted =
         SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "deleteMany"}, {"entries", selected}});
     REQUIRE(deleted.at("ok").as_bool());
@@ -1036,4 +1040,58 @@ TEST_CASE(PinyinBatchDeleteRemovesEverySelectedEntry)
     const auto after =
         SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}});
     REQUIRE(after.at("rows").as_array().empty());
+}
+
+// 一条都没删掉时不能报成功：设置页靠 ok 决定是刷新列表还是保留勾选，谎报成功会让用户
+// 以为删掉了，勾选却指向已经不存在的行。
+TEST_CASE(BatchDeleteFailsWhenNoEntryCouldBeRemoved)
+{
+    ScopedQuickPhraseDataDir data;
+    const auto response =
+        SettingsDictionary::HandleRequest({{"dictionary", "quick"},
+                                           {"action", "deleteMany"},
+                                           {"entries", boost::json::array{{{"code", "abc"}, {"word", "没有这条"}},
+                                                                          {{"code", "abc"}, {"word", "也没有这条"}}}}});
+
+    REQUIRE(!response.at("ok").as_bool());
+    // 消息带的是第一条失败原因，不是「已删除 0 条」这种看不出问题所在的说法。
+    REQUIRE_EQ(Message(response).rfind("删除失败：", 0), size_t{0});
+    REQUIRE_EQ(data.rows().as_array().size(), size_t{2});
+}
+
+// 英文词库按「单词 + 显示内容」定位，批量删除的每一条都得带 display，否则后端一律拒绝。
+TEST_CASE(EnglishBatchDeleteRemovesTheSelectedWords)
+{
+    const ScopedTempDir dir(L"msime-batch-delete-english");
+    const ScopedDataDir scoped(dir.path());
+    struct Row
+    {
+        const char *word;
+        const char *display;
+    };
+    const Row rows[] = {{"hello", "哈喽"}, {"world", "世界"}};
+    for (const auto &row : rows)
+        REQUIRE(SettingsDictionary::HandleRequest({{"dictionary", "english"},
+                                                   {"action", "create"},
+                                                   {"word", row.word},
+                                                   {"display", row.display},
+                                                   {"weight", 10}})
+                    .at("ok")
+                    .as_bool());
+
+    boost::json::array selected;
+    for (const auto &row : rows)
+        selected.push_back({{"word", row.word}, {"display", row.display}});
+    const auto deleted =
+        SettingsDictionary::HandleRequest({{"dictionary", "english"}, {"action", "deleteMany"}, {"entries", selected}});
+    REQUIRE(deleted.at("ok").as_bool());
+    REQUIRE_EQ(Message(deleted), std::string("已删除 2 条词条"));
+
+    for (const auto &row : rows)
+    {
+        const auto listed = SettingsDictionary::HandleRequest(
+            {{"dictionary", "english"}, {"action", "query"}, {"word", std::string(row.word).substr(0, 1)}});
+        REQUIRE(listed.at("ok").as_bool());
+        REQUIRE(listed.at("rows").as_array().empty());
+    }
 }

@@ -435,10 +435,14 @@ TEST_CASE(DictionaryRowsCanBeSelectedAndDeletedInOneRequest)
     REQUIRE_EQ(queries.size(), size_t{2});
     const Json &request = queries.at(1);
     REQUIRE_EQ(request.at("action").get<std::string>(), std::string("deleteMany"));
+    REQUIRE_EQ(request.at("dictionary").get<std::string>(), std::string("quanpin"));
     const auto &entries = request.at("entries");
     REQUIRE_EQ(entries.size(), size_t{2});
     REQUIRE_EQ(entries.at(0).at("word").get<std::string>(), std::string("词0"));
     REQUIRE_EQ(entries.at(1).at("word").get<std::string>(), std::string("词2"));
+    // 编码是后端定位词条的键（拼音表按 key+value 删，不是按词面删），必须原样带上。
+    REQUIRE_EQ(entries.at(0).at("code").get<std::string>(), std::string("ci0"));
+    REQUIRE_EQ(entries.at(1).at("code").get<std::string>(), std::string("ci2"));
 
     // 删完之后列表会重查，勾选不该跟着旧行号留下来：新的一页从干净状态开始。
     harness.Respond(request, Json{{"ok", true}, {"message", "已删除 2 条词条"}});
@@ -475,4 +479,97 @@ TEST_CASE(DictionaryHeaderSelectsEveryRowOnThePage)
     REQUIRE(remove->IsDisabled());
     REQUIRE_EQ(remove->Text(), std::wstring(L"删除选中"));
     REQUIRE_EQ(harness.Queries().size(), size_t{1});
+}
+
+// 设置窗口能缩到 600 DIP 宽，表格过窄时左右两侧的固定列（勾选、序号、操作）不能被挤出右边界：
+// 被挤出去的部分会被滚动区裁掉，删除链接既看不见也点不到。百分比列先让出空间。
+TEST_CASE(DictionaryColumnsKeepTheActionColumnInsideANarrowTable)
+{
+    native_settings::DictColumns columns;
+    for (const float width : {900.0f, 650.0f, 590.0f, 518.0f, 458.0f, 300.0f, 240.0f})
+    {
+        const auto edges = columns.Edges(width);
+        REQUIRE(edges[1] >= native_settings::kDictCheckColumn - 0.01f);
+        REQUIRE(edges[2] >= edges[1]);
+        REQUIRE(edges[3] >= edges[2]);
+        REQUIRE(edges[4] >= edges[3]);
+        REQUIRE(edges[5] >= edges[4]);
+        // 操作列固定 124px，它的右边界必须留在表内（正常宽度下还要加上剩余空白）。
+        REQUIRE(edges[5] + 124.0f <= width + 0.01f);
+    }
+}
+
+// 英文词库的行没有编码（后端查询只产出 word/display），删除靠「单词 + 显示内容」定位，
+// 所以请求里的每一条都要带上 display，显示内容为空时用单词本身。
+TEST_CASE(EnglishRowsCarryTheDisplayInABatchDelete)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Panel().SetDictionary("english");
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    harness.Respond(queries.at(1),
+                    Json{{"ok", true},
+                         {"message", "查询成功"},
+                         {"rows", Json::array({{{"word", "hello"}, {"display", "哈喽"}, {"weight", 10}},
+                                               {{"word", "world"}, {"display", "世界"}, {"weight", 10}}})},
+                         {"offset", 0},
+                         {"hasMore", false}});
+
+    SettingsWindowHarness &window = harness.Window();
+    window.Layout();
+    const auto headers = Visible<native_settings::DictTableHeader>(window, 1600.0f);
+    REQUIRE_EQ(headers.size(), size_t{1});
+    const msimeui::RectF header = (*headers.begin())->GetBounds();
+    window.Click(header.x + 20.0f, header.y + header.height * 0.5f);
+
+    native_settings::Button *remove = FindToolbarButton(window, L"删除选中");
+    REQUIRE(remove != nullptr);
+    REQUIRE_EQ(remove->Text(), std::wstring(L"删除选中 (2)"));
+    const msimeui::RectF area = remove->GetBounds();
+    window.Click(area.x + area.width * 0.5f, area.y + area.height * 0.5f);
+
+    const auto sent = harness.Queries();
+    REQUIRE_EQ(sent.size(), size_t{3});
+    const Json &request = sent.at(2);
+    REQUIRE_EQ(request.at("dictionary").get<std::string>(), std::string("english"));
+    const auto &entries = request.at("entries");
+    REQUIRE_EQ(entries.size(), size_t{2});
+    REQUIRE_EQ(entries.at(0).at("word").get<std::string>(), std::string("hello"));
+    REQUIRE_EQ(entries.at(0).at("display").get<std::string>(), std::string("哈喽"));
+    REQUIRE_EQ(entries.at(1).at("display").get<std::string>(), std::string("世界"));
+}
+
+// 整批都失败时后端回 ok=false：勾选要原地留着，让用户能直接重试，而不是清空重选一遍。
+TEST_CASE(FailedBatchDeleteKeepsTheSelection)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 2, false, 2));
+
+    SettingsWindowHarness &window = harness.Window();
+    window.Layout();
+    const auto bodies = Visible<native_settings::DictTableBody>(window, 1600.0f);
+    REQUIRE_EQ(bodies.size(), size_t{1});
+    const msimeui::RectF body = (*bodies.begin())->GetBounds();
+    window.Click(body.x + 20.0f, body.y + body.height * 0.25f);
+
+    native_settings::Button *remove = FindToolbarButton(window, L"删除选中");
+    REQUIRE(remove != nullptr);
+    const msimeui::RectF area = remove->GetBounds();
+    window.Click(area.x + area.width * 0.5f, area.y + area.height * 0.5f);
+
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    harness.Respond(queries.at(1), Json{{"ok", false}, {"message", "原词条不存在或已被删除"}});
+
+    const auto after = Visible<native_settings::DictTableBody>(window, 1600.0f);
+    REQUIRE_EQ(after.size(), size_t{1});
+    REQUIRE_EQ((*after.begin())->Selection().size(), size_t{1});
+    REQUIRE(!remove->IsDisabled());
+    REQUIRE_EQ(remove->Text(), std::wstring(L"删除选中 (1)"));
+    REQUIRE_EQ(harness.Host().toasts.size(), size_t{1});
+    REQUIRE(!harness.Host().toasts.front().second);
 }
