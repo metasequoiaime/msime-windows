@@ -457,6 +457,22 @@
     "direction": "server"
   },
   {
+    "name": "dictionary batch delete partial",
+    "message": {
+      "type": "dictionaryResponse",
+      "requestId": "dict-6",
+      "action": "deleteMany",
+      "dictionary": "quanpin",
+      "ok": true,
+      "message": "已删除 1 条词条，1 条未删除：原词条不存在或已被删除",
+      "rows": [],
+      "failed": 1
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "server"
+  },
+  {
     "name": "user data export request",
     "message": {
       "type": "userDataBackupRequest",

@@ -460,6 +460,169 @@ TEST_CASE(DictionaryRowsCanBeSelectedAndDeletedInOneRequest)
     REQUIRE_EQ(remove->Text(), std::wstring(L"删除选中"));
 }
 
+// 请求发出到响应回来这段时间里，按钮和表头全选框都得按住：再点一次会对同一批发第二个
+// deleteMany，第二批注定全失败，用户还得自己收拾那条报错。
+TEST_CASE(DictionaryDeleteIgnoresClicksWhileTheRequestIsInFlight)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 3, false, 3));
+
+    SettingsWindowHarness &window = harness.Window();
+    window.Layout();
+    const auto bodies = Visible<native_settings::DictTableBody>(window, 1600.0f);
+    REQUIRE_EQ(bodies.size(), size_t{1});
+    native_settings::DictTableBody &body = **bodies.begin();
+    const msimeui::RectF bounds = body.GetBounds();
+    const float rowHeight = bounds.height / 3.0f;
+    window.Click(bounds.x + 20.0f, bounds.y + rowHeight * 0.5f);
+
+    native_settings::Button *remove = FindToolbarButton(window, L"删除选中");
+    REQUIRE(remove != nullptr);
+    REQUIRE(!remove->IsDisabled());
+    const msimeui::RectF area = remove->GetBounds();
+    window.Click(area.x + area.width * 0.5f, area.y + area.height * 0.5f);
+
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    REQUIRE_EQ(queries.at(1).at("action").get<std::string>(), std::string("deleteMany"));
+    REQUIRE(remove->IsDisabled());
+
+    // 再点按钮、再点全选框，都不该多发一条，也不该改掉已经发出去的那批勾选。
+    window.Click(area.x + area.width * 0.5f, area.y + area.height * 0.5f);
+    const auto headers = Visible<native_settings::DictTableHeader>(window, 1600.0f);
+    REQUIRE_EQ(headers.size(), size_t{1});
+    const msimeui::RectF header = (*headers.begin())->GetBounds();
+    window.Click(header.x + 20.0f, header.y + header.height * 0.5f);
+    REQUIRE_EQ(harness.Queries().size(), size_t{2});
+    REQUIRE_EQ(body.Selection().size(), size_t{1});
+
+    // 响应回来才解禁：这一批只有一条，重查之后勾选清空、按钮重新变灰。
+    harness.Respond(queries.at(1), Json{{"ok", true}, {"failed", 0}, {"message", "已删除 1 条词条"}});
+    REQUIRE_EQ(harness.Queries().size(), size_t{3});
+    REQUIRE(remove->IsDisabled());
+    REQUIRE(!harness.Host().toasts.empty());
+    REQUIRE(harness.Host().toasts.back().second);
+}
+
+// 一部分删不掉时，后端仍然算「成功」（删掉的要留下、列表要刷新），但提示不能是绿的：
+// 绿勾会让用户以为整批都删了。
+TEST_CASE(DictionaryPartialDeleteShowsAWarningToast)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 3, false, 3));
+
+    SettingsWindowHarness &window = harness.Window();
+    window.Layout();
+    const auto bodies = Visible<native_settings::DictTableBody>(window, 1600.0f);
+    REQUIRE_EQ(bodies.size(), size_t{1});
+    native_settings::DictTableBody &body = **bodies.begin();
+    const msimeui::RectF bounds = body.GetBounds();
+    const float rowHeight = bounds.height / 3.0f;
+    window.Click(bounds.x + 20.0f, bounds.y + rowHeight * 0.5f);
+
+    native_settings::Button *remove = FindToolbarButton(window, L"删除选中");
+    REQUIRE(remove != nullptr);
+    const msimeui::RectF area = remove->GetBounds();
+    window.Click(area.x + area.width * 0.5f, area.y + area.height * 0.5f);
+
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    harness.Respond(
+        queries.at(1),
+        Json{{"ok", true}, {"failed", 1}, {"message", "已删除 0 条词条，1 条未删除：原词条不存在或已被删除"}});
+
+    REQUIRE(!harness.Host().toasts.empty());
+    REQUIRE(!harness.Host().toasts.back().second);
+    REQUIRE(harness.Host().toasts.back().first.find(L"1 条未删除") != std::wstring::npos);
+    // 列表照样刷新，删掉的那部分用户能立刻看到。
+    REQUIRE_EQ(harness.Queries().size(), size_t{3});
+}
+
+// 换词库前发出的批量删除，响应回来时已经不在那一页上了：不能拿旧批次的「删完清勾选」
+// 去抹掉新页面上用户刚勾的行。
+TEST_CASE(DictionaryStaleDeleteResponseKeepsTheNewSelection)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 3, false, 3));
+
+    SettingsWindowHarness &window = harness.Window();
+    window.Layout();
+    const auto bodies = Visible<native_settings::DictTableBody>(window, 1600.0f);
+    REQUIRE_EQ(bodies.size(), size_t{1});
+    native_settings::DictTableBody &body = **bodies.begin();
+    const msimeui::RectF bounds = body.GetBounds();
+    window.Click(bounds.x + 20.0f, bounds.y + bounds.height / 3.0f * 0.5f);
+
+    native_settings::Button *remove = FindToolbarButton(window, L"删除选中");
+    REQUIRE(remove != nullptr);
+    const msimeui::RectF area = remove->GetBounds();
+    window.Click(area.x + area.width * 0.5f, area.y + area.height * 0.5f);
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    const Json stale = queries.at(1);
+
+    // 请求还在路上就换了词库：新页面自己会重查一次。
+    harness.Panel().SetDictionary("english");
+    REQUIRE_EQ(harness.Queries().size(), size_t{3});
+    harness.Respond(harness.Queries().at(2), QueryPage(0, 2, false, 2));
+    window.Layout();
+
+    const auto refreshed = Visible<native_settings::DictTableBody>(window, 1600.0f);
+    REQUIRE_EQ(refreshed.size(), size_t{1});
+    native_settings::DictTableBody &english = **refreshed.begin();
+    const msimeui::RectF englishBounds = english.GetBounds();
+    window.Click(englishBounds.x + 20.0f, englishBounds.y + englishBounds.height / 2.0f * 0.5f);
+    REQUIRE_EQ(english.Selection().size(), size_t{1});
+
+    // 旧的响应现在才回来：不属于当前词库，勾选不能跟着清。
+    harness.Respond(stale, Json{{"ok", true}, {"failed", 0}, {"message", "已删除 1 条词条"}});
+    REQUIRE_EQ(english.Selection().size(), size_t{1});
+    // 提示仍然要带词库名前缀，让用户知道这条说的是哪个词库。
+    REQUIRE(!harness.Host().toasts.empty());
+    REQUIRE(harness.Host().toasts.back().first.find(L"：") != std::wstring::npos);
+}
+
+// 窄表把操作列压到只剩勾选列之后那点余量时，「编辑」「删除」也必须留在表里：
+// 越界的那截会被滚动区裁掉，看得见一半、点不到另一半。
+TEST_CASE(DictionaryActionButtonsStayInsideANarrowTable)
+{
+    for (const float width : {340.0f, 240.0f, 200.0f})
+    {
+        PanelHarness harness(DictionaryPanel::Kind::Dictionary, width);
+        harness.Build();
+        harness.Show();
+        harness.Respond(harness.Queries().front(), QueryPage(0, 2, false, 2));
+        harness.Window().Layout();
+        const auto bodies = Visible<native_settings::DictTableBody>(harness.Window(), 1600.0f);
+        REQUIRE_EQ(bodies.size(), size_t{1});
+        native_settings::DictTableBody &body = **bodies.begin();
+        const msimeui::RectF bounds = body.GetBounds();
+        for (size_t row = 0; row < 2; ++row)
+        {
+            for (const bool remove : {false, true})
+            {
+                const msimeui::RectF rect = body.ActionRect(row, remove);
+                REQUIRE(rect.x >= bounds.x - 0.01f);
+                REQUIRE(rect.x + rect.width <= bounds.x + bounds.width + 0.01f);
+            }
+        }
+        // 再直接摆一张 120 DIP 宽的窄表：操作列只剩 80 DIP，两枚按钮必须一起挤进表内。
+        body.Arrange({bounds.x, bounds.y, 120.0f, bounds.height});
+        for (const bool remove : {false, true})
+        {
+            const msimeui::RectF rect = body.ActionRect(0, remove);
+            REQUIRE(rect.x >= bounds.x - 0.01f);
+            REQUIRE(rect.x + rect.width <= bounds.x + 120.0f + 0.01f);
+        }
+    }
+}
+
 // 表头的全选框勾上当前页全部行，再点一次全取消；勾选本身不产生请求。
 TEST_CASE(DictionaryHeaderSelectsEveryRowOnThePage)
 {

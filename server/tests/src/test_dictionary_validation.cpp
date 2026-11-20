@@ -971,6 +971,8 @@ TEST_CASE(QuickPhraseBatchDeleteKeepsDeletionsAndReportsTheRest)
                                                                           {{"code", "abc"}, {"word", "没有这条"}}}}});
 
     REQUIRE(response.at("ok").as_bool());
+    // ok 只说「这一批处理完了」；有几条没删掉由 failed 单独回答，面板靠它决定提示的颜色。
+    REQUIRE_EQ(response.at("failed").as_int64(), 1);
     REQUIRE_EQ(Message(response).rfind("已删除 1 条快捷短语，1 条未删除：", 0), size_t{0});
     const auto rows = data.rows().as_array();
     REQUIRE_EQ(rows.size(), size_t{1});
@@ -980,6 +982,7 @@ TEST_CASE(QuickPhraseBatchDeleteKeepsDeletionsAndReportsTheRest)
     const auto empty = SettingsDictionary::HandleRequest(
         {{"dictionary", "quick"}, {"action", "deleteMany"}, {"entries", boost::json::array()}});
     REQUIRE(!empty.at("ok").as_bool());
+    REQUIRE_EQ(empty.at("failed").as_int64(), 0);
     REQUIRE_EQ(Message(empty), std::string("没有选中要删除的条目"));
     const auto missing = SettingsDictionary::HandleRequest({{"dictionary", "quick"}, {"action", "deleteMany"}});
     REQUIRE(!missing.at("ok").as_bool());
@@ -1033,6 +1036,7 @@ TEST_CASE(PinyinBatchDeleteRemovesEverySelectedEntry)
     const auto deleted =
         SettingsDictionary::HandleRequest({{"dictionary", "quanpin"}, {"action", "deleteMany"}, {"entries", selected}});
     REQUIRE(deleted.at("ok").as_bool());
+    REQUIRE_EQ(deleted.at("failed").as_int64(), 0);
     REQUIRE_EQ(Message(deleted), std::string("已删除 2 条词条"));
     REQUIRE_EQ(CountRows(db.get(), "SELECT count(*) FROM tbl_2_n"), 0);
 
@@ -1054,6 +1058,8 @@ TEST_CASE(BatchDeleteFailsWhenNoEntryCouldBeRemoved)
                                                                           {{"code", "abc"}, {"word", "也没有这条"}}}}});
 
     REQUIRE(!response.at("ok").as_bool());
+    // 一条都没删掉时 failed 是全部条目数，ok=false 告诉面板别刷新、别清勾选。
+    REQUIRE_EQ(response.at("failed").as_int64(), 2);
     // 消息带的是第一条失败原因，不是「已删除 0 条」这种看不出问题所在的说法。
     REQUIRE_EQ(Message(response).rfind("删除失败：", 0), size_t{0});
     REQUIRE_EQ(data.rows().as_array().size(), size_t{2});
@@ -1085,6 +1091,7 @@ TEST_CASE(EnglishBatchDeleteRemovesTheSelectedWords)
     const auto deleted =
         SettingsDictionary::HandleRequest({{"dictionary", "english"}, {"action", "deleteMany"}, {"entries", selected}});
     REQUIRE(deleted.at("ok").as_bool());
+    REQUIRE_EQ(deleted.at("failed").as_int64(), 0);
     REQUIRE_EQ(Message(deleted), std::string("已删除 2 条词条"));
 
     for (const auto &row : rows)

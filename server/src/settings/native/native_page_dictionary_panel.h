@@ -170,10 +170,11 @@ class DictTableBody : public msimeui::Visual
     bool OnMouseDown(const POINT &point, WPARAM keyState) override;
     bool OnMouseUp(const POINT &point, WPARAM keyState) override;
     HCURSOR GetCursor() const override;
+    // 操作按钮的矩形：窄表下必须钳在表内，测试靠它锁住这个约束。
+    RectF ActionRect(size_t row, bool remove) const;
 
   private:
     float RowHeight() const;
-    RectF ActionRect(size_t row, bool remove) const;
     RectF CheckRect(size_t row) const;
     // (row, remove) under the point, or row = -1.
     std::pair<size_t, bool> HitAction(const PointF &point) const;
@@ -300,7 +301,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
         std::string dictionary;
     };
 
-    void Post(const std::string &action, Json data);
+    std::string Post(const std::string &action, Json data);
     void Query(size_t offset, bool fromInput);
     void PostQuery(size_t offset);
     void RefreshQuery(const std::string &action);
@@ -326,6 +327,8 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     uint64_t counter_ = 0;
     std::map<std::string, Pending> pending_;
     std::string latestQueryId_;
+    // 批量删除发出后、响应回来前按住按钮：再点一次会对同一批发第二个请求。
+    std::string deletingRequestId_;
     std::wstring lastQuery_;
     std::vector<Entry> rows_;
 

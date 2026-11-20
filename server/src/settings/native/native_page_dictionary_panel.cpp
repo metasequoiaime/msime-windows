@@ -783,8 +783,14 @@ RectF DictTableBody::ActionRect(size_t row, bool remove) const
     const float height = lineHeight + 8.0f;
     const float top = bounds_.y + RowHeight() * static_cast<float>(row);
     const float y = top + (RowHeight() - CssBorder() - height) * 0.5f;
-    const float x = bounds_.x + edges[5] + 18.0f + (remove ? editWidth : 0.0f);
-    return {x, y, remove ? removeWidth : editWidth, height};
+    const float width = remove ? removeWidth : editWidth;
+    const float left = bounds_.x + edges[5];
+    const float right = bounds_.x + edges[6];
+    float x = left + 18.0f + (remove ? editWidth : 0.0f);
+    // 表窄到操作列被压完时，按钮不能照旧按列起点摆：钳回表内，否则会被画到表外裁掉。
+    if (x + width > right)
+        x = std::max(left, right - width);
+    return {x, y, std::min(width, std::max(right - x, 0.0f)), height};
 }
 
 RectF DictTableBody::CheckRect(size_t row) const
@@ -1174,7 +1180,11 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     hint_->SetMargin({22.0f, 0.0f, 22.0f, 16.0f});
     header_ = std::make_shared<DictTableHeader>(columns);
     body_ = std::make_shared<DictTableBody>(columns);
-    header_->SetOnSelectAll([this]() { body_->SetAllSelected(!body_->AllSelected()); });
+    header_->SetOnSelectAll([this]() {
+        if (!deletingRequestId_.empty())
+            return;
+        body_->SetAllSelected(!body_->AllSelected());
+    });
     body_->SetOnSelectionChanged([this]() { SyncSelection(); });
     body_->SetOnAction([this](size_t row, bool remove) {
         if (row >= rows_.size())
@@ -1370,7 +1380,7 @@ void DictionaryPanel::SetOnModeChanged(std::function<void()> handler)
     onModeChanged_ = std::move(handler);
 }
 
-void DictionaryPanel::Post(const std::string &action, Json data)
+std::string DictionaryPanel::Post(const std::string &action, Json data)
 {
     const std::string requestId = prefix_ + std::to_string(++counter_);
     std::string target = dictionary_;
@@ -1388,6 +1398,7 @@ void DictionaryPanel::Post(const std::string &action, Json data)
     data["action"] = action;
     data["dictionary"] = target;
     context_.model.Post("dictionaryRequest", std::move(data));
+    return requestId;
 }
 
 void DictionaryPanel::Query(size_t offset, bool fromInput)
@@ -1441,13 +1452,16 @@ void DictionaryPanel::SyncSelection()
     if (!removeSelected_)
         return;
     const size_t count = body_->Selection().size();
-    removeSelected_->SetDisabled(count == 0);
+    // 上一批还在路上：按钮按住不放，否则会把同一批发第二次。
+    removeSelected_->SetDisabled(count == 0 || !deletingRequestId_.empty());
     removeSelected_->SetText(count == 0 ? L"删除选中" : L"删除选中 (" + std::to_wstring(count) + L")");
     header_->SetAllSelected(body_->AllSelected());
 }
 
 void DictionaryPanel::DeleteSelected()
 {
+    if (!deletingRequestId_.empty())
+        return;
     const std::vector<size_t> selected = body_->Selection();
     if (selected.empty())
         return;
@@ -1470,9 +1484,10 @@ void DictionaryPanel::DeleteSelected()
     const std::wstring message =
         std::wstring(L"确定删除选中的 ") + count + (kind_ == Kind::Quick ? L" 条快捷短语吗？" : L" 条词条吗？");
     context_.host.Confirm(message, [this, entries, target](bool confirmed) {
-        if (!confirmed)
+        if (!confirmed || !deletingRequestId_.empty())
             return;
-        Post("deleteMany", {{"dictionary", target}, {"entries", entries}});
+        deletingRequestId_ = Post("deleteMany", {{"dictionary", target}, {"entries", entries}});
+        SyncSelection();
     });
 }
 
@@ -1686,11 +1701,19 @@ void DictionaryPanel::OnResponse(const Json &message)
         return;
     const Pending context = found->second;
     pending_.erase(found);
+    if (requestId == deletingRequestId_)
+    {
+        deletingRequestId_.clear();
+        SyncSelection();
+    }
     if (context.action == "query" && requestId != latestQueryId_)
         return;
     if (kind_ == Kind::Dictionary && context.action == "query" && context.dictionary != dictionary_)
         return;
     const bool ok = message.value("ok", false);
+    // 批量删除里没删掉几条：删掉的那部分仍然算成功（列表要刷新、勾选要清），
+    // 但提示不能报成绿的，否则用户以为整批都删了。
+    const bool partial = message.value("failed", 0) > 0;
     if (context.action == "query")
     {
         loading_ = false;
@@ -1746,7 +1769,7 @@ void DictionaryPanel::OnResponse(const Json &message)
             if (!label.empty())
                 text = label + L"：" + text;
         }
-        context_.host.ShowToast(text, ok);
+        context_.host.ShowToast(text, ok && !partial);
     }
 
     if (context.action == "query" && ok)
@@ -1773,7 +1796,8 @@ void DictionaryPanel::OnResponse(const Json &message)
     if (ok && context.action != "query" && !isExport)
     {
         // 删除成功后行号已经对不上了，勾选立刻作废，别让按钮继续顶着上一页的条数。
-        if (context.action == "deleteMany")
+        // 响应回来时已经换过词库的不能跟着清：新页面的勾选跟这批删除没关系。
+        if (context.action == "deleteMany" && context.dictionary == dictionary_)
             body_->ClearSelection();
         if (kind_ == Kind::Quick)
         {
