@@ -436,10 +436,10 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         auto heading = MakeTitle(L"服务商");
         heading->SetMargin({0.0f, 0.0f, 0.0f, 18.0f});
         column->Add(heading);
-        auto description = MakeDescription(
-            L"OpenAI 兼容的 Chat Completions 接口。接口地址与模型留空时使用各家的默认值；"
-            L"凭据按服务商分开保存。Ollama 连接本机服务，不需要 API Token，"
-            L"模型用「查询模型」从已下载的模型里选。");
+        auto description =
+            MakeDescription(L"OpenAI 兼容的 Chat Completions 接口。接口地址与模型留空时使用各家的默认值；"
+                            L"凭据按服务商分开保存。Ollama 连接本机服务，不需要 API Token，"
+                            L"模型用「查询模型」从已下载的模型里选。");
         description->SetMargin({0.0f, -10.0f, 0.0f, 16.0f});
         column->Add(description);
 
@@ -552,8 +552,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
             SyncLayout();
         });
         auto endpointField = std::make_shared<Field>(L"接口地址", endpoint);
-        endpointField->Add(
-            MakeDescription(L"留空使用官方地址。服务商会收到你的敏感信息，只填你信任的地址。"));
+        endpointField->Add(MakeDescription(L"留空使用官方地址。服务商会收到你的敏感信息，只填你信任的地址。"));
         grid->Add(endpointField, true);
 
         column->Add(grid);
@@ -615,8 +614,8 @@ struct AiPage : std::enable_shared_from_this<AiPage>
             auto group = std::make_shared<Column>(2.0f);
             group->Add(generate);
             group->Add(select);
-            auto row = MakeRow(L"联想模式",
-                               L"生成式让模型按拼音和前文写出新候选；从候选里挑只让服务商在本地候选里挑。", group);
+            auto row = MakeRow(L"联想模式", L"生成式让模型按拼音和前文写出新候选；从候选里挑只让服务商在本地候选里挑。",
+                               group);
             column->Add(row);
             page.AddSection(column);
         }

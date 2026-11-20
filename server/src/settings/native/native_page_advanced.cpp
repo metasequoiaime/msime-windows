@@ -16,8 +16,7 @@ namespace native_settings
 {
 namespace
 {
-constexpr wchar_t kProxyHint[] =
-    L"仅支持 HTTP 代理";
+constexpr wchar_t kProxyHint[] = L"仅支持 HTTP 代理";
 
 bool IsValidProxyServer(const std::wstring &value)
 {
@@ -332,8 +331,7 @@ VisualPtr BuildAdvancedPage(PageContext &context)
         column->Add(Description(L"按 Win+Space 切换输入法、以及系统设置「语言和区域」键盘列表里显示的水杉图标。"
                                 L"更换需要管理员权限"));
         // Windows caches the profile icon in explorer; nothing short of restarting it picks up the new file.
-        auto restartHint =
-            Description(L"应用后需要重启 Windows 资源管理器才会显示新图标；也可以注销后重新登录");
+        auto restartHint = Description(L"应用后需要重启 Windows 资源管理器才会显示新图标；也可以注销后重新登录");
         restartHint->SetMargin({0.0f, 4.0f, 0.0f, 0.0f});
         column->Add(restartHint);
         auto tiles = std::make_shared<Row>(24.0f);
@@ -560,8 +558,7 @@ VisualPtr BuildAdvancedPage(PageContext &context)
     {
         auto column = std::make_shared<Column>(0.0f);
         column->Add(MakeTitle(L"网络代理"));
-        column->Add(
-            Description(L"云输入、语法模型下载、AI 联想、翻译和语音识别等联网功能共用"));
+        column->Add(Description(L"云输入、语法模型下载、AI 联想、翻译和语音识别等联网功能共用"));
         auto options = std::make_shared<Column>(0.0f);
         options->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         const std::pair<const char *, const wchar_t *> modes[] = {
