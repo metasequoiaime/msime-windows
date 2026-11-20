@@ -390,7 +390,10 @@ void SkinPage::ApplyCardState(SkinCard &card)
     card.badgeHost->SetVisible(active);
     card.card->SetActive(active);
 
-    const std::string key = contentKey_ + (light ? "\x1fL" : "\x1fD");
+    const std::string key = contentKey_ + (light ? "\x1f"
+                                                   "L"
+                                                 : "\x1f"
+                                                   "D");
     if (key == card.appliedKey)
         return;
     card.appliedKey = key;
@@ -454,7 +457,11 @@ void SkinPage::UpdateCurrentSkin()
         hint = std::wstring(L"正在预览") + (light ? L"浅色" : L"深色") + L"，不影响主题设置";
     currentHint_->SetText(std::move(hint));
 
-    const std::string key = contentKey_ + "\x1f" + active + (light ? "\x1fL" : "\x1fD");
+    const std::string key = contentKey_ + "\x1f" + active +
+                            (light ? "\x1f"
+                                     "L"
+                                   : "\x1f"
+                                     "D");
     if (key == currentKey_)
         return;
     currentKey_ = key;
