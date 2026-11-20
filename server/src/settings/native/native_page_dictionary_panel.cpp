@@ -1351,12 +1351,18 @@ void DictionaryPanel::OnResponse(const Json &message)
                 return;
             }
             offset_ = start;
-            total_ = message.value("total", start + count);
+            // 总数只在第一页由服务端统计，翻页响应不带 total，保留缓存值。
+            if (message.contains("total") && message["total"].is_number_integer())
+                total_ = static_cast<size_t>(message["total"].get<int64_t>());
+            else if (start == 0)
+                total_ = start + count;
             hasMore_ = message.value("hasMore", false);
             status_->SetText(PageStatus(start, count, total_));
         }
         else
         {
+            total_ = 0;
+            hasMore_ = false;
             status_->SetText(L"查询失败，请重试");
         }
         SyncPager();

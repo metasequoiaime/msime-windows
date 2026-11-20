@@ -314,6 +314,32 @@ TEST_CASE(DictionaryPagerClicksTheLastAndFirstPages)
     REQUIRE_EQ(queries.at(2).at("offset").get<size_t>(), size_t{0});
 }
 
+// 查询失败不能沿用上一次的总数：末页按钮会按旧总数跳到与失败查询无关的偏移。
+TEST_CASE(DictionaryQueryFailureResetsThePager)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 100, true, 205));
+
+    native_settings::Button *next = harness.FindButton(L"下一页");
+    native_settings::Button *last = harness.FindButton(L"末页");
+    native_settings::Button *search = harness.FindButton(L"查询");
+    REQUIRE(next != nullptr);
+    REQUIRE(last != nullptr);
+    REQUIRE(search != nullptr);
+    REQUIRE(!next->IsDisabled());
+    REQUIRE(!last->IsDisabled());
+
+    harness.Click(search);
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    harness.Respond(queries.at(1), {{"ok", false}, {"message", "查询失败"}});
+    REQUIRE(next->IsDisabled());
+    REQUIRE(last->IsDisabled());
+    REQUIRE(harness.HasLabel(L"查询失败，请重试"));
+}
+
 // 删掉最后一页仅剩的条目后，那一页会查成空页；停在空页上会误报「还没有添加过词条」。
 TEST_CASE(AnEmptiedPageStepsBackTowardsTheFirstPage)
 {
