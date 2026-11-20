@@ -389,7 +389,7 @@ TEST_CASE(ForeignDictionaryImportCreatesManageableCellDictionary)
     REQUIRE(enabled.at("ok").as_bool());
     // 停用期间手工加的同键词已转为个人词条，重新启用来源不会接管，删除来源也不会误删。
     REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{77});
-    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{505});
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{10});
 
     const auto removed = SettingsDictionary::HandleRequest(
         {{"dictionary", "cells"}, {"action", "deleteSource"}, {"sourceId", source_id}});

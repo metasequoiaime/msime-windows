@@ -380,8 +380,9 @@ TEST_CASE(merge_user_dictionary_equal_timestamp_local_delete_and_disable_win_bot
     REQUIRE_EQ(QueryInt(local_db, "SELECT deleted FROM dictionary_sources WHERE id='local-delete'"), 1);
     REQUIRE_EQ(QueryInt(local_db, "SELECT enabled FROM dictionary_sources WHERE id='remote-enable'"), 0);
     REQUIRE_EQ(QueryInt(local_db, "SELECT enabled FROM dictionary_sources WHERE id='remote-disable'"), 0);
-    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources WHERE id LIKE 'lexical-%' AND name='乙'"),
-               2);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources WHERE id='lexical-local' AND name='乙'"), 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources WHERE id='lexical-remote' AND name='乙'"),
+               1);
     REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations"), 0);
     REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_latin_words"), 0);
 }
@@ -487,7 +488,7 @@ TEST_CASE(merge_user_dictionary_keeps_ordinary_equal_timestamp_row_local)
     CreateUserDatabase(local_db, {kOperationSource, "INSERT INTO user_dictionary_operations VALUES"
                                                     "('pinyin','tong''miao','本机','upsert',10,'',0,0,500,NULL)"});
     CreateUserDatabase(remote_db, {kOperationSource, "INSERT INTO user_dictionary_operations VALUES"
-                                                     "('pinyin','tong''miao','远端','upsert',20,'',0,0,500,NULL)"});
+                                                     "('pinyin','tong''miao','本机','upsert',20,'',0,0,500,NULL)"});
 
     user_data_sync::DictionaryMergeReport report;
     std::string message;

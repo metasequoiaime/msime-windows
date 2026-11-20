@@ -465,7 +465,7 @@ TEST_CASE(UserDictionarySourceSchemaUpgradesAndLearningKeepsSourceId)
                     "dictionary TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,operation TEXT NOT NULL,"
                     "weight INTEGER NOT NULL DEFAULT 0,display TEXT NOT NULL DEFAULT '',"
                     "updated_at INTEGER NOT NULL DEFAULT(unixepoch()),PRIMARY KEY(dictionary,key,value));"
-                    "INSERT INTO user_dictionary_operations VALUES('pinyin','jiu','旧',1,'',1);"
+                    "INSERT INTO user_dictionary_operations VALUES('pinyin','jiu','旧','upsert',1,'',1);"
                     "CREATE TABLE user_latin_words(key TEXT NOT NULL,value TEXT NOT NULL,weight INTEGER NOT NULL,"
                     "exact_only INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0,"
                     "PRIMARY KEY(key,value));");
