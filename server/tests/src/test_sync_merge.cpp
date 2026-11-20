@@ -224,6 +224,12 @@ constexpr const char *kLatinTable = "CREATE TABLE user_latin_words(key TEXT NOT 
                                     "weight INTEGER NOT NULL DEFAULT 0,exact_only INTEGER NOT NULL DEFAULT 0,"
                                     "updated_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(key,value));";
 constexpr const char *kStateTable = "CREATE TABLE dictionary_state(name TEXT PRIMARY KEY,value TEXT NOT NULL);";
+constexpr const char *kSourceTable =
+    "CREATE TABLE dictionary_sources(id TEXT PRIMARY KEY,name TEXT NOT NULL,format TEXT NOT NULL,"
+    "enabled INTEGER NOT NULL DEFAULT 1,deleted INTEGER NOT NULL DEFAULT 0,"
+    "created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0);";
+constexpr const char *kOperationSource = "ALTER TABLE user_dictionary_operations ADD COLUMN source_id TEXT;";
+constexpr const char *kLatinSource = "ALTER TABLE user_latin_words ADD COLUMN source_id TEXT;";
 } // namespace
 
 // user_inserted 是粘性标记：远端较新的自动调频行（0）不能把本机手动加的词（1）降级，
@@ -287,6 +293,232 @@ TEST_CASE(merge_user_dictionary_creates_latin_table_for_old_local_journal)
 
 // 远端日志按另一份出厂词库记的：采纳远端行后必须让下次回放走 rebase，
 // 否则旧词库量级的绝对权重会把新词库的词频压下去。
+TEST_CASE(merge_user_dictionary_syncs_sources_by_id_without_resurrecting_deleted_words)
+{
+    const fs::path root = TempDir("merge-dictionary-sources");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {kSourceTable, kLatinTable, kLatinSource, kOperationSource,
+                                  "INSERT INTO dictionary_sources VALUES('source-a','同名','scel',1,0,1,100),"
+                                  "('local-other','同名','scel',1,0,1,100)"});
+    CreateUserDatabase(remote_db, {kSourceTable, kLatinTable, kLatinSource, kOperationSource,
+                                   "INSERT INTO dictionary_sources VALUES('source-a','远端名','scel',0,0,1,200),"
+                                   "('remote-other','同名','scel',1,0,1,150)",
+                                   "INSERT INTO user_dictionary_operations VALUES"
+                                   "('pinyin','xin','来源词','upsert',10,'',1,0,200,'source-a')",
+                                   "INSERT INTO user_latin_words VALUES('a','来源字母',5,0,200,'source-a')"});
+
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT enabled FROM dictionary_sources WHERE id='source-a'"), 0);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources WHERE name='同名'"), 2);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE source_id='source-a'"), 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_latin_words WHERE source_id='source-a'"), 1);
+
+    // 本机较新的删除先清掉词条；再次合并同一份远端归档也不能把它们带回来。
+    Exec(local_db, "UPDATE dictionary_sources SET deleted=1,updated_at=300 WHERE id='source-a'");
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT deleted FROM dictionary_sources WHERE id='source-a'"), 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE source_id='source-a'"), 0);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_latin_words WHERE source_id='source-a'"), 0);
+}
+
+TEST_CASE(merge_user_dictionary_equal_timestamp_remote_delete_clears_local_source_rows)
+{
+    const fs::path root = TempDir("merge-dictionary-remote-delete");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {kSourceTable, kLatinTable, kLatinSource, kOperationSource,
+                                  "INSERT INTO dictionary_sources VALUES('source-a','来源','scel',1,0,1,100)",
+                                  "INSERT INTO user_dictionary_operations VALUES"
+                                  "('pinyin','xin','来源词','upsert',10,'',1,0,200,'source-a')",
+                                  "INSERT INTO user_latin_words VALUES('a','来源字母',5,0,200,'source-a')"});
+    CreateUserDatabase(remote_db, {kSourceTable, kLatinTable, kLatinSource, kOperationSource,
+                                   "INSERT INTO dictionary_sources VALUES('source-a','来源','scel',1,1,1,100)",
+                                   "INSERT INTO user_dictionary_operations VALUES"
+                                   "('pinyin','xin','来源词','upsert',10,'',1,0,400,'source-a')",
+                                   "INSERT INTO user_latin_words VALUES('a','来源字母',5,0,400,'source-a')"});
+
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT deleted FROM dictionary_sources WHERE id='source-a'"), 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations"), 0);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_latin_words"), 0);
+}
+
+TEST_CASE(merge_user_dictionary_equal_timestamp_local_delete_and_disable_win_both_directions)
+{
+    const fs::path root = TempDir("merge-dictionary-source-ties");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {kSourceTable, kLatinTable, kLatinSource, kOperationSource,
+                                  "INSERT INTO dictionary_sources VALUES"
+                                  "('local-delete','本地删除','scel',1,1,1,100),"
+                                  "('remote-enable','本地禁用','scel',0,0,1,100),"
+                                  "('remote-disable','本地启用','scel',1,0,1,100),"
+                                  "('lexical-local','乙','scel',1,0,1,100),"
+                                  "('lexical-remote','甲','scel',1,0,1,100)",
+                                  "INSERT INTO user_dictionary_operations VALUES"
+                                  "('pinyin','xin','本地词','upsert',10,'',1,0,100,'local-delete')",
+                                  "INSERT INTO user_latin_words VALUES('a','本地字母',5,0,100,'local-delete')"});
+    CreateUserDatabase(remote_db, {kSourceTable, kLatinTable, kLatinSource, kOperationSource,
+                                   "INSERT INTO dictionary_sources VALUES"
+                                   "('local-delete','远端未删','scel',1,0,1,100),"
+                                   "('remote-enable','远端启用','scel',1,0,1,100),"
+                                   "('remote-disable','远端禁用','scel',0,0,1,100),"
+                                   "('lexical-local','甲','scel',1,0,1,100),"
+                                   "('lexical-remote','乙','scel',1,0,1,100)",
+                                   "INSERT INTO user_dictionary_operations VALUES"
+                                   "('pinyin','xin','远端词','upsert',20,'',1,0,200,'local-delete')",
+                                   "INSERT INTO user_latin_words VALUES('a','远端字母',9,0,200,'local-delete')"});
+
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT deleted FROM dictionary_sources WHERE id='local-delete'"), 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT enabled FROM dictionary_sources WHERE id='remote-enable'"), 0);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT enabled FROM dictionary_sources WHERE id='remote-disable'"), 0);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources WHERE id='lexical-local' AND name='甲'"), 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources WHERE id='lexical-remote' AND name='甲'"),
+               1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations"), 0);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_latin_words"), 0);
+}
+
+TEST_CASE(merge_user_dictionary_preserves_explicit_personal_ownership)
+{
+    const fs::path root = TempDir("merge-dictionary-personal-owner");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {kOperationSource, "INSERT INTO user_dictionary_operations VALUES"
+                                                    "('pinyin','ge''ren','个人','upsert',10,'',1,0,100,NULL),"
+                                                    "('pinyin','shou''dong','手改','upsert',10,'',0,1,100,NULL),"
+                                                    "('pinyin','zhuan''ge','转个人','upsert',10,'',0,0,100,'source-a'),"
+                                                    "('pinyin','jiu''ren','旧个人','upsert',10,'',0,0,300,'source-a'),"
+                                                    "('pinyin','lai''yuan','来源','upsert',10,'',0,0,100,'source-a'),"
+                                                    "('pinyin','zi''dong','自动','upsert',10,'',0,0,100,NULL)"});
+    CreateUserDatabase(remote_db, {kOperationSource, "INSERT INTO user_dictionary_operations VALUES"
+                                                     "('pinyin','ge''ren','个人','upsert',90,'',0,0,900,'source-a'),"
+                                                     "('pinyin','shou''dong','手改','upsert',90,'',0,0,900,'source-a'),"
+                                                     "('pinyin','zhuan''ge','转个人','upsert',20,'',1,0,200,NULL),"
+                                                     "('pinyin','jiu''ren','旧个人','upsert',20,'',0,1,200,NULL),"
+                                                     "('pinyin','lai''yuan','来源','upsert',90,'',0,0,900,NULL),"
+                                                     "('pinyin','zi''dong','自动','upsert',90,'',0,0,900,'source-a')"});
+
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT weight FROM user_dictionary_operations WHERE key='ge''ren'"), 10);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT weight FROM user_dictionary_operations WHERE key='shou''dong'"), 10);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE "
+                                  "key IN ('ge''ren','shou''dong') AND source_id IS NULL"),
+               2);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE "
+                                  "key='zhuan''ge' AND source_id IS NULL AND user_inserted=1 AND weight=20"),
+               1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE "
+                                  "key='jiu''ren' AND source_id='source-a' AND weight=10"),
+               1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE "
+                                  "key='lai''yuan' AND source_id='source-a' AND weight=10"),
+               1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE "
+                                  "key='zi''dong' AND source_id='source-a' AND weight=90"),
+               1);
+}
+
+TEST_CASE(merge_user_dictionary_personal_ownership_converges_in_both_directions)
+{
+    const fs::path root = TempDir("merge-dictionary-personal-bidirectional");
+    const fs::path a_db = root / "a.db";
+    const fs::path b_db = root / "b.db";
+    CreateUserDatabase(a_db, {kOperationSource, kLatinTable, kLatinSource,
+                              "INSERT INTO user_dictionary_operations VALUES"
+                              "('pinyin','cha''ru','个人手加','upsert',20,'',1,0,500,NULL),"
+                              "('pinyin','shou''dong','个人改频','upsert',10,'',0,0,500,'source-a'),"
+                              "('pinyin','bao''hu','来源保护','upsert',10,'',0,0,500,'source-a')",
+                              "INSERT INTO user_latin_words VALUES"
+                              "('personal insert','个人字母',20,0,500,NULL),"
+                              "('personal edit','来源字母',10,0,500,'source-a'),"
+                              "('protected','来源保护',10,0,500,'source-a')"});
+    CreateUserDatabase(b_db, {kOperationSource, kLatinTable, kLatinSource,
+                              "INSERT INTO user_dictionary_operations VALUES"
+                              "('pinyin','cha''ru','来源手加','upsert',10,'',0,0,500,'source-a'),"
+                              "('pinyin','shou''dong','个人改频','upsert',20,'',0,1,500,NULL),"
+                              "('pinyin','bao''hu','远端调频','upsert',20,'',0,0,900,NULL)",
+                              "INSERT INTO user_latin_words VALUES"
+                              "('personal insert','来源字母',10,0,500,'source-a'),"
+                              "('personal edit','个人字母',20,0,500,NULL),"
+                              "('protected','远端个人',20,0,900,NULL)"});
+
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(a_db, b_db, report, message));
+    REQUIRE(user_data_sync::MergeUserDictionary(b_db, a_db, report, message));
+    for (const fs::path &db : {a_db, b_db})
+    {
+        REQUIRE_EQ(QueryInt(db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE "
+                                "key='cha''ru' AND weight=20 AND user_inserted=1 AND source_id IS NULL"),
+                   1);
+        REQUIRE_EQ(QueryInt(db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE "
+                                "key='shou''dong' AND weight=20 AND weight_edited=1 AND source_id IS NULL"),
+                   1);
+        REQUIRE_EQ(QueryInt(db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE "
+                                "key='bao''hu' AND weight=10 AND source_id='source-a'"),
+                   1);
+        REQUIRE_EQ(QueryInt(db, "SELECT COUNT(*) FROM user_latin_words WHERE "
+                                "key='personal insert' AND weight=20 AND source_id IS NULL"),
+                   1);
+        REQUIRE_EQ(QueryInt(db, "SELECT COUNT(*) FROM user_latin_words WHERE "
+                                "key='personal edit' AND weight=20 AND source_id IS NULL"),
+                   1);
+        REQUIRE_EQ(QueryInt(db, "SELECT COUNT(*) FROM user_latin_words WHERE "
+                                "key='protected' AND weight=10 AND source_id='source-a'"),
+                   1);
+    }
+}
+
+TEST_CASE(merge_user_dictionary_keeps_ordinary_equal_timestamp_row_local)
+{
+    const fs::path root = TempDir("merge-dictionary-ordinary-tie");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {kOperationSource, "INSERT INTO user_dictionary_operations VALUES"
+                                                    "('pinyin','tong''miao','本机','upsert',10,'',0,0,500,NULL)"});
+    CreateUserDatabase(remote_db, {kOperationSource, "INSERT INTO user_dictionary_operations VALUES"
+                                                     "('pinyin','tong''miao','本机','upsert',20,'',0,0,500,NULL)"});
+
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(report.kept_local, 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT weight FROM user_dictionary_operations WHERE key='tong''miao'"), 10);
+}
+
+TEST_CASE(merge_user_dictionary_old_archive_preserves_local_sources)
+{
+    const fs::path root = TempDir("merge-dictionary-old-archive-source");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {kSourceTable, kOperationSource,
+                                  "INSERT INTO dictionary_sources VALUES('source-a','来源','scel',1,0,1,100)",
+                                  "INSERT INTO user_dictionary_operations VALUES"
+                                  "('pinyin','xin','来源词','upsert',10,'',1,0,200,'source-a')"});
+    CreateUserDatabase(remote_db,
+                       {"INSERT INTO user_dictionary_operations VALUES('pinyin','jiu','旧词','upsert',5,'',0,0,100)"});
+
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations"), 2);
+    REQUIRE_EQ(
+        QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE value='旧词' AND source_id IS NULL"),
+        1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources WHERE id='source-a'"), 1);
+}
+
 TEST_CASE(merge_user_dictionary_forces_rebase_when_dictionaries_differ)
 {
     const fs::path root = TempDir("merge-dictionary-rebase");

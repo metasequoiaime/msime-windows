@@ -119,6 +119,7 @@ class DictTableBody : public msimeui::Visual
     void SetRows(std::vector<std::array<std::wstring, 3>> rows, size_t firstIndex);
     void SetEmpty(std::wstring message);
     void SetOnAction(ActionHandler handler);
+    void SetReadOnly(bool readOnly);
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
@@ -142,6 +143,7 @@ class DictTableBody : public msimeui::Visual
     std::pair<size_t, bool> hovered_ = {static_cast<size_t>(-1), false};
     std::pair<size_t, bool> pressed_ = {static_cast<size_t>(-1), false};
     ActionHandler onAction_;
+    bool readOnly_ = false;
 };
 
 // `.dict-table-wrap`: shows the body up to max-height: clamp(180px, 100vh - 350px, 550px)
@@ -207,6 +209,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     {
         Dictionary, // quanpin / wubi / english, requestId prefix "dict-"
         Quick,      // quick phrases, requestId prefix "quick-"
+        Cell,       // read-only entries of one cell dictionary, requestId prefix "cell-"
     };
 
     DictionaryPanel(PageContext &context, Kind kind);
@@ -219,11 +222,12 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     {
         return dictionary_;
     }
+    void SetSourceId(const std::string &sourceId);
     // 批量导入 for the current dictionary (`import`) or 纯汉字导入 (`importHans`).
     void Import(const std::string &action);
     // 导入其他词库：按 `format`（foreign_dictionary.h 的格式标识）选文件，交给宿主读取并
     // 导入拼音用户词库。导入进行中再点只提示，不重复提交。
-    void ImportForeign(const std::string &format);
+    void ImportForeign(const std::string &format, const std::string &name = {});
     void Export(const std::string &dictionary);
     // Called when the current dictionary changes, e.g. to retitle the hans import card.
     void SetOnModeChanged(std::function<void()> handler);
@@ -241,6 +245,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     {
         std::string action;
         std::string dictionary;
+        std::string sourceId;
     };
 
     void Post(const std::string &action, Json data);
@@ -262,6 +267,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     PageContext &context_;
     Kind kind_ = Kind::Dictionary;
     std::string dictionary_;
+    std::string sourceId_;
     std::string prefix_;
     uint64_t counter_ = 0;
     std::map<std::string, Pending> pending_;

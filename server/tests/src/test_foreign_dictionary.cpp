@@ -342,6 +342,93 @@ TEST_CASE(ForeignDictionaryImportWritesThroughThePinyinImportPath)
     REQUIRE_EQ(std::string(missing.at("message").as_string()), std::string("读取文件失败"));
 }
 
+TEST_CASE(ForeignDictionaryImportCreatesManageableCellDictionary)
+{
+    ScopedForeignDataDir data;
+    CreatePinyinTables(data, {"ni'hao", "shi'jie"});
+    const std::filesystem::path file = data.path() / L"文学词库.txt";
+    {
+        std::ofstream stream(file, std::ios::binary);
+        stream << "你好\tni hao\t100\n世界\tshi jie\t50\n";
+    }
+    const auto imported = SettingsDictionary::HandleRequest({{"dictionary", "quanpin"},
+                                                             {"action", "importForeign"},
+                                                             {"format", "rime"},
+                                                             {"path", test::Utf8(file)},
+                                                             {"name", "文学"}});
+    REQUIRE(imported.at("ok").as_bool());
+    const std::string source_id(imported.at("sourceId").as_string());
+    REQUIRE(!source_id.empty());
+    REQUIRE_EQ(std::string(imported.at("sourceName").as_string()), std::string("文学"));
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{1000});
+
+    auto sources = SettingsDictionary::HandleRequest({{"dictionary", "cells"}, {"action", "listSources"}});
+    REQUIRE(sources.at("ok").as_bool());
+    REQUIRE_EQ(sources.at("sources").as_array().size(), size_t{1});
+    REQUIRE_EQ(std::string(sources.at("sources").as_array()[0].as_object().at("id").as_string()), source_id);
+    REQUIRE_EQ(sources.at("sources").as_array()[0].as_object().at("entryCount").as_int64(), int64_t{2});
+
+    const auto personal = SettingsDictionary::HandleRequest(
+        {{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}, {"offset", 0}, {"limit", 100}});
+    REQUIRE(personal.at("rows").as_array().empty());
+    const auto entries = SettingsDictionary::HandleRequest(
+        {{"dictionary", "cells"}, {"action", "query"}, {"sourceId", source_id}, {"offset", 0}, {"limit", 1}});
+    REQUIRE_EQ(entries.at("rows").as_array().size(), size_t{1});
+    REQUIRE(entries.at("hasMore").as_bool());
+
+    const auto disabled = SettingsDictionary::HandleRequest(
+        {{"dictionary", "cells"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", false}});
+    REQUIRE(disabled.at("ok").as_bool());
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{-1});
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{-1});
+    const auto personal_insert = SettingsDictionary::HandleRequest(
+        {{"dictionary", "quanpin"}, {"action", "create"}, {"code", "ni hao"}, {"word", "你好"}, {"weight", 77}});
+    REQUIRE(personal_insert.at("ok").as_bool());
+    const auto enabled = SettingsDictionary::HandleRequest(
+        {{"dictionary", "cells"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", true}});
+    REQUIRE(enabled.at("ok").as_bool());
+    // 停用期间手工加的同键词已转为个人词条，重新启用来源不会接管，删除来源也不会误删。
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{77});
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{10});
+
+    const auto removed = SettingsDictionary::HandleRequest(
+        {{"dictionary", "cells"}, {"action", "deleteSource"}, {"sourceId", source_id}});
+    REQUIRE(removed.at("ok").as_bool());
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{77});
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{-1});
+    sources = SettingsDictionary::HandleRequest({{"dictionary", "cells"}, {"action", "listSources"}});
+    REQUIRE(sources.at("sources").as_array().empty());
+}
+
+TEST_CASE(CellDictionaryLatinWordsSupportLegacyTablesWithoutUniqueConstraints)
+{
+    ScopedForeignDataDir data;
+    CreatePinyinTables(data, {});
+    {
+        sqlite3 *raw = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(data.path() / L"msime.db").c_str(), &raw), SQLITE_OK);
+        const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+        REQUIRE_EQ(sqlite3_exec(db.get(), "CREATE TABLE latin_words(key TEXT,value TEXT,weight INTEGER)", nullptr,
+                                nullptr, nullptr),
+                   SQLITE_OK);
+    }
+    const std::filesystem::path file = data.path() / L"字母.txt";
+    {
+        std::ofstream stream(file, std::ios::binary);
+        stream << "T恤\t100\n";
+    }
+    const auto imported = SettingsDictionary::HandleRequest(
+        {{"dictionary", "quanpin"}, {"action", "importForeign"}, {"format", "rime"}, {"path", test::Utf8(file)}});
+    REQUIRE(imported.at("ok").as_bool());
+    const std::string source_id(imported.at("sourceId").as_string());
+    for (const bool enabled : {false, true})
+    {
+        const auto changed = SettingsDictionary::HandleRequest(
+            {{"dictionary", "cells"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", enabled}});
+        REQUIRE(changed.at("ok").as_bool());
+    }
+}
+
 TEST_CASE(PinyinBatchImportMapsWeightsUnlessRestoringABackup)
 {
     ScopedForeignDataDir data;
