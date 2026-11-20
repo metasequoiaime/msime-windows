@@ -80,16 +80,11 @@ struct CandidateTranslationGloss
 };
 extern std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 extern std::string g_candidate_translation_signature;
-// 英文候选模式里高亮候选下方的音标与释义（english.db），按小写词缓存。工作线程独用。
-// 异步回来，done 置位后不再请求。
-constexpr size_t kMaxEnglishCandidateDetails = 2048;
-struct EnglishCandidateDetail
-{
-    std::string ipa;
-    std::string gloss;
-    bool local_done = false;
-};
-extern std::unordered_map<std::string, EnglishCandidateDetail> g_english_candidate_details;
+// 候选旁的音标（english.db 的 en_ipa），按小写词或短语缓存；查过但没有的存空串，不再请求。工作线程独用。
+constexpr size_t kMaxCandidatePhonetics = 2048;
+extern std::unordered_map<std::string, std::string> g_candidate_phonetics;
+// 最近一次发出的音标请求：答复回来之前组页不重复请求同一批。
+extern std::string g_candidate_phonetics_request;
 extern bool g_translation_candidates_active;
 // 日期页：选中混输里的「📅日期」入口后，候选框换成整组日期时间格式。和译文页一样不动输入串，
 // 两者互斥，共用下面这份保存的候选与页码，退出时原样放回。
@@ -370,14 +365,11 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
                       const std::optional<metasequoia::OnlineQuery> &query);
 void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string &input, uint64_t generation);
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge);
-// 高亮英文候选的音标与释义回来了：from_dr_dict 为真时 gloss 是 DR Dict 的摘要（ipa 不用），否则是
-// 词库的音标与释义。写进缓存，正高亮着这个词就重画当前页。
-void ApplyEnglishLocalDetail(const EnglishIme::EnglishDetail &detail);
+// 词库查回来的音标：写进缓存，候选窗开着就重组当前页。
+void ApplyCandidatePhonetics(std::vector<EnglishIme::Phonetic> phonetics);
 // 英文候选模式下要停靠在候选窗旁的 DR Dict 弹窗显示哪个词：高亮的英文候选（小写）；不该显示时为空。
 // 组页时随页面快照发给界面线程，由它连同候选卡片的位置交给 DrDictDock。
 std::string DrDictDockWord(const WordItem &highlighted);
-// 组页时取高亮英文候选下方那一行；缓存里还没有的部分顺带发出请求。
-std::string EnglishCandidateDetailText(const WordItem &item);
 void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &input, uint64_t generation);
 void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &word, bool pinyin_is_canonical = false);
 bool ResolveCandidateItem(int one_based_index, WordItem &item);

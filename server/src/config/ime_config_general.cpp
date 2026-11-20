@@ -131,6 +131,58 @@ bool SetConfiguredCandidateTranslationSingleSense(bool single)
     return true;
 }
 
+namespace
+{
+bool WriteGeneralSwitch(const char *key, std::atomic_bool &target, bool value)
+{
+    if (!WriteConfiguredValue("general", key, value ? "true" : "false"))
+        return false;
+    target.store(value, std::memory_order_relaxed);
+    return true;
+}
+} // namespace
+
+bool GetConfiguredEnglishCandidateTranslationShowPos()
+{
+    return g_english_candidate_translation_show_pos.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredEnglishCandidateTranslationShowPos(bool show)
+{
+    return WriteGeneralSwitch("english_candidate_translation_show_pos", g_english_candidate_translation_show_pos, show);
+}
+
+bool GetConfiguredEnglishCandidateTranslationSingleSense()
+{
+    return g_english_candidate_translation_single_sense.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredEnglishCandidateTranslationSingleSense(bool single)
+{
+    return WriteGeneralSwitch("english_candidate_translation_single_sense",
+                              g_english_candidate_translation_single_sense, single);
+}
+
+bool GetConfiguredCandidateTranslationPhonetics()
+{
+    return g_candidate_translation_phonetics.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredCandidateTranslationPhonetics(bool show)
+{
+    return WriteGeneralSwitch("candidate_translation_phonetics", g_candidate_translation_phonetics, show);
+}
+
+bool GetConfiguredEnglishCandidatePhonetics()
+{
+    return g_english_candidate_phonetics.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredEnglishCandidatePhonetics(bool show)
+{
+    return WriteGeneralSwitch("english_candidate_phonetics", g_english_candidate_phonetics, show);
+}
+
 int GetConfiguredEnglishMixedInputMinChars()
 {
     return g_english_mixed_input_min_chars;

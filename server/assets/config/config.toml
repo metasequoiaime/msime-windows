@@ -67,6 +67,14 @@ english_candidate_translations = false
 candidate_translation_show_pos = true
 # 候选译文只显示第一条释义，关闭时最多显示两条
 candidate_translation_single_sense = false
+# 中文候选的目标语种是英语时，在英文译文前显示它的音标（english.db 的 en_ipa）
+candidate_translation_phonetics = false
+# 英文候选的译文是否显示词性、只显示第一条释义；与上面中文候选那两项分开设
+english_candidate_translation_show_pos = true
+english_candidate_translation_single_sense = false
+# 英文候选（英文候选模式与中文里混输的英文）显示音标（english.db 的 en_ipa），不依赖 english_candidate_translations；
+# 词典里的音标与释义由停靠在候选窗旁的 DR Dict 弹窗显示，见 [dr_dict].english_popup
+english_candidate_phonetics = false
 # 中文输入状态下输入恰好等于 emoji 关键词时显示 emoji 候选（排在候选项列表最后，不做前缀匹配）
 emoji_mixed_input = false
 # 中文输入状态下显示颜文字前缀候选（排在 emoji 之后）
@@ -413,9 +421,6 @@ enter_learns_english_word = true
 # 英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文候选后自动补一个空格；
 # 回车与标点上屏不补，数字开头或以撇号结尾的词也不补
 english_commit_with_space = true
-# 英文候选模式下在高亮候选下方显示音标与中文释义（取自 english.db）；词典里的释义由停靠在候选窗旁的
-# DR Dict 弹窗显示，见 [dr_dict].english_popup
-english_candidate_detail = true
 # 模糊音，全拼与双拼均生效；默认全部关闭，升级用户零行为变化
 # 总开关：关闭时所有规则不生效，已选规则保留，便于临时停用后恢复
 fuzzy_pinyin = false

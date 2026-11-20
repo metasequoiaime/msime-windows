@@ -92,7 +92,6 @@ bool g_enter_learns_english_word = true;
 // 英文候选模式下空格、数字键或鼠标上屏后自动补一个空格。默认开启。
 bool g_english_commit_with_space = true;
 // 英文候选模式下在高亮候选下方显示音标与释义。默认开启。
-bool g_english_candidate_detail = true;
 // 五笔 z 键角色两态：off | wildcard。非法值回落 off（升级用户零变化）。
 std::string g_wubi_z_mode = "off";
 // 四码唯一自动上屏与顶字是两个独立开关，与混输、z 键角色都无关：前者决定第四键落下即上屏，
@@ -157,6 +156,10 @@ bool g_candidate_translations_enabled = false;
 std::atomic_bool g_english_candidate_translations_enabled{false};
 std::atomic_bool g_candidate_translation_show_pos{true};
 std::atomic_bool g_candidate_translation_single_sense{false};
+std::atomic_bool g_english_candidate_translation_show_pos{true};
+std::atomic_bool g_english_candidate_translation_single_sense{false};
+std::atomic_bool g_candidate_translation_phonetics{false};
+std::atomic_bool g_english_candidate_phonetics{false};
 int g_english_mixed_input_min_chars = kEnglishMixedInputMinCharsDefault;
 int g_english_mixed_input_first_page_count = kEnglishMixedInputFirstPageCountDefault;
 bool g_cloud_candidates_enabled = true;
@@ -563,7 +566,6 @@ bool LoadImeConfig()
         g_escape_keeps_selected_word = tbl["input"]["escape_keeps_selected_word"].value_or(false);
         g_enter_learns_english_word = tbl["input"]["enter_learns_english_word"].value_or(true);
         g_english_commit_with_space = tbl["input"]["english_commit_with_space"].value_or(true);
-        g_english_candidate_detail = tbl["input"]["english_candidate_detail"].value_or(true);
         const std::string z_mode = tbl["input"]["wubi_z_mode"].value_or(std::string("off"));
         g_wubi_z_mode = z_mode == "wildcard" ? "wildcard" : "off";
         g_wubi_four_code_auto_commit = tbl["input"]["wubi_four_code_auto_commit"].value_or(true);
@@ -681,6 +683,21 @@ bool LoadImeConfig()
                                                std::memory_order_relaxed);
         g_candidate_translation_single_sense.store(tbl["general"]["candidate_translation_single_sense"].value_or(false),
                                                    std::memory_order_relaxed);
+        // 英文候选的译文显示另有一套；没有新键的配置跟着中文候选那边的走。
+        g_english_candidate_translation_show_pos.store(
+            tbl["general"]["english_candidate_translation_show_pos"].value_or(
+                g_candidate_translation_show_pos.load(std::memory_order_relaxed)),
+            std::memory_order_relaxed);
+        g_english_candidate_translation_single_sense.store(
+            tbl["general"]["english_candidate_translation_single_sense"].value_or(
+                g_candidate_translation_single_sense.load(std::memory_order_relaxed)),
+            std::memory_order_relaxed);
+        g_candidate_translation_phonetics.store(tbl["general"]["candidate_translation_phonetics"].value_or(false),
+                                                std::memory_order_relaxed);
+        // 原来的 input.english_candidate_detail（高亮候选下方的音标与释义）拆成了这个开关和英文候选翻译。
+        g_english_candidate_phonetics.store(tbl["general"]["english_candidate_phonetics"].value_or(
+                                                tbl["input"]["english_candidate_detail"].value_or(false)),
+                                            std::memory_order_relaxed);
         {
             const int min_chars =
                 tbl["general"]["cn_en_mixed_input_min_chars"].value_or(kEnglishMixedInputMinCharsDefault);

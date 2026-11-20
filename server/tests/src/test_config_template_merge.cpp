@@ -2,10 +2,32 @@
 #define NOMINMAX
 #endif
 #include "config/ime_config.h"
+#include "src/config/ime_config_internal.h"
 #include "tests/includes/test_framework.h"
 #include <type_traits>
 #include <fstream>
 #include <iterator>
+
+TEST_CASE(config_write_inserts_missing_keys_under_the_real_section_header)
+{
+    // 注释里提到「[translation].provider」：按子串找段头会把新键插进 [association]，下一次写入在真正的
+    // [translation] 里找不到它又插一遍，重复键让配置解析失败（设置页报「保存失败」）。
+    std::string text =
+        "[association]\nsentence = true\n\n#\n# 实际生效方由 [translation].provider 决定。\n#\n"
+        "[tencent_tmt]\ntarget_language = \"en\"\n\n# 翻译服务\n[translation]\nprovider = \"bilibili\"\n\n"
+        "# 网络代理\n[network]\nproxy_mode = \"system\"\n";
+    using namespace ime_config_detail;
+    for (const char *value : {"\"ja\"", "\"fr\""})
+        if (!ReplaceTomlValuePreservingFormatting(text, "translation", "english_target_language", value))
+            REQUIRE(InsertTomlValuePreservingFormatting(text, "translation", "english_target_language", value));
+    const auto parsed = toml::parse(text);
+    REQUIRE(parsed["translation"]["english_target_language"].value_or(std::string()) == "fr");
+    REQUIRE(!parsed["association"]["english_target_language"]);
+    REQUIRE(!parsed["tencent_tmt"]["english_target_language"]);
+    // 新键紧跟本段最后一个值，不落在写给下一段的注释下面。
+    REQUIRE(text.find("provider = \"bilibili\"\nenglish_target_language = \"fr\"\n\n# 网络代理\n[network]") !=
+            std::string::npos);
+}
 
 TEST_CASE(font_fallback_upgrade_preserves_legacy_fonts_and_order)
 {
@@ -370,10 +392,19 @@ TEST_CASE(split_translation_settings_inherit_the_old_settings_on_upgrade)
     REQUIRE(static_cast<bool>(input));
     const std::string installed((std::istreambuf_iterator<char>(input)), {});
 
-    const std::string translating = "[general]\ncandidate_translations = true\n"
-                                    "[translation]\nprovider = \"niutrans\"\n"
-                                    "[dr_dict]\nenglish_brief = false\n";
+    const std::string translating =
+        "[general]\ncandidate_translations = true\n"
+        "candidate_translation_show_pos = false\ncandidate_translation_single_sense = true\n"
+        "[input]\nenglish_candidate_detail = true\n"
+        "[translation]\nprovider = \"niutrans\"\n"
+        "[dr_dict]\nenglish_brief = false\n";
     const auto upgraded = toml::parse(MergeConfigIntoTemplate(installed, translating, ""));
+    // 英文候选的译文显示照抄中文那边；原来的「音标与释义」开着的，英文候选的音标也开着。
+    REQUIRE(!upgraded["general"]["english_candidate_translation_show_pos"].value_or(true));
+    REQUIRE(upgraded["general"]["english_candidate_translation_single_sense"].value_or(false));
+    REQUIRE(upgraded["general"]["english_candidate_phonetics"].value_or(false));
+    REQUIRE(!upgraded["general"]["candidate_translation_phonetics"].value_or(true));
+    REQUIRE(!upgraded["input"]["english_candidate_detail"]);
     REQUIRE(upgraded["general"]["candidate_translations"].value_or(false));
     REQUIRE(upgraded["general"]["english_candidate_translations"].value_or(false));
     REQUIRE_EQ(upgraded["translation"]["english_target_language"].value_or(std::string()), std::string("zh"));
@@ -398,6 +429,8 @@ TEST_CASE(split_translation_settings_inherit_the_old_settings_on_upgrade)
     // 新装（没有用户配置）用模板默认。
     const auto fresh = toml::parse(MergeConfigIntoTemplate(installed, "", ""));
     REQUIRE(!fresh["general"]["english_candidate_translations"].value_or(true));
+    REQUIRE(fresh["general"]["english_candidate_translation_show_pos"].value_or(false));
+    REQUIRE(!fresh["general"]["english_candidate_phonetics"].value_or(true));
     REQUIRE_EQ(fresh["translation"]["english_provider"].value_or(std::string()), std::string("bilibili"));
     REQUIRE(fresh["dr_dict"]["english_popup"].value_or(false));
 }

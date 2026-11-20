@@ -141,6 +141,11 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
     };
     inherit("general", "english_candidate_translations", "general", "candidate_translations");
     inherit("dr_dict", "english_popup", "dr_dict", "english_brief");
+    // 英文候选的译文显示（词性、单条释义）也拆出来了，升级时照抄中文那边；原来高亮英文候选下方的
+    // 「音标与释义」只剩音标这一半由新开关管（释义归英文候选翻译）。
+    inherit("general", "english_candidate_translation_show_pos", "general", "candidate_translation_show_pos");
+    inherit("general", "english_candidate_translation_single_sense", "general", "candidate_translation_single_sense");
+    inherit("general", "english_candidate_phonetics", "input", "english_candidate_detail");
     // 很老的配置没有 [translation].provider，靠各家 enabled 布尔推导服务商。模板里的新默认不能替它
     // 补上，否则推导结果被 bilibili 盖掉；补成空串，加载时照旧推导。
     const auto translation_provider_id = MakeTomlAssignmentId("translation", "provider");

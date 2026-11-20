@@ -49,15 +49,14 @@ void RequestTranslations(std::vector<TranslationQuery> queries, bool local_engli
 void ClearTranslations();
 bool IsTranslationCurrent(uint64_t generation);
 
-// 英文候选模式里高亮候选的音标与本地释义。word 是小写词；查完在后台线程上回调，
-// 同一个词连着请求只查最后一次。
-struct EnglishDetail
+// 候选旁显示的音标（english.db 的 en_ipa）：英文候选标它自己，中文候选译成英语时标英文译文。
+// term 是小写的词或短语；查完在后台线程上回调，查不到的 ipa 为空串。连着请求只查最后一批。
+struct Phonetic
 {
-    std::string word;
+    std::string term;
     std::string ipa;
-    std::string gloss;
 };
-using DetailCallback = std::function<void(EnglishDetail detail)>;
-void SetDetailCallback(DetailCallback callback);
-void RequestDetail(const std::string &word);
+using PhoneticsCallback = std::function<void(std::vector<Phonetic> phonetics)>;
+void SetPhoneticsCallback(PhoneticsCallback callback);
+void RequestPhonetics(std::vector<std::string> terms);
 } // namespace EnglishIme

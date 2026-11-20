@@ -211,9 +211,10 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
         [](std::vector<EnglishIme::TranslationResult> results, uint64_t generation) {
             FanyNamedPipe::EnqueueCandidateTranslations(std::move(results), generation);
         });
-    // 英文候选模式里高亮候选下方的音标与释义：词库一路，DR Dict 摘要与英美音标一路（DR Dict 没运行时不会回）。
-    EnglishIme::SetDetailCallback(
-        [](EnglishIme::EnglishDetail detail) { FanyNamedPipe::EnqueueEnglishCandidateDetail(std::move(detail)); });
+    // 候选旁的音标（english.db 的 en_ipa）。
+    EnglishIme::SetPhoneticsCallback([](std::vector<EnglishIme::Phonetic> phonetics) {
+        FanyNamedPipe::EnqueueCandidatePhonetics(std::move(phonetics));
+    });
     // 英文候选模式里停靠在候选窗旁的 DR Dict 弹窗（词典里的音标与释义）。
     DrDictDock::Start();
     CloudTranslation::Start(CommonUtils::get_ime_data_path() + "\\english.db",

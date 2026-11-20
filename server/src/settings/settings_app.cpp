@@ -432,7 +432,6 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"escape_keeps_selected_word", GetConfiguredEscapeKeepsSelectedWord()},
             {"enter_learns_english_word", GetConfiguredEnterLearnsEnglishWord()},
             {"english_commit_with_space", GetConfiguredEnglishCommitWithSpace()},
-            {"english_candidate_detail", GetConfiguredEnglishCandidateDetail()},
             {"wubi_z_mode", GetConfiguredWubiZMode()},
             {"wubi_four_code_auto_commit", GetConfiguredWubiFourCodeAutoCommit()},
             {"wubi_fifth_code_top_commit", GetConfiguredWubiFifthCodeTopCommit()},
@@ -483,6 +482,10 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"english_candidate_translations", GetConfiguredEnglishCandidateTranslationsEnabled()},
             {"candidate_translation_show_pos", GetConfiguredCandidateTranslationShowPos()},
             {"candidate_translation_single_sense", GetConfiguredCandidateTranslationSingleSense()},
+            {"english_candidate_translation_show_pos", GetConfiguredEnglishCandidateTranslationShowPos()},
+            {"english_candidate_translation_single_sense", GetConfiguredEnglishCandidateTranslationSingleSense()},
+            {"candidate_translation_phonetics", GetConfiguredCandidateTranslationPhonetics()},
+            {"english_candidate_phonetics", GetConfiguredEnglishCandidatePhonetics()},
             {"cn_en_mixed_input_min_chars", GetConfiguredEnglishMixedInputMinChars()},
             {"cn_en_mixed_input_first_page_count", GetConfiguredEnglishMixedInputFirstPageCount()},
             {"emoji_mixed_input", GetConfiguredEmojiMixedInputEnabled()},
@@ -853,8 +856,6 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEnterLearnsEnglishWord(json::value_to<bool>(data.at("value")));
     if (path == "input.english_commit_with_space")
         return SetConfiguredEnglishCommitWithSpace(json::value_to<bool>(data.at("value")));
-    if (path == "input.english_candidate_detail")
-        return SetConfiguredEnglishCandidateDetail(json::value_to<bool>(data.at("value")));
     if (path == "input.wubi_z_mode")
         return SetConfiguredWubiZMode(json::value_to<std::string>(data.at("value")));
     if (path == "input.wubi_four_code_auto_commit")
@@ -1009,6 +1010,14 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredCandidateTranslationShowPos(json::value_to<bool>(data.at("value")));
     if (path == "general.candidate_translation_single_sense")
         return SetConfiguredCandidateTranslationSingleSense(json::value_to<bool>(data.at("value")));
+    if (path == "general.english_candidate_translation_show_pos")
+        return SetConfiguredEnglishCandidateTranslationShowPos(json::value_to<bool>(data.at("value")));
+    if (path == "general.english_candidate_translation_single_sense")
+        return SetConfiguredEnglishCandidateTranslationSingleSense(json::value_to<bool>(data.at("value")));
+    if (path == "general.candidate_translation_phonetics")
+        return SetConfiguredCandidateTranslationPhonetics(json::value_to<bool>(data.at("value")));
+    if (path == "general.english_candidate_phonetics")
+        return SetConfiguredEnglishCandidatePhonetics(json::value_to<bool>(data.at("value")));
     if (path == "general.cn_en_mixed_input_min_chars")
         return SetConfiguredEnglishMixedInputMinChars(static_cast<int>(data.at("value").as_int64()));
     if (path == "general.cn_en_mixed_input_first_page_count")

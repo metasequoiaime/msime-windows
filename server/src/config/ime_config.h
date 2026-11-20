@@ -396,9 +396,6 @@ bool GetConfiguredEnterLearnsEnglishWord();
 bool SetConfiguredEnterLearnsEnglishWord(bool enabled);
 bool GetConfiguredEnglishCommitWithSpace();
 bool SetConfiguredEnglishCommitWithSpace(bool enabled);
-// 英文候选模式下高亮候选下方的音标与中文释义（english.db）。
-bool GetConfiguredEnglishCandidateDetail();
-bool SetConfiguredEnglishCandidateDetail(bool enabled);
 // 五笔 z 键角色："off" | "wildcard"。混输已拆成独立开关，这里只剩通配两态。
 const std::string &GetConfiguredWubiZMode();
 bool SetConfiguredWubiZMode(const std::string &mode);
@@ -587,6 +584,17 @@ bool GetConfiguredCandidateTranslationShowPos();
 bool SetConfiguredCandidateTranslationShowPos(bool show);
 bool GetConfiguredCandidateTranslationSingleSense();
 bool SetConfiguredCandidateTranslationSingleSense(bool single);
+// 英文候选（含中文候选里混输的英文）译文的显示方式，与上面中文候选那一套分开设。
+bool GetConfiguredEnglishCandidateTranslationShowPos();
+bool SetConfiguredEnglishCandidateTranslationShowPos(bool show);
+bool GetConfiguredEnglishCandidateTranslationSingleSense();
+bool SetConfiguredEnglishCandidateTranslationSingleSense(bool single);
+// 音标（english.db 的 en_ipa，随哈利路亚英文输入法迁移来）：中文候选那边只在目标语种是英语时生效，
+// 标的是英文译文的音标；英文候选那边标候选词本身的音标，不依赖英文候选翻译开关。
+bool GetConfiguredCandidateTranslationPhonetics();
+bool SetConfiguredCandidateTranslationPhonetics(bool show);
+bool GetConfiguredEnglishCandidatePhonetics();
+bool SetConfiguredEnglishCandidatePhonetics(bool show);
 int GetConfiguredEnglishMixedInputMinChars();
 bool SetConfiguredEnglishMixedInputMinChars(int min_chars);
 int GetConfiguredEnglishMixedInputFirstPageCount();

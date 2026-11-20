@@ -348,7 +348,16 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
         item.text = words.back().text + words.back().badge;
         item.annotation = string_to_wstring(view.annotation);
         // 译文开关关着时工作线程不给候选填译文（见 PrepareCandidateTranslationRequest），这里有就画；
-        // 英文候选模式里高亮候选的音标与释义不受那个开关管，同样走这一栏。
+        // 音标（英文候选的不受译文开关管）画在译文前面，用词性那种次要色。
+        if (!view.phonetic.empty())
+        {
+            const std::wstring phonetic = L"/" + string_to_wstring(view.phonetic) + L"/";
+            item.translationRuns.push_back(
+                {0, static_cast<UINT32>(phonetic.size()), msimeui::CandidateList::TextRunRole::Secondary});
+            item.translation = phonetic;
+            if (!view.translation.empty())
+                item.translation += L"  ";
+        }
         if (!view.translation.empty())
         {
             // 逐段转成 UTF-16 再拼起来，区间按拼出来的串计。

@@ -18,6 +18,9 @@ struct CandidateViewItem
     std::string badge;
     std::string translation;
     bool fixed_position = false;
+    // 音标（不带斜杠），画在译文前面：英文候选是它自己的，中文候选译成英语时是英文译文的。
+    // 放在最后：已有的按位置聚合初始化（{text, annotation, badge, translation, fixed}）不受影响。
+    std::string phonetic;
 };
 
 // 模糊音查询的 pinyin 保留用户实际匹配码，双拼下还会还原成双拼编码；规范全拼只在
@@ -160,8 +163,10 @@ inline std::string CandidateViewHtml(const CandidateViewItem &item)
     std::string html = EscapeCandidateViewHtml(item.text + item.annotation + item.badge);
     if (item.fixed_position)
         html = "<span style=\"color:#379AD3\">" + html + "</span>";
+    if (!item.phonetic.empty())
+        html += "<span class=\"cand-pos\">/" + EscapeCandidateViewHtml(item.phonetic) + "/</span>";
     if (!item.translation.empty())
-        html += CandidateTranslationHtml(item.translation);
+        html += (item.phonetic.empty() ? "" : "  ") + CandidateTranslationHtml(item.translation);
     return html;
 }
 
