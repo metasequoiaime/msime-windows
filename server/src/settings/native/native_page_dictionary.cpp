@@ -189,9 +189,10 @@ class CellDictionaryManager : public std::enable_shared_from_this<CellDictionary
                 return;
             const Source source = *Selected();
             context_.host.Confirm(L"确定删除细胞词库“" + Widen(source.name) + L"”吗？其中的词条会一并删除。",
-                                  [this, source](bool confirmed) {
+                                  [weak = weak_from_this(), source](bool confirmed) {
                                       if (confirmed)
-                                          Post("deleteSource", {{"sourceId", source.id}});
+                                          if (const auto manager = weak.lock())
+                                              manager->Post("deleteSource", {{"sourceId", source.id}});
                                   });
         });
         SyncButtons();

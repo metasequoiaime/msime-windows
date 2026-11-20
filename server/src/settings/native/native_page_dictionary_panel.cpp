@@ -1052,13 +1052,15 @@ void DictionaryPanel::SetSourceId(const std::string &sourceId)
     if (kind_ != Kind::Cell || sourceId_ == sourceId)
         return;
     sourceId_ = sourceId;
+    latestQueryId_.clear();
+    loading_ = false;
     offset_ = 0;
+    hasMore_ = false;
     rows_.clear();
     if (sourceId_.empty())
     {
         body_->SetEmpty(L"还没有导入细胞词库");
         status_->SetText(L"没有结果");
-        hasMore_ = false;
         SyncPager();
     }
     else if (loaded_)
@@ -1078,7 +1080,7 @@ void DictionaryPanel::Post(const std::string &action, Json data)
     std::string target = dictionary_;
     if (data.contains("dictionary") && data["dictionary"].is_string())
         target = data["dictionary"].get<std::string>();
-    pending_[requestId] = {action, target};
+    pending_[requestId] = {action, target, kind_ == Kind::Cell ? sourceId_ : std::string{}};
     if (action == "query")
     {
         latestQueryId_ = requestId;
@@ -1356,6 +1358,8 @@ void DictionaryPanel::OnResponse(const Json &message)
     if (context.action == "query" && requestId != latestQueryId_)
         return;
     if (kind_ == Kind::Dictionary && context.action == "query" && context.dictionary != dictionary_)
+        return;
+    if (kind_ == Kind::Cell && context.action == "query" && context.sourceId != sourceId_)
         return;
     const bool ok = message.value("ok", false);
     if (context.action == "query")

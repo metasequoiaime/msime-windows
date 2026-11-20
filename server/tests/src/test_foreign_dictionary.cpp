@@ -381,15 +381,21 @@ TEST_CASE(ForeignDictionaryImportCreatesManageableCellDictionary)
     REQUIRE(disabled.at("ok").as_bool());
     REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{-1});
     REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{-1});
+    const auto personal_insert = SettingsDictionary::HandleRequest(
+        {{"dictionary", "quanpin"}, {"action", "create"}, {"code", "ni hao"}, {"word", "你好"}, {"weight", 77}});
+    REQUIRE(personal_insert.at("ok").as_bool());
     const auto enabled = SettingsDictionary::HandleRequest(
         {{"dictionary", "cells"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", true}});
     REQUIRE(enabled.at("ok").as_bool());
-    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{1000});
+    // 停用期间手工加的同键词已转为个人词条，重新启用来源不会接管，删除来源也不会误删。
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{77});
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{505});
 
     const auto removed = SettingsDictionary::HandleRequest(
         {{"dictionary", "cells"}, {"action", "deleteSource"}, {"sourceId", source_id}});
     REQUIRE(removed.at("ok").as_bool());
-    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{-1});
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{77});
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{-1});
     sources = SettingsDictionary::HandleRequest({{"dictionary", "cells"}, {"action", "listSources"}});
     REQUIRE(sources.at("sources").as_array().empty());
 }

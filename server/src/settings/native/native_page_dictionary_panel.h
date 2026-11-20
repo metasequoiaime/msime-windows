@@ -245,6 +245,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     {
         std::string action;
         std::string dictionary;
+        std::string sourceId;
     };
 
     void Post(const std::string &action, Json data);

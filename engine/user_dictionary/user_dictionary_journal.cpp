@@ -255,6 +255,12 @@ bool ensure_schema(sqlite3 *db)
         sqlite3_exec(db, "ALTER TABLE user_latin_words ADD COLUMN source_id TEXT", nullptr, nullptr, nullptr) !=
             SQLITE_OK)
         return false;
+    if (sqlite3_exec(db,
+                     "CREATE INDEX IF NOT EXISTS user_dictionary_operations_by_source_id "
+                     "ON user_dictionary_operations(source_id);"
+                     "CREATE INDEX IF NOT EXISTS user_latin_words_by_source_id ON user_latin_words(source_id);",
+                     nullptr, nullptr, nullptr) != SQLITE_OK)
+        return false;
     // Setting user_version is a write, even to the same value. Skip it when it is
     // already current, so opening a connection never waits for another writer.
     auto version = prepare(db, "PRAGMA user_version");
@@ -748,7 +754,7 @@ bool record_user_insert(const std::string &user_db_path, DictionaryKind kind, co
                                   " VALUES(?1,?2,?3,'upsert',?4,?5,1,?6)"
                                   " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',"
                                   "weight=excluded.weight,display=excluded.display,user_inserted=1,"
-                                  "source_id=COALESCE(excluded.source_id,source_id),updated_at=unixepoch()");
+                                  "source_id=excluded.source_id,updated_at=unixepoch()");
     return stmt && bind_text(stmt.get(), 1, kind_name(kind)) && bind_text(stmt.get(), 2, key) &&
            bind_text(stmt.get(), 3, value) && sqlite3_bind_int64(stmt.get(), 4, weight) == SQLITE_OK &&
            bind_text(stmt.get(), 5, display) && bind_optional_text(stmt.get(), 6, source_id) &&
@@ -1151,12 +1157,22 @@ bool journal_latin_word(sqlite3 *db, const UserLatinWord &word, const std::strin
 {
     auto stmt = prepare(db, "INSERT INTO latin_journal.user_latin_words(key,value,weight,exact_only,source_id)"
                             " VALUES(?1,?2,?3,?4,?5) ON CONFLICT(key,value) DO UPDATE SET weight=excluded.weight,"
-                            "exact_only=excluded.exact_only,source_id=COALESCE(excluded.source_id,source_id),"
+                            "exact_only=excluded.exact_only,source_id=excluded.source_id,"
                             "updated_at=unixepoch()");
     return stmt && bind_text(stmt.get(), 1, word.key) && bind_text(stmt.get(), 2, word.value) &&
            sqlite3_bind_int64(stmt.get(), 3, clamp_latin_weight(word.weight)) == SQLITE_OK &&
            sqlite3_bind_int(stmt.get(), 4, word.exact_only ? 1 : 0) == SQLITE_OK &&
            bind_optional_text(stmt.get(), 5, source_id) && sqlite3_step(stmt.get()) == SQLITE_DONE;
+}
+
+bool materialize_latin_word(sqlite3 *db, const UserLatinWord &word, const std::string &source_id)
+{
+    if (source_id.empty())
+        return true;
+    auto stmt = prepare(db, "INSERT OR IGNORE INTO main.cell_dictionary_materialized(source_id,dictionary,key,value) "
+                            "VALUES(?1,'latin',?2,?3)");
+    return stmt && bind_text(stmt.get(), 1, source_id) && bind_text(stmt.get(), 2, word.key) &&
+           bind_text(stmt.get(), 3, word.value) && sqlite3_step(stmt.get()) == SQLITE_DONE;
 }
 
 // 打开词库、挂上日志、开写事务、确保 latin_words 可写。失败返回空连接，什么也没写。
@@ -1172,7 +1188,11 @@ Db begin_latin_transaction(const std::string &main_db_path, const std::string &u
     attach.reset();
     if (!execute_sql(database.get(), "BEGIN IMMEDIATE"))
         return {};
-    if (!ensure_latin_words_table(database.get()))
+    if (!ensure_latin_words_table(database.get()) ||
+        !execute_sql(database.get(),
+                     "CREATE TABLE IF NOT EXISTS main.cell_dictionary_materialized("
+                     "source_id TEXT NOT NULL,dictionary TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,"
+                     "PRIMARY KEY(source_id,dictionary,key,value))"))
     {
         (void)execute_sql(database.get(), "ROLLBACK");
         return {};
@@ -1206,7 +1226,8 @@ std::vector<LatinWordWrite> add_user_latin_words(const std::string &main_db_path
             results[i] = LatinWordWrite::Exists;
             continue;
         }
-        if (!write_latin_row(database.get(), word) || !journal_latin_word(database.get(), word, source_id))
+        if (!write_latin_row(database.get(), word) || !journal_latin_word(database.get(), word, source_id) ||
+            !materialize_latin_word(database.get(), word, source_id))
         {
             (void)execute_sql(database.get(), "ROLLBACK");
             return std::vector<LatinWordWrite>(words.size(), LatinWordWrite::Failed);
@@ -2289,11 +2310,12 @@ void replay_user_latin_words(sqlite3 *journal, sqlite3 *main_db, ReplayResult &r
                                    ? "NOT EXISTS(SELECT 1 FROM dictionary_sources WHERE id=user_latin_words.source_id "
                                      "AND (enabled=0 OR deleted=1))"
                                    : "1";
-    auto rows =
-        prepare(journal, "SELECT key,value,weight,exact_only," + active + " FROM user_latin_words ORDER BY key,value");
+    auto rows = prepare(journal, "SELECT key,value,weight,exact_only," + active + "," +
+                                     (has_source ? std::string("source_id") : std::string("NULL")) +
+                                     " FROM user_latin_words ORDER BY key,value");
     if (!rows)
         return;
-    std::vector<UserLatinWord> words;
+    std::vector<std::pair<UserLatinWord, std::string>> words;
     int row_result = SQLITE_ROW;
     while ((row_result = sqlite3_step(rows.get())) == SQLITE_ROW)
     {
@@ -2304,10 +2326,11 @@ void replay_user_latin_words(sqlite3 *journal, sqlite3 *main_db, ReplayResult &r
         word.value = value != nullptr ? reinterpret_cast<const char *>(value) : "";
         word.weight = sqlite3_column_int64(rows.get(), 2);
         word.exact_only = sqlite3_column_int(rows.get(), 3) != 0;
+        const unsigned char *source = sqlite3_column_text(rows.get(), 5);
         if (sqlite3_column_int(rows.get(), 4) == 0 || !valid_latin_word(word))
             ++result.skipped;
         else
-            words.push_back(std::move(word));
+            words.emplace_back(std::move(word), source ? reinterpret_cast<const char *>(source) : "");
     }
     rows.reset();
     if (row_result != SQLITE_DONE)
@@ -2322,8 +2345,19 @@ void replay_user_latin_words(sqlite3 *journal, sqlite3 *main_db, ReplayResult &r
         result.failed += static_cast<int>(words.size());
         return;
     }
-    for (const auto &word : words)
-        write_latin_row(main_db, word) ? ++result.applied : ++result.failed;
+    for (const auto &[word, source_id] : words)
+    {
+        bool ok = write_latin_row(main_db, word);
+        if (ok && !source_id.empty())
+        {
+            auto marker =
+                prepare(main_db, "INSERT OR IGNORE INTO cell_dictionary_materialized(source_id,dictionary,key,value) "
+                                 "VALUES(?1,'latin',?2,?3)");
+            ok = marker && bind_text(marker.get(), 1, source_id) && bind_text(marker.get(), 2, word.key) &&
+                 bind_text(marker.get(), 3, word.value) && sqlite3_step(marker.get()) == SQLITE_DONE;
+        }
+        ok ? ++result.applied : ++result.failed;
+    }
 }
 } // namespace
 
@@ -2391,7 +2425,8 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         dictionary_identity.has_value() && replayed_dictionary_identity(journal.get()) != dictionary_identity;
     std::vector<RebasedOperation> rebased;
     auto rows = prepare(journal.get(), "SELECT dictionary,key,value,operation,weight,display," + learned_kana + ",(" +
-                                           user_owned + ")," + source_active +
+                                           user_owned + ")," + source_active + "," +
+                                           (has_source ? std::string("source_id") : std::string("NULL")) +
                                            " FROM user_dictionary_operations ORDER BY updated_at,rowid");
     if (!rows)
     {
@@ -2399,9 +2434,14 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         return result;
     }
 
-    if (!execute_sql(main_db.get(), "BEGIN IMMEDIATE"))
+    if (!execute_sql(main_db.get(), "BEGIN IMMEDIATE") ||
+        !execute_sql(main_db.get(),
+                     "CREATE TABLE IF NOT EXISTS cell_dictionary_materialized("
+                     "source_id TEXT NOT NULL,dictionary TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,"
+                     "PRIMARY KEY(source_id,dictionary,key,value))"))
     {
         result.error = "cannot start replay transaction";
+        (void)execute_sql(main_db.get(), "ROLLBACK");
         return result;
     }
     int row_result = SQLITE_ROW;
@@ -2416,6 +2456,8 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         const bool learned_kana_pinyin = sqlite3_column_int(rows.get(), 6) != 0;
         const bool user_owned_row = sqlite3_column_int(rows.get(), 7) != 0;
         const bool source_is_active = sqlite3_column_int(rows.get(), 8) != 0;
+        const unsigned char *source = sqlite3_column_text(rows.get(), 9);
+        const std::string source_id = source ? reinterpret_cast<const char *>(source) : "";
         if (!source_is_active || (kind == "pinyin" && operation == "upsert" && weight < 1) || learned_kana_pinyin)
         {
             ++result.skipped;
@@ -2449,6 +2491,19 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
             ok = apply_simple(main_db.get(), "quick_parases", "key", "value", key, value, operation, weight);
         else if (kind == "english")
             ok = apply_english(main_db.get(), key, value, operation, weight, display);
+        if (ok && kind == "pinyin")
+        {
+            auto marker =
+                operation == "upsert" && !source_id.empty()
+                    ? prepare(main_db.get(),
+                              "INSERT OR IGNORE INTO cell_dictionary_materialized(source_id,dictionary,key,value) "
+                              "VALUES(?1,'pinyin',?2,?3)")
+                    : prepare(main_db.get(),
+                              "DELETE FROM cell_dictionary_materialized WHERE dictionary='pinyin' AND key=?2 AND "
+                              "value=?3 AND (?1='' OR source_id=?1)");
+            ok = marker && bind_text(marker.get(), 1, source_id) && bind_text(marker.get(), 2, key) &&
+                 bind_text(marker.get(), 3, value) && sqlite3_step(marker.get()) == SQLITE_DONE;
+        }
         ok ? ++result.applied : ++result.failed;
     }
     rows.reset();

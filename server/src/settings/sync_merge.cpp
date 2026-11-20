@@ -13,6 +13,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #pragma comment(lib, "bcrypt.lib")
@@ -284,6 +285,19 @@ std::string OperationId(const OperationRow &row)
     return row.dictionary + '\x1f' + row.key + '\x1f' + row.value;
 }
 
+bool SourceRemoteWins(const DictionarySourceRow &local, const DictionarySourceRow &remote)
+{
+    if (remote.updated_at != local.updated_at)
+        return remote.updated_at > local.updated_at;
+    // 同秒冲突必须双向收敛：删除优先；都未删除时禁用优先。其余字段的字典序处理剩下同秒变化。
+    if (remote.deleted != local.deleted)
+        return remote.deleted;
+    if (!remote.deleted && remote.enabled != local.enabled)
+        return !remote.enabled;
+    return std::tie(remote.name, remote.format, remote.enabled, remote.created_at) >
+           std::tie(local.name, local.format, local.enabled, local.created_at);
+}
+
 // 较新者胜出；时间相同时本地胜出并计入 conflicts（两边同时改过同一词的情况很少，
 // 让本机行为可预期比让远端覆盖更稳妥）。
 bool RemoteWins(const OperationRow &local, const OperationRow &remote, int &conflicts)
@@ -299,6 +313,19 @@ bool RemoteWins(const OperationRow &local, const OperationRow &remote, int &conf
         ++conflicts;
     }
     return false;
+}
+
+bool RemoteOperationWins(const OperationRow &local, const OperationRow &remote, int &conflicts)
+{
+    const bool local_explicit = !local.source_id && (local.user_inserted || local.weight_edited);
+    const bool remote_explicit = !remote.source_id && (remote.user_inserted || remote.weight_edited);
+    // 来源不能接管本机明确拥有的个人词条。反过来，来源行可以接受较新的远端个人显式行；
+    // 普通自动调频不会把已有来源行转成未分组行。
+    if (local_explicit && remote.source_id)
+        return false;
+    if (local.source_id && !remote.source_id && !remote_explicit)
+        return false;
+    return RemoteWins(local, remote, conflicts);
 }
 
 // 32 位小写十六进制，UUID v4 形状但不带连字符：够唯一，也不依赖任何平台 UUID API。
@@ -468,7 +495,7 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
         const auto found = merged_sources.find(row.id);
         if (found == merged_sources.end())
             merged_sources.emplace(row.id, row);
-        else if (row.updated_at > found->second.updated_at)
+        else if (SourceRemoteWins(found->second, row))
             found->second = row;
     }
     const auto source_deleted = [&](const std::optional<std::string> &source_id) {
@@ -517,7 +544,7 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
                                 "VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET name=excluded.name,"
                                 "format=excluded.format,enabled=excluded.enabled,deleted=excluded.deleted,"
                                 "created_at=excluded.created_at,updated_at=excluded.updated_at "
-                                "WHERE excluded.updated_at>dictionary_sources.updated_at",
+                                "WHERE excluded.updated_at>=dictionary_sources.updated_at",
                                 -1, &source_statement, nullptr) == SQLITE_OK;
         if (!ok)
             message = std::string("准备来源合并语句失败：") + sqlite3_errmsg(local.get());
@@ -528,7 +555,7 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
             break;
         const auto found = std::find_if(local_sources.begin(), local_sources.end(),
                                         [&](const DictionarySourceRow &local) { return local.id == row.id; });
-        if (found != local_sources.end() && row.updated_at <= found->updated_at)
+        if (found != local_sources.end() && !SourceRemoteWins(*found, row))
             continue;
         const bool bound =
             sqlite3_bind_text(source_statement, 1, row.id.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
@@ -628,7 +655,7 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
         if (source_deleted(row.source_id))
             continue;
         const auto found = local_by_id.find(OperationId(row));
-        if (found != local_by_id.end() && !RemoteWins(*found->second, row, report.conflicts))
+        if (found != local_by_id.end() && !RemoteOperationWins(*found->second, row, report.conflicts))
         {
             ++report.kept_local;
             continue;
