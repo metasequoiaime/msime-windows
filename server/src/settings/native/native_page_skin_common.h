@@ -219,6 +219,9 @@ class Band : public msimeui::Container
 {
   public:
     explicit Band(VisualPtr child, Thickness padding = {});
+    // The band's own padding, e.g. a preview stage that leaves less room above and below a
+    // toolbar than around a candidate window.
+    void SetBandPadding(Thickness padding);
     void SetBackground(std::function<D2D1_COLOR_F()> background);
     void SetTopRule(std::function<D2D1_COLOR_F()> color);
     void SetBottomRule(std::function<D2D1_COLOR_F()> color);
@@ -250,6 +253,9 @@ class PillButton : public msimeui::Visual
   public:
     explicit PillButton(std::wstring text, float height = 24.0f);
     void SetText(std::wstring text);
+    // The chosen option of a pill row: accent fill and accent text instead of the outline.
+    void SetActive(bool active);
+    bool IsActive() const;
     void SetOnClick(std::function<void()> handler);
 
     SizeF Measure(const SizeF &availableSize) override;
@@ -264,9 +270,46 @@ class PillButton : public msimeui::Visual
   private:
     std::wstring text_;
     float height_ = 24.0f;
+    bool active_ = false;
     bool hovered_ = false;
     bool pressed_ = false;
     std::function<void()> onClick_;
+};
+
+// A skin card: the whole card is one button, so the title, the description and the preview
+// all select the skin. FlushCard hands a press to the deepest child under the cursor, which
+// would leave the gaps between labels dead; this answers FindVisualAt itself instead.
+// Not focusable and not clickable while the skin cannot be used in the current layout and
+// theme, the same state the old per-card switch was disabled in.
+class PickCard : public FlushCard
+{
+  public:
+    PickCard() = default;
+
+    void SetOnActivate(std::function<void()> handler);
+    void SetActive(bool active);
+    void SetSelectable(bool selectable);
+    bool IsActive() const;
+    bool IsSelectable() const;
+
+    msimeui::Visual *FindVisualAt(const PointF &point) override;
+    bool IsFocusable() const override;
+    void OnFocusChanged(bool focused) override;
+    bool OnMouseDown(const POINT &point, WPARAM keyState) override;
+    bool OnMouseUp(const POINT &point, WPARAM keyState) override;
+    void OnMouseEnter() override;
+    void OnMouseLeave() override;
+    bool OnKeyDown(WPARAM key, LPARAM lParam) override;
+    HCURSOR GetCursor() const override;
+    void Render(msimeui::DeviceResources &dr) override;
+
+  private:
+    std::function<void()> onActivate_;
+    bool active_ = false;
+    bool selectable_ = true;
+    bool hovered_ = false;
+    bool pressed_ = false;
+    bool focused_ = false;
 };
 
 // `.screenkb-open-button` / `.handwriting-open-button`: accent fill, 13px text,
