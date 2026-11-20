@@ -277,8 +277,9 @@ class PillButton : public msimeui::Visual
 };
 
 // A skin card: the whole card is one button, so the title, the description and the preview
-// all select the skin. FlushCard hands a press to the deepest child under the cursor, which
-// would leave the gaps between labels dead; this answers FindVisualAt itself instead.
+// all select the skin. A plain panel would report the deepest child under the cursor
+// instead: labels take the hover and the cursor, and the candidate list inside a preview is
+// focusable, so it would take the press as well. The card answers for its whole surface.
 // Not focusable and not clickable while the skin cannot be used in the current layout and
 // theme, the same state the old per-card switch was disabled in.
 class PickCard : public FlushCard
@@ -293,6 +294,7 @@ class PickCard : public FlushCard
     bool IsSelectable() const;
 
     msimeui::Visual *FindVisualAt(const PointF &point) override;
+    msimeui::Visual *FindFocusableAt(const PointF &point) override;
     bool IsFocusable() const override;
     void OnFocusChanged(bool focused) override;
     bool OnMouseDown(const POINT &point, WPARAM keyState) override;

@@ -693,6 +693,13 @@ msimeui::Visual *PickCard::FindVisualAt(const PointF &point)
     return HitTest(point) ? this : nullptr;
 }
 
+msimeui::Visual *PickCard::FindFocusableAt(const PointF &point)
+{
+    // Window dispatches a press to the focusable visual under the cursor. A preview holds a
+    // focusable candidate list, which would otherwise swallow every press over it.
+    return selectable_ && HitTest(point) ? this : nullptr;
+}
+
 bool PickCard::IsFocusable() const
 {
     return selectable_;
@@ -759,13 +766,14 @@ void PickCard::Render(msimeui::DeviceResources &dr)
 {
     FlushCard::Render(dr);
     const Palette &p = CurrentPalette();
-    // Inset by half the stroke so the outline sits on the card's own 1px border.
+    // Same radius and path as FlushCard's own 8px/1px outline, so the two centers match and
+    // the corners do not show a double line.
     if (active_)
-        StrokeRounded(dr, Inflate(bounds_, -0.75f), 7.25f, p.accent, 1.5f);
+        StrokeRounded(dr, bounds_, 8.0f, p.accent, 1.5f);
     else if (focused_)
-        StrokeRounded(dr, Inflate(bounds_, -0.75f), 7.25f, p.borderStrong, 1.5f);
+        StrokeRounded(dr, bounds_, 8.0f, p.borderStrong, 1.5f);
     else if (hovered_ && selectable_)
-        StrokeRounded(dr, Inflate(bounds_, -0.75f), 7.25f, p.accentSoftBorder, 1.5f);
+        StrokeRounded(dr, bounds_, 8.0f, p.accentSoftBorder, 1.5f);
 }
 
 // ---------------------------------------------------------------------------------

@@ -86,48 +86,59 @@ TEST_CASE(BuildingEverySettingsPageSendsNoMessage)
     }
 }
 
-// The skin page is a list of cards, and a card is one button: the title and the preview are
-// part of it, so a press anywhere selects the skin. Left as a plain panel, the press would
-// land on a label inside it and the card would never see it.
-TEST_CASE(SettingsSkinCardIsOneClickTarget)
+// A skin card is one button covering its title and its preview. The preview holds a focusable
+// candidate list, and Window dispatches a press to the focusable visual under the cursor, so
+// the card must answer for focus as well as for hit testing. Otherwise the largest part of
+// the card changes the preview's selected row and never selects the skin.
+TEST_CASE(SettingsSkinCardKeepsThePressOverFocusableContent)
 {
-    msimeui::Window window(L"settings-window-test", L"", 200, 200);
-    auto card = std::make_shared<native_settings::skinpreview::PickCard>();
-    card->Add(std::make_shared<native_settings::Label>(L"标题", native_settings::SectionTitleStyle()));
-    card->Attach(&window);
-    card->MeasureInLayout({200.0f, 100.0f});
-    card->ArrangeInLayout({0.0f, 0.0f, 200.0f, 100.0f});
+    for (float dpi : {96.0f, 144.0f})
+    {
+        SettingsWindowHarness window(dpi, {300.0f, 200.0f});
+        auto card = std::make_shared<native_settings::skinpreview::PickCard>();
+        auto inner = std::make_shared<native_settings::ToggleSwitch>(false);
+        card->Add(inner);
+        window.SetRoot(card);
 
-    int activations = 0;
-    card->SetOnActivate([&activations]() { ++activations; });
+        int activations = 0;
+        card->SetOnActivate([&activations]() { ++activations; });
 
-    REQUIRE(card->FindVisualAt({5.0f, 5.0f}) == card.get());
-    REQUIRE(card->FindVisualAt({250.0f, 5.0f}) == nullptr);
+        const msimeui::RectF innerBounds = inner->GetBounds();
+        REQUIRE(innerBounds.width > 0.0f);
+        const float x = innerBounds.x + innerBounds.width * 0.5f;
+        const float y = innerBounds.y + innerBounds.height * 0.5f;
+        auto *scene = window.Window().GetScene();
+        REQUIRE(scene->FindVisualAt({x, y}) == card.get());
+        REQUIRE(scene->FindFocusableAt({x, y}) == card.get());
 
-    const POINT inside{10, 10};
-    const POINT outside{250, 10};
-    REQUIRE(card->OnMouseDown(inside, 0));
-    REQUIRE(card->OnMouseUp(inside, 0));
-    REQUIRE_EQ(activations, 1);
-    // Releasing outside the card cancels the press, like every other button here.
-    REQUIRE(card->OnMouseDown(inside, 0));
-    REQUIRE(card->OnMouseUp(outside, 0));
-    REQUIRE_EQ(activations, 1);
-    REQUIRE(card->OnKeyDown(VK_RETURN, 0));
-    REQUIRE(card->OnKeyDown(VK_SPACE, 0));
-    REQUIRE(!card->OnKeyDown(VK_ESCAPE, 0));
-    REQUIRE_EQ(activations, 3);
+        window.GiveWindowKeyboardFocus();
+        window.Click(x, y);
+        REQUIRE_EQ(activations, 1);
+        REQUIRE(!inner->IsChecked());
+        window.Key(VK_RETURN);
+        REQUIRE_EQ(activations, 2);
+        window.Key(VK_SPACE);
+        REQUIRE_EQ(activations, 3);
 
-    // A skin the current layout cannot use takes no input and leaves the tab order.
-    card->SetSelectable(false);
-    REQUIRE(!card->IsFocusable());
-    REQUIRE(!card->OnMouseDown(inside, 0));
-    REQUIRE(!card->OnKeyDown(VK_RETURN, 0));
-    REQUIRE_EQ(activations, 3);
+        // Releasing outside the card cancels the press, like every other button here.
+        const POINT inside = window.Pixels(x, y);
+        const POINT outside = window.Pixels(400.0f, 400.0f);
+        REQUIRE(card->OnMouseDown(inside, 0));
+        REQUIRE(card->OnMouseUp(outside, 0));
+        REQUIRE_EQ(activations, 3);
+
+        // An unusable skin is not a focus target and takes no input.
+        card->SetSelectable(false);
+        REQUIRE(!card->IsFocusable());
+        REQUIRE(scene->FindFocusableAt({x, y}) == nullptr);
+        window.Click(x, y);
+        window.Key(VK_RETURN);
+        REQUIRE_EQ(activations, 3);
+    }
 }
 
-// Clicking a card posts the skin it shows, not the one above or below it. Cards are found by
-// walking the page, because what matters is that the whole card answers, wherever it is.
+// Clicking a card posts the skin it shows, not the one above or below it. The press lands in
+// the preview, the part of the card the candidate list would otherwise take.
 TEST_CASE(SettingsSkinPageSwitchesSkinFromTheCard)
 {
     SettingsWindowHarness window(96.0f, {800.0f, 1400.0f});
@@ -158,7 +169,9 @@ TEST_CASE(SettingsSkinPageSwitchesSkinFromTheCard)
     REQUIRE(cards.size() >= 2);
 
     const msimeui::RectF bounds = cards[1]->GetBounds();
-    window.Click(300.0f, bounds.y + 8.0f);
+    const msimeui::PointF preview{300.0f, bounds.y + bounds.height - 55.0f};
+    REQUIRE(window.Window().GetScene()->FindFocusableAt(preview) == cards[1]);
+    window.Click(preview.x, preview.y);
 
     std::string picked;
     for (const std::string &raw : sent)
@@ -167,7 +180,7 @@ TEST_CASE(SettingsSkinPageSwitchesSkinFromTheCard)
         if (message.is_object() && message.value("type", std::string()) == "configUpdate")
             picked = message["data"].value("value", std::string());
     }
-    REQUIRE_EQ(picked, std::string("wechat"));
+    REQUIRE_EQ(picked, native_settings::skinpreview::BuiltinSkins()[1]);
     REQUIRE(cards[1]->IsActive());
     REQUIRE(!cards[0]->IsActive());
 }

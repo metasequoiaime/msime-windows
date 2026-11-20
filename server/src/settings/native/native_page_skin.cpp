@@ -140,9 +140,6 @@ struct SkinCard
 {
     std::string id;
     std::wstring name;
-    bool external = false;
-    // 官方贴图皮肤：照外部皮肤渲染，但和内置皮肤列在一起。
-    bool official = false;
     bool compatible = true;
     bool decoratedHorizontal = false;
     bool decoratedVertical = false;
@@ -154,9 +151,11 @@ struct SkinCard
     std::shared_ptr<Hideable> badgeHost;
     std::shared_ptr<PickCard> card;
     PreviewStage stage;
-    // Inputs the last FillStage ran with. Selecting another skin does not change any card's
+    // What the last FillStage ran with. Selecting another skin does not change any card's
     // preview, so the page skips the manifest parsing and scene rebuild when this matches.
-    std::string appliedKey;
+    std::string appliedContentKey;
+    bool appliedLight = false;
+    bool applied = false;
 };
 
 class SkinPage
@@ -220,8 +219,6 @@ std::shared_ptr<SkinCard> SkinPage::MakeCard(const std::string &id, const Json *
 {
     auto card = std::make_shared<SkinCard>();
     card->id = id;
-    card->external = external != nullptr;
-    card->official = official;
 
     std::wstring description;
     std::wstring meta;
@@ -284,6 +281,9 @@ std::shared_ptr<SkinCard> SkinPage::MakeCard(const std::string &id, const Json *
     card->badgeHost = std::make_shared<Hideable>(card->badge, false);
     auto actions = std::make_shared<Column>(8.0f);
     actions->SetHorizontalContentAlignment(msimeui::HorizontalAlignment::Trailing);
+    // Keep the slot while the badge is hidden: showing it would otherwise take width from
+    // the titles and rewrap a description, and both cards would change height on selection.
+    actions->SetMinWidth(44.0f);
     actions->Add(card->badgeHost);
 
     auto header = std::make_shared<Row>(16.0f);
@@ -390,13 +390,11 @@ void SkinPage::ApplyCardState(SkinCard &card)
     card.badgeHost->SetVisible(active);
     card.card->SetActive(active);
 
-    const std::string key = contentKey_ + (light ? "\x1f"
-                                                   "L"
-                                                 : "\x1f"
-                                                   "D");
-    if (key == card.appliedKey)
+    if (card.applied && card.appliedLight == light && card.appliedContentKey == contentKey_)
         return;
-    card.appliedKey = key;
+    card.applied = true;
+    card.appliedLight = light;
+    card.appliedContentKey = contentKey_;
     FillStage(card.stage, card.id, light, card.layouts, card.decoratedHorizontal, card.decoratedVertical);
 }
 
@@ -452,19 +450,22 @@ void SkinPage::UpdateCurrentSkin()
     if (card && !card->compatible)
         hint = L"当前布局或明暗不受该皮肤支持，候选窗会回退到 Fluent";
     else if (previewLight_ < 0)
-        hint = std::wstring(L"预览跟随候选窗口主题：") + (candLight_ ? L"浅色" : L"深色");
+    {
+        hint = std::wstring(L"预览跟随候选窗口主题：") + (light ? L"浅色" : L"深色");
+        if (light != RequestedLight())
+            hint += light ? L"，这个皮肤只有浅色" : L"，这个皮肤只有深色";
+    }
     else
         hint = std::wstring(L"正在预览") + (light ? L"浅色" : L"深色") + L"，不影响主题设置";
     currentHint_->SetText(std::move(hint));
 
-    const std::string key = contentKey_ + "\x1f" + active +
-                            (light ? "\x1f"
-                                     "L"
-                                   : "\x1f"
-                                     "D");
+    std::string key = contentKey_;
+    key += '\x1f';
+    key += active;
+    key += light ? 'L' : 'D';
     if (key == currentKey_)
         return;
-    currentKey_ = key;
+    currentKey_ = std::move(key);
     FillStage(currentStage_, active, light, card ? card->layouts : kNoLayouts, card && card->decoratedHorizontal,
               card && card->decoratedVertical);
 }
