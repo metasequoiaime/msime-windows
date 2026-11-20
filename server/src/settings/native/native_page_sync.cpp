@@ -331,9 +331,9 @@ VisualPtr BuildSyncPage(PageContext &context)
         webdav->Add(FieldWithCaption(L"网盘地址", state->webdavUrl));
         webdav->Add(FieldWithCaption(L"用户名", state->webdavUser));
         webdav->Add(FieldWithCaption(L"密码", state->webdavPassword));
-        webdav->Add(SyncDescription(L"填网盘上放备份的位置，通常直接填根目录就行，不用自己建文件夹：数据写在它下面的"
-                                    L" msime 目录里，第一次上传时自动创建。坚果云填 https://dav.jianguoyun.com/dav，"
-                                    L"Nextcloud 填 https://你的域名/remote.php/dav/files/用户名。"));
+        webdav->Add(
+            SyncDescription(L"网盘上放备份的位置，自动创建 msime 目录。坚果云填 https://dav.jianguoyun.com/dav，"
+                            L"Nextcloud 填 https://你的域名/remote.php/dav/files/用户名。"));
         state->webdavFields = std::make_shared<Hideable>(webdav, false);
         column->Add(state->webdavFields);
 
