@@ -70,7 +70,7 @@ json::object Result(bool ok, std::string message)
 json::object BatchResult(bool ok, std::string message, size_t failed)
 {
     json::object result = Result(ok, std::move(message));
-    result["failed"] = static_cast<std::uint64_t>(failed);
+    result["failed"] = static_cast<std::int64_t>(failed);
     return result;
 }
 
