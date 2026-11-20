@@ -333,9 +333,8 @@ class CellDictionaryManager : public std::enable_shared_from_this<CellDictionary
         std::vector<DropdownOption> options;
         if (message.contains("sources") && message["sources"].is_array())
         {
-            for (const auto &item : message["sources"].as_array())
+            for (const auto &object : message["sources"])
             {
-                const auto &object = item.as_object();
                 Source source;
                 source.id = object.value("id", std::string());
                 source.name = object.value("name", std::string());
