@@ -65,7 +65,8 @@ bool record_upsert(const std::string &user_db_path, DictionaryKind kind, const s
 bool record_weight_edit(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
                         const std::string &value, std::int64_t weight, const std::string &display = {});
 bool record_user_insert(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
-                        const std::string &value, std::int64_t weight, const std::string &display = {});
+                        const std::string &value, std::int64_t weight, const std::string &display = {},
+                        const std::string &source_id = {});
 bool record_delete(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
                    const std::string &value);
 bool is_user_inserted(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
@@ -114,7 +115,8 @@ enum class LatinWordWrite
 // 逐条加进 latin_words 与日志，整批一个事务（词库是还没有这张表的旧版本时先建表）。结果与 words 一一对应；
 // 事务本身失败时全部是 Failed，什么也没写。调用方先用 quanpin::parse_latin_entry 规范好键。
 std::vector<LatinWordWrite> add_user_latin_words(const std::string &main_db_path, const std::string &user_db_path,
-                                                 const std::vector<UserLatinWord> &words);
+                                                 const std::vector<UserLatinWord> &words,
+                                                 const std::string &source_id = {});
 // 把用户加的 (old_key, old_value) 换成 word：两张表上删旧写新，一个事务。
 LatinWordWrite update_user_latin_word(const std::string &main_db_path, const std::string &user_db_path,
                                       const std::string &old_key, const std::string &old_value,

@@ -454,6 +454,116 @@ TEST_CASE(UserDictionaryTracksOnlyExplicitUserInsertionsForExport)
     std::filesystem::remove_all(directory);
 }
 
+TEST_CASE(UserDictionarySourceSchemaUpgradesAndLearningKeepsSourceId)
+{
+    ScopedTempDirectory directory("msime-source-schema-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const auto main_path = directory.path() / "msime.db";
+    {
+        TestDatabase legacy(user_path);
+        legacy.exec("CREATE TABLE user_dictionary_operations("
+                    "dictionary TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,operation TEXT NOT NULL,"
+                    "weight INTEGER NOT NULL DEFAULT 0,display TEXT NOT NULL DEFAULT '',"
+                    "updated_at INTEGER NOT NULL DEFAULT(unixepoch()),PRIMARY KEY(dictionary,key,value));"
+                    "INSERT INTO user_dictionary_operations VALUES('pinyin','jiu','旧',1,'',1);"
+                    "CREATE TABLE user_latin_words(key TEXT NOT NULL,value TEXT NOT NULL,weight INTEGER NOT NULL,"
+                    "exact_only INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0,"
+                    "PRIMARY KEY(key,value));");
+        TestDatabase main_db(main_path);
+        main_db.exec("CREATE TABLE latin_words(key TEXT,value TEXT,weight INTEGER,exact_only INTEGER);");
+    }
+    REQUIRE(user_dictionary::ensure_user_database(test::Utf8(user_path)));
+    REQUIRE(user_dictionary::record_user_insert(test::Utf8(user_path), user_dictionary::DictionaryKind::Pinyin, "xin",
+                                                "新", 10, {}, "source-a"));
+    REQUIRE(user_dictionary::record_upsert(test::Utf8(user_path), user_dictionary::DictionaryKind::Pinyin, "xin", "新",
+                                           20));
+    const std::vector<user_dictionary::UserLatinWord> latin = {{"a", "A股", 5, false}};
+    const auto writes =
+        user_dictionary::add_user_latin_words(test::Utf8(main_path), test::Utf8(user_path), latin, "source-a");
+    REQUIRE_EQ(writes.size(), static_cast<std::size_t>(1));
+    REQUIRE(writes[0] == user_dictionary::LatinWordWrite::Written);
+    {
+        TestDatabase db(user_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM dictionary_sources"), 0);
+        REQUIRE_EQ(
+            db.scalar_int("SELECT COUNT(*) FROM user_dictionary_operations WHERE value='旧' AND source_id IS NULL"), 1);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM user_dictionary_operations WHERE value='新' AND "
+                                 "source_id='source-a' AND weight=20"),
+                   1);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM user_latin_words WHERE source_id='source-a'"), 1);
+    }
+}
+
+TEST_CASE(UserDictionaryReplayHonorsSourceEnabledAndDeletedState)
+{
+    ScopedTempDirectory directory("msime-source-replay-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const auto main_path = directory.path() / "msime.db";
+    const auto english_path = directory.path() / "english.db";
+    {
+        TestDatabase db(main_path);
+        db.exec("CREATE TABLE tbl_1_x(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                "CREATE TABLE latin_words(key TEXT,value TEXT,weight INTEGER,exact_only INTEGER);");
+        TestDatabase english(english_path);
+        english.exec("CREATE TABLE english_words(word TEXT PRIMARY KEY,display TEXT);");
+    }
+    REQUIRE(user_dictionary::record_user_insert(test::Utf8(user_path), user_dictionary::DictionaryKind::Pinyin, "xin",
+                                                "来源词", 10, {}, "source-a"));
+    REQUIRE(user_dictionary::record_user_insert(test::Utf8(user_path), user_dictionary::DictionaryKind::Pinyin, "xue",
+                                                "未分组", 20));
+    const std::vector<user_dictionary::UserLatinWord> latin = {{"a", "来源字母", 5, false},
+                                                               {"b", "普通字母", 6, false}};
+    REQUIRE(user_dictionary::add_user_latin_words(test::Utf8(main_path), test::Utf8(user_path), {latin[0]},
+                                                  "source-a")[0] == user_dictionary::LatinWordWrite::Written);
+    REQUIRE(user_dictionary::add_user_latin_words(test::Utf8(main_path), test::Utf8(user_path), {latin[1]})[0] ==
+            user_dictionary::LatinWordWrite::Written);
+    {
+        TestDatabase db(user_path);
+        db.exec("INSERT INTO dictionary_sources(id,name,format,enabled,deleted,created_at,updated_at) "
+                "VALUES('source-a','来源','scel',0,0,1,1);");
+        TestDatabase main_db(main_path);
+        main_db.exec("DELETE FROM tbl_1_x;DELETE FROM latin_words;");
+    }
+    auto result = user_dictionary::replay(test::Utf8(user_path), test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(result.error.empty());
+    REQUIRE_EQ(result.failed, 0);
+    REQUIRE_EQ(result.applied, 2);
+    REQUIRE_EQ(result.skipped, 2);
+    {
+        TestDatabase db(main_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='来源词'"), 0);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='未分组'"), 1);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'"), 0);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='普通字母'"), 1);
+    }
+    {
+        TestDatabase db(user_path);
+        db.exec("UPDATE dictionary_sources SET enabled=1 WHERE id='source-a'");
+        TestDatabase main_db(main_path);
+        main_db.exec("DELETE FROM tbl_1_x;DELETE FROM latin_words;");
+    }
+    result = user_dictionary::replay(test::Utf8(user_path), test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(result.error.empty());
+    REQUIRE_EQ(result.applied, 4);
+    {
+        TestDatabase db(main_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='来源词'"), 1);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'"), 1);
+        db.exec("DELETE FROM tbl_1_x WHERE value='来源词';DELETE FROM latin_words WHERE value='来源字母';");
+    }
+    {
+        TestDatabase db(user_path);
+        db.exec("UPDATE dictionary_sources SET deleted=1 WHERE id='source-a'");
+    }
+    result = user_dictionary::replay(test::Utf8(user_path), test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(result.error.empty());
+    {
+        TestDatabase db(main_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='来源词'"), 0);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'"), 0);
+    }
+}
+
 TEST_CASE(EnterLearnedEnglishWordsAreValidatedPersistedAndIdempotent)
 {
     const auto directory = test::TempRoot() / ("msime-enter-english-" + std::to_string(GetCurrentProcessId()));

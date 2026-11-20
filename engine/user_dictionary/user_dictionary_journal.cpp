@@ -132,6 +132,11 @@ bool bind_text(sqlite3_stmt *stmt, int index, const std::string &value)
     return sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK;
 }
 
+bool bind_optional_text(sqlite3_stmt *stmt, int index, const std::string &value)
+{
+    return value.empty() ? sqlite3_bind_null(stmt, index) == SQLITE_OK : bind_text(stmt, index, value);
+}
+
 Stmt prepare_upsert_journal(sqlite3 *db)
 {
     // 调频写下的权重会覆盖设置页改过的权重，这一行从此按自动调频对待（见 replay）。
@@ -194,6 +199,10 @@ bool ensure_schema(sqlite3 *db)
         "weight_edited INTEGER NOT NULL DEFAULT 0,"
         "updated_at INTEGER NOT NULL DEFAULT(unixepoch()),"
         "PRIMARY KEY(dictionary,key,value));"
+        "CREATE TABLE IF NOT EXISTS dictionary_sources("
+        "id TEXT PRIMARY KEY,name TEXT NOT NULL,format TEXT NOT NULL,"
+        "enabled INTEGER NOT NULL DEFAULT 1,deleted INTEGER NOT NULL DEFAULT 0,"
+        "created_at INTEGER NOT NULL DEFAULT(unixepoch()),updated_at INTEGER NOT NULL DEFAULT(unixepoch()));"
         "CREATE TABLE IF NOT EXISTS personal_dictionary_receipts( request_id TEXT PRIMARY KEY, payload TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS candidate_selection_state("
         "context_key TEXT NOT NULL,entry_key TEXT NOT NULL,value TEXT NOT NULL,"
@@ -238,13 +247,21 @@ bool ensure_schema(sqlite3 *db)
                      "ADD COLUMN weight_edited INTEGER NOT NULL DEFAULT 0",
                      nullptr, nullptr, nullptr) != SQLITE_OK)
         return false;
+    if (!has_column(db, "user_dictionary_operations", "source_id") &&
+        sqlite3_exec(db, "ALTER TABLE user_dictionary_operations ADD COLUMN source_id TEXT", nullptr, nullptr,
+                     nullptr) != SQLITE_OK)
+        return false;
+    if (!has_column(db, "user_latin_words", "source_id") &&
+        sqlite3_exec(db, "ALTER TABLE user_latin_words ADD COLUMN source_id TEXT", nullptr, nullptr, nullptr) !=
+            SQLITE_OK)
+        return false;
     // Setting user_version is a write, even to the same value. Skip it when it is
     // already current, so opening a connection never waits for another writer.
     auto version = prepare(db, "PRAGMA user_version");
-    if (version && sqlite3_step(version.get()) == SQLITE_ROW && sqlite3_column_int(version.get(), 0) == 3)
+    if (version && sqlite3_step(version.get()) == SQLITE_ROW && sqlite3_column_int(version.get(), 0) == 4)
         return true;
     version.reset();
-    return sqlite3_exec(db, "PRAGMA user_version=3", nullptr, nullptr, nullptr) == SQLITE_OK;
+    return sqlite3_exec(db, "PRAGMA user_version=4", nullptr, nullptr, nullptr) == SQLITE_OK;
 }
 
 std::vector<std::string> pinyin_segments(const std::string &key)
@@ -720,20 +737,22 @@ bool record_weight_edit(const std::string &user_db_path, DictionaryKind kind, co
 }
 
 bool record_user_insert(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
-                        const std::string &value, std::int64_t weight, const std::string &display)
+                        const std::string &value, std::int64_t weight, const std::string &display,
+                        const std::string &source_id)
 {
     UserDatabase db(user_db_path);
     if (!db)
         return false;
-    auto stmt =
-        prepare(db.get(), "INSERT INTO user_dictionary_operations("
-                          "dictionary,key,value,operation,weight,display,user_inserted)"
-                          " VALUES(?1,?2,?3,'upsert',?4,?5,1)"
-                          " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',weight=excluded.weight,"
-                          " display=excluded.display,user_inserted=1,updated_at=unixepoch()");
+    auto stmt = prepare(db.get(), "INSERT INTO user_dictionary_operations("
+                                  "dictionary,key,value,operation,weight,display,user_inserted,source_id)"
+                                  " VALUES(?1,?2,?3,'upsert',?4,?5,1,?6)"
+                                  " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',"
+                                  "weight=excluded.weight,display=excluded.display,user_inserted=1,"
+                                  "source_id=COALESCE(excluded.source_id,source_id),updated_at=unixepoch()");
     return stmt && bind_text(stmt.get(), 1, kind_name(kind)) && bind_text(stmt.get(), 2, key) &&
            bind_text(stmt.get(), 3, value) && sqlite3_bind_int64(stmt.get(), 4, weight) == SQLITE_OK &&
-           bind_text(stmt.get(), 5, display) && sqlite3_step(stmt.get()) == SQLITE_DONE;
+           bind_text(stmt.get(), 5, display) && bind_optional_text(stmt.get(), 6, source_id) &&
+           sqlite3_step(stmt.get()) == SQLITE_DONE;
 }
 
 bool record_delete(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
@@ -1128,15 +1147,16 @@ bool delete_row(sqlite3 *db, const char *table, const std::string &key, const st
            sqlite3_step(stmt.get()) == SQLITE_DONE;
 }
 
-bool journal_latin_word(sqlite3 *db, const UserLatinWord &word)
+bool journal_latin_word(sqlite3 *db, const UserLatinWord &word, const std::string &source_id = {})
 {
-    auto stmt = prepare(db, "INSERT INTO latin_journal.user_latin_words(key,value,weight,exact_only)"
-                            " VALUES(?1,?2,?3,?4) ON CONFLICT(key,value) DO UPDATE SET weight=excluded.weight,"
-                            " exact_only=excluded.exact_only,updated_at=unixepoch()");
+    auto stmt = prepare(db, "INSERT INTO latin_journal.user_latin_words(key,value,weight,exact_only,source_id)"
+                            " VALUES(?1,?2,?3,?4,?5) ON CONFLICT(key,value) DO UPDATE SET weight=excluded.weight,"
+                            "exact_only=excluded.exact_only,source_id=COALESCE(excluded.source_id,source_id),"
+                            "updated_at=unixepoch()");
     return stmt && bind_text(stmt.get(), 1, word.key) && bind_text(stmt.get(), 2, word.value) &&
            sqlite3_bind_int64(stmt.get(), 3, clamp_latin_weight(word.weight)) == SQLITE_OK &&
            sqlite3_bind_int(stmt.get(), 4, word.exact_only ? 1 : 0) == SQLITE_OK &&
-           sqlite3_step(stmt.get()) == SQLITE_DONE;
+           bind_optional_text(stmt.get(), 5, source_id) && sqlite3_step(stmt.get()) == SQLITE_DONE;
 }
 
 // 打开词库、挂上日志、开写事务、确保 latin_words 可写。失败返回空连接，什么也没写。
@@ -1167,7 +1187,7 @@ bool valid_latin_word(const UserLatinWord &word)
 } // namespace
 
 std::vector<LatinWordWrite> add_user_latin_words(const std::string &main_db_path, const std::string &user_db_path,
-                                                 const std::vector<UserLatinWord> &words)
+                                                 const std::vector<UserLatinWord> &words, const std::string &source_id)
 {
     std::vector<LatinWordWrite> results(words.size(), LatinWordWrite::Failed);
     if (words.empty())
@@ -1186,7 +1206,7 @@ std::vector<LatinWordWrite> add_user_latin_words(const std::string &main_db_path
             results[i] = LatinWordWrite::Exists;
             continue;
         }
-        if (!write_latin_row(database.get(), word) || !journal_latin_word(database.get(), word))
+        if (!write_latin_row(database.get(), word) || !journal_latin_word(database.get(), word, source_id))
         {
             (void)execute_sql(database.get(), "ROLLBACK");
             return std::vector<LatinWordWrite>(words.size(), LatinWordWrite::Failed);
@@ -2263,7 +2283,14 @@ bool save_rebased_journal(const std::string &user_db_path, const std::string &di
 // 回滚，和别的用户词一样不悄悄丢。还没有 user_latin_words 的旧日志 prepare 失败，即没有可写回的。
 void replay_user_latin_words(sqlite3 *journal, sqlite3 *main_db, ReplayResult &result)
 {
-    auto rows = prepare(journal, "SELECT key,value,weight,exact_only FROM user_latin_words ORDER BY key,value");
+    const bool has_source =
+        has_column(journal, "user_latin_words", "source_id") && table_exists(journal, "dictionary_sources");
+    const std::string active = has_source
+                                   ? "NOT EXISTS(SELECT 1 FROM dictionary_sources WHERE id=user_latin_words.source_id "
+                                     "AND (enabled=0 OR deleted=1))"
+                                   : "1";
+    auto rows =
+        prepare(journal, "SELECT key,value,weight,exact_only," + active + " FROM user_latin_words ORDER BY key,value");
     if (!rows)
         return;
     std::vector<UserLatinWord> words;
@@ -2277,10 +2304,10 @@ void replay_user_latin_words(sqlite3 *journal, sqlite3 *main_db, ReplayResult &r
         word.value = value != nullptr ? reinterpret_cast<const char *>(value) : "";
         word.weight = sqlite3_column_int64(rows.get(), 2);
         word.exact_only = sqlite3_column_int(rows.get(), 3) != 0;
-        if (valid_latin_word(word))
-            words.push_back(std::move(word));
-        else
+        if (sqlite3_column_int(rows.get(), 4) == 0 || !valid_latin_word(word))
             ++result.skipped;
+        else
+            words.push_back(std::move(word));
     }
     rows.reset();
     if (row_result != SQLITE_DONE)
@@ -2339,6 +2366,12 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
     const std::string user_owned =
         std::string(has_user_inserted ? "user_inserted" : "0") +
         (has_column(journal.get(), "user_dictionary_operations", "weight_edited") ? " OR weight_edited" : "");
+    const bool has_source = has_column(journal.get(), "user_dictionary_operations", "source_id") &&
+                            table_exists(journal.get(), "dictionary_sources");
+    const std::string source_active =
+        has_source ? "NOT EXISTS(SELECT 1 FROM dictionary_sources WHERE id=user_dictionary_operations.source_id "
+                     "AND (enabled=0 OR deleted=1))"
+                   : "1";
     // 日志记的是调频写下的绝对权重，按的是当时那份出厂词库的量级。出厂词库没变时原样写回，
     // 调频提上去的词和为它让位的邻居都回到原处。词库换过（或日志还没记过回放到哪份词库）时，
     // 旧量级的权重会把新词库的词频压下去：新词库里「了 le」是 5200 万，日志里还是旧词库上
@@ -2358,7 +2391,8 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         dictionary_identity.has_value() && replayed_dictionary_identity(journal.get()) != dictionary_identity;
     std::vector<RebasedOperation> rebased;
     auto rows = prepare(journal.get(), "SELECT dictionary,key,value,operation,weight,display," + learned_kana + ",(" +
-                                           user_owned + ") FROM user_dictionary_operations ORDER BY updated_at,rowid");
+                                           user_owned + ")," + source_active +
+                                           " FROM user_dictionary_operations ORDER BY updated_at,rowid");
     if (!rows)
     {
         result.error = "invalid user dictionary database";
@@ -2381,7 +2415,8 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         const std::string display = reinterpret_cast<const char *>(sqlite3_column_text(rows.get(), 5));
         const bool learned_kana_pinyin = sqlite3_column_int(rows.get(), 6) != 0;
         const bool user_owned_row = sqlite3_column_int(rows.get(), 7) != 0;
-        if ((kind == "pinyin" && operation == "upsert" && weight < 1) || learned_kana_pinyin)
+        const bool source_is_active = sqlite3_column_int(rows.get(), 8) != 0;
+        if (!source_is_active || (kind == "pinyin" && operation == "upsert" && weight < 1) || learned_kana_pinyin)
         {
             ++result.skipped;
             continue;

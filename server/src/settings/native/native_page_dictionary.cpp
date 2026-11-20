@@ -166,6 +166,208 @@ class ExportRow : public msimeui::Container
     float minHeight_ = 62.0f;
     bool topBorder_ = true;
 };
+class CellDictionaryManager : public std::enable_shared_from_this<CellDictionaryManager>
+{
+  public:
+    CellDictionaryManager(PageContext &context, std::shared_ptr<DictionaryPanel> entries)
+        : context_(context), entries_(std::move(entries))
+    {
+        Dropdown::Options options;
+        options.minWidth = 280.0f;
+        options.menuAlignLeft = true;
+        sources_ = std::make_shared<Dropdown>(std::vector<DropdownOption>{}, options);
+        sources_->SetOnChanged([this](size_t, const DropdownOption &) { SelectSource(); });
+        toggle_ = std::make_shared<Button>(L"停用", ButtonKind::Neutral);
+        toggle_->SetOnClick([this]() {
+            const Source *source = Selected();
+            if (source != nullptr)
+                Post("setSourceEnabled", {{"sourceId", source->id}, {"enabled", !source->enabled}});
+        });
+        remove_ = std::make_shared<Button>(L"删除词库", ButtonKind::Neutral);
+        remove_->SetOnClick([this]() {
+            if (Selected() == nullptr)
+                return;
+            const Source source = *Selected();
+            context_.host.Confirm(L"确定删除细胞词库“" + Widen(source.name) + L"”吗？其中的词条会一并删除。",
+                                  [this, source](bool confirmed) {
+                                      if (confirmed)
+                                          Post("deleteSource", {{"sourceId", source.id}});
+                                  });
+        });
+        SyncButtons();
+    }
+
+    VisualPtr Build()
+    {
+        context_.OnMessage("dictionaryResponse", [weak = weak_from_this()](const Json &message) {
+            if (const auto manager = weak.lock())
+                manager->OnResponse(message);
+        });
+        auto body = std::make_shared<Column>(0.0f);
+        body->Add(MakeTitle(L"细胞词库", L"每次导入都形成独立词库，按来源整理、启停或删除"));
+        auto description = MakeDescription(L"支持 Rime、LibIME（fcitx5）词库。已有词条会跳过；名称留空时使用文件名。"
+                                           L"细胞词库不会混入个人词库，停用后词条仍然保留");
+        description->SetMargin({0.0f, 4.0f, 0.0f, 14.0f});
+        body->Add(description);
+
+        std::vector<DropdownOption> options;
+        for (const auto &format : ForeignDictionary::Formats())
+            options.push_back({format.label, format.id});
+        Dropdown::Options settings;
+        settings.minWidth = 200.0f;
+        settings.menuAlignLeft = true;
+        settings.compact = true;
+        formats_ = std::make_shared<Dropdown>(std::move(options), settings);
+        formats_->SetSelectedIndex(0);
+        name_ = std::make_shared<DictInput>(kFontDefault, L"词库名称，留空使用文件名");
+        auto import = std::make_shared<Button>(L"导入", ButtonKind::Primary);
+        import->SetMinWidth(68.0f);
+        import->SetOnClick([this]() {
+            if (entries_)
+                entries_->ImportForeign(formats_->GetValue(), Narrow(name_->GetText()));
+        });
+        auto importRow = std::make_shared<Row>(10.0f);
+        importRow->Add(formats_);
+        importRow->Add(name_, 1.0f);
+        importRow->Add(import);
+        importRow->SetMargin({0.0f, 0.0f, 0.0f, 14.0f});
+        body->Add(importRow);
+
+        auto sourceRow = std::make_shared<Row>(10.0f);
+        sourceRow->Add(sources_, 1.0f);
+        sourceRow->Add(toggle_);
+        sourceRow->Add(remove_);
+        sourceRow->SetPadding({22.0f, 0.0f, 22.0f, 14.0f});
+        body->Add(sourceRow);
+        entries_->AddTo(*body);
+        return body;
+    }
+
+    void Load()
+    {
+        if (loaded_)
+            return;
+        loaded_ = true;
+        RequestSources();
+    }
+
+  private:
+    struct Source
+    {
+        std::string id;
+        std::string name;
+        bool enabled = false;
+        size_t entryCount = 0;
+    };
+
+    const Source *Selected() const
+    {
+        const auto found = std::find_if(items_.begin(), items_.end(),
+                                        [this](const Source &source) { return source.id == selectedId_; });
+        return found == items_.end() ? nullptr : &*found;
+    }
+
+    void SelectSource()
+    {
+        selectedId_ = sources_->GetValue();
+        entries_->SetSourceId(selectedId_);
+        SyncButtons();
+    }
+
+    void SyncButtons()
+    {
+        const Source *source = Selected();
+        toggle_->SetDisabled(source == nullptr);
+        remove_->SetDisabled(source == nullptr);
+        if (source != nullptr)
+            toggle_->SetText(source->enabled ? L"停用" : L"启用");
+    }
+
+    void Post(const std::string &action, Json data)
+    {
+        const std::string requestId = "cells-" + std::to_string(++counter_);
+        pending_[requestId] = action;
+        data["requestId"] = requestId;
+        data["dictionary"] = "cells";
+        data["action"] = action;
+        context_.model.Post("dictionaryRequest", std::move(data));
+    }
+
+    void RequestSources()
+    {
+        Post("listSources", {});
+    }
+
+    void OnResponse(const Json &message)
+    {
+        const std::string requestId = message.value("requestId", std::string());
+        const auto found = pending_.find(requestId);
+        if (found == pending_.end())
+        {
+            if (requestId.rfind("cell-", 0) == 0 && message.value("action", std::string()) == "importForeign" &&
+                message.value("ok", false))
+            {
+                name_->SetText(L"");
+                RequestSources();
+            }
+            return;
+        }
+        const std::string action = found->second;
+        pending_.erase(found);
+        if (!message.value("ok", false))
+        {
+            if (action != "listSources")
+                context_.host.ShowToast(Widen(message.value("message", std::string("操作失败"))), false);
+            return;
+        }
+        if (action != "listSources")
+        {
+            context_.host.ShowToast(Widen(message.value("message", std::string("操作成功"))), true);
+            if (action == "deleteSource")
+                selectedId_.clear();
+            RequestSources();
+            return;
+        }
+        items_.clear();
+        std::vector<DropdownOption> options;
+        if (message.contains("sources") && message["sources"].is_array())
+        {
+            for (const auto &item : message["sources"].as_array())
+            {
+                const auto &object = item.as_object();
+                Source source;
+                source.id = object.value("id", std::string());
+                source.name = object.value("name", std::string());
+                source.enabled = object.value("enabled", false);
+                source.entryCount = object.value("entryCount", uint64_t{0});
+                options.push_back({Widen(source.name) + L"（" + std::to_wstring(source.entryCount) + L" 条，" +
+                                       (source.enabled ? L"已启用" : L"已停用") + L"）",
+                                   source.id});
+                items_.push_back(std::move(source));
+            }
+        }
+        if (std::none_of(items_.begin(), items_.end(),
+                         [this](const Source &source) { return source.id == selectedId_; }))
+            selectedId_ = items_.empty() ? std::string{} : items_.front().id;
+        sources_->SetOptions(std::move(options));
+        sources_->SetValue(selectedId_);
+        entries_->SetSourceId(selectedId_);
+        SyncButtons();
+    }
+
+    PageContext &context_;
+    std::shared_ptr<DictionaryPanel> entries_;
+    std::shared_ptr<Dropdown> formats_;
+    std::shared_ptr<DictInput> name_;
+    std::shared_ptr<Dropdown> sources_;
+    std::shared_ptr<Button> toggle_;
+    std::shared_ptr<Button> remove_;
+    std::vector<Source> items_;
+    std::string selectedId_;
+    std::map<std::string, std::string> pending_;
+    uint64_t counter_ = 0;
+    bool loaded_ = false;
+};
 } // namespace
 
 VisualPtr MakeExportRow(const std::wstring &label, std::function<void()> onExport, float minHeight, bool topBorder)
@@ -241,40 +443,24 @@ VisualPtr BuildDictionaryPage(PageContext &context)
                                : L"批量导入纯汉字词组(e.g.人名)到" + WubiDictionaryLabel(dictionary));
     });
 
-    // 导入其他词库：左边选格式，右边导入。都是拼音词库，一律进拼音用户词库，与当前标签页无关。
+    auto cellEntries = std::make_shared<DictionaryPanel>(context, DictionaryPanel::Kind::Cell);
+    auto cells = std::make_shared<CellDictionaryManager>(context, cellEntries);
+    auto cellCard =
+        std::make_shared<PageCard>(cells->Build(), PageCard::Style::DictCard, Thickness{24.0f, 18.0f, 0.0f, 0.0f});
+    struct CellHolder : msimeui::Container
     {
-        auto body = std::make_shared<Column>(0.0f);
-        body->Add(MakeTitle(L"导入其他词库", L"导入 Rime、LibIME（fcitx5）输入法的词库"));
-        auto description =
-            MakeDescription(L"导入到拼音用户词库，已有的词条会跳过；文件里没有读音或读音不完整的纯汉字词会自动注音。"
-                            L"原词库带词频的按词频高低换算成 10～1000 的权重，没有词频的记 10");
-        description->SetMargin({0.0f, 4.0f, 0.0f, 14.0f});
-        body->Add(description);
-
-        std::vector<DropdownOption> options;
-        for (const auto &format : ForeignDictionary::Formats())
-            options.push_back({format.label, format.id});
-        Dropdown::Options settings;
-        settings.minWidth = 240.0f;
-        settings.menuAlignLeft = true;
-        settings.compact = true;
-        auto formats = std::make_shared<Dropdown>(std::move(options), settings);
-        formats->SetSelectedIndex(0);
-        auto button = std::make_shared<Button>(L"导入", ButtonKind::Primary);
-        button->SetMinWidth(68.0f);
-        std::weak_ptr<Dropdown> weakFormats = formats;
-        button->SetOnClick([panel, weakFormats]() {
-            if (const auto locked = weakFormats.lock())
-                panel->ImportForeign(locked->GetValue());
-        });
-        auto row = std::make_shared<Row>(18.0f);
-        row->SetJustify(Row::Justify::SpaceBetween);
-        row->Add(formats);
-        row->Add(button);
-        body->Add(row);
-        page.AddRaw(std::make_shared<PageCard>(body, PageCard::Style::Section, Thickness{24.0f, 18.0f, 24.0f, 20.0f}),
-                    18.0f);
-    }
+        CellHolder(VisualPtr child, std::shared_ptr<CellDictionaryManager> manager)
+            : msimeui::Container(std::move(child)), manager_(std::move(manager))
+        {
+        }
+        void Attach(msimeui::Window *window) override
+        {
+            msimeui::Container::Attach(window);
+            manager_->Load();
+        }
+        std::shared_ptr<CellDictionaryManager> manager_;
+    };
+    page.AddRaw(std::make_shared<CellHolder>(cellCard, cells), 18.0f);
 
     // .dict-export-section: padding-top 18px, padding-bottom 0.
     auto exportBody = std::make_shared<Column>(0.0f);

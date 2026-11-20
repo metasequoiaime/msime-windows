@@ -516,6 +516,13 @@ void DictTableBody::SetOnAction(ActionHandler handler)
     onAction_ = std::move(handler);
 }
 
+void DictTableBody::SetReadOnly(bool readOnly)
+{
+    readOnly_ = readOnly;
+    hovered_ = pressed_ = {kNone, false};
+    InvalidateVisual();
+}
+
 float DictTableBody::RowHeight() const
 {
     return 13.0f + LineHeight(CellStyle()) + 13.0f + CssBorder();
@@ -577,6 +584,8 @@ void DictTableBody::Render(msimeui::DeviceResources &dr)
         }
         for (bool remove : {false, true})
         {
+            if (readOnly_)
+                break;
             const RectF action = ActionRect(r, remove);
             const bool hot = hovered_.first == r && hovered_.second == remove;
             D2D1_COLOR_F color = p.textMuted;
@@ -590,7 +599,7 @@ void DictTableBody::Render(msimeui::DeviceResources &dr)
 
 std::pair<size_t, bool> DictTableBody::HitAction(const PointF &point) const
 {
-    if (rows_.empty() || !Contains(bounds_, point))
+    if (readOnly_ || rows_.empty() || !Contains(bounds_, point))
         return {kNone, false};
     const size_t row = static_cast<size_t>((point.y - bounds_.y) / RowHeight());
     if (row >= rows_.size())
@@ -811,8 +820,12 @@ size_t OffsetAfterWrite(const std::string &action, size_t offset, ListOrder orde
 }
 
 DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
-    : context_(context), kind_(kind), dictionary_(kind == Kind::Quick ? "quick" : "quanpin"),
-      prefix_(kind == Kind::Quick ? "quick-" : "dict-")
+    : context_(context), kind_(kind), dictionary_(kind == Kind::Quick  ? "quick"
+                                                  : kind == Kind::Cell ? "cells"
+                                                                       : "quanpin"),
+      prefix_(kind == Kind::Quick  ? "quick-"
+              : kind == Kind::Cell ? "cell-"
+                                   : "dict-")
 {
     DictColumns columns;
     if (kind_ == Kind::Quick)
@@ -909,10 +922,13 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
         Query(offset_ + kPageSize, false);
     });
 
-    if (kind_ == Kind::Quick)
+    if (kind_ == Kind::Quick || kind_ == Kind::Cell)
     {
         header_->SetLabels(HeaderLabels());
         body_->SetEmpty(EmptyText());
+        body_->SetReadOnly(kind_ == Kind::Cell);
+        if (kind_ == Kind::Cell)
+            hint_->SetText(L"词条按来源独立保存，不会混入个人用户词库；停用后保留词条，随时可以重新启用");
         SyncPager();
     }
     else
@@ -933,20 +949,24 @@ void DictionaryPanel::AddTo(Column &column)
         if (const auto panel = weak.lock())
             panel->EnsureLoaded();
     });
-    auto toolbar = std::make_shared<Row>(10.0f);
-    // .dict-toolbar { padding: 20px 22px 10px }
-    toolbar->SetPadding({22.0f, 20.0f, 22.0f, 10.0f});
-    toolbar->Add(search_, 1.0f);
-    auto searchButton = std::make_shared<Button>(L"查询", ButtonKind::Neutral);
-    searchButton->SetOnClick([this]() { Query(0, true); });
-    auto importButton = std::make_shared<Button>(L"批量导入", ButtonKind::Neutral);
-    importButton->SetOnClick([this]() { Import("import"); });
-    auto addButton = std::make_shared<Button>(kind_ == Kind::Quick ? L"新增短语" : L"新增词条", ButtonKind::Primary);
-    addButton->SetOnClick([this]() { OpenDialog(nullptr); });
-    toolbar->Add(searchButton);
-    toolbar->Add(importButton);
-    toolbar->Add(addButton);
-    column.Add(toolbar);
+    if (kind_ != Kind::Cell)
+    {
+        auto toolbar = std::make_shared<Row>(10.0f);
+        // .dict-toolbar { padding: 20px 22px 10px }
+        toolbar->SetPadding({22.0f, 20.0f, 22.0f, 10.0f});
+        toolbar->Add(search_, 1.0f);
+        auto searchButton = std::make_shared<Button>(L"查询", ButtonKind::Neutral);
+        searchButton->SetOnClick([this]() { Query(0, true); });
+        auto importButton = std::make_shared<Button>(L"批量导入", ButtonKind::Neutral);
+        importButton->SetOnClick([this]() { Import("import"); });
+        auto addButton =
+            std::make_shared<Button>(kind_ == Kind::Quick ? L"新增短语" : L"新增词条", ButtonKind::Primary);
+        addButton->SetOnClick([this]() { OpenDialog(nullptr); });
+        toolbar->Add(searchButton);
+        toolbar->Add(importButton);
+        toolbar->Add(addButton);
+        column.Add(toolbar);
+    }
     column.Add(hint_);
     column.Add(header_);
     column.Add(scroll_);
@@ -966,13 +986,16 @@ void DictionaryPanel::EnsureLoaded()
     if (loaded_)
         return;
     loaded_ = true;
-    PostQuery(0);
+    if (kind_ != Kind::Cell || !sourceId_.empty())
+        PostQuery(0);
 }
 
 std::array<std::wstring, 4> DictionaryPanel::HeaderLabels() const
 {
     if (kind_ == Kind::Quick)
         return {L"编码", L"快捷短语", L"权重", L"操作"};
+    if (kind_ == Kind::Cell)
+        return {L"读音", L"词条", L"权重", L""};
     if (dictionary_ == "english")
         return {L"单词", L"显示内容", L"权重", L"操作"};
     if (dictionary_ == "latin")
@@ -1024,6 +1047,26 @@ void DictionaryPanel::SetDictionary(const std::string &dictionary)
     }
 }
 
+void DictionaryPanel::SetSourceId(const std::string &sourceId)
+{
+    if (kind_ != Kind::Cell || sourceId_ == sourceId)
+        return;
+    sourceId_ = sourceId;
+    offset_ = 0;
+    rows_.clear();
+    if (sourceId_.empty())
+    {
+        body_->SetEmpty(L"还没有导入细胞词库");
+        status_->SetText(L"没有结果");
+        hasMore_ = false;
+        SyncPager();
+    }
+    else if (loaded_)
+    {
+        PostQuery(0);
+    }
+}
+
 void DictionaryPanel::SetOnModeChanged(std::function<void()> handler)
 {
     onModeChanged_ = std::move(handler);
@@ -1060,6 +1103,8 @@ void DictionaryPanel::Query(size_t offset, bool fromInput)
 void DictionaryPanel::PostQuery(size_t offset)
 {
     Json data = {{"offset", offset}, {"limit", kPageSize}};
+    if (kind_ == Kind::Cell)
+        data["sourceId"] = sourceId_;
     const bool user_entries = kind_ == Kind::Dictionary && lastQuery_.empty();
     if (user_entries)
         data["scope"] = "user";
@@ -1114,7 +1159,7 @@ void DictionaryPanel::Import(const std::string &action)
     Post(action, {{"dictionary", target}, {"content", Narrow(*content)}});
 }
 
-void DictionaryPanel::ImportForeign(const std::string &format)
+void DictionaryPanel::ImportForeign(const std::string &format, const std::string &name)
 {
     const ForeignDictionary::Format *info = ForeignDictionary::FindFormat(format);
     if (!info)
@@ -1149,7 +1194,10 @@ void DictionaryPanel::ImportForeign(const std::string &format)
 
     // 大词库要读、解析、逐条校验写库，几十万条得十几秒，先告诉用户在做了。
     context_.host.ShowToast(L"正在导入词库，请稍候", true);
-    Post("importForeign", {{"dictionary", "quanpin"}, {"format", format}, {"path", Narrow(selected)}});
+    Json data = {{"dictionary", "quanpin"}, {"format", format}, {"path", Narrow(selected)}};
+    if (!name.empty())
+        data["name"] = name;
+    Post("importForeign", std::move(data));
 }
 
 void DictionaryPanel::Export(const std::string &dictionary)
@@ -1267,6 +1315,8 @@ void DictionaryPanel::SaveDialog()
 
 std::wstring DictionaryPanel::EmptyText() const
 {
+    if (kind_ == Kind::Cell)
+        return sourceId_.empty() ? L"还没有导入细胞词库" : L"这个词库没有词条";
     if (!lastQuery_.empty())
         return kind_ == Kind::Quick ? L"没有找到快捷短语" : L"没有找到词条";
     return kind_ == Kind::Quick ? L"还没有快捷短语，可用「新增短语」添加" : L"还没有添加过词条，可用「新增词条」添加";
