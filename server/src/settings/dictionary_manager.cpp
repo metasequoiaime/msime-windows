@@ -2352,13 +2352,17 @@ bool ApplySourcePinyinRow(sqlite3 *db, const std::string &key, const std::string
                                      "ON CONFLICT(key,value) DO NOTHING"
                                : "DELETE FROM \"" + table + "\" WHERE key=?1 AND value=?2",
                         error);
-    if (!stmt || !BindText(stmt.get(), 1, key) || !BindText(stmt.get(), 2, value))
+    if (!stmt || !BindText(stmt.get(), 1, key))
         return false;
     if (upsert)
     {
-        if (!BindText(stmt.get(), 3, quanpin::segments_to_jianpin(quanpin::split_segments(key))) ||
-            sqlite3_bind_int64(stmt.get(), 4, weight) != SQLITE_OK)
+        if (!BindText(stmt.get(), 2, quanpin::segments_to_jianpin(quanpin::split_segments(key))) ||
+            !BindText(stmt.get(), 3, value) || sqlite3_bind_int64(stmt.get(), 4, weight) != SQLITE_OK)
             return false;
+    }
+    else if (!BindText(stmt.get(), 2, value))
+    {
+        return false;
     }
     if (sqlite3_step(stmt.get()) != SQLITE_DONE)
     {
