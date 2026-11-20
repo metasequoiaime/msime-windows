@@ -1,4 +1,5 @@
 #include "settings/native/native_settings_pages.h"
+#include "settings/native/native_page_skin_common.h"
 #include "tests/includes/settings_window_harness.h"
 #include "tests/includes/test_framework.h"
 
@@ -83,4 +84,90 @@ TEST_CASE(BuildingEverySettingsPageSendsNoMessage)
             joined += (joined.empty() ? "" : "; ") + offender;
         throw std::runtime_error(joined);
     }
+}
+
+// The skin page is a list of cards, and a card is one button: the title and the preview are
+// part of it, so a press anywhere selects the skin. Left as a plain panel, the press would
+// land on a label inside it and the card would never see it.
+TEST_CASE(SettingsSkinCardIsOneClickTarget)
+{
+    msimeui::Window window(L"settings-window-test", L"", 200, 200);
+    auto card = std::make_shared<native_settings::skinpreview::PickCard>();
+    card->Add(std::make_shared<native_settings::Label>(L"标题", native_settings::SectionTitleStyle()));
+    card->Attach(&window);
+    card->MeasureInLayout({200.0f, 100.0f});
+    card->ArrangeInLayout({0.0f, 0.0f, 200.0f, 100.0f});
+
+    int activations = 0;
+    card->SetOnActivate([&activations]() { ++activations; });
+
+    REQUIRE(card->FindVisualAt({5.0f, 5.0f}) == card.get());
+    REQUIRE(card->FindVisualAt({250.0f, 5.0f}) == nullptr);
+
+    const POINT inside{10, 10};
+    const POINT outside{250, 10};
+    REQUIRE(card->OnMouseDown(inside, 0));
+    REQUIRE(card->OnMouseUp(inside, 0));
+    REQUIRE_EQ(activations, 1);
+    // Releasing outside the card cancels the press, like every other button here.
+    REQUIRE(card->OnMouseDown(inside, 0));
+    REQUIRE(card->OnMouseUp(outside, 0));
+    REQUIRE_EQ(activations, 1);
+    REQUIRE(card->OnKeyDown(VK_RETURN, 0));
+    REQUIRE(card->OnKeyDown(VK_SPACE, 0));
+    REQUIRE(!card->OnKeyDown(VK_ESCAPE, 0));
+    REQUIRE_EQ(activations, 3);
+
+    // A skin the current layout cannot use takes no input and leaves the tab order.
+    card->SetSelectable(false);
+    REQUIRE(!card->IsFocusable());
+    REQUIRE(!card->OnMouseDown(inside, 0));
+    REQUIRE(!card->OnKeyDown(VK_RETURN, 0));
+    REQUIRE_EQ(activations, 3);
+}
+
+// Clicking a card posts the skin it shows, not the one above or below it. Cards are found by
+// walking the page, because what matters is that the whole card answers, wherever it is.
+TEST_CASE(SettingsSkinPageSwitchesSkinFromTheCard)
+{
+    SettingsWindowHarness window(96.0f, {800.0f, 1400.0f});
+    NullHost host(window.Window());
+    std::vector<std::string> sent;
+    SettingsModel model([&sent](const std::string &message) { sent.push_back(message); });
+    PageContext context(model, host);
+    model.Receive(native_settings::Json{{"type", "configSnapshot"},
+                                        {"data",
+                                         {{"appearance",
+                                           {{"candidate_skin", "fluent"},
+                                            {"external_candidate_skins", native_settings::Json::array()},
+                                            {"candidate_skin_catalog_scanned", true},
+                                            {"candidate_skin_directory", "C:\\skins"}}}}}}
+                      .dump());
+
+    const VisualPtr page = native_settings::BuildSkinPage(context);
+    window.SetRoot(page);
+    sent.clear();
+
+    std::vector<native_settings::skinpreview::PickCard *> cards;
+    for (float y = 0.0f; y < 1400.0f; y += 4.0f)
+    {
+        auto *card = dynamic_cast<native_settings::skinpreview::PickCard *>(window.VisualAt(300.0f, y));
+        if (card && (cards.empty() || cards.back() != card))
+            cards.push_back(card);
+    }
+    REQUIRE(cards.size() >= 2);
+
+    const msimeui::RectF bounds = cards[1]->GetBounds();
+    window.Click(300.0f, bounds.y + 8.0f);
+
+    std::string picked;
+    for (const std::string &raw : sent)
+    {
+        const native_settings::Json message = native_settings::Json::parse(raw, nullptr, false);
+        if (message.is_object() && message.value("type", std::string()) == "configUpdate")
+            picked = message["data"].value("value", std::string());
+    }
+    REQUIRE_EQ(picked, std::string("wechat"));
+    REQUIRE(cards[1]->IsActive());
+    REQUIRE(!cards[0]->IsActive());
 }
