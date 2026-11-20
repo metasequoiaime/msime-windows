@@ -229,6 +229,46 @@ bool BindText(sqlite3_stmt *stmt, int index, const std::string &value)
     return sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK;
 }
 
+int64_t CountRows(sqlite3 *db, const std::string &from_where, const std::vector<std::string> &bindings,
+                  std::string &error)
+{
+    Stmt stmt = Prepare(db, "SELECT COUNT(*) " + from_where, error);
+    if (!stmt)
+        return -1;
+    for (size_t index = 0; index < bindings.size(); ++index)
+    {
+        if (!BindText(stmt.get(), static_cast<int>(index + 1), bindings[index]))
+        {
+            error = sqlite3_errmsg(db);
+            return -1;
+        }
+    }
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW)
+    {
+        error = sqlite3_errmsg(db);
+        return -1;
+    }
+    return sqlite3_column_int64(stmt.get(), 0);
+}
+
+// 数据查询保持 ORDER BY … LIMIT，总数用相同 FROM/WHERE 单独 COUNT；
+// 且只在新搜索的第一页统计，后续翻页由设置页缓存第一页的 total。
+// 之前的 COUNT(*) OVER() 会让 SQLite 每次翻页都先取出并排好全部匹配行。
+std::optional<int64_t> PageTotal(sqlite3 *db, const std::string &from_where, const std::vector<std::string> &bindings,
+                                 const json::object &request, std::string &error, bool &ok)
+{
+    ok = true;
+    if (!Paging::WantsTotal(request))
+        return std::nullopt;
+    const int64_t total = CountRows(db, from_where, bindings, error);
+    if (total < 0)
+    {
+        ok = false;
+        return std::nullopt;
+    }
+    return total;
+}
+
 std::string SanitizeExportField(std::string value)
 {
     std::replace(value.begin(), value.end(), '\t', ' ');
@@ -376,6 +416,7 @@ json::object QueryUserEntries(const std::string &dictionary, const json::object 
         json::object empty = Result(true, "没有找到词条");
         empty["hasMore"] = false;
         empty["offset"] = Paging::Integer(request, "offset", 0, 2147483647);
+        empty["total"] = 0;
         return empty;
     }
     if (!user_dictionary::ensure_user_database(path))
@@ -387,21 +428,22 @@ json::object QueryUserEntries(const std::string &dictionary, const json::object 
         return Result(false, "打开用户词库失败：" + error);
 
     Stmt stmt;
-    if (latin)
-        stmt = Prepare(db.get(),
-                       "SELECT key,value,weight FROM user_latin_words ORDER BY updated_at DESC,key,value" +
-                           Paging::Sql(request),
-                       error);
-    else
-        stmt = Prepare(db.get(),
-                       "SELECT key,value,weight FROM user_dictionary_operations WHERE dictionary=?1 AND "
-                       "operation='upsert' AND (user_inserted=1 OR weight_edited=1) "
-                       "ORDER BY updated_at DESC,key,value" +
-                           Paging::Sql(request),
-                       error);
+    const std::string from_where =
+        latin ? "FROM user_latin_words"
+              : "FROM user_dictionary_operations WHERE dictionary=?1 AND operation='upsert' AND "
+                "(user_inserted=1 OR weight_edited=1)";
+    const std::vector<std::string> bindings =
+        latin ? std::vector<std::string>{} : std::vector<std::string>{journal_kind};
+    bool total_ok = true;
+    const std::optional<int64_t> total = PageTotal(db.get(), from_where, bindings, request, error, total_ok);
+    if (!total_ok)
+        return Result(false, "查询用户词库失败：" + error);
+    stmt = Prepare(
+        db.get(),
+        "SELECT key,value,weight " + from_where + " ORDER BY updated_at DESC,key,value" + Paging::Sql(request), error);
     if (!stmt || (!latin && !BindText(stmt.get(), 1, journal_kind)))
         return Result(false, "查询用户词库失败：" + error);
-    return Paging::Read(stmt.get(), request, dictionary == "english");
+    return Paging::Read(stmt.get(), request, dictionary == "english", total);
 }
 
 bool NormalizePinyin(const std::string &mode, const std::string &input, quanpin::Segments &segments,
@@ -471,13 +513,17 @@ json::object QueryChinese(const std::string &mode, const std::string &search, co
     if (!normalized.empty())
     {
         const std::string table = quanpin::build_table_name(segments);
-        Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM \"" + table + "\" WHERE key=?1 ORDER BY weight DESC,value" +
-                                Paging::Sql(request),
-                            error);
+        const std::string from_where = "FROM \"" + table + "\" WHERE key=?1";
+        bool total_ok = true;
+        const std::optional<int64_t> total = PageTotal(db.get(), from_where, {normalized}, request, error, total_ok);
+        if (!total_ok)
+            return Result(false, "查询失败：" + error);
+        Stmt stmt = Prepare(
+            db.get(), "SELECT key,value,weight " + from_where + " ORDER BY weight DESC,value" + Paging::Sql(request),
+            error);
         if (!stmt || !BindText(stmt.get(), 1, normalized))
             return Result(false, "查询失败：" + error);
-        return Paging::Read(stmt.get(), request);
+        return Paging::Read(stmt.get(), request, false, total);
     }
     json::object result = Result(true, rows.empty() ? "没有找到词条" : "查询成功");
     result["rows"] = std::move(rows);
@@ -885,21 +931,27 @@ json::object QueryLatin(const json::object &request)
         json::object result = Result(true, "没有找到词条");
         result["hasMore"] = false;
         result["offset"] = 0;
+        result["total"] = 0;
         return result;
     }
     exists.reset();
     std::string upper = code;
     ++upper.back(); // 只有 a-z，加一就是前缀的上界
+    const std::string from_where = "FROM latin_words WHERE replace(\"key\",'''','')>=?1 AND "
+                                   "replace(\"key\",'''','')<?2";
+    bool total_ok = true;
+    const std::optional<int64_t> total = PageTotal(db.get(), from_where, {code, upper}, request, error, total_ok);
+    if (!total_ok)
+        return Result(false, "查询失败：" + error);
     Stmt stmt = Prepare(db.get(),
-                        "SELECT \"key\",\"value\",\"weight\" FROM latin_words "
-                        "WHERE replace(\"key\",'''','')>=?1 AND replace(\"key\",'''','')<?2 "
-                        "ORDER BY CASE WHEN replace(\"key\",'''','')=?1 THEN 0 ELSE 1 END,\"weight\" DESC,\"key\","
-                        "\"value\"" +
+                        "SELECT \"key\",\"value\",\"weight\" " + from_where +
+                            " ORDER BY CASE WHEN replace(\"key\",'''','')=?1 THEN 0 ELSE 1 END,\"weight\" DESC,\"key\","
+                            "\"value\"" +
                             Paging::Sql(request),
                         error);
     if (!stmt || !BindText(stmt.get(), 1, code) || !BindText(stmt.get(), 2, upper))
         return Result(false, "查询失败：" + error);
-    return Paging::Read(stmt.get(), request);
+    return Paging::Read(stmt.get(), request, false, total);
 }
 
 json::object MutateLatin(const json::object &request)
@@ -1593,15 +1645,21 @@ json::object HandleEnglish(const json::object &request)
             return Result(false, "请输入英文单词前缀");
         std::string upper = word;
         ++upper.back(); // ASCII prefix upper bound, compatible with the BINARY primary key.
+        const std::string from_where = "FROM english_words WHERE word>=?1 AND word<?3";
+        bool total_ok = true;
+        const std::optional<int64_t> total =
+            PageTotal(db.get(), from_where, {word, word, upper}, request, error, total_ok);
+        if (!total_ok)
+            return Result(false, "查询失败：" + error);
         Stmt stmt = Prepare(db.get(),
-                            "SELECT word,display,weight FROM english_words WHERE word>=?1 AND word<?3 "
-                            "ORDER BY CASE WHEN word=?2 THEN 0 ELSE 1 END,weight DESC,length(word),word,display" +
+                            "SELECT word,display,weight " + from_where +
+                                " ORDER BY CASE WHEN word=?2 THEN 0 ELSE 1 END,weight DESC,length(word),word,display" +
                                 Paging::Sql(request),
                             error);
         if (!stmt || !BindText(stmt.get(), 1, word) || !BindText(stmt.get(), 2, word) ||
             !BindText(stmt.get(), 3, upper))
             return Result(false, "查询失败：" + error);
-        return Paging::Read(stmt.get(), request, true);
+        return Paging::Read(stmt.get(), request, true, total);
     }
 
     if (!IsAsciiWord(word) || display.empty())
@@ -1774,13 +1832,17 @@ json::object HandleWubi(const json::object &request, const WubiTable &wubi)
         if (code.empty() ||
             !std::all_of(code.begin(), code.end(), [](unsigned char ch) { return ch >= 'a' && ch <= 'z'; }))
             return Result(false, "请输入合法的五笔编码");
-        Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM " + table +
-                                " WHERE key LIKE ?1 ORDER BY weight DESC,key,value" + Paging::Sql(request),
-                            error);
+        const std::string from_where = "FROM " + table + " WHERE key LIKE ?1";
+        bool total_ok = true;
+        const std::optional<int64_t> total = PageTotal(db.get(), from_where, {code + "%"}, request, error, total_ok);
+        if (!total_ok)
+            return Result(false, "查询失败：" + error);
+        Stmt stmt = Prepare(
+            db.get(),
+            "SELECT key,value,weight " + from_where + " ORDER BY weight DESC,key,value" + Paging::Sql(request), error);
         if (!stmt || !BindText(stmt.get(), 1, code + "%"))
             return Result(false, "查询失败：" + error);
-        return Paging::Read(stmt.get(), request);
+        return Paging::Read(stmt.get(), request, false, total);
     }
     if (code.empty() || word.empty() ||
         !std::all_of(code.begin(), code.end(), [](unsigned char ch) { return ch >= 'a' && ch <= 'z'; }))
@@ -2010,14 +2072,18 @@ json::object HandleQuickPhrase(const json::object &request)
             return Result(false, "编码只能包含英文字母");
         // 默认按编码前缀查；精确匹配只认编码完全相同的行。编码留空时两种方式都列出全部。
         const bool exact = !code.empty() && StringValue(request, "match") == "exact";
-        Stmt stmt = Prepare(db.get(),
-                            std::string("SELECT key,value,weight FROM quick_parases WHERE ") +
-                                (exact ? "key = ?1 " : "key LIKE ?1 ") + "ORDER BY weight DESC,key,value" +
-                                Paging::Sql(request),
-                            error);
+        const std::string from_where = std::string("FROM quick_parases WHERE ") + (exact ? "key = ?1" : "key LIKE ?1");
+        bool total_ok = true;
+        const std::optional<int64_t> total =
+            PageTotal(db.get(), from_where, {exact ? code : code + "%"}, request, error, total_ok);
+        if (!total_ok)
+            return Result(false, "查询失败：" + error);
+        Stmt stmt = Prepare(
+            db.get(),
+            "SELECT key,value,weight " + from_where + " ORDER BY weight DESC,key,value" + Paging::Sql(request), error);
         if (!stmt || !BindText(stmt.get(), 1, exact ? code : code + "%"))
             return Result(false, "查询失败：" + error);
-        return Paging::Read(stmt.get(), request);
+        return Paging::Read(stmt.get(), request, false, total);
     }
 
     if (action == "create" || action == "update")

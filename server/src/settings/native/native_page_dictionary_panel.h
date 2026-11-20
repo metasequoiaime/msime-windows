@@ -190,6 +190,8 @@ enum class ListOrder
     ByWeight,
 };
 size_t OffsetAfterWrite(const std::string &action, size_t offset, ListOrder order);
+size_t LastPageOffset(size_t total, size_t pageSize);
+std::wstring PageStatus(size_t offset, size_t count, size_t total);
 
 // 五笔标签页的词库 id 跟随配置 input.wubi_schema：wubi86 → "wubi"（沿用原来的 id），wubi98 → "wubi98"，
 // wubixsj → "wubixsj"；不认识的值按 86。
@@ -271,6 +273,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
 
     // Pager state (utils/dictionary-pagination.ts).
     size_t offset_ = 0;
+    size_t total_ = 0;
     bool hasMore_ = false;
     bool loading_ = false;
     bool loaded_ = false;
@@ -292,8 +295,10 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     std::shared_ptr<DictTableBody> body_;
     std::shared_ptr<DictTableScroll> scroll_;
     std::shared_ptr<Label> status_;
+    std::shared_ptr<Button> first_;
     std::shared_ptr<Button> previous_;
     std::shared_ptr<Button> next_;
+    std::shared_ptr<Button> last_;
     std::function<void()> onModeChanged_;
 };
 } // namespace native_settings

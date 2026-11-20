@@ -810,6 +810,18 @@ size_t OffsetAfterWrite(const std::string &action, size_t offset, ListOrder orde
     return offset;
 }
 
+size_t LastPageOffset(size_t total, size_t pageSize)
+{
+    return total > 0 && pageSize > 0 ? ((total - 1) / pageSize) * pageSize : 0;
+}
+
+std::wstring PageStatus(size_t offset, size_t count, size_t total)
+{
+    return count ? L"第 " + std::to_wstring(offset + 1) + L"–" + std::to_wstring(offset + count) + L" 条，共计 " +
+                       std::to_wstring(total) + L" 条"
+                 : L"没有结果，共计 " + std::to_wstring(total) + L" 条";
+}
+
 DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     : context_(context), kind_(kind), dictionary_(kind == Kind::Quick ? "quick" : "quanpin"),
       prefix_(kind == Kind::Quick ? "quick-" : "dict-")
@@ -898,8 +910,14 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     TextStyle status;
     status.size = kFontDefault;
     status_ = std::make_shared<Label>(L"", status);
+    first_ = std::make_shared<Button>(L"首页", ButtonKind::Neutral);
     previous_ = std::make_shared<Button>(L"上一页", ButtonKind::Neutral);
     next_ = std::make_shared<Button>(L"下一页", ButtonKind::Neutral);
+    last_ = std::make_shared<Button>(L"末页", ButtonKind::Neutral);
+    first_->SetOnClick([this]() {
+        scroll_->ScrollToTop();
+        Query(0, false);
+    });
     previous_->SetOnClick([this]() {
         scroll_->ScrollToTop();
         Query(PreviousPageOffset(offset_), false);
@@ -907,6 +925,10 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     next_->SetOnClick([this]() {
         scroll_->ScrollToTop();
         Query(offset_ + kPageSize, false);
+    });
+    last_->SetOnClick([this]() {
+        scroll_->ScrollToTop();
+        Query(LastPageOffset(total_, kPageSize), false);
     });
 
     if (kind_ == Kind::Quick)
@@ -956,8 +978,10 @@ void DictionaryPanel::AddTo(Column &column)
     pager->SetPadding({18.0f, 0.0f, 18.0f, 0.0f});
     pager->SetMargin({0.0f, 12.0f, 0.0f, 12.0f});
     pager->Add(status_, 1.0f);
+    pager->Add(first_);
     pager->Add(previous_);
     pager->Add(next_);
+    pager->Add(last_);
     column.Add(pager);
 }
 
@@ -986,6 +1010,7 @@ void DictionaryPanel::SetDictionary(const std::string &dictionary)
     latestQueryId_.clear();
     lastQuery_.clear();
     offset_ = 0;
+    total_ = 0;
     hasMore_ = false;
     loading_ = false;
     status_->SetText(L"");
@@ -1089,8 +1114,10 @@ void DictionaryPanel::RefreshQuery(const std::string &action)
 
 void DictionaryPanel::SyncPager()
 {
+    first_->SetDisabled(loading_ || offset_ == 0);
     previous_->SetDisabled(loading_ || offset_ == 0);
     next_->SetDisabled(loading_ || !hasMore_);
+    last_->SetDisabled(loading_ || !hasMore_);
 }
 
 void DictionaryPanel::Import(const std::string &action)
@@ -1324,13 +1351,18 @@ void DictionaryPanel::OnResponse(const Json &message)
                 return;
             }
             offset_ = start;
+            // 总数只在第一页由服务端统计，翻页响应不带 total，保留缓存值。
+            if (message.contains("total") && message["total"].is_number_integer())
+                total_ = static_cast<size_t>(message["total"].get<int64_t>());
+            else if (start == 0)
+                total_ = start + count;
             hasMore_ = message.value("hasMore", false);
-            status_->SetText(count ? L"第 " + std::to_wstring(start + 1) + L"–" + std::to_wstring(start + count) +
-                                         L" 条" + (hasMore_ ? L"，后面还有结果" : L"")
-                                   : L"没有结果");
+            status_->SetText(PageStatus(start, count, total_));
         }
         else
         {
+            total_ = 0;
+            hasMore_ = false;
             status_->SetText(L"查询失败，请重试");
         }
         SyncPager();

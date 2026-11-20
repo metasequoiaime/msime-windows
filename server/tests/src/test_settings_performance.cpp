@@ -3,6 +3,7 @@
 #include "settings/serial_task_queue.h"
 #include <chrono>
 #include <future>
+#include <optional>
 #include <set>
 
 TEST_CASE(settings_worker_preserves_order_and_drains_on_close)
@@ -92,16 +93,29 @@ TEST_CASE(dictionary_pages_cover_ties_without_duplicates_or_unbounded_results)
     for (int offset : {0, 100, 200})
     {
         json::object request{{"offset", offset}, {"limit", 100}};
+        std::optional<int64_t> total;
+        if (SettingsDictionary::Paging::WantsTotal(request))
+        {
+            sqlite3_stmt *count = nullptr;
+            REQUIRE(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM words", -1, &count, nullptr) == SQLITE_OK);
+            REQUIRE(sqlite3_step(count) == SQLITE_ROW);
+            total = sqlite3_column_int64(count, 0);
+            sqlite3_finalize(count);
+        }
         const auto sql = "SELECT code,word,weight FROM words ORDER BY weight DESC,code,word" +
                          SettingsDictionary::Paging::Sql(request);
         sqlite3_stmt *stmt = nullptr;
         REQUIRE(sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK);
-        auto result = SettingsDictionary::Paging::Read(stmt, request);
+        auto result = SettingsDictionary::Paging::Read(stmt, request, false, total);
         sqlite3_finalize(stmt);
         REQUIRE(result.at("ok").as_bool());
         REQUIRE_EQ(result.at("offset").as_int64(), offset);
         REQUIRE_EQ(result.at("hasMore").as_bool(), offset < 200);
         REQUIRE_EQ(result.at("rows").as_array().size(), offset < 200 ? size_t{100} : size_t{5});
+        if (offset == 0)
+            REQUIRE_EQ(result.at("total").as_int64(), 205);
+        else
+            REQUIRE(!result.contains("total"));
         for (const auto &row : result.at("rows").as_array())
             REQUIRE(seen.insert(json::value_to<std::string>(row.at("word"))).second);
     }

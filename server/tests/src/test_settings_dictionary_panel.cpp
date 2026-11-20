@@ -109,6 +109,32 @@ class PanelHarness
         return queries;
     }
 
+    native_settings::Button *FindButton(const std::wstring &text)
+    {
+        for (float y = 0; y < 1600; y += 6)
+            for (float x = 0; x < 800; x += 6)
+                if (auto *button = dynamic_cast<native_settings::Button *>(window_.VisualAt(x, y));
+                    button && button->Text() == text)
+                    return button;
+        return nullptr;
+    }
+
+    void Click(native_settings::Button *button)
+    {
+        const auto rect = button->GetBounds();
+        window_.Click(rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f);
+    }
+
+    bool HasLabel(const std::wstring &text)
+    {
+        for (float y = 0; y < 1600; y += 6)
+            for (float x = 0; x < 800; x += 6)
+                if (auto *label = dynamic_cast<native_settings::Label *>(window_.VisualAt(x, y));
+                    label && label->GetText() == text)
+                    return true;
+        return false;
+    }
+
     void Respond(const Json &request, Json fields)
     {
         Json message = {{"type", "dictionaryResponse"},
@@ -118,6 +144,7 @@ class PanelHarness
                         {"dictionary", request.at("dictionary")}};
         message.update(fields);
         model_.Receive(message.dump());
+        window_.Layout();
     }
 
   private:
@@ -130,16 +157,13 @@ class PanelHarness
     std::shared_ptr<Column> column_;
 };
 
-Json QueryPage(size_t offset, size_t rows, bool has_more)
+Json QueryPage(size_t offset, size_t rows, bool has_more, size_t total)
 {
     Json rows_json = Json::array();
     for (size_t i = 0; i < rows; ++i)
         rows_json.push_back({{"code", "ci" + std::to_string(i)}, {"word", "词" + std::to_string(i)}, {"weight", 10}});
-    return {{"ok", true},
-            {"message", "查询成功"},
-            {"rows", std::move(rows_json)},
-            {"offset", offset},
-            {"hasMore", has_more}};
+    return {{"ok", true},       {"message", "查询成功"}, {"rows", std::move(rows_json)},
+            {"offset", offset}, {"hasMore", has_more},   {"total", total}};
 }
 } // namespace
 
@@ -239,6 +263,83 @@ TEST_CASE(WritingTheUserListReturnsToTheFirstPage)
     REQUIRE_EQ(native_settings::OffsetAfterWrite("update", 200, ListOrder::ByWeight), size_t{200});
 }
 
+TEST_CASE(DictionaryPagerShowsTheTotalAndCalculatesTheLastPage)
+{
+    REQUIRE_EQ(native_settings::PageStatus(0, 100, 205), L"第 1–100 条，共计 205 条");
+    REQUIRE_EQ(native_settings::PageStatus(200, 5, 205), L"第 201–205 条，共计 205 条");
+    REQUIRE_EQ(native_settings::PageStatus(0, 0, 0), L"没有结果，共计 0 条");
+    REQUIRE_EQ(native_settings::LastPageOffset(0, 100), size_t{0});
+    REQUIRE_EQ(native_settings::LastPageOffset(100, 100), size_t{0});
+    REQUIRE_EQ(native_settings::LastPageOffset(101, 100), size_t{100});
+    REQUIRE_EQ(native_settings::LastPageOffset(200, 100), size_t{100});
+    REQUIRE_EQ(native_settings::LastPageOffset(205, 100), size_t{200});
+}
+
+TEST_CASE(DictionaryPagerClicksTheLastAndFirstPages)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 100, true, 205));
+
+    native_settings::Button *first = harness.FindButton(L"首页");
+    native_settings::Button *previous = harness.FindButton(L"上一页");
+    native_settings::Button *next = harness.FindButton(L"下一页");
+    native_settings::Button *last = harness.FindButton(L"末页");
+    REQUIRE(first != nullptr);
+    REQUIRE(previous != nullptr);
+    REQUIRE(next != nullptr);
+    REQUIRE(last != nullptr);
+    REQUIRE(first->IsDisabled());
+    REQUIRE(previous->IsDisabled());
+    REQUIRE(!next->IsDisabled());
+    REQUIRE(!last->IsDisabled());
+    REQUIRE(harness.HasLabel(L"第 1–100 条，共计 205 条"));
+
+    harness.Click(last);
+    auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    REQUIRE_EQ(queries.at(1).at("offset").get<size_t>(), size_t{200});
+    REQUIRE(last->IsDisabled());
+    harness.Respond(queries.at(1), QueryPage(200, 5, false, 205));
+    REQUIRE(!first->IsDisabled());
+    REQUIRE(!previous->IsDisabled());
+    REQUIRE(next->IsDisabled());
+    REQUIRE(last->IsDisabled());
+    REQUIRE(harness.HasLabel(L"第 201–205 条，共计 205 条"));
+
+    harness.Click(first);
+    queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{3});
+    REQUIRE_EQ(queries.at(2).at("offset").get<size_t>(), size_t{0});
+}
+
+// 查询失败不能沿用上一次的总数：末页按钮会按旧总数跳到与失败查询无关的偏移。
+TEST_CASE(DictionaryQueryFailureResetsThePager)
+{
+    PanelHarness harness(DictionaryPanel::Kind::Dictionary);
+    harness.Build();
+    harness.Show();
+    harness.Respond(harness.Queries().front(), QueryPage(0, 100, true, 205));
+
+    native_settings::Button *next = harness.FindButton(L"下一页");
+    native_settings::Button *last = harness.FindButton(L"末页");
+    native_settings::Button *search = harness.FindButton(L"查询");
+    REQUIRE(next != nullptr);
+    REQUIRE(last != nullptr);
+    REQUIRE(search != nullptr);
+    REQUIRE(!next->IsDisabled());
+    REQUIRE(!last->IsDisabled());
+
+    harness.Click(search);
+    const auto queries = harness.Queries();
+    REQUIRE_EQ(queries.size(), size_t{2});
+    harness.Respond(queries.at(1), {{"ok", false}, {"message", "查询失败"}});
+    REQUIRE(next->IsDisabled());
+    REQUIRE(last->IsDisabled());
+    REQUIRE(harness.HasLabel(L"查询失败，请重试"));
+}
+
 // 删掉最后一页仅剩的条目后，那一页会查成空页；停在空页上会误报「还没有添加过词条」。
 TEST_CASE(AnEmptiedPageStepsBackTowardsTheFirstPage)
 {
@@ -247,7 +348,7 @@ TEST_CASE(AnEmptiedPageStepsBackTowardsTheFirstPage)
     harness.Show();
     REQUIRE_EQ(harness.Queries().size(), size_t{1});
 
-    harness.Respond(harness.Queries().front(), QueryPage(200, 0, false));
+    harness.Respond(harness.Queries().front(), QueryPage(200, 0, false, 200));
     const auto queries = harness.Queries();
     REQUIRE_EQ(queries.size(), size_t{2});
     REQUIRE_EQ(queries.at(1).at("offset").get<size_t>(), size_t{100});
