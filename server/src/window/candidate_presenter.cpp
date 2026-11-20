@@ -13,6 +13,7 @@
 #include "window/candidate_menu_placement.h"
 #include "window/candidate_skin_overlay.h"
 #include "utils/common_utils.h"
+#include "utils/dr_dict_dock.h"
 #include "utils/dr_dict_lookup.h"
 #include "utils/ime_utils.h"
 #include "utils/window_utils.h"
@@ -333,6 +334,7 @@ void CandidatePresenter::ApplySkin()
 std::uint64_t CandidatePresenter::FillItemsFromUi()
 {
     const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
+    drDictDockWord_ = page->dr_dict_dock_word;
     std::vector<msimeui::CandidateList::Item> items;
     items.reserve(page->page_views.size());
     std::vector<CandidateSkinScene::PageWord> words;
@@ -346,7 +348,16 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
         item.text = words.back().text + words.back().badge;
         item.annotation = string_to_wstring(view.annotation);
         // 译文开关关着时工作线程不给候选填译文（见 PrepareCandidateTranslationRequest），这里有就画；
-        // 英文候选模式里高亮候选的音标与释义不受那个开关管，同样走这一栏。
+        // 音标（英文候选的不受译文开关管）画在译文前面，用词性那种次要色。
+        if (!view.phonetic.empty())
+        {
+            const std::wstring phonetic = L"/" + string_to_wstring(view.phonetic) + L"/";
+            item.translationRuns.push_back(
+                {0, static_cast<UINT32>(phonetic.size()), msimeui::CandidateList::TextRunRole::Secondary});
+            item.translation = phonetic;
+            if (!view.translation.empty())
+                item.translation += L"  ";
+        }
         if (!view.translation.empty())
         {
             // 逐段转成 UTF-16 再拼起来，区间按拼出来的串计。
@@ -977,6 +988,16 @@ void CandidatePresenter::PlaceAndShow(POINT caret, float widthDip, float heightD
         SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
     }
     SetCandidateHostCloaked(false);
+    // 英文候选模式：DR Dict 弹窗贴着卡片（不是带阴影留白的宿主窗口）的左右边停靠。
+    const RECT cardScreen{x + cardLeftPx, y + cardTopPx, x + cardLeftPx + cardWidthPx, y + cardTopPx + cardHeightPx};
+    if (drDictDockWord_.empty())
+    {
+        DrDictDock::Hide();
+    }
+    else
+    {
+        DrDictDock::Show(drDictDockWord_, cardScreen);
+    }
     // Acceptance trace for the RDP candidate-scale fix: which scale authority
     // won, and the system's own (potentially diverging) DPI values. Coordinates
     // and DPI only — never user input, per the diagnostic logging red lines.
@@ -1007,6 +1028,7 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // the show request so MoveCandidate / the settle timer can place it later.
     if (caret.y == Global::INVALID_Y)
     {
+        DrDictDock::Hide();
         CloseContextMenu(false);
         StopAnimationFrames();
         SetCandidateHostCloaked(true);
@@ -1221,6 +1243,7 @@ void CandidatePresenter::SetPinnedCardOrigin(const POINT *origin)
 
 void CandidatePresenter::Hide()
 {
+    DrDictDock::Hide();
     cardOriginPinned_ = false;
     if (!hwnd_)
     {

@@ -215,3 +215,20 @@ TEST_CASE(translation_display_first_synonym_cuts_dictionary_commas_outside_paren
     // Cloud sentences are passed without first_synonym and keep their punctuation.
     REQUIRE_EQ(FormatTranslationGlossForDisplay("Hello, world", true, true), std::string("Hello, world"));
 }
+
+TEST_CASE(chinese_to_english_phonetic_term_is_the_first_english_sense)
+{
+    using FanyImeIpc::TranslationPhoneticTerm;
+    // english.db 的中译英：去掉词性、截到第一个同义词。
+    REQUIRE(TranslationPhoneticTerm("n. apple; Malus pumila") == "apple");
+    REQUIRE(TranslationPhoneticTerm("v. teach, instruct; n. lesson") == "teach");
+    REQUIRE(TranslationPhoneticTerm("proper n. New York (city)") == "new york");
+    REQUIRE(TranslationPhoneticTerm("n. well-known  brand") == "well-known brand");
+    // 云端整句带标点、词太多或根本不是英语：不标。
+    REQUIRE(TranslationPhoneticTerm("How are you?").empty());
+    REQUIRE(TranslationPhoneticTerm("one two three four").empty());
+    REQUIRE(TranslationPhoneticTerm("pomme").size() == 5);
+    REQUIRE(TranslationPhoneticTerm("りんご").empty());
+    REQUIRE(TranslationPhoneticTerm("(note)").empty());
+    REQUIRE(TranslationPhoneticTerm("").empty());
+}

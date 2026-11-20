@@ -157,22 +157,36 @@ inline std::vector<WordItem> MergeEnglishPhrases(const std::string &prefix, std:
 }
 
 /**
- * 高亮英文候选下方显示的文字：「/音标/  释义」。DR Dict 给了摘要就用摘要，否则用词库释义；
- * 两样都没有时为空，候选窗不显示这一行。
+ * 一个小写英文词或短语的音标，lookup 查 english.db 的 en_ipa（由 CMUdict 转写，按单词存）。
+ * 整体查得到就用它；短语逐词查，每个词都有音标时用空格连起来，缺一个就不标，免得半截音标误导人。
+ * 词典里的音标与释义不进候选窗，由停靠在候选窗旁的 DR Dict 弹窗显示（见 utils/dr_dict_dock.h）。
  */
-inline std::string FormatDetail(const std::string &ipa, const std::string &gloss, const std::string &brief)
+template <class Lookup> std::string PhoneticOf(const std::string &term, Lookup &&lookup)
 {
-    const std::string &text = brief.empty() ? gloss : brief;
-    std::string result;
-    if (!ipa.empty())
-        result = "/" + ipa + "/";
-    if (!text.empty())
+    if (term.empty())
+        return {};
+    std::string whole = lookup(term);
+    if (!whole.empty() || term.find(' ') == std::string::npos)
+        return whole;
+    std::string joined;
+    size_t start = 0;
+    while (start < term.size())
     {
-        if (!result.empty())
-            result += "  ";
-        result += text;
+        size_t end = term.find(' ', start);
+        if (end == std::string::npos)
+            end = term.size();
+        if (end > start)
+        {
+            const std::string ipa = lookup(term.substr(start, end - start));
+            if (ipa.empty())
+                return {};
+            if (!joined.empty())
+                joined += ' ';
+            joined += ipa;
+        }
+        start = end + 1;
     }
-    return result;
+    return joined;
 }
 
 struct SpellingCandidate

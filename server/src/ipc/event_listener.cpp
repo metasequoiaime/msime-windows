@@ -82,7 +82,8 @@ namespace event_listener_detail
 {
 std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 std::string g_candidate_translation_signature;
-std::unordered_map<std::string, EnglishCandidateDetail> g_english_candidate_details;
+std::unordered_map<std::string, std::string> g_candidate_phonetics;
+std::string g_candidate_phonetics_request;
 
 // 副候选框：Ctrl+Enter 在高亮候选有多条译义时，把候选框整个换成那几条译义，让空格/
 // 数字键像选普通候选一样选一条上屏。输入串一个字都没动，所以退出这个子模式时把原来的
@@ -95,10 +96,29 @@ int g_translation_saved_page_index = 0;
 int g_translation_saved_selected_index = 0;
 bool g_translation_saved_selection_started = false;
 
+std::string TranslationTargetLanguage(EnglishIme::TranslationDirection direction)
+{
+    return direction == EnglishIme::TranslationDirection::EnglishToChinese
+               ? GetConfiguredTranslation()->english_target_language
+               : GetConfiguredTencentTmt().target_language;
+}
+
 std::string TranslationIdentity(const EnglishIme::TranslationQuery &query)
 {
-    return GetConfiguredTencentTmt().target_language + ":" +
+    return TranslationTargetLanguage(query.direction) + ":" +
            (query.direction == EnglishIme::TranslationDirection::EnglishToChinese ? "e:" : "z:") + query.key;
+}
+
+bool CandidateTranslationsEnabledFor(EnglishIme::TranslationDirection direction)
+{
+    return direction == EnglishIme::TranslationDirection::EnglishToChinese
+               ? GetConfiguredEnglishCandidateTranslationsEnabled()
+               : GetConfiguredCandidateTranslationsEnabled();
+}
+
+bool AnyCandidateTranslationsEnabled()
+{
+    return GetConfiguredCandidateTranslationsEnabled() || GetConfiguredEnglishCandidateTranslationsEnabled();
 }
 
 bool IsCandidateSubPageActive()

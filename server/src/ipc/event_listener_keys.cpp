@@ -832,7 +832,7 @@ void HandleTranslationCommitKey(uint64_t client_id, uint64_t activation_epoch, u
     // 而且这条回复既不上屏也不给 wch 补标点。
     Global::MsgTypeToTsf = Global::DataFromServerMsgType::NavigationIgnored;
     const bool japanese = g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji;
-    if (IsCandidateSubPageActive() || IsUiLessMode() || japanese || !GetConfiguredCandidateTranslationsEnabled() ||
+    if (IsCandidateSubPageActive() || IsUiLessMode() || japanese || !AnyCandidateTranslationsEnabled() ||
         Global::candidate_ui.items.empty())
     {
         SendCurrentDataToClient(client_id, activation_epoch, request_id);

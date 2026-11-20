@@ -245,3 +245,16 @@ TEST_CASE(ai_suggestion_badge_switches_between_robot_and_whale)
     ApplyFixedPositionBadge(both, true, "paperclip");
     REQUIRE_EQ(both.badge, std::string(" \xF0\x9F\x90\xB3 \xF0\x9F\x93\x8E"));
 }
+
+TEST_CASE(candidate_phonetic_is_drawn_before_the_translation)
+{
+    CandidateViewItem view;
+    view.text = "apple";
+    view.translation = "n. 苹果";
+    view.phonetic = "ˈæpl";
+    REQUIRE(CandidateViewHtml(view).find("<span class=\"cand-pos\">/ˈæpl/</span>  <span class=\"cand-translation\">") !=
+            std::string::npos);
+    // 只有音标、没有译文（英文候选的音标不依赖翻译开关）。
+    view.translation.clear();
+    REQUIRE_EQ(CandidateViewHtml(view), std::string("apple<span class=\"cand-pos\">/ˈæpl/</span>"));
+}

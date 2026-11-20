@@ -208,7 +208,27 @@ bool InsertTomlValuePreservingFormatting(std::string &text, const std::string &s
                                          const std::string &value)
 {
     const std::string section_header = "[" + section + "]";
-    const size_t section_begin = text.find(section_header);
+    // 只认独占一行的段头：注释里也会写「[translation].provider」，按子串找会把键插进别的段，
+    // 下次写入在真正的段里找不到它又插一遍，重复键让整份配置解析失败（设置页报「保存失败」）。
+    size_t section_begin = std::string::npos;
+    for (size_t line_begin = 0; line_begin < text.size();)
+    {
+        const size_t newline = text.find('\n', line_begin);
+        const size_t line_end = newline == std::string::npos ? text.size() : newline;
+        const std::string trimmed = Trim(text.substr(line_begin, line_end - line_begin));
+        if (trimmed.compare(0, section_header.size(), section_header) == 0)
+        {
+            const std::string rest = Trim(trimmed.substr(section_header.size()));
+            if (rest.empty() || rest.front() == '#')
+            {
+                section_begin = line_begin + text.substr(line_begin, line_end - line_begin).find('[');
+                break;
+            }
+        }
+        if (newline == std::string::npos)
+            break;
+        line_begin = newline + 1;
+    }
     if (section_begin == std::string::npos)
     {
         // 出厂模板不带全部设置段（如 [quanpin]），首次安装后第一次写这类键不能失败，
@@ -241,6 +261,18 @@ bool InsertTomlValuePreservingFormatting(std::string &text, const std::string &s
     else
     {
         ++insert_pos;
+        // 下一段前面那几行注释和空行是写给下一段的：新键放在它们之前，紧跟本段最后一个值。
+        while (insert_pos > section_line_end + 1)
+        {
+            const size_t previous_begin = text.rfind('\n', insert_pos - 2);
+            const size_t begin = previous_begin == std::string::npos ? 0 : previous_begin + 1;
+            if (begin <= section_line_end)
+                break;
+            const std::string trimmed = Trim(text.substr(begin, insert_pos - 1 - begin));
+            if (!trimmed.empty() && trimmed.front() != '#')
+                break;
+            insert_pos = begin;
+        }
     }
 
     text.insert(insert_pos, key + " = " + value + "\n");

@@ -2,10 +2,32 @@
 #define NOMINMAX
 #endif
 #include "config/ime_config.h"
+#include "src/config/ime_config_internal.h"
 #include "tests/includes/test_framework.h"
 #include <type_traits>
 #include <fstream>
 #include <iterator>
+
+TEST_CASE(config_write_inserts_missing_keys_under_the_real_section_header)
+{
+    // 注释里提到「[translation].provider」：按子串找段头会把新键插进 [association]，下一次写入在真正的
+    // [translation] 里找不到它又插一遍，重复键让配置解析失败（设置页报「保存失败」）。
+    std::string text =
+        "[association]\nsentence = true\n\n#\n# 实际生效方由 [translation].provider 决定。\n#\n"
+        "[tencent_tmt]\ntarget_language = \"en\"\n\n# 翻译服务\n[translation]\nprovider = \"bilibili\"\n\n"
+        "# 网络代理\n[network]\nproxy_mode = \"system\"\n";
+    using namespace ime_config_detail;
+    for (const char *value : {"\"ja\"", "\"fr\""})
+        if (!ReplaceTomlValuePreservingFormatting(text, "translation", "english_target_language", value))
+            REQUIRE(InsertTomlValuePreservingFormatting(text, "translation", "english_target_language", value));
+    const auto parsed = toml::parse(text);
+    REQUIRE(parsed["translation"]["english_target_language"].value_or(std::string()) == "fr");
+    REQUIRE(!parsed["association"]["english_target_language"]);
+    REQUIRE(!parsed["tencent_tmt"]["english_target_language"]);
+    // 新键紧跟本段最后一个值，不落在写给下一段的注释下面。
+    REQUIRE(text.find("provider = \"bilibili\"\nenglish_target_language = \"fr\"\n\n# 网络代理\n[network]") !=
+            std::string::npos);
+}
 
 TEST_CASE(font_fallback_upgrade_preserves_legacy_fonts_and_order)
 {
@@ -360,6 +382,57 @@ TEST_CASE(config_merge_lets_new_defaults_win_for_untouched_keys)
     // page_size 仍是旧默认值 -> 跟随新默认值；font_size 被用户改过 -> 保留。
     REQUIRE_EQ(MergeConfigIntoTemplate(template_text, user_text, baseline_text),
                "[appearance]\npage_size = 9\nfont_size = 20\n");
+}
+
+// 候选词翻译拆成中文、英文两个开关和两家服务，dr_dict.english_brief 换成 english_popup：老配置没有新键时
+// 跟着原来那个开关走。
+TEST_CASE(split_translation_settings_inherit_the_old_settings_on_upgrade)
+{
+    std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string installed((std::istreambuf_iterator<char>(input)), {});
+
+    const std::string translating =
+        "[general]\ncandidate_translations = true\n"
+        "candidate_translation_show_pos = false\ncandidate_translation_single_sense = true\n"
+        "[input]\nenglish_candidate_detail = true\n"
+        "[translation]\nprovider = \"niutrans\"\n"
+        "[dr_dict]\nenglish_brief = false\n";
+    const auto upgraded = toml::parse(MergeConfigIntoTemplate(installed, translating, ""));
+    // 英文候选的译文显示照抄中文那边；原来的「音标与释义」开着的，英文候选的音标也开着。
+    REQUIRE(!upgraded["general"]["english_candidate_translation_show_pos"].value_or(true));
+    REQUIRE(upgraded["general"]["english_candidate_translation_single_sense"].value_or(false));
+    REQUIRE(upgraded["general"]["english_candidate_phonetics"].value_or(false));
+    REQUIRE(!upgraded["general"]["candidate_translation_phonetics"].value_or(true));
+    REQUIRE(!upgraded["input"]["english_candidate_detail"]);
+    REQUIRE(upgraded["general"]["candidate_translations"].value_or(false));
+    REQUIRE(upgraded["general"]["english_candidate_translations"].value_or(false));
+    REQUIRE_EQ(upgraded["translation"]["english_target_language"].value_or(std::string()), std::string("zh"));
+    // 英文候选沿用原来那家服务，不被模板的新默认换掉。
+    REQUIRE_EQ(upgraded["translation"]["english_provider"].value_or(std::string()), std::string("niutrans"));
+    REQUIRE(!upgraded["dr_dict"]["english_popup"].value_or(true));
+    // 拆掉的键不再出现。
+    REQUIRE(!upgraded["dr_dict"]["english_brief"]);
+    REQUIRE(!upgraded["input"]["english_candidate_phonetic"]);
+
+    // 很老的配置没有 provider：两边都留空串，加载时一起按旧布尔推导。
+    const std::string legacy = "[general]\ncandidate_translations = true\n[niutrans]\nenabled = true\n";
+    const auto derived = toml::parse(MergeConfigIntoTemplate(installed, legacy, ""));
+    REQUIRE_EQ(derived["translation"]["provider"].value_or(std::string("x")), std::string());
+    REQUIRE_EQ(derived["translation"]["english_provider"].value_or(std::string("x")), std::string());
+
+    // 用户已经分别设过就不再继承。
+    const std::string split = "[general]\ncandidate_translations = true\nenglish_candidate_translations = false\n";
+    const auto kept = toml::parse(MergeConfigIntoTemplate(installed, split, ""));
+    REQUIRE(!kept["general"]["english_candidate_translations"].value_or(true));
+
+    // 新装（没有用户配置）用模板默认。
+    const auto fresh = toml::parse(MergeConfigIntoTemplate(installed, "", ""));
+    REQUIRE(!fresh["general"]["english_candidate_translations"].value_or(true));
+    REQUIRE(fresh["general"]["english_candidate_translation_show_pos"].value_or(false));
+    REQUIRE(!fresh["general"]["english_candidate_phonetics"].value_or(true));
+    REQUIRE_EQ(fresh["translation"]["english_provider"].value_or(std::string()), std::string("bilibili"));
+    REQUIRE(fresh["dr_dict"]["english_popup"].value_or(false));
 }
 
 // 0.10.0 把这些键的出厂值改成了新装用户的默认。从 0.9.5 升级上来、一直用着旧默认值的用户，升级后

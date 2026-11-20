@@ -60,8 +60,8 @@ void EnqueueEnglishCandidates(std::vector<WordItem> candidates, const std::strin
 void EnqueueCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation,
                                   bool merge = false);
 void EnqueueMixedCandidates(MixedCandidates::Result result, const std::string &input, uint64_t generation);
-// 英文候选模式高亮候选的音标与释义：from_dr_dict 为真时 gloss 是 DR Dict 的摘要，ipa 不用。任意线程调用。
-void EnqueueEnglishCandidateDetail(std::string word, std::string ipa, std::string gloss, bool from_dr_dict);
+// 候选旁的音标（english.db）查完了。任意线程调用。
+void EnqueueCandidatePhonetics(std::vector<EnglishIme::Phonetic> phonetics);
 void EnqueueCandidateUiAction(CandidateUiAction action, int one_based_index, int fixed_position = 0);
 // 鼠标开始操作当前显示的候选页时，通知工作线程保持这批候选的顺序。界面线程调用，只记下页面
 // 代次，由工作线程在处理下一个任务前认领（见 LatchCandidateUiInteraction）。

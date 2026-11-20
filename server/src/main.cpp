@@ -25,7 +25,7 @@
 #include "engine/local_modes/radical_query.h"
 #include "global/globals.h"
 #include "utils/common_utils.h"
-#include "utils/dr_dict_brief.h"
+#include "utils/dr_dict_dock.h"
 #include "utils/process_priority.h"
 #include "utils/single_instance.h"
 #include "session/session_factory.h"
@@ -211,14 +211,12 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
         [](std::vector<EnglishIme::TranslationResult> results, uint64_t generation) {
             FanyNamedPipe::EnqueueCandidateTranslations(std::move(results), generation);
         });
-    // 英文候选模式里高亮候选下方的音标与释义：词库一路，DR Dict 摘要一路（DR Dict 没运行时不会回）。
-    EnglishIme::SetDetailCallback([](EnglishIme::EnglishDetail detail) {
-        FanyNamedPipe::EnqueueEnglishCandidateDetail(std::move(detail.word), std::move(detail.ipa),
-                                                     std::move(detail.gloss), /*from_dr_dict=*/false);
+    // 候选旁的音标（english.db 的 en_ipa）。
+    EnglishIme::SetPhoneticsCallback([](std::vector<EnglishIme::Phonetic> phonetics) {
+        FanyNamedPipe::EnqueueCandidatePhonetics(std::move(phonetics));
     });
-    DrDictBrief::Start([](std::string word, std::string text) {
-        FanyNamedPipe::EnqueueEnglishCandidateDetail(std::move(word), {}, std::move(text), /*from_dr_dict=*/true);
-    });
+    // 英文候选模式里停靠在候选窗旁的 DR Dict 弹窗（词典里的音标与释义）。
+    DrDictDock::Start();
     CloudTranslation::Start(CommonUtils::get_ime_data_path() + "\\english.db",
                             [](std::vector<EnglishIme::TranslationResult> results, uint64_t generation) {
                                 FanyNamedPipe::EnqueueCandidateTranslations(std::move(results), generation, true);
@@ -263,7 +261,7 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
 
     FanyNamedPipe::RegisterStatusSnapshotWindow(nullptr);
 
-    DrDictBrief::Stop();
+    DrDictDock::Stop();
     EnglishIme::Stop();
     CloudTranslation::Stop();
     MixedCandidates::Stop();

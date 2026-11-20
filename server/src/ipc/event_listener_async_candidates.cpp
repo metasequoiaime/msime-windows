@@ -27,7 +27,6 @@
 #include "config/ime_config.h"
 #include "mixed/mixed_candidates.h"
 #include "utils/common_utils.h"
-#include "utils/dr_dict_brief.h"
 #include "log/candidate_diag_log.h"
 
 using namespace event_listener_detail;
@@ -380,71 +379,40 @@ std::string EnglishCandidateDetailKey(const WordItem &item)
                                  item.word);
 }
 
-bool EnglishCandidateDetailShown()
-{
-    return g_english_input_mode && GetConfiguredEnglishCandidateDetail() && !IsUiLessMode() &&
-           !IsCandidateSubPageActive();
-}
 } // namespace
 
-std::string EnglishCandidateDetailText(const WordItem &item)
+std::string DrDictDockWord(const WordItem &highlighted)
 {
-    if (!EnglishCandidateDetailShown())
+    // 只在英文候选模式、开了词典联动和停靠弹窗时；UILess 宿主自己画候选，没有可贴的候选窗。
+    if (!g_english_input_mode || !GetConfiguredDrDictEnglishPopup() || IsUiLessMode() || IsCandidateSubPageActive())
         return {};
-    const std::string key = EnglishCandidateDetailKey(item);
-    if (key.empty())
-        return {};
-    auto found = g_english_candidate_details.find(key);
-    if (found == g_english_candidate_details.end())
-    {
-        if (g_english_candidate_details.size() >= kMaxEnglishCandidateDetails)
-            g_english_candidate_details.clear();
-        found = g_english_candidate_details.emplace(key, EnglishCandidateDetail{}).first;
-    }
-    EnglishCandidateDetail &detail = found->second;
-    // 两边都只保留最后一次请求：高亮移得快时跳过的词还没有答复，下次高亮到它时再请求一次。
-    if (!detail.local_done)
-        EnglishIme::RequestDetail(key);
-    if (!detail.brief_done && GetConfiguredDrDictEnglishBrief())
-        DrDictBrief::Request(key);
-    return EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief);
+    return EnglishCandidateDetailKey(highlighted);
 }
 
-void ApplyEnglishCandidateDetail(const std::string &word, const std::string &ipa, const std::string &gloss,
-                                 bool from_dr_dict)
+void ApplyCandidatePhonetics(std::vector<EnglishIme::Phonetic> phonetics)
 {
-    auto found = g_english_candidate_details.find(word);
-    if (found == g_english_candidate_details.end())
-        return; // 缓存满了被清掉：下次组页会重新请求
-    EnglishCandidateDetail &detail = found->second;
-    const std::string before = EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief);
-    if (from_dr_dict)
+    // 这一批答复回来了，之后组页时还缺的（翻页、换词）可以再请求。
+    g_candidate_phonetics_request.clear();
+    bool found_any = false;
+    for (auto &phonetic : phonetics)
     {
-        detail.brief = gloss;
-        detail.brief_done = true;
+        if (g_candidate_phonetics.size() >= kMaxCandidatePhonetics &&
+            g_candidate_phonetics.find(phonetic.term) == g_candidate_phonetics.end())
+            g_candidate_phonetics.clear();
+        found_any = found_any || !phonetic.ipa.empty();
+        g_candidate_phonetics[std::move(phonetic.term)] = std::move(phonetic.ipa);
     }
-    else
-    {
-        detail.ipa = ipa;
-        detail.gloss = gloss;
-        detail.local_done = true;
-    }
-    if (!EnglishCandidateDetailShown() || g_inputSession == nullptr ||
-        EnglishIme::FormatDetail(detail.ipa, detail.gloss, detail.brief) == before)
-        return;
-    const auto &ui = Global::candidate_ui;
-    const int highlighted = ui.current_page_start() + ui.selected_index_in_page;
-    if (highlighted < 0 || static_cast<size_t>(highlighted) >= ui.items.size() ||
-        EnglishCandidateDetailKey(ui.items[static_cast<size_t>(highlighted)]) != word)
+    // 只请求过当前页缺的词，查到了就重组这一页把音标画上；一个都没有时画面不会变。
+    if (!found_any || g_inputSession == nullptr || Global::candidate_ui.items.empty() || IsUiLessMode() ||
+        IsCandidateSubPageActive())
         return;
     RefreshCandidatePageUiAsync();
-    PushUiLessCandidatesToOwner();
 }
 
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge)
 {
-    if (!EnglishIme::IsTranslationCurrent(generation) || !GetConfiguredCandidateTranslationsEnabled() ||
-        IsUiLessMode() || g_candidate_translation_signature.empty() || IsCandidateSubPageActive() ||
+    if (!EnglishIme::IsTranslationCurrent(generation) || !AnyCandidateTranslationsEnabled() || IsUiLessMode() ||
+        g_candidate_translation_signature.empty() || IsCandidateSubPageActive() ||
         (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji))
         return;
 

@@ -362,21 +362,6 @@ bool SetConfiguredEnglishCommitWithSpace(bool enabled)
     return true;
 }
 
-bool GetConfiguredEnglishCandidateDetail()
-{
-    return g_english_candidate_detail;
-}
-
-bool SetConfiguredEnglishCandidateDetail(bool enabled)
-{
-    if (!WriteConfiguredValue("input", "english_candidate_detail", enabled ? "true" : "false"))
-    {
-        return false;
-    }
-    g_english_candidate_detail = enabled;
-    return true;
-}
-
 const std::string &GetConfiguredShuangpinPreeditMode()
 {
     return g_shuangpin_preedit_mode;
