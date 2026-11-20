@@ -2463,7 +2463,18 @@ json::object SetDictionarySourceState(const json::object &request, bool remove)
     }
     Stmt latin_table =
         Prepare(db.get(), "SELECT 1 FROM sqlite_master WHERE type='table' AND name='latin_words'", error);
-    const bool has_latin_table = latin_table && sqlite3_step(latin_table.get()) == SQLITE_ROW;
+    if (!latin_table)
+    {
+        rollback();
+        return Result(false, "检查字母词表失败：" + error);
+    }
+    const int latin_table_status = sqlite3_step(latin_table.get());
+    if (latin_table_status != SQLITE_ROW && latin_table_status != SQLITE_DONE)
+    {
+        rollback();
+        return Result(false, "检查字母词表失败：" + std::string(sqlite3_errmsg(db.get())));
+    }
+    const bool has_latin_table = latin_table_status == SQLITE_ROW;
     latin_table.reset();
     if (has_latin_table && !enable)
     {
