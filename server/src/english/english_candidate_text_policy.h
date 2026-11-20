@@ -157,7 +157,7 @@ inline std::vector<WordItem> MergeEnglishPhrases(const std::string &prefix, std:
 }
 
 /**
- * 一个小写英文词或短语的音标，lookup 查 english.db 的 en_ipa（随哈利路亚英文输入法迁移来，按单词存）。
+ * 一个小写英文词或短语的音标，lookup 查 english.db 的 en_ipa（由 CMUdict 转写，按单词存）。
  * 整体查得到就用它；短语逐词查，每个词都有音标时用空格连起来，缺一个就不标，免得半截音标误导人。
  * 词典里的音标与释义不进候选窗，由停靠在候选窗旁的 DR Dict 弹窗显示（见 utils/dr_dict_dock.h）。
  */

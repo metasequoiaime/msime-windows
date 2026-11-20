@@ -589,7 +589,7 @@ bool GetConfiguredEnglishCandidateTranslationShowPos();
 bool SetConfiguredEnglishCandidateTranslationShowPos(bool show);
 bool GetConfiguredEnglishCandidateTranslationSingleSense();
 bool SetConfiguredEnglishCandidateTranslationSingleSense(bool single);
-// 音标（english.db 的 en_ipa，随哈利路亚英文输入法迁移来）：中文候选那边只在目标语种是英语时生效，
+// 音标（english.db 的 en_ipa，由 CMUdict 转写）：中文候选那边只在目标语种是英语时生效，
 // 标的是英文译文的音标；英文候选那边标候选词本身的音标，不依赖英文候选翻译开关。
 bool GetConfiguredCandidateTranslationPhonetics();
 bool SetConfiguredCandidateTranslationPhonetics(bool show);

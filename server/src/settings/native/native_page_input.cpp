@@ -2214,10 +2214,8 @@ VisualPtr BuildTranslationPage(PageContext &context)
                                          s->chinese.Sync();
                                      });
         s->chinesePhoneticsRow = std::make_shared<Hideable>(
-            Col({option(),
-                 LanguageRow(L"显示音标",
-                             L"在英文译文前显示它的音标，取自输入法自带的英文词库（随哈利路亚英文输入法迁移而来）",
-                             BindToggle(context, "general.candidate_translation_phonetics"))}),
+            Col({option(), LanguageRow(L"显示音标", L"在英文译文前显示它的音标，取自 CMU 发音词典（CMUdict）",
+                                       BindToggle(context, "general.candidate_translation_phonetics"))}),
             true);
         s->chineseOptionsBlock = std::make_shared<Dimmable>(
             Col({LanguageRow(L"目标语种", L"英语优先使用本地词库；本地未命中时使用所选在线翻译服务", target),
@@ -2279,8 +2277,8 @@ VisualPtr BuildTranslationPage(PageContext &context)
 
     // ---- 英文候选模式 ----
     page.AddSection(MakeRow(L"英文候选显示音标",
-                            L"在英文候选（含中文候选里混输的英文）旁显示音标，取自输入法自带的英文词库（随哈利路亚"
-                            L"英文输入法迁移而来），不依赖英文候选翻译开关。词典里的音标与释义可由停靠在候选窗旁的 "
+                            L"在英文候选（含中文候选里混输的英文）旁显示音标，取自 CMU 发音词典（CMUdict），"
+                            L"不依赖英文候选翻译开关。词典里的音标与释义可由停靠在候选窗旁的 "
                             L"DR Dict 弹窗显示，见「高级」里的 DR Dict 词典联动",
                             Toggle(context, "general.english_candidate_phonetics")));
     page.AddSection(MakeRow(L"英文上屏后自动补空格",
