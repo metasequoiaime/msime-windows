@@ -2444,6 +2444,64 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         (void)execute_sql(main_db.get(), "ROLLBACK");
         return result;
     }
+    // 同步可能只改了来源状态或留下删除墓碑。回放现有主库时，先撤下这些来源此前物化的词条，
+    // 否则只跳过日志会让旧候选永久残留。
+    if (has_source)
+    {
+        auto inactive = prepare(journal.get(), "SELECT id FROM dictionary_sources WHERE enabled=0 OR deleted=1");
+        std::vector<std::string> inactive_ids;
+        int inactive_status = inactive ? SQLITE_ROW : SQLITE_ERROR;
+        while (inactive && (inactive_status = sqlite3_step(inactive.get())) == SQLITE_ROW)
+        {
+            const unsigned char *id = sqlite3_column_text(inactive.get(), 0);
+            if (id)
+                inactive_ids.emplace_back(reinterpret_cast<const char *>(id));
+        }
+        inactive.reset();
+        if (inactive_status != SQLITE_DONE)
+            ++result.failed;
+        for (const auto &source_id : inactive_ids)
+        {
+            auto marked = prepare(main_db.get(),
+                                  "SELECT dictionary,key,value FROM cell_dictionary_materialized WHERE source_id=?1");
+            struct MaterializedRow
+            {
+                std::string dictionary;
+                std::string key;
+                std::string value;
+            };
+            std::vector<MaterializedRow> materialized;
+            const bool can_read_marked = marked && bind_text(marked.get(), 1, source_id);
+            int marked_status = can_read_marked ? SQLITE_ROW : SQLITE_ERROR;
+            if (can_read_marked)
+            {
+                while ((marked_status = sqlite3_step(marked.get())) == SQLITE_ROW)
+                {
+                    const auto text = [&](int column) {
+                        const unsigned char *text_value = sqlite3_column_text(marked.get(), column);
+                        return text_value ? std::string(reinterpret_cast<const char *>(text_value)) : std::string{};
+                    };
+                    materialized.push_back({text(0), text(1), text(2)});
+                }
+            }
+            marked.reset();
+            if (marked_status != SQLITE_DONE)
+                ++result.failed;
+            for (const auto &row : materialized)
+            {
+                const bool ok = row.dictionary == "pinyin"
+                                    ? apply_pinyin(main_db.get(), row.key, row.value, "delete", 0)
+                                : row.dictionary == "latin" && table_exists(main_db.get(), "latin_words")
+                                    ? delete_row(main_db.get(), "main.latin_words", row.key, row.value)
+                                    : false;
+                if (!ok)
+                    ++result.failed;
+            }
+            auto clear = prepare(main_db.get(), "DELETE FROM cell_dictionary_materialized WHERE source_id=?1");
+            if (!clear || !bind_text(clear.get(), 1, source_id) || sqlite3_step(clear.get()) != SQLITE_DONE)
+                ++result.failed;
+        }
+    }
     int row_result = SQLITE_ROW;
     while ((row_result = sqlite3_step(rows.get())) == SQLITE_ROW)
     {

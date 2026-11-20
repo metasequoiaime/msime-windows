@@ -315,17 +315,29 @@ bool RemoteWins(const OperationRow &local, const OperationRow &remote, int &conf
     return false;
 }
 
+// 跨个人与来源归属时，显式个人行总胜出；其余冲突仍由普通时间规则处理。
 bool RemoteOperationWins(const OperationRow &local, const OperationRow &remote, int &conflicts)
 {
     const bool local_explicit = !local.source_id && (local.user_inserted || local.weight_edited);
     const bool remote_explicit = !remote.source_id && (remote.user_inserted || remote.weight_edited);
-    // 来源不能接管本机明确拥有的个人词条。反过来，来源行可以接受较新的远端个人显式行；
-    // 普通自动调频不会把已有来源行转成未分组行。
+    // 来源不能接管明确拥有的个人词条，普通自动调频也不能清除已有来源。
     if (local_explicit && remote.source_id)
         return false;
     if (local.source_id && !remote.source_id && !remote_explicit)
         return false;
+    if (local.source_id && remote_explicit)
+        return true;
     return RemoteWins(local, remote, conflicts);
+}
+
+bool RemoteLatinWins(const LatinWordRow &local, const LatinWordRow &remote)
+{
+    // 字母词没有显式标记，未分组即个人。个人行与来源行冲突时个人总胜出。
+    if (!local.source_id && remote.source_id)
+        return false;
+    if (local.source_id && !remote.source_id)
+        return true;
+    return remote.updated_at > local.updated_at;
 }
 
 // 32 位小写十六进制，UUID v4 形状但不带连字符：够唯一，也不依赖任何平台 UUID API。
@@ -483,9 +495,15 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     std::vector<DictionarySourceRow> local_sources;
     if (!ReadSources(local.get(), local_sources, message))
         return false;
+    std::vector<LatinWordRow> local_latin;
+    if (!ReadLatinWords(local.get(), local_latin, message))
+        return false;
     std::map<std::string, const OperationRow *> local_by_id;
     for (const OperationRow &row : local_rows)
         local_by_id.emplace(OperationId(row), &row);
+    std::map<std::pair<std::string, std::string>, const LatinWordRow *> local_latin_by_id;
+    for (const LatinWordRow &row : local_latin)
+        local_latin_by_id.emplace(std::make_pair(row.key, row.value), &row);
 
     std::map<std::string, DictionarySourceRow> merged_sources;
     for (const auto &row : local_sources)
@@ -639,6 +657,17 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
         insert_sql += ",source_id=excluded.source_id";
     // RemoteWins 已经只放行更新的行，这里在数据库层再守一道，防止本地快照与表不一致时用旧行盖新行。
     insert_sql += " WHERE excluded.updated_at>user_dictionary_operations.updated_at";
+    if (has_source_id && (has_user_inserted || has_weight_edited))
+    {
+        // 来源转显式个人在同秒也能落库。普通同秒冲突仍只保留本机现有行。
+        insert_sql += " OR (excluded.updated_at=user_dictionary_operations.updated_at "
+                      "AND excluded.source_id IS NULL AND user_dictionary_operations.source_id IS NOT NULL AND ";
+        if (has_user_inserted && has_weight_edited)
+            insert_sql += "(excluded.user_inserted<>0 OR excluded.weight_edited<>0)";
+        else
+            insert_sql += has_user_inserted ? "excluded.user_inserted<>0" : "excluded.weight_edited<>0";
+        insert_sql += ")";
+    }
 
     sqlite3_stmt *statement = nullptr;
     if (ok && sqlite3_prepare_v2(local.get(), insert_sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
@@ -719,7 +748,10 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
             " ON CONFLICT(key,value) DO UPDATE SET weight=excluded.weight,exact_only=excluded.exact_only,"
             "updated_at=excluded.updated_at" +
             (has_latin_source ? ",source_id=excluded.source_id" : "") +
-            " WHERE excluded.updated_at>user_latin_words.updated_at";
+            " WHERE excluded.updated_at>user_latin_words.updated_at" +
+            (has_latin_source ? " OR (excluded.updated_at=user_latin_words.updated_at "
+                                "AND excluded.source_id IS NULL AND user_latin_words.source_id IS NOT NULL)"
+                              : "");
         if (ok && sqlite3_prepare_v2(local.get(), latin_sql.c_str(), -1, &latin, nullptr) != SQLITE_OK)
         {
             message = std::string("准备字母词合并语句失败：") + sqlite3_errmsg(local.get());
@@ -730,6 +762,9 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
             if (!ok)
                 break;
             if (source_deleted(row.source_id))
+                continue;
+            const auto found = local_latin_by_id.find({row.key, row.value});
+            if (found != local_latin_by_id.end() && !RemoteLatinWins(*found->second, row))
                 continue;
             sqlite3_reset(latin);
             sqlite3_clear_bindings(latin);

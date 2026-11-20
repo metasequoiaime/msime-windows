@@ -854,6 +854,83 @@ void ImportLatinLines(const std::vector<LatinImportLine> &lines, int &inserted, 
     }
 }
 
+bool ImportCellLatinLines(sqlite3 *db, const std::vector<LatinImportLine> &lines, const std::string &source_id,
+                          int &inserted, int &skipped,
+                          const std::function<void(int, const std::string &)> &append_error, std::string &error)
+{
+    if (lines.empty())
+        return true;
+    if (sqlite3_exec(db, quanpin::kLatinWordsTableSql, nullptr, nullptr, nullptr) != SQLITE_OK)
+    {
+        error = sqlite3_errmsg(db);
+        return false;
+    }
+    bool exact_only = false;
+    Stmt columns = Prepare(db, "PRAGMA main.table_info(latin_words)", error);
+    while (columns && sqlite3_step(columns.get()) == SQLITE_ROW)
+    {
+        const unsigned char *name = sqlite3_column_text(columns.get(), 1);
+        exact_only = exact_only || (name && std::string(reinterpret_cast<const char *>(name)) == "exact_only");
+    }
+    columns.reset();
+    if (!exact_only && sqlite3_exec(db, "ALTER TABLE main.latin_words ADD COLUMN exact_only INTEGER NOT NULL DEFAULT 0",
+                                    nullptr, nullptr, nullptr) != SQLITE_OK)
+    {
+        error = sqlite3_errmsg(db);
+        return false;
+    }
+    for (const auto &line : lines)
+    {
+        const auto entry = ResolveLatinEntry(line.word, line.reading, error);
+        if (!entry)
+        {
+            append_error(line.line_no, error);
+            continue;
+        }
+        Stmt exists = Prepare(db, "SELECT 1 FROM latin_words WHERE key=?1 AND value=?2 LIMIT 1", error);
+        if (!exists || !BindText(exists.get(), 1, entry->key) || !BindText(exists.get(), 2, entry->value))
+            return false;
+        if (sqlite3_step(exists.get()) == SQLITE_ROW)
+        {
+            ++skipped;
+            continue;
+        }
+        Stmt insert = Prepare(db, "INSERT INTO latin_words(key,value,weight,exact_only) VALUES(?1,?2,?3,?4)", error);
+        if (!insert || !BindText(insert.get(), 1, entry->key) || !BindText(insert.get(), 2, entry->value) ||
+            sqlite3_bind_int(insert.get(), 3, (std::max)(0, line.weight)) != SQLITE_OK ||
+            sqlite3_bind_int(insert.get(), 4, entry->exact_only ? 1 : 0) != SQLITE_OK ||
+            sqlite3_step(insert.get()) != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(db);
+            return false;
+        }
+        Stmt journal = Prepare(db,
+                               "INSERT INTO cell_journal.user_latin_words(key,value,weight,exact_only,source_id) "
+                               "VALUES(?1,?2,?3,?4,?5)",
+                               error);
+        if (!journal || !BindText(journal.get(), 1, entry->key) || !BindText(journal.get(), 2, entry->value) ||
+            sqlite3_bind_int(journal.get(), 3, (std::max)(0, line.weight)) != SQLITE_OK ||
+            sqlite3_bind_int(journal.get(), 4, entry->exact_only ? 1 : 0) != SQLITE_OK ||
+            !BindText(journal.get(), 5, source_id) || sqlite3_step(journal.get()) != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(db);
+            return false;
+        }
+        Stmt marker = Prepare(db,
+                              "INSERT INTO cell_dictionary_materialized(source_id,dictionary,key,value) "
+                              "VALUES(?1,'latin',?2,?3)",
+                              error);
+        if (!marker || !BindText(marker.get(), 1, source_id) || !BindText(marker.get(), 2, entry->key) ||
+            !BindText(marker.get(), 3, entry->value) || sqlite3_step(marker.get()) != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(db);
+            return false;
+        }
+        ++inserted;
+    }
+    return true;
+}
+
 json::object ImportLatin(const json::object &request)
 {
     std::string content = StringValue(request, "content");
@@ -1214,51 +1291,15 @@ std::string NewDictionarySourceId()
     return text;
 }
 
-std::string CreateDictionarySource(const std::string &name, const std::string &format, std::string &error)
+bool CreateDictionarySource(sqlite3 *db, const std::string &source_id, const std::string &name,
+                            const std::string &format, std::string &error)
 {
-    const std::string path = user_dictionary::default_user_db_path();
-    if (!user_dictionary::ensure_user_database(path))
-    {
-        error = "升级用户词库格式失败";
-        return {};
-    }
-    sqlite3 *raw = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
-    {
-        error = raw ? sqlite3_errmsg(raw) : "无法打开用户词库";
-        if (raw)
-            sqlite3_close(raw);
-        return {};
-    }
-    Db db(raw);
-    const std::string id = NewDictionarySourceId();
-    Stmt stmt = Prepare(db.get(), "INSERT INTO dictionary_sources(id,name,format) VALUES(?1,?2,?3)", error);
-    const bool ok = !id.empty() && stmt && BindText(stmt.get(), 1, id) && BindText(stmt.get(), 2, name) &&
+    Stmt stmt = Prepare(db, "INSERT INTO cell_journal.dictionary_sources(id,name,format) VALUES(?1,?2,?3)", error);
+    const bool ok = !source_id.empty() && stmt && BindText(stmt.get(), 1, source_id) && BindText(stmt.get(), 2, name) &&
                     BindText(stmt.get(), 3, format) && sqlite3_step(stmt.get()) == SQLITE_DONE;
     if (!ok && error.empty())
-        error = sqlite3_errmsg(db.get());
-    return ok ? id : std::string{};
-}
-
-void DiscardEmptyDictionarySource(const std::string &source_id)
-{
-    sqlite3 *raw = nullptr;
-    if (sqlite3_open_v2(user_dictionary::default_user_db_path().c_str(), &raw,
-                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
-    {
-        if (raw)
-            sqlite3_close(raw);
-        return;
-    }
-    Db db(raw);
-    std::string ignored;
-    Stmt stmt = Prepare(db.get(),
-                        "DELETE FROM dictionary_sources WHERE id=?1 AND NOT EXISTS("
-                        "SELECT 1 FROM user_dictionary_operations WHERE source_id=?1) AND NOT EXISTS("
-                        "SELECT 1 FROM user_latin_words WHERE source_id=?1)",
-                        ignored);
-    if (stmt && BindText(stmt.get(), 1, source_id))
-        (void)sqlite3_step(stmt.get());
+        error = sqlite3_errmsg(db);
+    return ok;
 }
 
 // 导入其他输入法的词库（Rime、LibIME）为独立的细胞词库。
@@ -1317,9 +1358,12 @@ json::object ImportForeign(const json::object &request)
     Db db = OpenDatabase("msime.db", error);
     if (!db)
         return Result(false, "打开拼音词库失败：" + error);
-    const std::string source_id = CreateDictionarySource(name, format, error);
+    const std::string source_id = NewDictionarySourceId();
     if (source_id.empty())
-        return Result(false, "创建细胞词库失败：" + error);
+        return Result(false, "创建细胞词库标识失败");
+    const std::string journal_path = user_dictionary::default_user_db_path();
+    if (!user_dictionary::ensure_user_database(journal_path))
+        return Result(false, "升级用户词库格式失败");
 
     std::vector<std::optional<double>> frequencies;
     frequencies.reserve(entries.size());
@@ -1339,7 +1383,6 @@ json::object ImportForeign(const json::object &request)
 
     // 含英文字母的词（T恤、卡拉OK）按字母词导入并自动注音，理由同 ImportChinese。
     std::vector<LatinImportLine> latin_lines;
-    const std::string journal_path = user_dictionary::default_user_db_path();
     Stmt attach = Prepare(db.get(), "ATTACH DATABASE ?1 AS cell_journal", error);
     if (!attach || !BindText(attach.get(), 1, journal_path) || sqlite3_step(attach.get()) != SQLITE_DONE ||
         sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) != SQLITE_OK ||
@@ -1350,12 +1393,16 @@ json::object ImportForeign(const json::object &request)
                      nullptr, nullptr, nullptr) != SQLITE_OK)
     {
         (void)sqlite3_exec(db.get(), "ROLLBACK", nullptr, nullptr, nullptr);
-        DiscardEmptyDictionarySource(source_id);
         if (error.empty())
             error = sqlite3_errmsg(db.get());
         return Result(false, "准备导入细胞词库失败：" + error);
     }
     attach.reset();
+    if (!CreateDictionarySource(db.get(), source_id, name, format, error))
+    {
+        (void)sqlite3_exec(db.get(), "ROLLBACK", nullptr, nullptr, nullptr);
+        return Result(false, "创建细胞词库失败：" + error);
+    }
     for (size_t i = 0; i < entries.size(); ++i)
     {
         const int index = static_cast<int>(i + 1);
@@ -1394,27 +1441,28 @@ json::object ImportForeign(const json::object &request)
         if (!InsertCellChineseWord(db.get(), segments, key, entry.word, weights[i], source_id, message))
         {
             (void)sqlite3_exec(db.get(), "ROLLBACK", nullptr, nullptr, nullptr);
-            DiscardEmptyDictionarySource(source_id);
-            return Result(false, "导入细胞词库失败，已回滚拼音词条：" + message);
+            return Result(false, "导入细胞词库失败，已回滚：" + message);
         }
         ++inserted;
+    }
+    if (!ImportCellLatinLines(db.get(), latin_lines, source_id, inserted, skipped, append_error, error))
+    {
+        (void)sqlite3_exec(db.get(), "ROLLBACK", nullptr, nullptr, nullptr);
+        return Result(false, "导入细胞词库失败，已回滚：" + error);
+    }
+    if (inserted == 0)
+    {
+        (void)sqlite3_exec(db.get(), "ROLLBACK", nullptr, nullptr, nullptr);
+        return SummarizeImport(inserted, skipped, failed, error_details);
     }
     if (sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK)
     {
         const std::string commit_error = sqlite3_errmsg(db.get());
         (void)sqlite3_exec(db.get(), "ROLLBACK", nullptr, nullptr, nullptr);
-        DiscardEmptyDictionarySource(source_id);
         return Result(false, "提交细胞词库失败：" + commit_error);
     }
-    db.reset();
-    ImportLatinLines(latin_lines, inserted, skipped, append_error, source_id);
 
     json::object result = SummarizeImport(inserted, skipped, failed, error_details);
-    if (inserted == 0)
-    {
-        DiscardEmptyDictionarySource(source_id);
-        return result;
-    }
     result["sourceId"] = source_id;
     result["sourceName"] = name;
     return result;
@@ -2298,7 +2346,7 @@ bool ApplySourcePinyinRow(sqlite3 *db, const std::string &key, const std::string
 {
     const std::string table = quanpin::build_table_name(quanpin::split_segments(key));
     const bool upsert = enable && operation == "upsert";
-    Stmt stmt = Prepare(db.get(),
+    Stmt stmt = Prepare(db,
                         upsert ? "INSERT INTO \"" + table +
                                      "\"(key,jp,value,weight) VALUES(?1,?2,?3,?4) "
                                      "ON CONFLICT(key,value) DO NOTHING"
@@ -2449,7 +2497,8 @@ json::object SetDictionarySourceState(const json::object &request, bool remove)
             int exact_only;
         };
         std::vector<LatinRow> latin_rows;
-        while (sqlite3_step(read.get()) == SQLITE_ROW)
+        int read_status = SQLITE_ROW;
+        while ((read_status = sqlite3_step(read.get())) == SQLITE_ROW)
         {
             const auto text = [&](int column) {
                 const unsigned char *value = sqlite3_column_text(read.get(), column);
@@ -2459,11 +2508,16 @@ json::object SetDictionarySourceState(const json::object &request, bool remove)
                 {text(0), text(1), sqlite3_column_int64(read.get(), 2), sqlite3_column_int(read.get(), 3)});
         }
         read.reset();
+        if (read_status != SQLITE_DONE)
+        {
+            rollback();
+            return Result(false, "读取细胞词库失败：" + std::string(sqlite3_errmsg(db.get())));
+        }
         for (const auto &row : latin_rows)
         {
             Stmt insert = Prepare(db.get(),
-                                  "INSERT INTO latin_words(key,value,weight,exact_only) VALUES(?1,?2,?3,?4) "
-                                  "ON CONFLICT(key,value) DO NOTHING",
+                                  "INSERT INTO latin_words(key,value,weight,exact_only) SELECT ?1,?2,?3,?4 "
+                                  "WHERE NOT EXISTS(SELECT 1 FROM latin_words WHERE key=?1 AND value=?2)",
                                   error);
             if (!insert || !BindText(insert.get(), 1, row.key) || !BindText(insert.get(), 2, row.value) ||
                 sqlite3_bind_int64(insert.get(), 3, row.weight) != SQLITE_OK ||

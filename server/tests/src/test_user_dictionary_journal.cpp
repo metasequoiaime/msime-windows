@@ -549,6 +549,31 @@ TEST_CASE(UserDictionaryReplayHonorsSourceEnabledAndDeletedState)
         TestDatabase db(main_path);
         REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='来源词'"), 1);
         REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'"), 1);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM cell_dictionary_materialized WHERE source_id='source-a'"), 2);
+    }
+    {
+        TestDatabase db(user_path);
+        db.exec("UPDATE dictionary_sources SET enabled=0 WHERE id='source-a'");
+    }
+    // 同步只改变用户库里的来源状态；回放必须撤下当前主库中已经物化的候选。
+    result = user_dictionary::replay(test::Utf8(user_path), test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(result.error.empty());
+    {
+        TestDatabase db(main_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='来源词'"), 0);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'"), 0);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM cell_dictionary_materialized WHERE source_id='source-a'"), 0);
+    }
+    {
+        TestDatabase db(user_path);
+        db.exec("UPDATE dictionary_sources SET enabled=1 WHERE id='source-a'");
+    }
+    result = user_dictionary::replay(test::Utf8(user_path), test::Utf8(main_path), test::Utf8(english_path));
+    REQUIRE(result.error.empty());
+    {
+        TestDatabase db(main_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='来源词'"), 1);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'"), 1);
         db.exec("DELETE FROM tbl_1_x WHERE value='来源词';DELETE FROM latin_words WHERE value='来源字母';");
     }
     {

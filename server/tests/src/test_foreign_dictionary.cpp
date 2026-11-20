@@ -400,6 +400,35 @@ TEST_CASE(ForeignDictionaryImportCreatesManageableCellDictionary)
     REQUIRE(sources.at("sources").as_array().empty());
 }
 
+TEST_CASE(CellDictionaryLatinWordsSupportLegacyTablesWithoutUniqueConstraints)
+{
+    ScopedForeignDataDir data;
+    CreatePinyinTables(data, {});
+    {
+        sqlite3 *raw = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(data.path() / L"msime.db").c_str(), &raw), SQLITE_OK);
+        const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+        REQUIRE_EQ(sqlite3_exec(db.get(), "CREATE TABLE latin_words(key TEXT,value TEXT,weight INTEGER)", nullptr,
+                                nullptr, nullptr),
+                   SQLITE_OK);
+    }
+    const std::filesystem::path file = data.path() / L"字母.txt";
+    {
+        std::ofstream stream(file, std::ios::binary);
+        stream << "T恤\t100\n";
+    }
+    const auto imported = SettingsDictionary::HandleRequest(
+        {{"dictionary", "quanpin"}, {"action", "importForeign"}, {"format", "rime"}, {"path", test::Utf8(file)}});
+    REQUIRE(imported.at("ok").as_bool());
+    const std::string source_id(imported.at("sourceId").as_string());
+    for (const bool enabled : {false, true})
+    {
+        const auto changed = SettingsDictionary::HandleRequest(
+            {{"dictionary", "cells"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", enabled}});
+        REQUIRE(changed.at("ok").as_bool());
+    }
+}
+
 TEST_CASE(PinyinBatchImportMapsWeightsUnlessRestoringABackup)
 {
     ScopedForeignDataDir data;
