@@ -248,7 +248,9 @@ TEST_CASE(ai_suggestion_badge_switches_between_robot_and_whale)
 
 TEST_CASE(candidate_phonetic_is_drawn_before_the_translation)
 {
-    CandidateViewItem view{"apple", "", "", "n. 苹果", false};
+    CandidateViewItem view;
+    view.text = "apple";
+    view.translation = "n. 苹果";
     view.phonetic = "ˈæpl";
     REQUIRE(CandidateViewHtml(view).find("<span class=\"cand-pos\">/ˈæpl/</span>  <span class=\"cand-translation\">") !=
             std::string::npos);
