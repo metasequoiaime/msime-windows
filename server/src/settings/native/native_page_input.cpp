@@ -2325,7 +2325,7 @@ void AddSentenceSection(PageBuilder &page, PageContext &context)
                  SubBlock(L"云候选",
                           L"联网，把当前的全拼（双拼会先还原成全拼，日文输入时是罗马字）发送到 Google 的 inputtools "
                           L"服务换取一个候选。对方会收到拼音、你的 IP 地址和请求元数据，不会收到已上屏的文字、"
-                          L"词库或设置。默认开启，无需账号；需要走代理时在「高级」页设置，详见 PRIVACY.md"),
+                          L"词库或设置。默认开启，无需账号；需要走代理时在「高级」页设置。"),
                  Toggle(context, "general.cloud_candidates"))});
         content->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         page.AddSection(

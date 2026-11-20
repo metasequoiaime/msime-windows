@@ -437,8 +437,8 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         heading->SetMargin({0.0f, 0.0f, 0.0f, 18.0f});
         column->Add(heading);
         auto description = MakeDescription(
-            L"以下服务商都走 OpenAI 兼容的 Chat Completions 接口。接口地址与模型留空时使用各家的默认值；"
-            L"凭据按服务商分开保存，切换服务商不会清掉其它家的 Token。Ollama 连接本机服务，不需要 API Token，"
+            L"OpenAI 兼容的 Chat Completions 接口。接口地址与模型留空时使用各家的默认值；"
+            L"凭据按服务商分开保存。Ollama 连接本机服务，不需要 API Token，"
             L"模型用「查询模型」从已下载的模型里选。");
         description->SetMargin({0.0f, -10.0f, 0.0f, 16.0f});
         column->Add(description);
@@ -553,8 +553,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
         });
         auto endpointField = std::make_shared<Field>(L"接口地址", endpoint);
         endpointField->Add(
-            MakeDescription(L"留空使用官方地址。Laya、OpenJev 这类自建实现照同一套协议，填它们的地址即可。"
-                            L"这里填的地址会收到你的 Token，只填你信任的地址。"));
+            MakeDescription(L"留空使用官方地址。服务商会收到你的敏感信息，只填你信任的地址。"));
         grid->Add(endpointField, true);
 
         column->Add(grid);
@@ -594,7 +593,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
             auto privacy = MakeDescription(
                 L"开启后，每次输入完整拼音都会把拼音、本焦点会话最近上屏的文本（最多 1024 字节）和候选数量发给你配置"
                 L"的服务商，对方按自己的隐私条款处理。像密码、密钥的连续英文数字串会被剔除；中文正文原样发送。"
-                L"宿主标记为敏感字段的输入框不发送。关闭总开关即可停止。详见 PRIVACY.md。");
+                L"宿主标记为敏感字段的输入框不发送。关闭总开关即可停止。");
             privacy->SetMargin({0.0f, 10.0f, 0.0f, 0.0f});
             column->Add(privacy);
             page.AddSection(column);
@@ -617,7 +616,7 @@ struct AiPage : std::enable_shared_from_this<AiPage>
             group->Add(generate);
             group->Add(select);
             auto row = MakeRow(L"联想模式",
-                               L"生成式让模型按拼音和前文写出新候选；从候选里挑只让服务商在本地候选里挑一个。", group);
+                               L"生成式让模型按拼音和前文写出新候选；从候选里挑只让服务商在本地候选里挑。", group);
             column->Add(row);
             page.AddSection(column);
         }
