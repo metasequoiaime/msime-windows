@@ -1,4 +1,5 @@
 #include "settings/native/native_settings_pages.h"
+#include "settings/native/native_page_skin_common.h"
 #include "tests/includes/settings_window_harness.h"
 #include "tests/includes/test_framework.h"
 
@@ -83,4 +84,103 @@ TEST_CASE(BuildingEverySettingsPageSendsNoMessage)
             joined += (joined.empty() ? "" : "; ") + offender;
         throw std::runtime_error(joined);
     }
+}
+
+// A skin card is one button covering its title and its preview. The preview holds a focusable
+// candidate list, and Window dispatches a press to the focusable visual under the cursor, so
+// the card must answer for focus as well as for hit testing. Otherwise the largest part of
+// the card changes the preview's selected row and never selects the skin.
+TEST_CASE(SettingsSkinCardKeepsThePressOverFocusableContent)
+{
+    for (float dpi : {96.0f, 144.0f})
+    {
+        SettingsWindowHarness window(dpi, {300.0f, 200.0f});
+        auto card = std::make_shared<native_settings::skinpreview::PickCard>();
+        auto inner = std::make_shared<native_settings::ToggleSwitch>(false);
+        card->Add(inner);
+        window.SetRoot(card);
+
+        int activations = 0;
+        card->SetOnActivate([&activations]() { ++activations; });
+
+        const msimeui::RectF innerBounds = inner->GetBounds();
+        REQUIRE(innerBounds.width > 0.0f);
+        const float x = innerBounds.x + innerBounds.width * 0.5f;
+        const float y = innerBounds.y + innerBounds.height * 0.5f;
+        auto *scene = window.Window().GetScene();
+        REQUIRE(scene->FindVisualAt({x, y}) == card.get());
+        REQUIRE(scene->FindFocusableAt({x, y}) == card.get());
+
+        window.GiveWindowKeyboardFocus();
+        window.Click(x, y);
+        REQUIRE_EQ(activations, 1);
+        REQUIRE(!inner->IsChecked());
+        window.Key(VK_RETURN);
+        REQUIRE_EQ(activations, 2);
+        window.Key(VK_SPACE);
+        REQUIRE_EQ(activations, 3);
+
+        // Releasing outside the card cancels the press, like every other button here.
+        const POINT inside = window.Pixels(x, y);
+        const POINT outside = window.Pixels(400.0f, 400.0f);
+        REQUIRE(card->OnMouseDown(inside, 0));
+        REQUIRE(card->OnMouseUp(outside, 0));
+        REQUIRE_EQ(activations, 3);
+
+        // An unusable skin is not a focus target and takes no input.
+        card->SetSelectable(false);
+        REQUIRE(!card->IsFocusable());
+        REQUIRE(scene->FindFocusableAt({x, y}) == nullptr);
+        window.Click(x, y);
+        window.Key(VK_RETURN);
+        REQUIRE_EQ(activations, 3);
+    }
+}
+
+// Clicking a card posts the skin it shows, not the one above or below it. The press lands in
+// the preview, the part of the card the candidate list would otherwise take.
+TEST_CASE(SettingsSkinPageSwitchesSkinFromTheCard)
+{
+    SettingsWindowHarness window(96.0f, {800.0f, 1400.0f});
+    NullHost host(window.Window());
+    std::vector<std::string> sent;
+    SettingsModel model([&sent](const std::string &message) { sent.push_back(message); });
+    PageContext context(model, host);
+    model.Receive(native_settings::Json{{"type", "configSnapshot"},
+                                        {"data",
+                                         {{"appearance",
+                                           {{"candidate_skin", "fluent"},
+                                            {"external_candidate_skins", native_settings::Json::array()},
+                                            {"candidate_skin_catalog_scanned", true},
+                                            {"candidate_skin_directory", "C:\\skins"}}}}}}
+                      .dump());
+
+    const VisualPtr page = native_settings::BuildSkinPage(context);
+    window.SetRoot(page);
+    sent.clear();
+
+    std::vector<native_settings::skinpreview::PickCard *> cards;
+    for (float y = 0.0f; y < 1400.0f; y += 4.0f)
+    {
+        auto *card = dynamic_cast<native_settings::skinpreview::PickCard *>(window.VisualAt(300.0f, y));
+        if (card && (cards.empty() || cards.back() != card))
+            cards.push_back(card);
+    }
+    REQUIRE(cards.size() >= 2);
+
+    const msimeui::RectF bounds = cards[1]->GetBounds();
+    const msimeui::PointF preview{300.0f, bounds.y + bounds.height - 55.0f};
+    REQUIRE(window.Window().GetScene()->FindFocusableAt(preview) == cards[1]);
+    window.Click(preview.x, preview.y);
+
+    std::string picked;
+    for (const std::string &raw : sent)
+    {
+        const native_settings::Json message = native_settings::Json::parse(raw, nullptr, false);
+        if (message.is_object() && message.value("type", std::string()) == "configUpdate")
+            picked = message["data"].value("value", std::string());
+    }
+    REQUIRE_EQ(picked, native_settings::skinpreview::BuiltinSkins()[1]);
+    REQUIRE(cards[1]->IsActive());
+    REQUIRE(!cards[0]->IsActive());
 }

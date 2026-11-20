@@ -444,6 +444,12 @@ Band::Band(VisualPtr child, Thickness padding) : msimeui::Container(std::move(ch
 {
 }
 
+void Band::SetBandPadding(Thickness padding)
+{
+    bandPadding_ = padding;
+    InvalidateMeasure();
+}
+
 void Band::SetBackground(std::function<D2D1_COLOR_F()> background)
 {
     background_ = std::move(background);
@@ -558,6 +564,19 @@ void PillButton::SetText(std::wstring text)
     InvalidateVisual();
 }
 
+void PillButton::SetActive(bool active)
+{
+    if (active_ == active)
+        return;
+    active_ = active;
+    InvalidateVisual();
+}
+
+bool PillButton::IsActive() const
+{
+    return active_;
+}
+
 void PillButton::SetOnClick(std::function<void()> handler)
 {
     onClick_ = std::move(handler);
@@ -576,6 +595,13 @@ void PillButton::Arrange(const RectF &finalRect)
 void PillButton::Render(msimeui::DeviceResources &dr)
 {
     const Palette &p = CurrentPalette();
+    if (active_)
+    {
+        FillRounded(dr, bounds_, 6.0f, p.accentSoft);
+        StrokeRounded(dr, bounds_, 6.0f, p.accentSoftBorder, 1.0f);
+        DrawCentered(dr, text_, PillStyle(), bounds_, p.accent);
+        return;
+    }
     if (hovered_)
         FillRounded(dr, bounds_, 6.0f, p.buttonSecondaryBg);
     StrokeRounded(dr, bounds_, 6.0f, p.border, 1.0f);
@@ -618,6 +644,136 @@ void PillButton::OnMouseLeave()
 HCURSOR PillButton::GetCursor() const
 {
     return LoadCursor(nullptr, IDC_HAND);
+}
+
+// ---------------------------------------------------------------------------------
+// PickCard
+// ---------------------------------------------------------------------------------
+void PickCard::SetOnActivate(std::function<void()> handler)
+{
+    onActivate_ = std::move(handler);
+}
+
+void PickCard::SetActive(bool active)
+{
+    if (active_ == active)
+        return;
+    active_ = active;
+    InvalidateVisual();
+}
+
+void PickCard::SetSelectable(bool selectable)
+{
+    if (selectable_ == selectable)
+        return;
+    selectable_ = selectable;
+    pressed_ = false;
+    if (!selectable_)
+    {
+        hovered_ = false;
+        focused_ = false;
+    }
+    InvalidateVisual();
+}
+
+bool PickCard::IsActive() const
+{
+    return active_;
+}
+
+bool PickCard::IsSelectable() const
+{
+    return selectable_;
+}
+
+msimeui::Visual *PickCard::FindVisualAt(const PointF &point)
+{
+    // The card is the target for every point inside it, children included: a press on the
+    // title or the preview is a press on the skin.
+    return HitTest(point) ? this : nullptr;
+}
+
+msimeui::Visual *PickCard::FindFocusableAt(const PointF &point)
+{
+    // Window dispatches a press to the focusable visual under the cursor. A preview holds a
+    // focusable candidate list, which would otherwise swallow every press over it.
+    return selectable_ && HitTest(point) ? this : nullptr;
+}
+
+bool PickCard::IsFocusable() const
+{
+    return selectable_;
+}
+
+void PickCard::OnFocusChanged(bool focused)
+{
+    focused_ = focused;
+    InvalidateVisual();
+}
+
+bool PickCard::OnMouseDown(const POINT &point, WPARAM)
+{
+    pressed_ = selectable_ && HitSelf(window_, *this, point);
+    return pressed_;
+}
+
+bool PickCard::OnMouseUp(const POINT &point, WPARAM)
+{
+    if (!pressed_)
+        return false;
+    pressed_ = false;
+    if (selectable_ && HitSelf(window_, *this, point))
+    {
+        // The handler may rebuild the page that owns this card.
+        const auto handler = onActivate_;
+        if (handler)
+            handler();
+    }
+    return true;
+}
+
+void PickCard::OnMouseEnter()
+{
+    if (!selectable_)
+        return;
+    hovered_ = true;
+    InvalidateVisual();
+}
+
+void PickCard::OnMouseLeave()
+{
+    hovered_ = false;
+    pressed_ = false;
+    InvalidateVisual();
+}
+
+bool PickCard::OnKeyDown(WPARAM key, LPARAM)
+{
+    if (!selectable_ || (key != VK_RETURN && key != VK_SPACE))
+        return false;
+    const auto handler = onActivate_;
+    if (handler)
+        handler();
+    return true;
+}
+
+HCURSOR PickCard::GetCursor() const
+{
+    return LoadCursor(nullptr, selectable_ ? IDC_HAND : IDC_ARROW);
+}
+
+void PickCard::Render(msimeui::DeviceResources &dr)
+{
+    FlushCard::Render(dr);
+    const Palette &p = CurrentPalette();
+    // Same radius and path as FlushCard's own 8px/1px outline, so the two centers match and
+    // the corners do not show a double line.
+    if (active_)
+        StrokeRounded(dr, bounds_, 8.0f, p.accent, 1.5f);
+    else if (focused_)
+        StrokeRounded(dr, bounds_, 8.0f, p.borderStrong, 1.5f);
+    else if (hovered_ && selectable_)
+        StrokeRounded(dr, bounds_, 8.0f, p.accentSoftBorder, 1.5f);
 }
 
 // ---------------------------------------------------------------------------------
