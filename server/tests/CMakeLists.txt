@@ -148,6 +148,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_outbound_session_state.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_pipe_write_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_input_key_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_commit_guard_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_dr_dict_lookup.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_dr_dict_dock.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_ui_owner.cpp"

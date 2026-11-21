@@ -245,6 +245,20 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
     const bool is_digit_selection = keycode >= '1' && keycode <= '9';
     const bool is_direct_selection = forced_index_in_page >= 0;
 
+    // Keyboard commits must decide on a page that belongs to the live composition. A missing or stale page is
+    // rebuilt (and silently published to the module) before the module is asked. A mouse click names a candidate on
+    // the page the user pointed at; rebuilding around it would change what that index means.
+    if (!is_direct_selection)
+    {
+        const bool commit_page_ready = EnsureCandidatePageForComposition(client_id, activation_epoch);
+        if (!commit_page_ready && !g_inputSession->get_pinyin_sequence_with_cases().empty())
+        {
+            CAND_DIAG_LOGF(L"commit-page-missing keycode=0x{:X} input_units={} page_units={}", keycode,
+                           g_inputSession->get_pinyin_sequence_with_cases().size(),
+                           Global::candidate_ui.page_words.size());
+        }
+    }
+
     // The module owns the rendered page. Ask it for the choice; only fall back to the live list when no page has
     // been published at all (for example before the first frame of a composition).
     const bool module_page = !resolve_live_page && HasCandidatePage();
@@ -303,6 +317,9 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
         if (is_valid_selection)
             selected_page_word = Global::candidate_ui.page_words[static_cast<std::size_t>(index)];
     }
+    // A candidate with nothing to output must not end the composition with an empty commit.
+    if (is_valid_selection && CandidateOutputText(curWordItem).empty())
+        is_valid_selection = false;
 
     if (is_valid_selection && metasequoia::local_modes::is_date_time_menu_item(curWordItem))
     {
