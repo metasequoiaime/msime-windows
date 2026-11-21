@@ -2584,7 +2584,13 @@ int run_test()
                         sentence.candidates()[learned].source != CandidateSource::Fallback,
                     "The learned sentence did not come back as a dictionary row.");
             require(learned == 0, "The learned sentence did not outrank the guessed ones.");
+            require(database.query_integer("SELECT weight FROM tbl_3_n WHERE value='那一条'") == 1000,
+                    "A first-time learned sentence should keep its temporary weight.");
             (void)sentence.select_candidate(learned);
+            type(sentence, "na'yi'tiao");
+            (void)candidate_index(sentence, "那一条");
+            require(database.query_integer("SELECT weight FROM tbl_3_n WHERE value='那一条'") == 10000,
+                    "Selecting the learned sentence a second time did not make it permanent.");
         }
         {
             // 学习整句是造词，不是调频：关掉候选学习的会话一条也不该落库。

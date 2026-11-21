@@ -279,7 +279,8 @@ void EnqueueTask(TaskType type, const FanyImeNamedpipeData &pipeData, uint64_t a
 // ranking_candidates 为空时按当前候选页排位；句中辅助码组合传去掉约束后的候选。
 void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::string &context_key,
                                        const std::string &entry_key, const std::string &word, uint64_t client_id,
-                                       uint64_t activation_epoch,
+                                       uint64_t activation_epoch, const std::string &canonical_pinyin,
+                                       bool confirm_temporary_pinyin, bool allow_ranking_fallback,
                                        const std::vector<WordItem> *ranking_candidates = nullptr);
 // 长词前缀补全（#1343）选中后的调频：只把它在自己的完整读音 key 下升到组内首位，不按排位挪位置。
 void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,

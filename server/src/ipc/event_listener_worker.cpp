@@ -2,6 +2,8 @@
 #include "ipc/event_listener_internal.h"
 #include <Windows.h>
 #include <array>
+#include <atomic>
+#include <ctime>
 #include <string>
 #include <chrono>
 #include <functional>
@@ -1293,7 +1295,18 @@ SerialTaskRunner &DictionaryWriter()
             // The checkpoint copies the journal's write-ahead log back into the database, which SQLite would otherwise
             // do on whichever commit crosses its threshold -- inside a selection the user is waiting for. Here it runs
             // once the queue is empty, i.e. after the user stops typing.
-            runner.SetIdleHandler([] { user_dictionary::checkpoint_user_journal_if_needed(); });
+            runner.SetIdleHandler([] {
+                static std::atomic<std::int64_t> last_expiry_day = 0;
+                const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+                const std::int64_t day = now / 86400;
+                std::int64_t observed = last_expiry_day.load();
+                if (observed != day && last_expiry_day.compare_exchange_strong(observed, day))
+                {
+                    (void)user_dictionary::expire_temporary_pinyin_words(
+                        CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), now);
+                }
+                user_dictionary::checkpoint_user_journal_if_needed();
+            });
         }
         SerialTaskRunner runner{/*below_normal_priority=*/true};
     };
@@ -1306,7 +1319,9 @@ SerialTaskRunner &DictionaryWriter()
 // worker thread only, which is also what serializes the replay guard.
 void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::string &context_key,
                                        const std::string &entry_key, const std::string &word, uint64_t client_id,
-                                       uint64_t activation_epoch, const std::vector<WordItem> *ranking_candidates)
+                                       uint64_t activation_epoch, const std::string &canonical_pinyin,
+                                       bool confirm_temporary_pinyin, bool allow_ranking_fallback,
+                                       const std::vector<WordItem> *ranking_candidates)
 {
     static FanyImeIpc::SelectionRankingReplayGuard replay_guard;
     const std::string replay_key =
@@ -1322,27 +1337,38 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
     const std::string mode = wubi ? frequency.wubi_mode : frequency.mode;
     const user_dictionary::DictionaryKind kind =
         wubi ? ConfiguredWubiDictionaryKind() : user_dictionary::DictionaryKind::Pinyin;
-    DictionaryWriter().Post(
-        [english, kind, context_key,
-         candidates =
-             FanyImeIpc::FirstVariantsOnly(ranking_candidates ? *ranking_candidates : Global::candidate_ui.items),
-         entry_key, word, mode, linear_step = frequency.linear_step, trigger_count = frequency.trigger_count] {
-            if (english)
-            {
-                (void)user_dictionary::adjust_english_candidate_ranking(
-                    CommonUtils::get_ime_data_path() + "\\english.db", user_dictionary::default_user_db_path(),
-                    context_key, candidates, entry_key, word, mode, linear_step, trigger_count, false);
-                return;
-            }
-            bool ranking_changed = false;
-            (void)user_dictionary::adjust_candidate_ranking(
-                CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), context_key,
-                candidates, entry_key, word, mode, linear_step, trigger_count, false, &ranking_changed, kind);
-            if (ranking_changed)
-            {
-                EnqueueResetInputSessionCacheTask();
-            }
-        });
+    DictionaryWriter().Post([english, kind, context_key,
+                             candidates = FanyImeIpc::FirstVariantsOnly(
+                                 ranking_candidates ? *ranking_candidates : Global::candidate_ui.items),
+                             entry_key, word, mode, canonical_pinyin, confirm_temporary_pinyin, allow_ranking_fallback,
+                             linear_step = frequency.linear_step, trigger_count = frequency.trigger_count] {
+        // 确认与调频在同一写线程里依序结算；临时词转正或过期刷新后，本次选择到此结束，
+        // 不再叠加排名计数。ReplayGuard 已在入队前同时管住这两种学习写入。
+        if (confirm_temporary_pinyin && user_dictionary::confirm_temporary_pinyin_word(
+                                            CommonUtils::get_ime_data_path() + "\\msime.db",
+                                            user_dictionary::default_user_db_path(), canonical_pinyin, word))
+        {
+            EnqueueResetInputSessionCacheTask();
+            return;
+        }
+        if (english)
+        {
+            (void)user_dictionary::adjust_english_candidate_ranking(
+                CommonUtils::get_ime_data_path() + "\\english.db", user_dictionary::default_user_db_path(), context_key,
+                candidates, entry_key, word, mode, linear_step, trigger_count, false);
+            return;
+        }
+        if (!allow_ranking_fallback)
+            return;
+        bool ranking_changed = false;
+        (void)user_dictionary::adjust_candidate_ranking(
+            CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), context_key,
+            candidates, entry_key, word, mode, linear_step, trigger_count, false, &ranking_changed, kind);
+        if (ranking_changed)
+        {
+            EnqueueResetInputSessionCacheTask();
+        }
+    });
 }
 
 void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,

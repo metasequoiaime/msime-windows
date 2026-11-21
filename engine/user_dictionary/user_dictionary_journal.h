@@ -66,6 +66,17 @@ bool record_weight_edit(const std::string &user_db_path, DictionaryKind kind, co
                         const std::string &value, std::int64_t weight, const std::string &display = {});
 bool record_user_insert(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
                         const std::string &value, std::int64_t weight, const std::string &display = {});
+// 自动造词先以低权重临时保留，第二次有效选用时转为正式词条。手动新增仍走 record_user_insert。
+inline constexpr std::int64_t kTemporaryPinyinWordWeight = 1000;
+inline constexpr std::int64_t kFormalPinyinWordWeight = 10000;
+inline constexpr std::int64_t kTemporaryWordRetentionSeconds = 30 * 24 * 60 * 60;
+bool record_automatic_pinyin_insert(const std::string &user_db_path, const std::string &key, const std::string &value,
+                                    std::int64_t now);
+// true 表示命中临时状态且本次学习已处理：未过期就同事务转正，过期则刷新保留期；false 表示正式词或不存在。
+bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                   const std::string &key, const std::string &value);
+// 清理超过保留期仍未第二次选用的自动新词。now 由调用方注入，便于测试时间边界。
+int expire_temporary_pinyin_words(const std::string &main_db_path, const std::string &user_db_path, std::int64_t now);
 bool record_delete(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
                    const std::string &value);
 bool is_user_inserted(const std::string &user_db_path, DictionaryKind kind, const std::string &key,

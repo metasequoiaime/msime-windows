@@ -6,6 +6,8 @@
 #include "engine/user_dictionary/user_dictionary_journal.h"
 #include "utils/common_utils.h"
 #include <algorithm>
+#include <ctime>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -50,6 +52,12 @@ std::shared_ptr<IInputSession> CreateInputSessionFromConfig()
     // wait for the commit. An installer upgrade ships a fresh rollback-mode file,
     // so this runs at every session creation, not once.
     (void)user_dictionary::enable_write_ahead_log(CommonUtils::get_ime_data_path() + "\\msime.db");
+    static std::once_flag expire_once;
+    std::call_once(expire_once, [] {
+        (void)user_dictionary::expire_temporary_pinyin_words(CommonUtils::get_ime_data_path() + "\\msime.db",
+                                                             user_dictionary::default_user_db_path(),
+                                                             static_cast<std::int64_t>(std::time(nullptr)));
+    });
     const std::string backend = DescribeEffectiveInputSessionBackendFromConfig();
     const ShuangpinProfile &shuangpin_profile = GetShuangpinProfile(GetConfiguredShuangpinSchema());
     if (backend == "engine-shuangpin")
