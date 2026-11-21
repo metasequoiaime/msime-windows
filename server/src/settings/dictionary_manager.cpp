@@ -23,6 +23,8 @@
 #include <utf8.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -62,19 +64,61 @@ json::object Result(bool ok, std::string message)
     return {{"ok", ok}, {"message", std::move(message)}, {"rows", json::array{}}};
 }
 
+// 批量删除专用：`ok` 只说「这一批处理完了」，`failed` 单独回答「有几条没删掉」。
+// 合成一个 ok=false 会让面板分不清「一条都没删」和「删了一部分」：前者值得重试，
+// 后者重试只会拿到「原词条不存在或已被删除」。不走批量路径的响应不带这个字段。
+json::object BatchResult(bool ok, std::string message, size_t failed)
+{
+    json::object result = Result(ok, std::move(message));
+    result["failed"] = static_cast<std::int64_t>(failed);
+    return result;
+}
+
 // 快捷短语允许首尾空行（模板类短语常以空行结尾），但整条不能只有空白。
 bool IsBlankQuickPhrase(const std::string &phrase)
 {
     return phrase.find_first_not_of(" \t\r\n") == std::string::npos;
 }
 
-void NotifyImeServerClearDictCache()
+void PostDictCacheReset()
 {
     if (const HWND hwnd = FindWindowW(L"metasequoiaime_windows", L"metaseuqoiaimecandwnd"))
         PostMessageW(hwnd, WM_CLS_DICT_CACHE, 0, 0);
     else if (const HWND anyClassHwnd = FindWindowW(L"metasequoiaime_windows", nullptr))
         PostMessageW(anyClassHwnd, WM_CLS_DICT_CACHE, 0, 0);
 }
+
+// 批量操作里逐条通知会把 ResetInputSessionCache 任务推 N 遍，攒到结尾发一次。
+int g_cacheNotifyDepth = 0;
+bool g_cacheNotifyPending = false;
+
+void NotifyImeServerClearDictCache()
+{
+    if (g_cacheNotifyDepth > 0)
+    {
+        g_cacheNotifyPending = true;
+        return;
+    }
+    PostDictCacheReset();
+}
+
+struct DictCacheNotifyBatch
+{
+    DictCacheNotifyBatch()
+    {
+        ++g_cacheNotifyDepth;
+    }
+    ~DictCacheNotifyBatch()
+    {
+        if (--g_cacheNotifyDepth == 0 && g_cacheNotifyPending)
+        {
+            g_cacheNotifyPending = false;
+            PostDictCacheReset();
+        }
+    }
+    DictCacheNotifyBatch(const DictCacheNotifyBatch &) = delete;
+    DictCacheNotifyBatch &operator=(const DictCacheNotifyBatch &) = delete;
+};
 
 std::string NormalizeAnnotatedSyllable(std::string syllable)
 {
@@ -2149,10 +2193,87 @@ json::object HandleQuickPhrase(const json::object &request)
 }
 } // namespace
 
+namespace
+{
+// 批量删除：每一条都走目标词库自己的删除路径（日志、内置词不能删之类的规则都在那里），
+// 只把 action 换成 delete 再按原请求分发一遍。
+json::object DeleteMany(const json::object &request)
+{
+    const auto *entries = request.if_contains("entries");
+    if (entries == nullptr || !entries->is_array() || entries->as_array().empty())
+        return BatchResult(false, "没有选中要删除的条目", 0);
+
+    const json::string dictionary = StringValue(request, "dictionary");
+    size_t deleted = 0;
+    size_t failed = 0;
+    std::string first_error;
+    {
+        DictCacheNotifyBatch batch;
+        for (const auto &item : entries->as_array())
+        {
+            if (!item.is_object())
+            {
+                ++failed;
+                if (first_error.empty())
+                    first_error = "条目格式错误";
+                continue;
+            }
+            const auto &entry = item.as_object();
+            const std::string word = StringValue(entry, "word");
+            const std::string code = StringValue(entry, "code");
+            const std::string display = StringValue(entry, "display");
+            json::object single = request;
+            single.erase("entries");
+            single["action"] = "delete";
+            single["code"] = code;
+            single["word"] = word;
+            single["oldCode"] = code;
+            single["oldWord"] = word;
+            if (!display.empty())
+            {
+                single["display"] = display;
+                single["oldDisplay"] = display;
+            }
+            // 单条抛异常不能把整批拖下水：已经删掉的要算数，这条记进 failed 和首个原因里。
+            try
+            {
+                const json::object response = HandleRequest(single);
+                if (response.at("ok").as_bool())
+                {
+                    ++deleted;
+                    continue;
+                }
+                if (first_error.empty())
+                    first_error = std::string(response.at("message").as_string());
+            }
+            catch (const std::exception &error)
+            {
+                if (first_error.empty())
+                    first_error = std::string("删除失败：") + error.what();
+            }
+            ++failed;
+        }
+    }
+
+    const std::string what = dictionary == "quick" ? "快捷短语" : "词条";
+    if (failed == 0)
+        return BatchResult(true, "已删除 " + std::to_string(deleted) + " 条" + what, 0);
+    if (deleted == 0)
+        return BatchResult(false, first_error, failed);
+    // 删掉一部分也算成功，列表要刷新；没删掉的原因一并在提示里说出来。
+    return BatchResult(true,
+                       "已删除 " + std::to_string(deleted) + " 条" + what + "，" + std::to_string(failed) +
+                           " 条未删除：" + first_error,
+                       failed);
+}
+} // namespace
+
 json::object HandleRequest(const json::object &request)
 {
     const std::string dictionary = StringValue(request, "dictionary");
     const std::string action = StringValue(request, "action");
+    if (action == "deleteMany")
+        return DeleteMany(request);
     if (action == "query" && StringValue(request, "scope") == "user")
         return QueryUserEntries(dictionary, request);
     // 其他输入法的词库都是拼音词库，只导入全拼用户词库。

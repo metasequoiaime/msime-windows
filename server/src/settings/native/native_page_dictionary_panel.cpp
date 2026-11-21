@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 
 using Microsoft::WRL::ComPtr;
@@ -54,6 +55,33 @@ TextStyle ActionStyle()
     TextStyle style = ControlStyle();
     style.size = 13.333f;
     return style;
+}
+
+constexpr float kCheckSize = 18.0f;
+
+// 表格里的勾选框，外观与 CheckOption 一致：18px 圆角框、2px 边框、勾选时实心加白勾。
+void DrawCheckbox(msimeui::DeviceResources &dr, const RectF &box, bool checked, bool hot)
+{
+    const Palette &p = CurrentPalette();
+    if (checked)
+    {
+        FillRounded(dr, box, 2.0f, p.checkboxChecked);
+        StrokeRounded(dr, box, 2.0f, p.checkboxChecked, 2.0f);
+        ID2D1RenderTarget *target = dr.GetRenderTarget();
+        if (ID2D1SolidColorBrush *white = dr.GetSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f)))
+        {
+            const PointF center = {box.x + 2.0f + 4.0f + 3.0f, box.y + 2.0f + 1.0f + 5.5f};
+            D2D1_MATRIX_3X2_F previous;
+            target->GetTransform(&previous);
+            target->SetTransform(D2D1::Matrix3x2F::Rotation(45.0f) * D2D1::Matrix3x2F::Translation(center.x, center.y) *
+                                 previous);
+            target->FillRectangle(D2D1::RectF(1.0f, -5.5f, 3.0f, 5.5f), white);
+            target->FillRectangle(D2D1::RectF(-3.0f, 3.5f, 3.0f, 5.5f), white);
+            target->SetTransform(previous);
+        }
+        return;
+    }
+    StrokeRounded(dr, box, 2.0f, hot ? p.checkboxBorderHover : p.checkboxBorder, 2.0f);
 }
 
 // Single-line text clipped with an ellipsis (text-overflow: ellipsis).
@@ -422,20 +450,105 @@ VisualPtr MakeDialogField(const std::wstring &label, const std::shared_ptr<DictI
 // ---------------------------------------------------------------------------------
 // Table
 // ---------------------------------------------------------------------------------
-std::array<float, 6> DictColumns::Edges(float width) const
+namespace
 {
-    const float percent = (percents[0] + percents[1] + percents[2]) * width;
-    const float leftover = std::max(width - 64.0f - 124.0f - percent, 0.0f);
-    const float index = 64.0f + leftover * 64.0f / 188.0f;
-    const float action = 124.0f + leftover * 124.0f / 188.0f;
-    std::array<float, 6> edges{};
+struct DictColumnLayout
+{
+    std::array<bool, 3> shown;
+    bool index = true;
+    float budget = 0.0f;
+    float percentSum = 0.0f;
+};
+
+// 正常宽度按原百分比排版，剩下的空白按 64:124 分给序号列和操作列（table-layout: fixed）。
+// 放不下时整列收起，绝不把文字列压成空白：固定列（勾选 / 序号 / 操作）必须先留住，
+// 否则它们会被滚动区裁掉，「删除」既看不见也点不到。
+DictColumnLayout LayoutDictColumns(const DictColumns &columns, float width)
+{
+    DictColumnLayout layout{};
+    for (size_t i = 0; i < 3; ++i)
+        layout.shown[i] = columns.percents[i] > 0.0f;
+    const size_t liveColumns = static_cast<size_t>(layout.shown[0]) + static_cast<size_t>(layout.shown[1]) +
+                               static_cast<size_t>(layout.shown[2]);
+    size_t remaining = liveColumns;
+
+    const auto percentSum = [&]() {
+        float sum = 0.0f;
+        for (size_t i = 0; i < 3; ++i)
+            sum += layout.shown[i] ? columns.percents[i] : 0.0f;
+        return sum;
+    };
+    const auto textBudget = [&]() {
+        const float fixed = kDictCheckColumn + (layout.index ? kDictIndexWidth : 0.0f) + kDictActionWidth;
+        return std::max(width - fixed, 0.0f);
+    };
+    // 收起过列之后剩下的列把预算吃满，省下来的宽度不白留在操作列里。
+    const auto budget = [&]() {
+        const float available = textBudget();
+        return remaining < liveColumns ? available : std::min(available, percentSum() * width);
+    };
+    const auto narrowest = [&]() {
+        const float sum = percentSum();
+        if (sum <= 0.0f)
+            return std::numeric_limits<float>::max();
+        float smallest = std::numeric_limits<float>::max();
+        for (size_t i = 0; i < 3; ++i)
+        {
+            if (layout.shown[i])
+                smallest = std::min(smallest, columns.percents[i] * budget() / sum);
+        }
+        return smallest;
+    };
+
+    // 收起的顺序：权重 → 编码 → 序号；词条最能说明这一行是什么，留到最后。
+    while (narrowest() < kDictMinTextColumn)
+    {
+        if (remaining > 1 && layout.shown[2])
+            layout.shown[2] = false;
+        else if (remaining > 1 && layout.shown[0])
+            layout.shown[0] = false;
+        else if (layout.index)
+            layout.index = false;
+        else
+            break;
+        remaining = static_cast<size_t>(layout.shown[0]) + static_cast<size_t>(layout.shown[1]) +
+                    static_cast<size_t>(layout.shown[2]);
+    }
+
+    layout.budget = budget();
+    layout.percentSum = percentSum();
+    return layout;
+}
+} // namespace
+
+std::array<float, 7> DictColumns::Edges(float width) const
+{
+    const DictColumnLayout layout = LayoutDictColumns(*this, width);
+    const float leftover = std::max(
+        width - kDictCheckColumn - (layout.index ? kDictIndexWidth : 0.0f) - kDictActionWidth - layout.budget, 0.0f);
+    const float indexWidth = layout.index ? kDictIndexWidth + leftover * 64.0f / 188.0f : 0.0f;
+    // 表格比勾选列加操作列还窄时，操作列只能跟着缩——它是唯一还能救回一点点点击区域的东西，
+    // 让它溢出到表外反而什么都点不到。
+    const float actionLimit = std::max(width - kDictCheckColumn, 0.0f);
+    const float actionWidth =
+        std::min(kDictActionWidth + leftover * (layout.index ? 124.0f / 188.0f : 1.0f), actionLimit);
+    const float unit = layout.percentSum > 0.0f ? layout.budget / layout.percentSum : 0.0f;
+
+    std::array<float, 7> edges{};
     edges[0] = 0.0f;
-    edges[1] = index;
-    edges[2] = edges[1] + percents[0] * width;
-    edges[3] = edges[2] + percents[1] * width;
-    edges[4] = edges[3] + percents[2] * width;
-    edges[5] = std::max(edges[4] + action, width);
+    edges[1] = kDictCheckColumn;
+    edges[2] = edges[1] + indexWidth;
+    // 收起的列把右边界停在上一条边上，单元格宽度成了 0 或负值，DrawCell 直接不画。
+    for (size_t i = 0; i < 3; ++i)
+        edges[i + 3] = edges[i + 2] + (layout.shown[i] ? percents[i] * unit : 0.0f);
+    edges[6] = std::max(edges[5] + actionWidth, width);
     return edges;
+}
+
+std::array<bool, 4> DictColumns::VisibleColumns(float width) const
+{
+    const DictColumnLayout layout = LayoutDictColumns(*this, width);
+    return {layout.index, layout.shown[0], layout.shown[1], layout.shown[2]};
 }
 
 DictTableHeader::DictTableHeader(DictColumns columns) : columns_(columns)
@@ -456,6 +569,30 @@ void DictTableHeader::SetScrollbarReserve(float width)
     InvalidateVisual();
 }
 
+void DictTableHeader::SetOnSelectAll(std::function<void()> handler)
+{
+    onSelectAll_ = std::move(handler);
+}
+
+void DictTableHeader::SetAllSelected(bool selected)
+{
+    if (allSelected_ == selected)
+        return;
+    allSelected_ = selected;
+    InvalidateVisual();
+}
+
+RectF DictTableHeader::CheckRect() const
+{
+    const float top = bounds_.y + (bounds_.height - kCheckSize) * 0.5f;
+    return {bounds_.x + (kDictCheckColumn - kCheckSize) * 0.5f, top, kCheckSize, kCheckSize};
+}
+
+bool DictTableHeader::HitCheck(const PointF &point) const
+{
+    return Contains(bounds_, point) && Contains(CheckRect(), point);
+}
+
 SizeF DictTableHeader::Measure(const SizeF &availableSize)
 {
     // border-top of the wrap + 13px padding + line + 13px padding + border-bottom
@@ -473,20 +610,70 @@ void DictTableHeader::Render(msimeui::DeviceResources &dr)
     const float border = CssBorder();
     FillRect(dr, bounds_, p.tableHeaderBg);
     FillRect(dr, {bounds_.x, bounds_.y, bounds_.width, border}, p.border);
-    FillRect(dr, {bounds_.x, bounds_.y + bounds_.height - border, bounds_.width - reserve_, border}, p.tableBorder);
+    FillRect(dr, {bounds_.x, bounds_.y + bounds_.height - border, bounds_.width, border}, p.tableBorder);
     const float width = std::max(bounds_.width - reserve_, 0.0f);
     const auto edges = columns_.Edges(width);
     const RectF row = {bounds_.x, bounds_.y + border, width, bounds_.height - border * 2.0f};
-    DrawCell(dr, L"No.", HeaderStyle(), {row.x + edges[0] + 10.0f, row.y, edges[1] - edges[0] - 20.0f, row.height},
+    DrawCheckbox(dr, CheckRect(), allSelected_, hovered_);
+    DrawCell(dr, L"No.", HeaderStyle(), {row.x + edges[1] + 10.0f, row.y, edges[2] - edges[1] - 20.0f, row.height},
              p.textMuted, true);
     for (size_t i = 0; i < 4; ++i)
     {
         // th:last-child { padding-left: 26px }
-        const float left = row.x + edges[i + 1] + (i == 3 ? 26.0f : 18.0f);
-        const float right = row.x + edges[i + 2] - 18.0f;
+        const float left = row.x + edges[i + 2] + (i == 3 ? 26.0f : 18.0f);
+        const float right = row.x + edges[i + 3] - 18.0f;
         DrawCell(dr, labels_[i], HeaderStyle(), {left, row.y, std::max(right - left, 0.0f), row.height}, p.textMuted,
                  false);
     }
+}
+
+bool DictTableHeader::OnMouseMove(const POINT &point, WPARAM)
+{
+    if (!window_)
+        return false;
+    const bool hot = HitCheck(window_->ClientPixelsToDips(point));
+    if (hot != hovered_)
+    {
+        hovered_ = hot;
+        InvalidateVisual();
+    }
+    return true;
+}
+
+void DictTableHeader::OnMouseLeave()
+{
+    if (hovered_)
+    {
+        hovered_ = false;
+        InvalidateVisual();
+    }
+}
+
+bool DictTableHeader::OnMouseDown(const POINT &point, WPARAM)
+{
+    if (!window_)
+        return false;
+    pressed_ = HitCheck(window_->ClientPixelsToDips(point));
+    return pressed_;
+}
+
+bool DictTableHeader::OnMouseUp(const POINT &point, WPARAM)
+{
+    if (!pressed_ || !window_)
+        return false;
+    const bool still = HitCheck(window_->ClientPixelsToDips(point));
+    pressed_ = false;
+    if (still && onSelectAll_)
+    {
+        const auto handler = onSelectAll_;
+        handler();
+    }
+    return true;
+}
+
+HCURSOR DictTableHeader::GetCursor() const
+{
+    return LoadCursor(nullptr, hovered_ ? IDC_HAND : IDC_ARROW);
 }
 
 DictTableBody::DictTableBody(DictColumns columns) : columns_(columns)
@@ -498,8 +685,13 @@ void DictTableBody::SetRows(std::vector<std::array<std::wstring, 3>> rows, size_
     rows_ = std::move(rows);
     firstIndex_ = firstIndex;
     hovered_ = pressed_ = {kNone, false};
+    hoveredCheck_ = pressedCheck_ = kNone;
+    const bool hadSelection = !selection_.empty();
+    selection_.clear();
     InvalidateMeasure();
     InvalidateVisual();
+    if (hadSelection)
+        NotifySelection();
 }
 
 void DictTableBody::SetEmpty(std::wstring message)
@@ -507,13 +699,62 @@ void DictTableBody::SetEmpty(std::wstring message)
     rows_.clear();
     empty_ = std::move(message);
     hovered_ = pressed_ = {kNone, false};
+    hoveredCheck_ = pressedCheck_ = kNone;
+    const bool hadSelection = !selection_.empty();
+    selection_.clear();
     InvalidateMeasure();
     InvalidateVisual();
+    if (hadSelection)
+        NotifySelection();
 }
 
 void DictTableBody::SetOnAction(ActionHandler handler)
 {
     onAction_ = std::move(handler);
+}
+
+void DictTableBody::SetOnSelectionChanged(SelectionHandler handler)
+{
+    onSelectionChanged_ = std::move(handler);
+}
+
+bool DictTableBody::IsSelected(size_t row) const
+{
+    return std::find(selection_.begin(), selection_.end(), row) != selection_.end();
+}
+
+bool DictTableBody::AllSelected() const
+{
+    return !rows_.empty() && selection_.size() == rows_.size();
+}
+
+void DictTableBody::SetAllSelected(bool selected)
+{
+    selection_.clear();
+    if (selected)
+        for (size_t row = 0; row < rows_.size(); ++row)
+            selection_.push_back(row);
+    hoveredCheck_ = pressedCheck_ = kNone;
+    InvalidateVisual();
+    NotifySelection();
+}
+
+void DictTableBody::ClearSelection()
+{
+    if (selection_.empty())
+        return;
+    selection_.clear();
+    InvalidateVisual();
+    NotifySelection();
+}
+
+void DictTableBody::NotifySelection()
+{
+    if (onSelectionChanged_)
+    {
+        const auto handler = onSelectionChanged_;
+        handler();
+    }
 }
 
 float DictTableBody::RowHeight() const
@@ -542,8 +783,21 @@ RectF DictTableBody::ActionRect(size_t row, bool remove) const
     const float height = lineHeight + 8.0f;
     const float top = bounds_.y + RowHeight() * static_cast<float>(row);
     const float y = top + (RowHeight() - CssBorder() - height) * 0.5f;
-    const float x = bounds_.x + edges[4] + 18.0f + (remove ? editWidth : 0.0f);
-    return {x, y, remove ? removeWidth : editWidth, height};
+    const float width = remove ? removeWidth : editWidth;
+    const float left = bounds_.x + edges[5];
+    const float right = bounds_.x + edges[6];
+    float x = left + 18.0f + (remove ? editWidth : 0.0f);
+    // 表窄到操作列被压完时，按钮不能照旧按列起点摆：钳回表内，否则会被画到表外裁掉。
+    if (x + width > right)
+        x = std::max(left, right - width);
+    return {x, y, std::min(width, std::max(right - x, 0.0f)), height};
+}
+
+RectF DictTableBody::CheckRect(size_t row) const
+{
+    const float top = bounds_.y + RowHeight() * static_cast<float>(row);
+    return {bounds_.x + (kDictCheckColumn - kCheckSize) * 0.5f, top + (RowHeight() - CssBorder() - kCheckSize) * 0.5f,
+            kCheckSize, kCheckSize};
 }
 
 void DictTableBody::Render(msimeui::DeviceResources &dr)
@@ -566,12 +820,13 @@ void DictTableBody::Render(msimeui::DeviceResources &dr)
         if (!dr.IsVisible(row))
             continue;
         const float textHeight = rowHeight - border;
+        DrawCheckbox(dr, CheckRect(r), IsSelected(r), hoveredCheck_ == r);
         DrawCell(dr, std::to_wstring(firstIndex_ + r + 1), CellStyle(),
-                 {row.x + edges[0] + 10.0f, row.y, edges[1] - edges[0] - 20.0f, textHeight}, p.textMuted, true);
+                 {row.x + edges[1] + 10.0f, row.y, edges[2] - edges[1] - 20.0f, textHeight}, p.textMuted, true);
         for (size_t c = 0; c < 3; ++c)
         {
-            const float left = row.x + edges[c + 1] + 18.0f;
-            const float right = row.x + edges[c + 2] - 18.0f;
+            const float left = row.x + edges[c + 2] + 18.0f;
+            const float right = row.x + edges[c + 3] - 18.0f;
             DrawCell(dr, rows_[r][c], CellStyle(), {left, row.y, std::max(right - left, 0.0f), textHeight}, p.text,
                      false);
         }
@@ -603,13 +858,26 @@ std::pair<size_t, bool> DictTableBody::HitAction(const PointF &point) const
     return {kNone, false};
 }
 
+size_t DictTableBody::HitCheck(const PointF &point) const
+{
+    if (rows_.empty() || !Contains(bounds_, point))
+        return kNone;
+    const size_t row = static_cast<size_t>((point.y - bounds_.y) / RowHeight());
+    if (row >= rows_.size() || !Contains(CheckRect(row), point))
+        return kNone;
+    return row;
+}
+
 bool DictTableBody::OnMouseMove(const POINT &point, WPARAM)
 {
     if (!window_)
         return false;
-    const auto hit = HitAction(window_->ClientPixelsToDips(point));
-    if (hit != hovered_)
+    const PointF dips = window_->ClientPixelsToDips(point);
+    const size_t check = HitCheck(dips);
+    const auto hit = HitAction(dips);
+    if (check != hoveredCheck_ || hit != hovered_)
     {
+        hoveredCheck_ = check;
         hovered_ = hit;
         InvalidateVisual();
     }
@@ -618,9 +886,10 @@ bool DictTableBody::OnMouseMove(const POINT &point, WPARAM)
 
 void DictTableBody::OnMouseLeave()
 {
-    if (hovered_.first != kNone)
+    if (hovered_.first != kNone || hoveredCheck_ != kNone)
     {
         hovered_ = {kNone, false};
+        hoveredCheck_ = kNone;
         InvalidateVisual();
     }
 }
@@ -629,15 +898,40 @@ bool DictTableBody::OnMouseDown(const POINT &point, WPARAM)
 {
     if (!window_)
         return false;
-    pressed_ = HitAction(window_->ClientPixelsToDips(point));
+    const PointF dips = window_->ClientPixelsToDips(point);
+    pressedCheck_ = HitCheck(dips);
+    if (pressedCheck_ != kNone)
+    {
+        pressed_ = {kNone, false};
+        return true;
+    }
+    pressed_ = HitAction(dips);
     return pressed_.first != kNone;
 }
 
 bool DictTableBody::OnMouseUp(const POINT &point, WPARAM)
 {
-    if (pressed_.first == kNone || !window_)
+    if (!window_)
         return false;
-    const auto hit = HitAction(window_->ClientPixelsToDips(point));
+    const PointF dips = window_->ClientPixelsToDips(point);
+    if (pressedCheck_ != kNone)
+    {
+        const size_t pressed = pressedCheck_;
+        pressedCheck_ = kNone;
+        if (HitCheck(dips) != pressed)
+            return true;
+        const auto found = std::find(selection_.begin(), selection_.end(), pressed);
+        if (found == selection_.end())
+            selection_.push_back(pressed);
+        else
+            selection_.erase(found);
+        InvalidateVisual();
+        NotifySelection();
+        return true;
+    }
+    if (pressed_.first == kNone)
+        return false;
+    const auto hit = HitAction(dips);
     const auto pressed = pressed_;
     pressed_ = {kNone, false};
     if (hit == pressed && onAction_)
@@ -650,7 +944,7 @@ bool DictTableBody::OnMouseUp(const POINT &point, WPARAM)
 
 HCURSOR DictTableBody::GetCursor() const
 {
-    return LoadCursor(nullptr, hovered_.first != kNone ? IDC_HAND : IDC_ARROW);
+    return LoadCursor(nullptr, hovered_.first != kNone || hoveredCheck_ != kNone ? IDC_HAND : IDC_ARROW);
 }
 
 DictTableScroll::DictTableScroll(std::shared_ptr<DictTableBody> body, HostServices &host)
@@ -692,6 +986,14 @@ SizeF DictTableScroll::Measure(const SizeF &availableSize)
         scroll_->SetAppearance(TableScrollbar());
     }
     scroll_->MeasureInLayout({availableSize.width, height});
+    // 内容超出可视高度时滚动条会占掉 8px：表头得留出同样的宽度，否则表头和表体的列错开。
+    const float reserve = contentHeight_ > height + 0.5f ? TableScrollbar().reservedWidth : 0.0f;
+    if (reserve != appliedReserve_)
+    {
+        appliedReserve_ = reserve;
+        if (onScrollbarReserve_)
+            onScrollbarReserve_(reserve);
+    }
     return {availableSize.width, height};
 }
 
@@ -709,6 +1011,11 @@ void DictTableScroll::Render(msimeui::DeviceResources &dr)
 void DictTableScroll::SetOnAttach(std::function<void()> handler)
 {
     onAttach_ = std::move(handler);
+}
+
+void DictTableScroll::SetOnScrollbarReserve(std::function<void(float)> handler)
+{
+    onScrollbarReserve_ = std::move(handler);
 }
 
 void DictTableScroll::Attach(msimeui::Window *window)
@@ -873,6 +1180,12 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     hint_->SetMargin({22.0f, 0.0f, 22.0f, 16.0f});
     header_ = std::make_shared<DictTableHeader>(columns);
     body_ = std::make_shared<DictTableBody>(columns);
+    header_->SetOnSelectAll([this]() {
+        if (!deletingRequestId_.empty())
+            return;
+        body_->SetAllSelected(!body_->AllSelected());
+    });
+    body_->SetOnSelectionChanged([this]() { SyncSelection(); });
     body_->SetOnAction([this](size_t row, bool remove) {
         if (row >= rows_.size())
             return;
@@ -906,6 +1219,7 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
         });
     });
     scroll_ = std::make_shared<DictTableScroll>(body_, context_.host);
+    scroll_->SetOnScrollbarReserve([this](float reserve) { header_->SetScrollbarReserve(reserve); });
 
     TextStyle status;
     status.size = kFontDefault;
@@ -930,6 +1244,9 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
         scroll_->ScrollToTop();
         Query(LastPageOffset(total_, kPageSize), false);
     });
+    removeSelected_ = std::make_shared<Button>(L"删除选中", ButtonKind::Danger);
+    removeSelected_->SetDisabled(true);
+    removeSelected_->SetOnClick([this]() { DeleteSelected(); });
 
     if (kind_ == Kind::Quick)
     {
@@ -955,19 +1272,28 @@ void DictionaryPanel::AddTo(Column &column)
         if (const auto panel = weak.lock())
             panel->EnsureLoaded();
     });
-    auto toolbar = std::make_shared<Row>(10.0f);
+    // `.dict-toolbar` 拆成两行：搜索框和「查询」一行，表格级操作一行。原来五个控件挤在一行，
+    // 最窄窗口（设置窗最小 600 DIP，工具栏内宽只剩 330 上下）放不下，`Row` 又不裁剪，
+    // 末尾的按钮会被压成 0 宽或越过卡片边框。操作那一行还允许换行，再窄也不会溢出去。
+    auto toolbar = std::make_shared<Column>(10.0f);
     // .dict-toolbar { padding: 20px 22px 10px }
     toolbar->SetPadding({22.0f, 20.0f, 22.0f, 10.0f});
-    toolbar->Add(search_, 1.0f);
+    auto searchRow = std::make_shared<Row>(10.0f);
     auto searchButton = std::make_shared<Button>(L"查询", ButtonKind::Neutral);
     searchButton->SetOnClick([this]() { Query(0, true); });
+    searchRow->Add(search_, 1.0f);
+    searchRow->Add(searchButton);
+    auto actions = std::make_shared<Row>(10.0f);
+    actions->SetWrap(true, 10.0f);
     auto importButton = std::make_shared<Button>(L"批量导入", ButtonKind::Neutral);
     importButton->SetOnClick([this]() { Import("import"); });
     auto addButton = std::make_shared<Button>(kind_ == Kind::Quick ? L"新增短语" : L"新增词条", ButtonKind::Primary);
     addButton->SetOnClick([this]() { OpenDialog(nullptr); });
-    toolbar->Add(searchButton);
-    toolbar->Add(importButton);
-    toolbar->Add(addButton);
+    actions->Add(importButton);
+    actions->Add(removeSelected_);
+    actions->Add(addButton);
+    toolbar->Add(searchRow);
+    toolbar->Add(actions);
     column.Add(toolbar);
     column.Add(hint_);
     column.Add(header_);
@@ -1054,7 +1380,7 @@ void DictionaryPanel::SetOnModeChanged(std::function<void()> handler)
     onModeChanged_ = std::move(handler);
 }
 
-void DictionaryPanel::Post(const std::string &action, Json data)
+std::string DictionaryPanel::Post(const std::string &action, Json data)
 {
     const std::string requestId = prefix_ + std::to_string(++counter_);
     std::string target = dictionary_;
@@ -1072,6 +1398,7 @@ void DictionaryPanel::Post(const std::string &action, Json data)
     data["action"] = action;
     data["dictionary"] = target;
     context_.model.Post("dictionaryRequest", std::move(data));
+    return requestId;
 }
 
 void DictionaryPanel::Query(size_t offset, bool fromInput)
@@ -1118,6 +1445,50 @@ void DictionaryPanel::SyncPager()
     previous_->SetDisabled(loading_ || offset_ == 0);
     next_->SetDisabled(loading_ || !hasMore_);
     last_->SetDisabled(loading_ || !hasMore_);
+}
+
+void DictionaryPanel::SyncSelection()
+{
+    if (!removeSelected_)
+        return;
+    const size_t count = body_->Selection().size();
+    // 上一批还在路上：按钮按住不放，否则会把同一批发第二次。
+    removeSelected_->SetDisabled(count == 0 || !deletingRequestId_.empty());
+    removeSelected_->SetText(count == 0 ? L"删除选中" : L"删除选中 (" + std::to_wstring(count) + L")");
+    header_->SetAllSelected(body_->AllSelected());
+}
+
+void DictionaryPanel::DeleteSelected()
+{
+    if (!deletingRequestId_.empty())
+        return;
+    const std::vector<size_t> selected = body_->Selection();
+    if (selected.empty())
+        return;
+    Json entries = Json::array();
+    for (const size_t index : selected)
+    {
+        if (index >= rows_.size())
+            continue;
+        const Entry &data = rows_[index];
+        Json entry = {{"code", data.code}, {"word", data.word}};
+        // 英文词库的删除按「单词 + 显示内容」定位，显示内容留空时用单词本身。
+        if (dictionary_ == "english")
+            entry["display"] = data.display.empty() ? data.word : data.display;
+        entries.push_back(std::move(entry));
+    }
+    if (entries.empty())
+        return;
+    const std::string target = dictionary_;
+    const std::wstring count = std::to_wstring(entries.size());
+    const std::wstring message =
+        std::wstring(L"确定删除选中的 ") + count + (kind_ == Kind::Quick ? L" 条快捷短语吗？" : L" 条词条吗？");
+    context_.host.Confirm(message, [this, entries, target](bool confirmed) {
+        if (!confirmed || !deletingRequestId_.empty())
+            return;
+        deletingRequestId_ = Post("deleteMany", {{"dictionary", target}, {"entries", entries}});
+        SyncSelection();
+    });
 }
 
 void DictionaryPanel::Import(const std::string &action)
@@ -1330,11 +1701,19 @@ void DictionaryPanel::OnResponse(const Json &message)
         return;
     const Pending context = found->second;
     pending_.erase(found);
+    if (requestId == deletingRequestId_)
+    {
+        deletingRequestId_.clear();
+        SyncSelection();
+    }
     if (context.action == "query" && requestId != latestQueryId_)
         return;
     if (kind_ == Kind::Dictionary && context.action == "query" && context.dictionary != dictionary_)
         return;
     const bool ok = message.value("ok", false);
+    // 批量删除里没删掉几条：删掉的那部分仍然算成功（列表要刷新、勾选要清），
+    // 但提示不能报成绿的，否则用户以为整批都删了。
+    const bool partial = message.value("failed", 0) > 0;
     if (context.action == "query")
     {
         loading_ = false;
@@ -1390,7 +1769,7 @@ void DictionaryPanel::OnResponse(const Json &message)
             if (!label.empty())
                 text = label + L"：" + text;
         }
-        context_.host.ShowToast(text, ok);
+        context_.host.ShowToast(text, ok && !partial);
     }
 
     if (context.action == "query" && ok)
@@ -1416,6 +1795,10 @@ void DictionaryPanel::OnResponse(const Json &message)
     }
     if (ok && context.action != "query" && !isExport)
     {
+        // 删除成功后行号已经对不上了，勾选立刻作废，别让按钮继续顶着上一页的条数。
+        // 响应回来时已经换过词库的不能跟着清：新页面的勾选跟这批删除没关系。
+        if (context.action == "deleteMany" && context.dictionary == dictionary_)
+            body_->ClearSelection();
         if (kind_ == Kind::Quick)
         {
             if (dialogOpen_)
