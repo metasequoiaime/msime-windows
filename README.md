@@ -11,7 +11,7 @@
 [![Stars](https://img.shields.io/github/stars/metasequoiaime/MSIME-Windows?style=flat)](https://github.com/metasequoiaime/MSIME-Windows/stargazers)
 <!-- badges:end -->
 
-一款开源的自由 Windows 输入法，面向 Windows 10 / Windows 11，采用纯 TSF 方案。
+一款开源的自由 Windows 输入法，面向 Windows 10 / Windows 11，采用纯 TSF 方案，提供 x64、x86 与 Arm64 组件。
 
 ## 下载与安装
 
