@@ -16,9 +16,12 @@
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 #include <fmt/xchar.h>
 #include "utils/window_utils.h"
+#include "utils/dr_dict_lookup.h"
+#include "utils/dr_dict_lookup_policy.h"
 #include "ipc/event_listener.h"
 #include "utils/ime_utils.h"
 #include "log/candidate_diag_log.h"
@@ -113,6 +116,32 @@ void NotePlacedCandidateCaret(POINT layoutCaret)
     g_last_placed_caret_x = layoutCaret.x;
     g_last_placed_caret_y = layoutCaret.y;
     g_caret_fallback_placed = g_caret_fallback_valid && Global::Point[1] == Global::INVALID_Y;
+}
+
+// DR Dict 查词快捷键的弹窗位置：候选窗本该在的那个光标锚点，取法与 GetCandidateLayoutCaret 同序
+// （TSF 光标 → 不跟随光标时的会话锚点 → UIA 兜底光标），但只读、不改任何状态。屏幕角落那个最后兜底
+// 不是光标，不算；都没有时返回空，由调用方退回鼠标位置。
+std::optional<RECT> DictionaryLookupCaret()
+{
+    std::optional<POINT> anchor;
+    const POINT caret{Global::Point[0], Global::Point[1]};
+    if (caret.y != Global::INVALID_Y)
+    {
+        anchor = !GetConfiguredCandidateWindowFollowCursor() && g_candidate_session_anchor_valid
+                     ? g_candidate_session_anchor
+                     : caret;
+    }
+    else if (g_caret_fallback_valid && !g_caret_fallback_pinned)
+    {
+        anchor = g_caret_fallback_anchor;
+    }
+    if (!anchor)
+    {
+        return std::nullopt;
+    }
+    const DrDictLookup::CaretRect line =
+        DrDictLookup::CaretRectFromAnchor(anchor->x, anchor->y, static_cast<double>(GetScaleForPoint(*anchor)));
+    return RECT{line.left, line.top, line.right, line.bottom};
 }
 } // namespace
 
@@ -270,7 +299,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             {
                 return WndProcCandWindow(hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
             }
-            Global::SetCandidateWindowRenderedVisible(false);
+            FanyNamedPipe::NoteCandidatePageVisibility(false);
             return 0;
         }
         const ULONGLONG updateStartedTick = GetTickCount64();
@@ -305,7 +334,8 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             // The frame already on screen is identical to the page just loaded, so the render echo is
             // honest even though nothing was repainted. Without it a digit/space selection would wait
             // out the full timeout on content that is already visible.
-            Global::PublishRenderedCandidatePageGeneration(candidatePage->generation);
+            FanyNamedPipe::NoteCandidatePagePainted(candidatePage->generation, true,
+                                                    CandidatePresenter::Instance().LastShownCount());
             CAND_DIAG_LOGF(L"candidate-frame path=dedup page_gen={}", candidatePage->generation);
             return 0;
         }
@@ -343,7 +373,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
         g_candidate_hide_pending = false;
         CAND_DIAG_LOGF(L"hide message begin {}", DescribeCandidateHostState());
         ::is_global_wnd_cand_shown = false;
-        Global::SetCandidateWindowRenderedVisible(false);
+        FanyNamedPipe::NoteCandidatePageVisibility(false);
         g_last_rendered_candidate_signature.clear();
         KillTimer(hwnd, TIMER_ID_CANDIDATE_MOVE_SETTLE);
         g_candidate_session_anchor_valid = false;
@@ -589,12 +619,23 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const bool previous_trilingual_cycle = GetConfiguredTrilingualCycleEnabled();
             const std::string previous_shuangpin_schema = GetConfiguredShuangpinSchema();
             const std::string previous_character_set = GetConfiguredCharacterSet();
-            const bool previous_translation_show_pos = GetConfiguredCandidateTranslationShowPos();
-            const bool previous_translation_single_sense = GetConfiguredCandidateTranslationSingleSense();
+            // 译文与音标的显示方式（中文候选、英文候选各一套）：变了就重组当前页。
+            const auto translation_display = [] {
+                return std::string{GetConfiguredCandidateTranslationShowPos() ? '1' : '0',
+                                   GetConfiguredCandidateTranslationSingleSense() ? '1' : '0',
+                                   GetConfiguredEnglishCandidateTranslationShowPos() ? '1' : '0',
+                                   GetConfiguredEnglishCandidateTranslationSingleSense() ? '1' : '0',
+                                   GetConfiguredCandidateTranslationPhonetics() ? '1' : '0',
+                                   GetConfiguredEnglishCandidatePhonetics() ? '1' : '0'};
+            };
+            const std::string previous_translation_display = translation_display();
             const std::string previous_layout = GetConfiguredCandidateWindowLayout();
             const std::string previous_candidate_skin = GetConfiguredCandidateSkin();
             const bool previous_fit_content = GetConfiguredCandidateWindowFitContent();
             const bool previous_single_line = GetConfiguredCandidateWindowSingleLine();
+            const bool previous_fixed_width = GetConfiguredCandidateWindowFixedWidth();
+            const double previous_fixed_width_ratio = GetConfiguredCandidateWindowFixedWidthRatio();
+            const bool previous_fixed_height = GetConfiguredCandidateWindowFixedHeight();
             const bool previous_floating_toolbar = GetConfiguredFloatingToolbarEnabled();
             const bool previous_caret_state_indicator = GetConfiguredCaretStateIndicatorEnabled();
             const FloatingToolbarItemsConfig previous_floating_toolbar_items = GetConfiguredFloatingToolbarItems();
@@ -664,8 +705,7 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
                     UpdateFtbCharacterSetState();
                 }
                 if (previous_character_set != GetConfiguredCharacterSet() ||
-                    previous_translation_show_pos != GetConfiguredCandidateTranslationShowPos() ||
-                    previous_translation_single_sense != GetConfiguredCandidateTranslationSingleSense())
+                    previous_translation_display != translation_display())
                 {
                     FanyNamedPipe::EnqueueRefreshCandidatePageTask();
                 }
@@ -685,6 +725,9 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
                     (previous_layout != GetConfiguredCandidateWindowLayout() ||
                      previous_fit_content != GetConfiguredCandidateWindowFitContent() ||
                      previous_single_line != GetConfiguredCandidateWindowSingleLine() ||
+                     previous_fixed_width != GetConfiguredCandidateWindowFixedWidth() ||
+                     previous_fixed_width_ratio != GetConfiguredCandidateWindowFixedWidthRatio() ||
+                     previous_fixed_height != GetConfiguredCandidateWindowFixedHeight() ||
                      previous_candidate_skin != GetConfiguredCandidateSkin() ||
                      previous_theme_mode != GetConfiguredThemeMode() ||
                      previous_theme_cand != GetConfiguredThemeCand() || previous_font != GetConfiguredCandidateFont() ||
@@ -962,6 +1005,23 @@ LRESULT CALLBACK WndProcCandWindow(HWND hwnd, UINT message, WPARAM wParam, LPARA
     case WM_EXPAND_CANDIDATES:
         FanyNamedPipe::EnqueueCandidateUiExpand();
         break;
+
+    case WM_DR_DICT_LOOKUP: {
+        // DR Dict 查词快捷键：候选窗照常隐藏，弹窗开在候选窗本该在的光标处，拿不到光标才退回鼠标位置。
+        std::unique_ptr<std::wstring> word(reinterpret_cast<std::wstring *>(lParam));
+        if (!word)
+        {
+            break;
+        }
+        // 先读锚点：隐藏会清掉会话锚点和 UIA 兜底光标。
+        const std::optional<RECT> caret = DictionaryLookupCaret();
+        if (::is_global_wnd_cand_shown)
+        {
+            WndProcCandWindow(hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+        }
+        DrDictLookup::LookupFromKeyboard(std::move(*word), caret);
+        break;
+    }
 
     case WM_CLEAR_IME_ENGINE_CACHE: {
 #ifdef FANY_DEBUG

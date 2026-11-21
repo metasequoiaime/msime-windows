@@ -63,6 +63,9 @@ struct ModelSpec
     const wchar_t *prompt;  // 导入对话框的标题
     // 文件被 Server 映射期间删不掉时，是否改为留删除标记、待重启后删除（见 kPendingDeleteMarker）。
     bool deferred_delete;
+    // 同目录下被本版本取代的旧文件名，可为空。新文件校验落位之后删掉它；在那之前它是否继续可用、
+    // 怎么提示更新，由各模型自己决定（neural_model 就继续用它）。
+    const char *superseded_file = nullptr;
 };
 
 struct ModelStatus

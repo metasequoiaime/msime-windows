@@ -566,8 +566,17 @@ STDAPI CTextStore::InsertTextAtSelection(DWORD dwFlags, __in_ecount(cch) const W
 
     if (dwFlags & TS_IAS_QUERYONLY)
     {
-        *pacpStart = acpStart;
-        *pacpEnd = acpStart + cch;
+        // The query answers which range an insertion would replace: the selection. A TIP
+        // starts its composition on this range, so an empty range at the selection start
+        // would leave the selected text in place and compose in front of it.
+        if (pacpStart)
+        {
+            *pacpStart = acpStart;
+        }
+        if (pacpEnd)
+        {
+            *pacpEnd = acpEnd;
+        }
         return S_OK;
     }
 

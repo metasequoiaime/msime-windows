@@ -5,16 +5,31 @@
 #include <functional>
 #include <optional>
 #include "../core/word_item.h"
+#include "../core/wubi_profile.h"
 
 namespace user_dictionary
 {
 enum class DictionaryKind
 {
     Pinyin,
+    // 86 五笔（日志里写 wubi，表 wubi86）。
     Wubi,
     QuickPhrase,
     English,
+    // 98 五笔与新世纪五笔，日志里写 wubi98 / wubixsj，表名同。只追加在末尾，已有的值不变。
+    Wubi98,
+    WubiXsj,
 };
+
+// 五笔方案下这一版码表的调频、删词和用户词归入的种类。
+DictionaryKind wubi_dictionary_kind(metasequoia::WubiProfile profile);
+// 三版五笔共用编码规则（1–4 个 a–y 字母），只是表不同。
+bool is_wubi_kind(DictionaryKind kind);
+// msime.db 里这个种类的五笔码表；不是五笔种类时为 nullptr。
+const char *wubi_table(DictionaryKind kind);
+// 日志 user_dictionary_operations.dictionary 列里的种类名（pinyin、wubi、wubi98、wubixsj、quick、english）。
+const char *dictionary_kind_name(DictionaryKind kind);
+std::optional<DictionaryKind> dictionary_kind_from_name(const std::string &name);
 
 std::string default_user_db_path();
 
@@ -70,8 +85,9 @@ bool record_pinyin_upsert_from_database(const std::string &main_db_path, const s
 // semantics as the quanpin side) and persist the new weight plus a journal upsert in one
 // attached-database transaction. Existing rows only: a missing (key,value) pair returns false
 // without inserting. Row-missing behaviour matches update_wubi_weight.
+// kind 选五笔版本的表（Wubi / Wubi98 / WubiXsj），不是五笔种类时返回 false。
 bool bump_wubi_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
-                      const std::string &value);
+                      const std::string &value, DictionaryKind kind = DictionaryKind::Wubi);
 // 同上，拼音分表（key 是带分隔符的完整全拼，表名按格式契约从它算）。长词前缀补全（#1343）选中时用：
 // 它的键和同页其他候选不同，不能走 adjust_candidate_ranking 按排位挪位置。
 bool bump_pinyin_weight(const std::string &main_db_path, const std::string &user_db_path, const std::string &key,
@@ -158,6 +174,21 @@ bool pin_date_time_format(const std::string &user_db_path, const std::string &ca
                           const std::vector<std::string> &default_ids, const std::string &format_id);
 // 固定位置写进 fixed_candidate_positions 用的 context_key，entry_key 与 value 都写格式 ID。
 std::string date_time_fixed_position_context(const std::string &category);
+
+// 繁体模式下用户选过的写法：同一个（全拼键 key, 简体底词 base_word）只留最后一次选的写法 spelling。
+// 存在日志库自己的表里，不进操作日志：replay 不读它，出厂词库与完整状态导出里都没有它。
+// 记下（key, base_word）→ spelling，覆盖原有记录。三项有一项为空时不写，返回 false。
+bool remember_traditional_variant(const std::string &user_db_path, const std::string &key, const std::string &base_word,
+                                  const std::string &spelling);
+// 删掉（key, base_word）的记录；没有这条记录也返回 true。key 或 base_word 为空时不删，返回 false。
+bool forget_traditional_variant(const std::string &user_db_path, const std::string &key, const std::string &base_word);
+// 删掉 base_word 在所有键下的记录。base_word 为空时不删，返回 false。
+bool forget_traditional_variants_of_word(const std::string &user_db_path, const std::string &base_word);
+// （key, base_word）记住的写法。key 或 base_word 为空时不开日志库，返回空；没有记录、日志库打不开或查询出错时
+// 也返回空。日志库被占用时查询本身不等待，直接返回空；这条线程还没有打开好连接时，打开连接那一段不在此列，
+// 仍按 kJournalBusyTimeoutMs 等锁。
+std::optional<std::string> traditional_variant_choice(const std::string &user_db_path, const std::string &key,
+                                                      const std::string &base_word);
 
 struct ReplayResult
 {

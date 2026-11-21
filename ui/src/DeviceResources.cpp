@@ -860,18 +860,20 @@ bool DeviceResources::ApplyBackdropMaterial()
            SUCCEEDED(effectBrush.As(&brush)) && SUCCEEDED(surface_->backdropSprite->put_Brush(brush.Get()));
 }
 
-void DeviceResources::SetBackdrop(const RectF &rectDips, float radiusDips)
+void DeviceResources::SetBackdrop(const RectF &rectDips, float radiusDips, float opacity)
 {
     if (!surface_)
     {
         return;
     }
-    const bool visible = rectDips.width > 0.0f && rectDips.height > 0.0f;
+    opacity = (std::clamp)(opacity, 0.0f, 1.0f);
+    const bool visible = rectDips.width > 0.0f && rectDips.height > 0.0f && opacity > 0.0f;
     surface_->backdrop->put_IsVisible(visible);
     if (!visible)
     {
         return;
     }
+    surface_->backdrop->put_Opacity(opacity);
     // Composition visuals of a window target are laid out in physical pixels.
     const float scale = DpiForHwnd() / 96.0f;
     const float left = std::round(rectDips.x * scale);
@@ -1257,6 +1259,31 @@ ID2D1Bitmap *DeviceResources::GetBitmapFromFile(const std::wstring &filePath, D2
     if (FAILED(decoder->GetFrame(0, frame.GetAddressOf())))
     {
         return nullptr;
+    }
+    // A multi-size .ico lists its frames in any order, often 16 px first; drawing that one scaled up is a blur, so
+    // take the largest. Single-frame formats and same-size frames (GIF) keep frame 0.
+    GUID container = {};
+    UINT frameCount = 0;
+    if (SUCCEEDED(decoder->GetContainerFormat(&container)) && container == GUID_ContainerFormatIco &&
+        SUCCEEDED(decoder->GetFrameCount(&frameCount)))
+    {
+        UINT bestWidth = 0;
+        UINT bestHeight = 0;
+        frame->GetSize(&bestWidth, &bestHeight);
+        for (UINT i = 1; i < frameCount; ++i)
+        {
+            Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> candidate;
+            UINT width = 0;
+            UINT height = 0;
+            if (SUCCEEDED(decoder->GetFrame(i, candidate.GetAddressOf())) &&
+                SUCCEEDED(candidate->GetSize(&width, &height)) &&
+                static_cast<UINT64>(width) * height > static_cast<UINT64>(bestWidth) * bestHeight)
+            {
+                frame = candidate;
+                bestWidth = width;
+                bestHeight = height;
+            }
+        }
     }
 
     Microsoft::WRL::ComPtr<IWICFormatConverter> converter;

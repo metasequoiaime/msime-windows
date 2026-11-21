@@ -120,6 +120,9 @@ void ApplyToCurl(CURL *curl)
 {
     if (curl == nullptr)
         return;
+    // Schannel fails the whole TLS handshake when a CRL/OCSP endpoint is offline. Keep certificate
+    // and hostname verification, but tolerate an unavailable revocation source (#1475).
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_REVOKE_BEST_EFFORT);
     const NetworkProxyConfig config = GetConfiguredNetworkProxy();
     std::string server = CustomServer(config);
     if (server.empty() && config.mode == "none")

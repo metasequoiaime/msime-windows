@@ -158,6 +158,11 @@ background = "#202020"
 border = "#333333"
 text = "#eeeeee"
 hover = "#2a2a2a"
+
+[toolbar.light]
+background = "#fcfcfc"
+backdrop_opacity = 0.25
+backdrop_luminosity = 0.8
 )toml");
     std::string error;
     const auto package = CandidateSkinCatalog::Load(root, "gloss", &error);
@@ -173,6 +178,12 @@ hover = "#2a2a2a"
     REQUIRE(*package->dark.backdropOpacity == 0.7);
     REQUIRE(*package->dark.backdropLuminosity == 0.9);
     REQUIRE(!package->light.backdropOpacity.has_value());
+    // The toolbar's own material keys; a theme that leaves them out follows the candidate card's.
+    REQUIRE(package->toolbarLight.backdropOpacity.has_value());
+    REQUIRE(*package->toolbarLight.backdropOpacity == 0.25);
+    REQUIRE(*package->toolbarLight.backdropLuminosity == 0.8);
+    REQUIRE(!package->toolbarDark.backdropOpacity.has_value());
+    REQUIRE(!package->toolbarDark.backdropLuminosity.has_value());
     REQUIRE_EQ(package->fontFamily, std::string("LXGW WenKai"));
     REQUIRE_EQ(package->dark.candidateText, std::string("#dddddd"));
     REQUIRE_EQ(package->dark.preeditText, std::string("#aaaaaa"));
@@ -220,6 +231,8 @@ TEST_CASE(candidate_skin_catalog_rejects_invalid_window_options)
     REQUIRE(Rejects(L"backdrop", "backdrop = \"glass\"\n"));
     REQUIRE(Rejects(L"backdrop-opacity", "\n[candidate.dark]\nbackdrop_opacity = 1.5\n"));
     REQUIRE(Rejects(L"backdrop-luminosity", "\n[candidate.dark]\nbackdrop_luminosity = \"high\"\n"));
+    REQUIRE(Rejects(L"toolbar-backdrop-opacity", "\n[toolbar.light]\nbackdrop_opacity = -0.1\n"));
+    REQUIRE(Rejects(L"toolbar-backdrop-luminosity", "\n[toolbar.dark]\nbackdrop_luminosity = \"high\"\n"));
     REQUIRE(Rejects(L"font", "font_family = \"Foo; color: red\"\n"));
     REQUIRE(Rejects(L"font-quote", "font_family = \"Foo'\"\n"));
     REQUIRE(Rejects(L"menu", "\n[candidate.dark]\nmenu = \"#fff\"\n"));

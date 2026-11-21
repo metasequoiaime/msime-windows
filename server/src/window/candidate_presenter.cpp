@@ -10,8 +10,11 @@
 #include "log/candidate_diag_log.h"
 #include "skin/candidate_skin_catalog.h"
 #include "window/candidate_skin_layers.h"
+#include "window/candidate_menu_placement.h"
 #include "window/candidate_skin_overlay.h"
 #include "utils/common_utils.h"
+#include "utils/dr_dict_dock.h"
+#include "utils/dr_dict_lookup.h"
 #include "utils/ime_utils.h"
 #include "utils/window_utils.h"
 #include "window/small_windows.h"
@@ -113,20 +116,6 @@ float StickyCardExtent(float kept, float natural)
 // 候选窗 HWND 上的动图帧定时器。宿主自己的定时器编号见 ime_windows_internal.h（2–14），这里避开它们。
 constexpr UINT_PTR kCandidateAnimationTimerId = 0x0A11;
 
-// 系统「透明效果」（设置 → 个性化 → 颜色）。关掉时系统材质一律退回纯色，皮肤的亚克力也跟着退回不透明底色。
-// 读不到时按开启处理。
-bool SystemTransparencyEnabled()
-{
-    DWORD value = 1;
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                     L"EnableTransparency", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
-    {
-        return true;
-    }
-    return value != 0;
-}
-
 } // namespace
 
 struct CandidatePresenter::Impl
@@ -156,8 +145,14 @@ struct CandidatePresenter::Impl
     D2D1_COLOR_F menuText = D2D1::ColorF(0xE9E8E8);
     D2D1_COLOR_F menuHover = D2D1::ColorF(0x414141);
     RECT hostRectBeforeMenu{};
+    POINT menuClient{};
+    // ExpandHostForMenu 给场景设的根偏移（DIP）。菜单开着时布局尺寸要把它算进去。
+    msimeui::PointF menuContentOffsetDip{};
+    float contextSubmenuWidthDip = 0.0f;
     bool contextMenuOpen = false;
     bool contextSubmenuOpen = false;
+    bool contextSubmenuLeft = false;
+    bool contextSubmenuAbove = false;
     bool hostExpandedForMenu = false;
     size_t contextMenuPageIndex = 0;
 };
@@ -339,7 +334,7 @@ void CandidatePresenter::ApplySkin()
 std::uint64_t CandidatePresenter::FillItemsFromUi()
 {
     const Global::CandidatePageSnapshotPtr page = Global::LoadCandidatePageSnapshot();
-    const bool translationsEnabled = GetConfiguredCandidateTranslationsEnabled();
+    drDictDockWord_ = page->dr_dict_dock_word;
     std::vector<msimeui::CandidateList::Item> items;
     items.reserve(page->page_views.size());
     std::vector<CandidateSkinScene::PageWord> words;
@@ -352,7 +347,18 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
         item.label = std::to_wstring(i + 1);
         item.text = words.back().text + words.back().badge;
         item.annotation = string_to_wstring(view.annotation);
-        if (translationsEnabled)
+        // 译文开关关着时工作线程不给候选填译文（见 PrepareCandidateTranslationRequest），这里有就画；
+        // 音标（英文候选的不受译文开关管）画在译文前面，用词性那种次要色。
+        if (!view.phonetic.empty())
+        {
+            const std::wstring phonetic = L"/" + string_to_wstring(view.phonetic) + L"/";
+            item.translationRuns.push_back(
+                {0, static_cast<UINT32>(phonetic.size()), msimeui::CandidateList::TextRunRole::Secondary});
+            item.translation = phonetic;
+            if (!view.translation.empty())
+                item.translation += L"  ";
+        }
+        if (!view.translation.empty())
         {
             // 逐段转成 UTF-16 再拼起来，区间按拼出来的串计。
             for (const auto &segment : FanyImeIpc::SegmentTranslationGloss(view.translation))
@@ -410,6 +416,7 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
         impl_->expandContent->SetShowGrid(showGrid);
         impl_->expandToggle->SetExpanded(expanded_);
     }
+    renderedPageStart_ = page->page_start;
     return page->generation;
 }
 
@@ -538,6 +545,11 @@ void CandidatePresenter::ShowItemContextMenu(size_t pageIndex, POINT clientPoint
         return;
     }
 
+    // Resolve the click on screen first: when a menu is already open the host is
+    // grown (possibly left/up), and CloseContextMenu below moves it back, so the
+    // client point would no longer map to where the cursor is.
+    POINT clickScreen = clientPoint;
+    ClientToScreen(hwnd_, &clickScreen);
     CloseContextMenu(true);
     impl_->contextMenuPageIndex = pageIndex;
 
@@ -607,6 +619,25 @@ void CandidatePresenter::ShowItemContextMenu(size_t pageIndex, POINT clientPoint
         });
         stack->AddChild(del);
     }
+    // DR Dict 词典联动：查的是右键时看见的这个候选。点击点就是鼠标位置，弹窗开在它旁边。
+    if (GetConfiguredDrDictEnabled() && !word.empty())
+    {
+        auto lookup = makeItem(L"查词典", false, [this, word]() {
+            POINT at{};
+            GetCursorPos(&at);
+            // 关菜单会销毁这一项连同这个 lambda，先把要用的值拷出来。
+            std::wstring target = word;
+            CloseContextMenu(true);
+            DrDictLookup::LookupAtPointer(std::move(target), at);
+        });
+        lookup->SetOnHover([this](bool hovered) {
+            if (hovered)
+            {
+                CloseFixSubmenu();
+            }
+        });
+        stack->AddChild(lookup);
+    }
 
     auto subStack = std::make_shared<msimeui::StackPanel>(0.0f);
     for (int position = 1; position <= 5; ++position)
@@ -630,9 +661,32 @@ void CandidatePresenter::ShowItemContextMenu(size_t pageIndex, POINT clientPoint
     impl_->contextSubmenu = std::make_shared<msimeui::Popup>(subStack);
     StyleContextPopup(*impl_->contextSubmenu, impl_->menuFill, impl_->menuBorder, kContextSubmenuWidthDip);
 
-    const msimeui::PointF anchor = impl_->window->ClientPixelsToDips(clientPoint);
-    impl_->contextMenu->SetAnchorRect({anchor.x, anchor.y, 1.0f, 1.0f});
-    ExpandHostForMenu(clientPoint);
+    // Measure before placing: the menu height depends on how many items the
+    // candidate allows (a single-character word has no delete item). Lay the
+    // menu out once at the origin so the plan reads the real bounds of the item
+    // the submenu hangs off instead of assuming a padding and a row height.
+    const msimeui::SizeF menuSize = impl_->contextMenu->MeasureInLayout({kContextMenuWidthDip, 4096.0f});
+    impl_->contextMenu->ArrangeInLayout({0.0f, 0.0f, menuSize.width, menuSize.height});
+    const msimeui::RectF item = impl_->fixPositionItem->GetBounds();
+    const msimeui::SizeF submenuSize = impl_->contextSubmenu->MeasureInLayout({kContextSubmenuWidthDip, 4096.0f});
+    impl_->contextSubmenuWidthDip = submenuSize.width;
+
+    FanyImeUi::CandidateMenuMetrics metrics{};
+    metrics.menuWidthDip = menuSize.width;
+    metrics.menuHeightDip = menuSize.height;
+    metrics.submenuWidthDip = submenuSize.width;
+    metrics.submenuHeightDip = submenuSize.height;
+    metrics.submenuItemLeftDip = item.x;
+    metrics.submenuItemTopDip = item.y;
+    metrics.submenuItemWidthDip = item.width;
+    metrics.submenuItemHeightDip = item.height;
+    ExpandHostForMenu(clickScreen, metrics);
+
+    // The plan already placed the menu inside the grown host, so it opens from
+    // its planned top-left corner and the popup has nothing left to clamp.
+    const msimeui::PointF origin = impl_->window->ClientPixelsToDips(impl_->menuClient);
+    impl_->contextMenu->SetAnchorRect({origin.x, origin.y, 1.0f, 0.0f});
+    impl_->contextMenu->SetPlacement(msimeui::PopupPlacement::BelowLeading);
 
     if (msimeui::Scene *scene = impl_->window->GetScene())
     {
@@ -640,6 +694,8 @@ void CandidatePresenter::ShowItemContextMenu(size_t pageIndex, POINT clientPoint
         impl_->contextMenuOpen = true;
     }
     Present();
+    // The resize above was done without presenting; this frame is current.
+    ValidateRect(hwnd_, nullptr);
 }
 
 void CandidatePresenter::CloseContextMenu(bool restoreHost)
@@ -678,17 +734,23 @@ void CandidatePresenter::CloseContextMenu(bool restoreHost)
     impl_->fixPositionItem.reset();
     impl_->contextMenu.reset();
     impl_->contextSubmenu.reset();
-    if (restoreHost)
-    {
-        RestoreHostAfterMenu();
-    }
-    else
+    // Move the host back before dropping the content offset, and present only
+    // once both are in place: a frame drawn with the offset cleared but the host
+    // still grown left/up (or the reverse) shows the card shifted.
+    const bool hostMoved = restoreHost && RestoreHostAfterMenu();
+    if (!restoreHost)
     {
         impl_->hostExpandedForMenu = false;
     }
-    if (hadPopup)
+    impl_->menuContentOffsetDip = {};
+    if (msimeui::Scene *scene = impl_->window->GetScene())
+    {
+        scene->SetRootOffset({0.0f, 0.0f});
+    }
+    if (hadPopup || hostMoved)
     {
         Present();
+        ValidateRect(hwnd_, nullptr);
     }
 }
 
@@ -704,7 +766,16 @@ void CandidatePresenter::OpenFixSubmenu()
         return;
     }
     impl_->contextSubmenu->SetAnchorRect(anchor);
-    impl_->contextSubmenu->SetOffset(anchor.width - 2.0f, -anchor.height);
+    // AboveLeading still ends level with the item: the offset carries its
+    // height, so only the placement side has to change.
+    impl_->contextSubmenu->SetPlacement(impl_->contextSubmenuAbove ? msimeui::PopupPlacement::AboveLeading
+                                                                   : msimeui::PopupPlacement::BelowLeading);
+    // Same overlap and measured width the placement plan reserved room for.
+    constexpr float overlap = FanyImeUi::kCandidateSubmenuOverlapDip;
+    const float submenuWidth =
+        impl_->contextSubmenuWidthDip > 0.0f ? impl_->contextSubmenuWidthDip : kContextSubmenuWidthDip;
+    impl_->contextSubmenu->SetOffset(impl_->contextSubmenuLeft ? overlap - submenuWidth : anchor.width - overlap,
+                                     -anchor.height);
     if (msimeui::Scene *scene = impl_->window->GetScene())
     {
         scene->AddPopup(impl_->contextSubmenu, [this]() { impl_->contextSubmenuOpen = false; });
@@ -730,16 +801,14 @@ void CandidatePresenter::CloseFixSubmenu()
     Present();
 }
 
-void CandidatePresenter::ExpandHostForMenu(POINT clientPoint)
+void CandidatePresenter::ExpandHostForMenu(POINT clickScreen, const FanyImeUi::CandidateMenuMetrics &metrics)
 {
     if (!hwnd_ || !impl_ || !impl_->window)
     {
         return;
     }
     RECT windowRect{};
-    RECT clientRect{};
     GetWindowRect(hwnd_, &windowRect);
-    GetClientRect(hwnd_, &clientRect);
     if (!impl_->hostExpandedForMenu)
     {
         impl_->hostRectBeforeMenu = windowRect;
@@ -747,33 +816,49 @@ void CandidatePresenter::ExpandHostForMenu(POINT clientPoint)
     }
 
     const float dpi = impl_->window->GetDpi();
-    const msimeui::PointF anchor = impl_->window->ClientPixelsToDips(clientPoint);
-    const msimeui::SizeF clientDip = impl_->window->ClientPixelsToDips(SIZE{clientRect.right, clientRect.bottom});
-    const float needWidth =
-        (std::max)(clientDip.width, anchor.x + kContextMenuWidthDip + kContextSubmenuWidthDip + 16.0f);
-    const float needHeight = (std::max)(clientDip.height, (std::max)(anchor.y + 168.0f, 176.0f));
-    const int widthPx = (std::max)(static_cast<int>(windowRect.right - windowRect.left),
-                                   static_cast<int>(std::ceil(needWidth * dpi / 96.0f)));
-    const int heightPx = (std::max)(static_cast<int>(windowRect.bottom - windowRect.top),
-                                    static_cast<int>(std::ceil(needHeight * dpi / 96.0f)));
-    if (widthPx == windowRect.right - windowRect.left && heightPx == windowRect.bottom - windowRect.top)
+    const FanyImeUi::CandidateMenuPlacement plan = FanyImeUi::PlanCandidateMenuPlacement(
+        windowRect, clickScreen, GetMonitorCoordinatesFromPoint(clickScreen), dpi / 96.0f, metrics);
+
+    impl_->contextSubmenuLeft = plan.submenuLeft;
+    impl_->contextSubmenuAbove = plan.submenuAbove;
+    impl_->menuClient = plan.menuClient;
+
+    // Growing left/up would drag the card with the window; shift the scene back
+    // by the same amount so only the popup gets the extra room. The offset is
+    // set before the move and the WM_SIZE of the move does not present (same
+    // guard as PlaceAndShow), so no frame pairs the moved origin with an
+    // unshifted card. The caller presents once everything is in place.
+    impl_->menuContentOffsetDip = {plan.contentOffsetXDip, plan.contentOffsetYDip};
+    if (msimeui::Scene *scene = impl_->window->GetScene())
     {
-        return;
+        scene->SetRootOffset(impl_->menuContentOffsetDip);
     }
-    SetWindowPos(hwnd_, HWND_TOPMOST, windowRect.left, windowRect.top, widthPx, heightPx,
-                 SWP_NOACTIVATE | SWP_NOZORDER);
+    const bool resized = plan.host.left != windowRect.left || plan.host.top != windowRect.top ||
+                         plan.host.right != windowRect.right || plan.host.bottom != windowRect.bottom;
+    if (resized)
+    {
+        placingHost_ = true;
+        SetWindowPos(hwnd_, HWND_TOPMOST, plan.host.left, plan.host.top, plan.host.right - plan.host.left,
+                     plan.host.bottom - plan.host.top, SWP_NOACTIVATE | SWP_NOZORDER);
+        placingHost_ = false;
+    }
 }
 
-void CandidatePresenter::RestoreHostAfterMenu()
+bool CandidatePresenter::RestoreHostAfterMenu()
 {
     if (!hwnd_ || !impl_ || !impl_->hostExpandedForMenu)
     {
-        return;
+        return false;
     }
     const RECT &rc = impl_->hostRectBeforeMenu;
+    // The caller clears the content offset and presents right after; a present
+    // from this WM_SIZE would draw the still-offset card at the restored origin.
+    placingHost_ = true;
     SetWindowPos(hwnd_, nullptr, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOACTIVATE | SWP_NOZORDER);
+    placingHost_ = false;
     impl_->hostExpandedForMenu = false;
+    return true;
 }
 
 void CandidatePresenter::PlaceAndShow(POINT caret, float widthDip, float heightDip, float cardLeftDip, float cardTopDip,
@@ -903,6 +988,16 @@ void CandidatePresenter::PlaceAndShow(POINT caret, float widthDip, float heightD
         SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
     }
     SetCandidateHostCloaked(false);
+    // 英文候选模式：DR Dict 弹窗贴着卡片（不是带阴影留白的宿主窗口）的左右边停靠。
+    const RECT cardScreen{x + cardLeftPx, y + cardTopPx, x + cardLeftPx + cardWidthPx, y + cardTopPx + cardHeightPx};
+    if (drDictDockWord_.empty())
+    {
+        DrDictDock::Hide();
+    }
+    else
+    {
+        DrDictDock::Show(drDictDockWord_, cardScreen);
+    }
     // Acceptance trace for the RDP candidate-scale fix: which scale authority
     // won, and the system's own (potentially diverging) DPI values. Coordinates
     // and DPI only — never user input, per the diagnostic logging red lines.
@@ -933,11 +1028,12 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // the show request so MoveCandidate / the settle timer can place it later.
     if (caret.y == Global::INVALID_Y)
     {
+        DrDictDock::Hide();
         CloseContextMenu(false);
         StopAnimationFrames();
         SetCandidateHostCloaked(true);
         ::is_global_wnd_cand_shown = true;
-        Global::SetCandidateWindowRenderedVisible(true);
+        FanyNamedPipe::NoteCandidatePageVisibility(true);
         CAND_DIAG_LOGF(L"candidate-d2d show deferred: no usable caret anchor ({},{})", caret.x, caret.y);
         return;
     }
@@ -994,8 +1090,34 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // must not split measure (clamped at one scale) from placement (another).
     const ResolvedCandidateScale scale = ResolveCandidateScaleForCaret(caret);
     const HalfScreenDipLimits limits = ApplyScaleToHalfScreenLimits(caret, scale.scale);
-    const float maxW = limits.maxWidthDip > 1.0 ? static_cast<float>(limits.maxWidthDip) : 480.0f;
+    float maxW = limits.maxWidthDip > 1.0 ? static_cast<float>(limits.maxWidthDip) : 480.0f;
     const float maxH = limits.maxHeightDip > 1.0 ? static_cast<float>(limits.maxHeightDip) : 640.0f;
+    // 横排固定宽度：卡片宽度钉在光标所在屏幕宽度（物理像素）的固定比例上，按本次显示的缩放换成 DIP。
+    // 一行放不下的候选不换行，裁掉后回报给工作线程，由它把它们划到下一页。
+    const bool fixedWidth = CandidateWindowFixedWidthActive();
+    float fixedCardWidthDip = 0.0f;
+    if (fixedWidth)
+    {
+        const double monitorWidthPx =
+            (std::max)(1.0, static_cast<double>(limits.monitor.right) - static_cast<double>(limits.monitor.left));
+        const double dipScale = limits.scale > 0.0f ? static_cast<double>(limits.scale) : 1.0;
+        fixedCardWidthDip =
+            (std::max)(cardMinWidthDip_,
+                       static_cast<float>(monitorWidthPx * GetConfiguredCandidateWindowFixedWidthRatio() / dipScale));
+        maxW = fixedCardWidthDip + kShadowPadLeft + kShadowPadRight;
+    }
+    // 竖排固定高度：卡片始终保持放得下 page_size 个候选的高度，候选少的页下面留空。
+    const bool fixedHeight =
+        GetConfiguredCandidateWindowLayout() == "vertical" && GetConfiguredCandidateWindowFixedHeight();
+    // 固定高度时每一行的行高也固定：emoji 或回落字体的字比汉字行高略高，不能让那一行把卡片撑高几像素。
+    // 皮肤重新套用时外观会被整份换掉，所以每次显示都对一下。
+    if (impl_->list && impl_->list->GetAppearance().uniformRowHeight != fixedHeight)
+    {
+        msimeui::CandidateList::Appearance appearance = impl_->list->GetAppearance();
+        appearance.uniformRowHeight = fixedHeight;
+        impl_->list->SetAppearance(std::move(appearance));
+    }
+    int shownCount = -1;
     float widthDip = 0.0f;
     float heightDip = 0.0f;
     auto layoutRoot = [&]() {
@@ -1016,10 +1138,38 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // carrying the old size over leaves blank rows at the bottom.
     if (impl_->card)
     {
-        impl_->card->SetMinWidth(cardMinWidthDip_);
+        impl_->card->SetMinWidth(fixedWidth ? fixedCardWidthDip : cardMinWidthDip_);
         impl_->card->ClearMinHeight();
     }
     layoutRoot();
+    if (fixedWidth && impl_->list)
+    {
+        const size_t total = impl_->list->GetItemCount();
+        const size_t fit = (std::max)(static_cast<size_t>(1), impl_->list->CountItemsOnFirstLine());
+        if (fit < total)
+        {
+            ignoreSelectionCallback_ = true;
+            impl_->list->TruncateItems(fit);
+            ignoreSelectionCallback_ = false;
+            shownCount = static_cast<int>(fit);
+            layoutRoot();
+        }
+    }
+    float fixedCardHeightDip = 0.0f;
+    if (fixedHeight && impl_->card && impl_->list)
+    {
+        const size_t pageSize = static_cast<size_t>((std::max)(1, GetConfiguredCandidatePageSize()));
+        const size_t count = impl_->list->GetItemCount();
+        if (count < pageSize)
+        {
+            // 定高行（见下面打开 uniformRowHeight 的地方）每行一样高，空出来的行按同一步长补。
+            const float rowStep = impl_->list->UniformRowHeight() + impl_->list->GetAppearance().itemGap;
+            const size_t missing = pageSize - count;
+            // 一个候选都没有时列表仍占一行高（CandidateList::Measure），那一行算在已有的里面。
+            fixedCardHeightDip =
+                impl_->card->GetBounds().height + rowStep * static_cast<float>(count == 0 ? missing - 1 : missing);
+        }
+    }
     if (impl_->card)
     {
         std::wstring stickyKey = GetPreeditWithCaretMarker();
@@ -1037,10 +1187,11 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
         const msimeui::RectF natural = impl_->card->GetBounds();
         const float maxCardWidthDip = (std::max)(cardMinWidthDip_, maxW - kShadowPadLeft - kShadowPadRight);
         // fit_content 的卡片严格跟随文字宽度，只保留高度的只增不减。
-        stickyCardWidthDip_ = fitContent_
+        // 固定宽度的卡片本来就是定宽，不用再撑。
+        stickyCardWidthDip_ = fitContent_ || fixedWidth
                                   ? natural.width
                                   : (std::min)(StickyCardExtent(stickyCardWidthDip_, natural.width), maxCardWidthDip);
-        stickyCardHeightDip_ = StickyCardExtent(stickyCardHeightDip_, natural.height);
+        stickyCardHeightDip_ = (std::max)(StickyCardExtent(stickyCardHeightDip_, natural.height), fixedCardHeightDip);
         if (stickyCardWidthDip_ > natural.width + 0.5f || stickyCardHeightDip_ > natural.height + 0.5f)
         {
             impl_->card->SetMinWidth((std::max)(cardMinWidthDip_, stickyCardWidthDip_));
@@ -1063,7 +1214,7 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     }
     PlaceAndShow(caret, widthDip, heightDip, cardLeftDip, cardTopDip, scale);
     ::is_global_wnd_cand_shown = true;
-    Global::SetCandidateWindowRenderedVisible(true);
+    FanyNamedPipe::NoteCandidatePageVisibility(true);
     // 后续候选不够填满一屏时，不用等滚动就再要一批。
     RequestMoreExpandedIfNearEnd();
     // PlaceAndShow presented while the host was still being placed; it is placed and shown only now.
@@ -1071,7 +1222,17 @@ void CandidatePresenter::ShowFromGlobalState(POINT caret)
     // PlaceAndShow paints synchronously, so the page is on screen now. Echo the generation of the
     // snapshot that was actually rendered (not the latest published one) so a pending digit/space
     // selection can settle against the same page the user is looking at.
-    Global::PublishRenderedCandidatePageGeneration(renderedGeneration);
+    lastShownCount_ = shownCount;
+    FanyNamedPipe::NoteCandidatePagePainted(renderedGeneration, true, shownCount);
+    if (shownCount > 0)
+    {
+        FanyNamedPipe::EnqueueCandidatePageFitted(renderedGeneration, renderedPageStart_, shownCount);
+    }
+}
+
+int CandidatePresenter::LastShownCount() const
+{
+    return lastShownCount_;
 }
 
 void CandidatePresenter::SetPinnedCardOrigin(const POINT *origin)
@@ -1082,6 +1243,7 @@ void CandidatePresenter::SetPinnedCardOrigin(const POINT *origin)
 
 void CandidatePresenter::Hide()
 {
+    DrDictDock::Hide();
     cardOriginPinned_ = false;
     if (!hwnd_)
     {
@@ -1091,7 +1253,7 @@ void CandidatePresenter::Hide()
     StopAnimationFrames();
     animationClockRunning_ = false;
     ::is_global_wnd_cand_shown = false;
-    Global::SetCandidateWindowRenderedVisible(false);
+    FanyNamedPipe::NoteCandidatePageVisibility(false);
     hoverArmed_ = false;
     wheelDeltaAccumulator_ = 0;
     SetExpanded(false);
@@ -1169,10 +1331,25 @@ void CandidatePresenter::Present()
         // Host HWND is larger than the card (shadow padding, 64px buckets, and a
         // grow-only size while typing). Stretching the scene to that HWND fills
         // the rounded card with empty space. Keep layout at the measured DIP size.
-        if (!impl_->hostExpandedForMenu && lastLayoutWidthDip_ > 0.0f && lastLayoutHeightDip_ > 0.0f)
+        if (lastLayoutWidthDip_ > 0.0f && lastLayoutHeightDip_ > 0.0f)
         {
-            layoutW = lastLayoutWidthDip_;
-            layoutH = lastLayoutHeightDip_;
+            if (!impl_->hostExpandedForMenu)
+            {
+                layoutW = lastLayoutWidthDip_;
+                layoutH = lastLayoutHeightDip_;
+            }
+            else
+            {
+                // The grown host gives the popup its room, but it must never give
+                // the card less than it was measured with: next to the right or
+                // bottom screen edge PlaceAndShow trims the host below the
+                // measured size, and the plan cannot grow it past the work area,
+                // so the client alone would re-measure the card narrower and wrap
+                // the candidate row. The scene shifts the root by the offset, so
+                // the card needs its measured size past that offset.
+                layoutW = (std::max)(layoutW, lastLayoutWidthDip_ + impl_->menuContentOffsetDip.x);
+                layoutH = (std::max)(layoutH, lastLayoutHeightDip_ + impl_->menuContentOffsetDip.y);
+            }
         }
         scene->EnsureLayout({layoutW, layoutH});
         scene->Render(impl_->resources);

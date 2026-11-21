@@ -9,6 +9,7 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -377,6 +378,11 @@ int run_test()
         database.execute("INSERT INTO symbol_code VALUES('alpha','α',100,1)");
         database.execute("INSERT INTO symbol_code VALUES('yi','一',20,0)");
         database.execute("INSERT INTO symbol_code VALUES('yi','①',21,0)");
+        // 双拼读法：小鹤 sj 原样是分组码，读成全拼又是 san；ui 是 shi，微软 l; 是 ling。
+        database.execute("INSERT INTO symbol_code VALUES('sj','㍘',30,0)");
+        database.execute("INSERT INTO symbol_code VALUES('san','三',31,0)");
+        database.execute("INSERT INTO symbol_code VALUES('shi','十',32,0)");
+        database.execute("INSERT INTO symbol_code VALUES('ling','〇',33,0)");
     }
 
     const auto emoji = metasequoia::local_modes::query_emoji("XIAOLIAN", SchemeType::Quanpin, others_database, 10);
@@ -495,6 +501,47 @@ int run_test()
                 metasequoia::local_modes::query_mixed_symbols("alpha", others_database, 3).candidates.front().word ==
                     "α",
             "Mixed symbol lookup did not respect the mixable flag and exact matching.");
+    // S 模式按方案查：双拼下原始编码在前，按双拼读成的全拼在后。
+    const auto &xiaohe_profile = GetXiaoheShuangpinProfile();
+    const auto &microsoft_profile = GetMicrosoftShuangpinProfile();
+    const auto symbol_words = [&](const std::string &code, SchemeType scheme, const ShuangpinProfile &profile) {
+        std::vector<std::string> words;
+        for (const auto &item :
+             metasequoia::local_modes::query_symbols(code, scheme, profile, others_database, 200).candidates)
+            words.push_back(item.word);
+        return words;
+    };
+    using Words = std::vector<std::string>;
+    require(symbol_words("sj", SchemeType::Shuangpin, xiaohe_profile) == Words{"㍘", "三"} &&
+                symbol_words("sj", SchemeType::Quanpin, xiaohe_profile) == Words{"㍘"} &&
+                symbol_words("ui", SchemeType::Shuangpin, xiaohe_profile) == Words{"十"} &&
+                symbol_words("ui", SchemeType::Quanpin, xiaohe_profile).empty(),
+            "Shuangpin symbol lookup did not add the full-pinyin reading after the raw group code.");
+    // 末尾落单的声母键按全拼声母查前缀（小鹤 u 是 sh）；分组码与 typst 名在双拼下照旧，大小写不分。
+    require(symbol_words("u", SchemeType::Shuangpin, xiaohe_profile) == Words{"十"} &&
+                symbol_words("XL", SchemeType::Shuangpin, xiaohe_profile) == Words{"α", "β", "𝛂", "Α"} &&
+                symbol_words("alpha", SchemeType::Shuangpin, xiaohe_profile).front() == "α",
+            "Shuangpin symbol lookup broke a trailing initial, a group code or a symbol name.");
+    // ; 只在用它当 ing 韵母的方案里是编码键。
+    require(symbol_words("l;", SchemeType::Shuangpin, microsoft_profile) == Words{"〇"} &&
+                symbol_words("l;", SchemeType::Shuangpin, xiaohe_profile).empty() &&
+                symbol_words("l;", SchemeType::Quanpin, microsoft_profile).empty(),
+            "Shuangpin symbol lookup mishandled the ; final.");
+
+    // T 模式按方案归一唤醒词：双拼的整拼读成全拼，短码、英文、指定日期时间与全拼原样。
+    using metasequoia::local_modes::date_time_query_input;
+    require(date_time_query_input("uijm", SchemeType::Shuangpin, xiaohe_profile) == "shijian" &&
+                date_time_query_input("xkqi", SchemeType::Shuangpin, xiaohe_profile) == "xingqi" &&
+                date_time_query_input("x;qi", SchemeType::Shuangpin, microsoft_profile) == "xingqi" &&
+                date_time_query_input("riqi", SchemeType::Shuangpin, xiaohe_profile) == "riqi",
+            "Date/time keyword normalization did not decode a shuangpin full spelling.");
+    require(date_time_query_input("sj", SchemeType::Shuangpin, xiaohe_profile) == "sj" &&
+                date_time_query_input("week", SchemeType::Shuangpin, xiaohe_profile) == "week" &&
+                date_time_query_input("20241225", SchemeType::Shuangpin, xiaohe_profile) == "20241225" &&
+                date_time_query_input("uij", SchemeType::Shuangpin, xiaohe_profile) == "uij" &&
+                date_time_query_input("uijm", SchemeType::Quanpin, xiaohe_profile) == "uijm" &&
+                date_time_query_input("uijm", SchemeType::Wubi, xiaohe_profile) == "uijm",
+            "Date/time keyword normalization rewrote an input it should have left alone.");
     // 旧词库没有 symbol_code 表：返回空列表和不带输入的诊断，不能崩。
     const std::filesystem::path others_without_symbols = quick_phrase_directory / "private-others-old.db";
     {
@@ -524,20 +571,25 @@ int run_test()
         std::ofstream stream(decomposition, std::ios::binary);
         // 故意带上首行 BOM、行尾 CRLF、末尾注释行、少列行和字频非整数的行：加载器的几种防御
         // 都要能过，且被丢弃的行不能变成候选。
-        stream << "\xEF\xBB\xBFheng\t一\t18584\r\n"
+        stream << "\xEF\xBB\xBFheng\t一\t18584\tyī\r\n"
                   "hengheng\t丁\t900\r\n"
-                  "ac\t乙\t500\r\n"
-                  "ab\t甲\t400\r\n"
-                  "ririri\t晶\t106\r\n"
-                  "ririri\t晿\t1\r\n"
+                  // 行尾空格与多出来的第 5 列都不该混进读音。
+                  "ac\t乙\t500\tyǐ \r\n"
+                  "ab\t甲\t400\tjiǎ\textra\r\n"
+                  "chang\t长\t20\tzhǎng,cháng\r\n"
+                  "ririri\t晶\t106\tjīng\r\n"
+                  "ririri\t晿\t1\tchēng\r\n"
                   "riririri\t𣊭\t1\r\n"
-                  "koukoukou\t品\t500\r\n"
+                  "koukoukou\t品\t500\tpǐn\r\n"
                   "koukou\t吅\t300\r\n"
-                  "ma\t马\t50\r\n"
-                  "kou\t口\t10\r\n"
-                  "majiong\t駉\t5\r\n"
-                  "majiongkou\t駉\t5\r\n"
-                  "matongkou\t駉\t4\r\n"
+                  "ma\t马\t50\tmǎ\r\n"
+                  "kou\t口\t10\tkǒu\r\n"
+                  "majiong\t駉\t5\tjiōng\r\n"
+                  "majiongkou\t駉\t5\tjiōng\r\n"
+                  "matongkou\t駉\t4\tjiōng\r\n"
+                  "zhegou\t了\t3\tle\r\n"
+                  "dingkou\t叮\t2\tdīng\r\n"
+                  "ershi\t廿\t1\tnian\r\n"
                   "# 末尾注释\r\n"
                   "heng\t少一列\r\n"
                   "heng\t字频非整数\txx\r\n";
@@ -545,18 +597,44 @@ int run_test()
     const auto radical_prefixed = metasequoia::local_modes::query_radical(decomposition, "ririri", 50);
     require(radical_prefixed.size() == 3 && radical_prefixed[0].word == "晶" && radical_prefixed[1].word == "晿" &&
                 radical_prefixed[2].word == "𣊭" && radical_prefixed[0].source == CandidateSource::Generated &&
-                radical_prefixed[0].pinyin.empty(),
-            "Radical lookup did not prefix-match in frequency order with the pinyin left to the server.");
+                radical_prefixed[0].pinyin.empty() && radical_prefixed[0].reading == "jīng" &&
+                radical_prefixed[2].reading.empty(),
+            "Radical lookup did not prefix-match in frequency order with the table's reading column attached.");
     const auto radical_prefix_widening = metasequoia::local_modes::query_radical(decomposition, "heng", 50);
     require(radical_prefix_widening.size() == 2 && radical_prefix_widening[0].word == "一" &&
-                radical_prefix_widening[0].weight == 18584 && radical_prefix_widening[1].word == "丁",
-            "Radical lookup did not widen a short prefix or dropped the frequency column.");
+                radical_prefix_widening[0].weight == 18584 && radical_prefix_widening[0].reading == "yī" &&
+                radical_prefix_widening[1].word == "丁" && radical_prefix_widening[1].reading.empty(),
+            "Radical lookup did not widen a short prefix, dropped the frequency column or invented a reading.");
     const auto radical_limit = metasequoia::local_modes::query_radical(decomposition, "heng", 1);
     require(radical_limit.size() == 1 && radical_limit[0].word == "一",
             "Radical lookup ignored its limit or ranked a shorter match below a longer one.");
+    const auto radical_stats = metasequoia::local_modes::preload_radical_table(decomposition);
+    require(radical_stats.entries == 18 && radical_stats.entries_with_reading == 15,
+            "Radical table stats did not count the entries carrying a reading.");
+    const std::filesystem::path old_decomposition = quick_phrase_directory / "decomposition-old.txt";
+    {
+        std::ofstream stream(old_decomposition, std::ios::binary);
+        stream << "heng\t一\t18584\n";
+    }
+    const auto old_radical_stats = metasequoia::local_modes::preload_radical_table(old_decomposition);
+    require(old_radical_stats.entries == 1 && old_radical_stats.entries_with_reading == 0,
+            "A three-column radical table was not detected as missing its reading column.");
+    const auto missing_radical_stats =
+        metasequoia::local_modes::preload_radical_table(quick_phrase_directory / "private-missing.txt");
+    require(missing_radical_stats.entries == 0 && missing_radical_stats.entries_with_reading == 0,
+            "A missing radical table did not report empty statistics.");
+    // 第 4 列遇到空白或下一个 tab 就结束：行尾空格与多出来的列不能变成注音。
     const auto radical_file_order = metasequoia::local_modes::query_radical(decomposition, "a", 50);
-    require(radical_file_order.size() == 2 && radical_file_order[0].word == "乙" && radical_file_order[1].word == "甲",
-            "Radical lookup ranked by spelling instead of the table's frequency order.");
+    require(radical_file_order.size() == 2 && radical_file_order[0].word == "乙" &&
+                radical_file_order[1].word == "甲" && radical_file_order[0].reading == "yǐ" &&
+                radical_file_order[1].reading == "jiǎ",
+            "Radical lookup ranked by spelling instead of the table's frequency order, or kept whitespace/extra "
+            "columns in the reading.");
+    // 多音字的两条读音原样随候选带回，分隔与展示格式由调用方决定。
+    const auto radical_multi_reading = metasequoia::local_modes::query_radical(decomposition, "chang", 50);
+    require(radical_multi_reading.size() == 1 && radical_multi_reading[0].word == "长" &&
+                radical_multi_reading[0].reading == "zhǎng,cháng",
+            "Radical lookup dropped the second reading of a polyphonic character.");
     // 打全了某个字的拆法，它排在更高频的长码前面，limit 再小也挤不掉。
     const auto radical_exact_first = metasequoia::local_modes::query_radical(decomposition, "kou", 50);
     require(radical_exact_first.size() == 3 && radical_exact_first[0].word == "口" &&
@@ -565,10 +643,12 @@ int run_test()
             "Radical lookup ranked a complete decomposition below longer, more frequent prefix matches.");
     // 一个字的几种拆法共享前缀时只出一次。
     const auto radical_deduplicated = metasequoia::local_modes::query_radical(decomposition, "ma", 50);
+    const auto radical_shared_reading = metasequoia::local_modes::query_radical(decomposition, "majiong", 50);
     require(radical_deduplicated.size() == 2 && radical_deduplicated[0].word == "马" &&
-                radical_deduplicated[1].word == "駉" &&
-                metasequoia::local_modes::query_radical(decomposition, "majiong", 50).size() == 1,
-            "Radical lookup listed one character once per decomposition sharing the typed prefix.");
+                radical_deduplicated[1].word == "駉" && radical_shared_reading.size() == 1 &&
+                radical_shared_reading[0].reading == "jiōng",
+            "Radical lookup listed one character once per decomposition sharing the typed prefix, or lost a "
+            "reading shared by several rows.");
     require(
         metasequoia::local_modes::query_radical(decomposition, "", 50).empty() &&
             metasequoia::local_modes::query_radical(decomposition, "Ri", 50).empty() &&
@@ -577,6 +657,51 @@ int run_test()
             metasequoia::local_modes::query_radical(decomposition, "heng", 0).empty() &&
             metasequoia::local_modes::query_radical(quick_phrase_directory / "private-missing.txt", "heng", 50).empty(),
         "Radical lookup accepted an empty, non-lowercase or unmatched code, a zero limit, or a missing table.");
+
+    // 双拼下拆字码是部件的双拼码：小鹤 口 = kz，每两键一个部件音节。
+    const auto &xiaohe = GetXiaoheShuangpinProfile();
+    const auto &microsoft = GetMicrosoftShuangpinProfile();
+    const auto radical_query = [&](const std::string &code, SchemeType scheme, const ShuangpinProfile &profile) {
+        return metasequoia::local_modes::query_radical(decomposition, code, scheme, profile, 50);
+    };
+    const auto words_of = [](const std::vector<WordItem> &items) {
+        std::vector<std::string> words;
+        for (const auto &item : items)
+            words.push_back(item.word);
+        return words;
+    };
+    const auto contains = [&](const std::vector<WordItem> &items, const std::string &word) {
+        const auto words = words_of(items);
+        return std::find(words.begin(), words.end(), word) != words.end();
+    };
+    require(words_of(radical_query("kz", SchemeType::Shuangpin, xiaohe)) ==
+                    std::vector<std::string>{"口", "品", "吅"} &&
+                words_of(radical_query("kzkzkz", SchemeType::Shuangpin, xiaohe)) == std::vector<std::string>{"品"},
+            "Shuangpin radical lookup did not decode each key pair as one component syllable.");
+    // 双拼码与全拼相同时不重复出字；末尾落单的一键按声母查前缀，小鹤 v 是 zh。
+    require(words_of(radical_query("ririri", SchemeType::Shuangpin, xiaohe)) ==
+                    std::vector<std::string>{"晶", "晿", "𣊭"} &&
+                words_of(radical_query("rir", SchemeType::Shuangpin, xiaohe)) ==
+                    std::vector<std::string>{"晶", "晿", "𣊭"} &&
+                words_of(radical_query("v", SchemeType::Shuangpin, xiaohe)) == std::vector<std::string>{"了"} &&
+                words_of(radical_query("veg", SchemeType::Shuangpin, xiaohe)) == std::vector<std::string>{"了"},
+            "Shuangpin radical lookup duplicated a character or mis-decoded a trailing initial key.");
+    // 在双拼下照旧打全拼也查得到，排在双拼码的命中之后。
+    require(radical_query("kou", SchemeType::Shuangpin, xiaohe).front().word == "口" &&
+                words_of(radical_query("ma", SchemeType::Shuangpin, xiaohe)) == std::vector<std::string>{"马", "駉"},
+            "Shuangpin radical lookup lost the full-pinyin spelling.");
+    // 微软双拼：; 是 ing 韵母（d; = ding），o 是零声母引导键，落单时 a/e/o 开头的部件都算。
+    const auto microsoft_zero_initial = radical_query("o", SchemeType::Shuangpin, microsoft);
+    require(words_of(radical_query("d;kb", SchemeType::Shuangpin, microsoft)) == std::vector<std::string>{"叮"} &&
+                words_of(radical_query("d;", SchemeType::Shuangpin, microsoft)) == std::vector<std::string>{"叮"} &&
+                contains(microsoft_zero_initial, "廿") && contains(microsoft_zero_initial, "乙"),
+            "Microsoft shuangpin radical lookup ignored the ; final or the zero-initial key.");
+    // ; 只在用它当韵母的方案里是编码键；全拼方案不解双拼；解不出音节的一对不硬凑成声母。
+    require(radical_query("d;", SchemeType::Shuangpin, xiaohe).empty() &&
+                radical_query(";", SchemeType::Shuangpin, microsoft).empty() &&
+                radical_query("kz", SchemeType::Quanpin, xiaohe).empty() &&
+                radical_query("kzfs", SchemeType::Shuangpin, xiaohe).empty(),
+            "Shuangpin radical lookup accepted a key outside the profile or forced an undecodable pair.");
 
     std::filesystem::remove_all(quick_phrase_directory);
     return 0;

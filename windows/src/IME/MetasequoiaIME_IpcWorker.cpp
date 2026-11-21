@@ -355,6 +355,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitCandidateAndContinue ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InsertText ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition ||
+            buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelComposition ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
         {
             bool hasTerminator = false;
@@ -495,28 +496,12 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             // worker pipe.
             validFrame = hasTerminator && buf.data[0] != L'\0' && end && *end == L'\0';
         }
-        if (validFrame && buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateInstallerReady)
+        if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateInstallerReady)
         {
-            // Soft control frame: a truncated or forged payload must never be answered with a
-            // process-wide modal dialog. Accept only the exact three-field shape
-            // "<version>\t<path>\t<name>".
-            bool hasTerminator = false;
-            for (const wchar_t ch : buf.data)
-            {
-                if (ch == L'\0')
-                {
-                    hasTerminator = true;
-                    break;
-                }
-            }
-            int tabs = 0;
-            for (size_t index = 0; index < FanyImePipeLimits::CandidateTextCapacity && buf.data[index] != L'\0';
-                 ++index)
-            {
-                if (buf.data[index] == L'\t')
-                    ++tabs;
-            }
-            validFrame = hasTerminator && tabs == 2 && buf.data[0] != L'\0';
+            // Retired opcode: the DLL never prompts inside the host while the user is typing.
+            // An older Server may still send it; drop it below as a soft frame without
+            // touching the pipe.
+            validFrame = false;
         }
 
         if (!validFrame)
@@ -558,6 +543,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateVoiceComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitVoiceComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition ||
+                buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelComposition ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged ||
                 buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateInstallerReady)
             {
@@ -625,11 +611,14 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
                 pIME->_PostServerTextDelivery(WM_CancelVoiceComposition, L"");
             }
         }
-        else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateInstallerReady)
+        else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelComposition)
         {
-            // 安装包已经下好并校验过。这里只问用户，不联网、不启动程序：确认后发 Aux 通知，
-            // 由 Server 拉起安装包并退出，让安装程序不必和正在映射的 TSF DLL 抢文件。
-            PromptUpdateInstaller(buf.data);
+            // The Server already dropped its composition (it caught a shortcut in its keyboard hook); the
+            // UI thread drops ours if the focus session and composition epoch are still the ones it saw.
+            if (pIME->_workerCommitReady.load(std::memory_order_acquire))
+            {
+                pIME->_PostServerTextDelivery(WM_CancelServerComposition, L"");
+            }
         }
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
         {

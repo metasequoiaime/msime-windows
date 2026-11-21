@@ -129,8 +129,10 @@ STDAPI CMetasequoiaIME::OnSetFocus(_In_ ITfDocumentMgr *pDocMgrFocus, _In_ ITfDo
     // Decided before the reconnect below flips g_connected. Returning from
     // TextInputHost (Win+.) lands back in the same field, so it never counts
     // as moving to another one, however focus was routed meanwhile.
+    bool focusedFieldEditable = false;
     {
         const FocusedField field = ResolveFocusedField(pDocMgrFocus);
+        focusedFieldEditable = field.editable;
         const bool focusWindowChanged = field.window != _focusAnnouncementWindow;
         const bool focusSessionStarted = !Global::g_connected;
         const bool announce = !windowsTextInputHostTransition &&
@@ -195,6 +197,10 @@ STDAPI CMetasequoiaIME::OnSetFocus(_In_ ITfDocumentMgr *pDocMgrFocus, _In_ ITfDo
             SetTimer(_msgWndHandle, TIMER_DEFERRED_FOCUS_LOSS, FOCUS_LOSS_DEFER_MS, nullptr);
         }
     }
+
+    // After the connect block: a session that still has to activate reports
+    // this state from its activation instead of from here.
+    _ReportFocusField(pDocMgrFocus, focusedFieldEditable, false);
 
     if (_msgWndHandle && IsWindow(_msgWndHandle))
     {
@@ -347,10 +353,30 @@ void CMetasequoiaIME::_HandleFocusedContextStackChange(_In_opt_ ITfContext *chan
     const UINT resetToken = _localSessionResetToken.load(std::memory_order_acquire);
     _RequestLocalSessionReset(resetContext, resetToken);
     _InitTextEditSink(focusedDocument);
+    // A pushed or popped context is another editor inside the same document.
+    _ReportFocusField(focusedDocument, ResolveFocusedField(focusedDocument).editable, true);
 
     resetContext->Release();
     focusedDocument->Release();
     changedDocument->Release();
+}
+
+void CMetasequoiaIME::_ReportFocusField(_In_opt_ ITfDocumentMgr *documentMgr, bool editable, bool contextChanged)
+{
+    // NULL focus says nothing about which field comes next: keep the serial so
+    // returning to the same document (Win+., Excel cell edit) stays that field.
+    bool newField = contextChanged;
+    if (documentMgr && !_IsSameComObject(documentMgr, _pFocusFieldDocMgr))
+    {
+        if (_pFocusFieldDocMgr)
+        {
+            _pFocusFieldDocMgr->Release();
+        }
+        _pFocusFieldDocMgr = documentMgr;
+        _pFocusFieldDocMgr->AddRef();
+        newField = true;
+    }
+    UpdateNamedpipeFocusField(documentMgr != nullptr && editable, newField);
 }
 
 //+---------------------------------------------------------------------------

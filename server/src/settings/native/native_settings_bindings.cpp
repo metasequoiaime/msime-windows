@@ -227,6 +227,10 @@ const std::vector<PageInfo> &Pages()
         {"input", L"输入", L"sidebar/input.svg", &BuildInputPage},
         {"appearance", L"外观", L"sidebar/appearance.svg", &BuildAppearancePage},
         {"helpcode", L"辅助码", L"sidebar/helpcode.svg", &BuildHelpcodePage},
+        // id 沿用 ai-settings：页面原名「AI 与云联想」，整句与云候选分区从「输入」页搬来后改了名。
+        {"ai-settings", L"整句与云候选", L"sidebar/ai.svg", &BuildAiPage},
+        // id 沿用 translation-settings：英文候选模式的音标、释义与补空格并进来之后改了名。
+        {"translation-settings", L"翻译与英文候选", L"sidebar/translation.svg", &BuildTranslationPage},
         {"shortcut", L"快捷键", L"sidebar/shortcut.svg", &BuildShortcutPage},
         {"dict", L"词库", L"sidebar/dictionary.svg", &BuildDictionaryPage},
         {"skin", L"皮肤", L"sidebar/skin.svg", &BuildSkinPage},
@@ -234,9 +238,10 @@ const std::vector<PageInfo> &Pages()
         {"screenkb-settings", L"屏幕键盘", L"sidebar/screen_keyboard.svg", &BuildScreenKeyboardPage},
         {"handwriting-settings", L"手写识别板", L"sidebar/handwriting.svg", &BuildHandwritingPage},
         {"tools-settings", L"实用功能", L"sidebar/utilities.svg", &BuildToolsPage},
-        {"ai-settings", L"AI 与云联想", L"sidebar/ai.svg", &BuildAiPage},
         {"floating-toolbar", L"悬浮工具栏", L"sidebar/floating_toolbar.svg", &BuildFloatingToolbarPage},
         {"stats", L"统计", L"sidebar/stats.svg", &BuildStatsPage},
+        {"sync-settings", L"数据同步", L"sidebar/sync.svg", &BuildSyncPage},
+        {"advanced-settings", L"高级", L"sidebar/advanced.svg", &BuildAdvancedPage},
         {"help-settings", L"帮助", L"sidebar/help.svg", &BuildHelpPage},
         {"about-settings", L"关于", L"sidebar/about.svg", &BuildAboutPage},
         {"feedback-settings", L"反馈", L"sidebar/feedback.svg", &BuildFeedbackPage},

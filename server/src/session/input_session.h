@@ -43,9 +43,10 @@ class IInputSession
     {
         return std::nullopt;
     }
-    // U 模式拆字反查：code 是唤醒键 U 之后的部件拼音连写，拆字表按本会话捕获的资源布局
-    // 解析，语义见 engine local_modes::query_radical。默认没有候选。
-    virtual std::vector<WordItem> query_radical(const std::string &) const
+    // U 模式拆字反查：code 是唤醒键 U 之后的部件拼音连写（双拼下是部件的双拼码），拆字表按本会话
+    // 捕获的资源布局解析，语义见 engine local_modes::query_radical。双拼方案由调用方按配置传入，
+    // 和 emoji、超级简拼一样不靠默认的小鹤。默认没有候选。
+    virtual std::vector<WordItem> query_radical(const std::string &, SchemeType, const ShuangpinProfile &) const
     {
         return {};
     }
@@ -135,6 +136,9 @@ class IInputSession
 
     virtual int store_user_phrase(std::string pinyin, std::string word) = 0;
     virtual int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word) = 0;
+    // remove_candidate 没有出错时的返回值（引擎各词库的 OK）：拼音、五笔词库删除成功时返回它。日语方案不支持删词，
+    // 什么都不做也返回它，要确认真的删了词的调用方得自己排除日语候选。单字母输入不删、词库删除失败都返回 -1。
+    static constexpr int kRemoveCandidateSucceeded = 0;
     // 混输组合里五笔与拼音候选共存，删除必须带上候选自己的方案。
     virtual int remove_candidate(std::string pinyin, std::string word, SchemeType scheme) = 0;
     virtual int cache_dynamic_candidate(const std::string &pinyin, const std::string &word, CandidateSource source) = 0;

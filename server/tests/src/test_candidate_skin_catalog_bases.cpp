@@ -248,12 +248,12 @@ TEST_CASE(candidate_skin_shared_base_preserves_default_manifest_and_package_swit
         fixture.Write("sample", base);
         auto package = CandidateSkinCatalog::Load(fixture.root, "sample");
         REQUIRE(package.has_value());
-        REQUIRE(CandidateSkinCatalog::ResolvePageArrows(fixture.root, "sample", &*package));
-        REQUIRE(CandidateSkinCatalog::ResolveFitContent(fixture.root, "sample", &*package));
+        REQUIRE(CandidateSkinCatalog::ResolvePageArrows(fixture.root, "sample", &*package, true));
+        REQUIRE(CandidateSkinCatalog::ResolveFitContent(fixture.root, "sample", &*package, true));
         fixture.Write("sample", base, "page_arrows = false\nfit_content = false\n");
         package = CandidateSkinCatalog::Load(fixture.root, "sample");
         REQUIRE(package.has_value());
-        REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(fixture.root, "sample", &*package));
-        REQUIRE(!CandidateSkinCatalog::ResolveFitContent(fixture.root, "sample", &*package));
+        REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(fixture.root, "sample", &*package, true));
+        REQUIRE(!CandidateSkinCatalog::ResolveFitContent(fixture.root, "sample", &*package, true));
     }
 }

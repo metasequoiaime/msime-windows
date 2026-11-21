@@ -34,13 +34,17 @@ class TraditionalSpellingIndex
     virtual std::string PreferredWordOf(const std::string &spelling) const = 0;
 };
 
+/** 以 lead 为首字节的 UTF-8 码位占几个字节。 */
+inline size_t Utf8CodePointLength(unsigned char lead)
+{
+    return lead < 0x80 ? 1 : (lead & 0xE0) == 0xC0 ? 2 : (lead & 0xF0) == 0xE0 ? 3 : 4;
+}
+
 inline bool IsSingleUtf8CodePoint(const std::string &text)
 {
     if (text.empty())
         return false;
-    const auto lead = static_cast<unsigned char>(text.front());
-    const size_t length = lead < 0x80 ? 1 : (lead & 0xE0) == 0xC0 ? 2 : (lead & 0xF0) == 0xE0 ? 3 : 4;
-    return text.size() == length;
+    return text.size() == Utf8CodePointLength(static_cast<unsigned char>(text.front()));
 }
 
 /**

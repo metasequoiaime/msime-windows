@@ -46,8 +46,9 @@ def build_msime(source: inputs.Inputs, path: Path, stage: Stages) -> None:
     connection = sqlite3.connect(path)
     try:
         stage("quanpin", lambda: pinyin_db.build_quanpin(
-            connection, pinyin_db.wanxiang_files(source.dictionary / pinyin_db.WANXIANG)))
-        stage("latin-words", lambda: pinyin_db.build_latin_words(connection, source.dictionary / pinyin_db.LATIN_WORDS))
+            connection, pinyin_db.pinyin_next_files(source.dictionary / pinyin_db.pinyin_next_base(source.dictionary))))
+        stage("latin-words", lambda: pinyin_db.build_latin_words(
+            connection, source.source(pinyin_db.latin_words_path(source.dictionary))))
 
         def words(relative: str):
             entries = pinyin_db.parse_word_list(textutil.read(source.source(relative)), relative)
@@ -71,6 +72,24 @@ def build_msime(source: inputs.Inputs, path: Path, stage: Stages) -> None:
             return f"{imported} rows imported, {skipped} skipped, {outside} outside the basic CJK set left out"
 
         stage("wubi", wubi)
+
+        def wubi98():
+            imported, skipped = pinyin_db.build_wubi98(
+                connection, source.source("sources/wubi/wubi98.txt"), source.source("sources/wubi/wubi98-fcitx.txt"),
+                [source.source("sources/wubi/wubi98-supplement.txt")])
+            return f"{imported} rows imported, {skipped} skipped"
+
+        stage("wubi98", wubi98)
+
+        def wubixsj():
+            imported, skipped, filtered, phrases = pinyin_db.build_wubixsj(
+                connection, source.source("sources/wubi/wubixsj-byujiang.txt"),
+                [source.source("sources/wubi/wubixsj-supplement.txt")])
+            return (f"{imported} rows imported, {skipped} skipped, {filtered} characters left out, "
+                    f"{phrases} upstream phrases dropped")
+
+        stage("wubixsj", wubixsj)
+
         def quick_phrases():
             pinyin_db.build_quick_phrases(connection)
             return "empty table, no built-in phrases"
@@ -117,6 +136,21 @@ def build_english(source: inputs.Inputs, path: Path, msime: Path, stage: Stages)
             return f"{len(en_zh)} English-to-Chinese, {len(zh_en)} Chinese-to-English"
 
         stage("english-glosses", glosses)
+
+        def ipa():
+            entries = english_db.parse_ipa(textutil.read(source.source(english_db.IPA_FILE)), english_db.IPA_FILE)
+            written = english_db.write_ipa(connection, entries)
+            return f"{written} of {len(entries)} hallelujahIM transcriptions match an English candidate"
+
+        stage("english-ipa", ipa)
+
+        def phrases():
+            entries = english_db.parse_phrases(textutil.read(source.source(english_db.PHRASES_FILE)),
+                                               english_db.PHRASES_FILE)
+            total, glosses_added = english_db.write_phrases(connection, entries)
+            return f"{total} ECDICT phrases, {glosses_added} phrase glosses"
+
+        stage("english-phrases", phrases)
 
         def cn_en():
             name = "sources/cn-en/machine-translations.txt"
@@ -203,7 +237,7 @@ def check_outputs(directory: Path) -> None:
     # 连接要显式关掉，否则 Windows 上临时目录删不掉。
     with closing(sqlite3.connect(f"file:{directory / 'msime.db'}?mode=ro", uri=True)) as msime:
         tables = {row[0] for row in msime.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        for table in ("wubi86", "japanese_lexicon", "tbl_1_a", "tbl_2_n", "tbl_others_s"):
+        for table in (*pinyin_db.WUBI_TABLES, "japanese_lexicon", "tbl_1_a", "tbl_2_n", "tbl_others_s"):
             if table not in tables or not msime.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone():
                 raise ValueError(f"msime.db 缺少表或表为空：{table}")
         # 快捷短语表必须在（用户快捷短语写在这里），但出厂必须是空的。

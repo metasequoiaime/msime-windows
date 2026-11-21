@@ -475,12 +475,44 @@ BOOL CTextLayout::Render(ID2D1RenderTarget *pRenderTarget, const WCHAR *psz, UIN
 
     if ((nSelStart == nSelEnd) && (_fInterimCaret || _fCaretVisible))
     {
+        // The host clips at x = 0, where a single-line box's text starts; a caret centered on
+        // that edge would lose most of its width. Keep it inside, then snap it to whole device
+        // pixels so every box draws the same crisp bar instead of a smear over three pixels.
         const FLOAT caretWidth = PixelsToDipsX(kCaretWidthPixels);
-        const FLOAT caretLeft = _rcCaret.left - (caretWidth * 0.5f) - PixelsToDipsX(kCaretVisualLeftBiasPixels);
-        const FLOAT caretRight = caretLeft + caretWidth;
-        pRenderTarget->FillRectangle(
-            D2D1::RectF(caretLeft, _rcCaret.top, max(caretRight, caretLeft + caretWidth), _rcCaret.bottom),
-            pCaretBrush);
+        FLOAT caretLeft = _rcCaret.left - (caretWidth * 0.5f) - PixelsToDipsX(kCaretVisualLeftBiasPixels);
+        caretLeft = max(caretLeft, 0.0f);
+
+        D2D1_MATRIX_3X2_F transform = {};
+        pRenderTarget->GetTransform(&transform);
+        FLOAT targetDpiX = 96.0f;
+        FLOAT targetDpiY = 96.0f;
+        pRenderTarget->GetDpi(&targetDpiX, &targetDpiY);
+        const FLOAT pixelsPerDipX = max(targetDpiX, 1.0f) / 96.0f;
+        const FLOAT pixelsPerDipY = max(targetDpiY, 1.0f) / 96.0f;
+        const FLOAT scaleX = transform._11 != 0.0f ? transform._11 : 1.0f;
+        const FLOAT scaleY = transform._22 != 0.0f ? transform._22 : 1.0f;
+        using RoundFn = FLOAT (*)(FLOAT);
+        const auto snapX = [&](FLOAT x, RoundFn roundFn) {
+            const FLOAT device = (x * scaleX + transform._31) * pixelsPerDipX;
+            return (roundFn(device) / pixelsPerDipX - transform._31) / scaleX;
+        };
+        const auto snapY = [&](FLOAT y, RoundFn roundFn) {
+            const FLOAT device = (y * scaleY + transform._32) * pixelsPerDipY;
+            return (roundFn(device) / pixelsPerDipY - transform._32) / scaleY;
+        };
+        const RoundFn roundPixel = [](FLOAT v) { return std::round(v); };
+        const RoundFn floorPixel = [](FLOAT v) { return std::floor(v); };
+        const RoundFn ceilPixel = [](FLOAT v) { return std::ceil(v); };
+
+        FLOAT left = snapX(caretLeft, roundPixel);
+        if (left < 0.0f)
+        {
+            left = snapX(0.0f, ceilPixel);
+        }
+        const FLOAT right = left + kCaretWidthPixels / pixelsPerDipX / scaleX;
+        const FLOAT top = snapY(_rcCaret.top, floorPixel);
+        const FLOAT bottom = max(snapY(_rcCaret.bottom, ceilPixel), top);
+        pRenderTarget->FillRectangle(D2D1::RectF(left, top, right, bottom), pCaretBrush);
     }
 
     pCompositionBrush->Release();

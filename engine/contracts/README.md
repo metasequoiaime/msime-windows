@@ -80,3 +80,34 @@ Policy is sent on activation before FocusSessionReady, on Worker registration,
 and when configuration or dedicated English mode changes. A TIP keeps policy
 per bound service, clears it on disconnect, and ignores replaced-pipe frames.
 Older clients and older Servers retain temporary R mode's previous key policy.
+
+### Server-initiated composition cancel
+
+`ServerCompositionCancel` (bit 9) is optional. Only clients that negotiate it
+receive Worker `CancelComposition` (opcode 42, empty payload): drop the current
+composition without committing, as Esc does. The Server sends it after clearing
+its own composition for a shortcut its low-level keyboard hook caught while the
+candidate window was shown (Ctrl+Alt+Enter, the DR Dict preedit lookup); some
+hosts never hand Alt chords to TSF. The client applies it only to the focus
+session and composition epoch current when it arrives. For a client without the
+bit the Server performs the lookup and leaves both compositions as they were.
+
+### Focus field attestation
+
+`FocusFieldAttestation` (bit 10) is optional. A client that negotiated it sends
+Main `FocusFieldState` (event 18) right after each successful `ClientActivated`
+and whenever its focused TSF document or that document's top context changes.
+`request_id` is the focus token of the activation the state belongs to,
+`keycode` is `1` when the document has a context that is not read-only, and
+`modifiers_down` is a per-thread serial that changes with the focused field.
+The event never activates or re-routes a client; the Server only records it for
+the client's current focus token and ignores a state whose token is stale.
+
+The Server's voice input treats a positive state on the foreground-bound active
+client as the input target's editability and identity (TSF serial plus the
+focused HWND and the foreground window), instead of UI Automation alone. That
+covers hosts whose UIA tree does not reach the text field (WebView2 visual
+hosting without an automation provider, a focused HWND and UIA element in
+different processes) and Chromium's lazily enabled accessibility, whose first
+query emits focus events that do not move the input. Without a positive state,
+or against an older client, the Server keeps the UIA-based decision.

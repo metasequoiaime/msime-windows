@@ -25,6 +25,13 @@
 - `jiajia` 的独体字与部首字取「本字声母 + 起笔笔画」（h 横、s 竖、p 撇、n 点/捺、z 折），共 138 个字。
   这是与拼音加加原表刻意保留的差别：加加对这些字给的是另一套拆法（笔画码或不同的部件拆分）。来源与授权见 [NOTICE.md](./NOTICE.md)。
 
+`jiajia_helpcode.txt` 现有 21327 条，覆盖 GBK 字集（按 CP936 解码得到 20924 个汉字）中的 20901 个，
+其余 23 个没有可用的拆字数据：〇 丣 丱 乀 乁 乄 乚 乛 亅 兯 冎 匸 厁 夊 栆 桛 氺 癶 稥 篐 鎼 﨎 﨟。
+另有 426 个 GBK 之外的扩展区与兼容汉字；扩展 A 的 䱷 同样没有拆字数据，没有收进表里。原有
+7968 条是旧版表，保持不动；新增的 13359 条由
+[`scripts/build_jiajia_helpcode.py`](./scripts/build_jiajia_helpcode.py) 按同一取码规则从
+rime-radical-pinyin 的拆字数据生成，重新生成的步骤写在脚本头部。
+
 ## 参考
 
 - 自然码辅助码：<https://github.com/copperay/ZRM_Aux-code>

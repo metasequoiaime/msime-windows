@@ -1,4 +1,5 @@
 #include "mixed/mixed_candidates.h"
+#include "mixed/mixed_candidates_policy.h"
 
 #include "mixed/date_time_candidates.h"
 #include "engine/core/data_path.h"
@@ -135,8 +136,10 @@ void WorkerLoop()
             }
         }
 
-        // 什么都没查到就不回调：任务线程组页时已经是不带混输候选的列表，没有可以合并的。
-        if (result.empty() || IsStale(observed_generation) || !g_apply_callback)
+        // 空结果也是一次完成回答：任务线程组页时已经是不带混输候选的列表，回调清掉重建时保留的
+        // UI-only 行；跳过回调会让旧英文行一直活着。
+        if (!FanyImeIpc::ShouldDeliverMixedResult(result, IsStale(observed_generation),
+                                                  static_cast<bool>(g_apply_callback)))
             continue;
         g_apply_callback(std::move(result), request.input, observed_generation);
     }

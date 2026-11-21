@@ -30,9 +30,12 @@ struct SwitchLanguageHotkeys
     bool ctrl_alt_space = true;
     bool character_set_ctrl_shift_f = true;
     bool commit_pinyin_shift_enter = true;
+    // DR Dict candidate lookup chord ([dr_dict]): Ctrl+Shift+Enter looks up the highlighted candidate.
+    // Already ANDed with dr_dict.enabled; default off. (The preedit lookup is the Server hook's.)
+    bool dr_dict_lookup_candidate = false;
     FanyImeInputStateShortcuts::Snapshot input_state;
 };
-// Read keybindings.switch_language_* from shared config.toml.
+// Read keybindings.switch_language_* (and the [dr_dict] chords) from shared config.toml.
 SwitchLanguageHotkeys ReadConfiguredSwitchLanguageHotkeys();
 // Whether input.vim_mode_apps in shared config.toml lists this host process; cached, disabled by default.
 bool ReadConfiguredVimMode();

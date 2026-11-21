@@ -60,7 +60,7 @@ std::string last_characters(const std::string &text, std::size_t count);
 const SentenceModel *shared_sentence_model(const std::string &path);
 
 // A handle that defers shared_sentence_model() until the model is first asked for. The two models
-// together are ~28 MB of heap once loaded; resolving them in the dictionary constructors paid for
+// together are ~34 MB of heap once loaded; resolving them in the dictionary constructors paid for
 // both even when the settings leave them off (the desktop model is off by default). Not thread-safe:
 // resolve it on the thread that owns the dictionary and hand the raw pointer to worker threads.
 class LazySentenceModel

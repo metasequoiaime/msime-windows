@@ -119,10 +119,16 @@ VisualPtr BuildVoicePage(PageContext &context);
 VisualPtr BuildScreenKeyboardPage(PageContext &context);
 VisualPtr BuildHandwritingPage(PageContext &context);
 VisualPtr BuildToolsPage(PageContext &context);
+// 「整句与云候选」页：整句模型与云候选分区（AddSentenceSection）在前，AI 联想在后。
 VisualPtr BuildAiPage(PageContext &context);
+VisualPtr BuildTranslationPage(PageContext &context);
+// 整句模型（Trigram、神经网络、octagram……）与云候选分区，挂在 page 末尾。
+void AddSentenceSection(PageBuilder &page, PageContext &context);
 VisualPtr BuildFloatingToolbarPage(PageContext &context);
 VisualPtr BuildStatsPage(PageContext &context);
+VisualPtr BuildAdvancedPage(PageContext &context);
 VisualPtr BuildHelpPage(PageContext &context);
 VisualPtr BuildAboutPage(PageContext &context);
 VisualPtr BuildFeedbackPage(PageContext &context);
+VisualPtr BuildSyncPage(PageContext &context);
 } // namespace native_settings

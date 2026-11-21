@@ -87,6 +87,62 @@
         "settings"
       ]
     },
+    "localAsrModelDownload": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "localAsrModelDelete": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "localAsrModelImport": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "localAsrModelStatusRequest": {
+      "surfaces": [
+        "settings"
+      ]
+    },
     "neuralModelDownload": {
       "surfaces": [
         "settings"
@@ -161,6 +217,36 @@
         "required": [
           "action",
           "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "userDataSyncRequest": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "probe",
+              "listDevices",
+              "upload",
+              "download"
+            ]
+          },
+          "deviceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "action"
         ],
         "additionalProperties": false
       }
@@ -327,6 +413,7 @@
               "translation.tencent",
               "translation.aliyun",
               "translation.niutrans",
+              "translation.bilibili",
               "translation.custom",
               "translation.ai",
               "voice.asr",
@@ -446,6 +533,8 @@
             "enum": [
               "quanpin",
               "wubi",
+              "wubi98",
+              "wubixsj",
               "english",
               "quick",
               "latin"
@@ -458,16 +547,42 @@
               "create",
               "update",
               "delete",
+              "deleteMany",
               "import",
               "importHans",
+              "importForeign",
               "export"
             ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "rime",
+              "libimetxt",
+              "libimebin"
+            ]
+          },
+          "path": {
+            "type": "string"
           },
           "word": {
             "type": "string"
           },
           "code": {
             "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "user"
+            ]
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "prefix",
+              "exact"
+            ]
           },
           "content": {
             "type": "string"
@@ -496,6 +611,27 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 200
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "word": {
+                  "type": "string"
+                },
+                "display": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "word"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
@@ -579,6 +715,35 @@
             "type": "boolean"
           },
           "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "profileIconRequest": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "apply",
+              "import"
+            ]
+          },
+          "icon": {
             "type": "string"
           }
         },
@@ -1102,6 +1267,38 @@
       ],
       "additionalProperties": false
     },
+    "profileIconResponse": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "cancelled": {
+          "type": "boolean"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "iconFile": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "action",
+        "ok",
+        "message"
+      ],
+      "additionalProperties": false
+    },
     "apiModelListResult": {
       "properties": {
         "requestId": {
@@ -1180,6 +1377,65 @@
       ],
       "additionalProperties": false
     },
+    "userDataSyncResponse": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "probe",
+            "listDevices",
+            "upload",
+            "download"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "deviceId": {
+                "type": "string"
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "uploadedUnix": {
+                "type": "integer"
+              },
+              "size": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "deviceId",
+              "hostname",
+              "uploadedUnix",
+              "size"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "localDeviceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "action",
+        "ok",
+        "message"
+      ],
+      "additionalProperties": false
+    },
     "dictionaryResponse": {
       "properties": {
         "requestId": {
@@ -1233,6 +1489,14 @@
         },
         "hasMore": {
           "type": "boolean"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [

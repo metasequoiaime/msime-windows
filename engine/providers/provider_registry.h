@@ -39,6 +39,11 @@ class ProviderRegistry
     int cache_dynamic_candidate_for_request(const QueryRequest &request, const std::string &word,
                                             CandidateSource source);
 
+    void set_wubi_profile(metasequoia::WubiProfile profile)
+    {
+        wubi_provider_.set_profile(profile);
+    }
+
     void set_helpcode_keymap(HelpcodeUtils::SharedKeymap table)
     {
         pinyin_provider_.set_helpcode_keymap(std::move(table));

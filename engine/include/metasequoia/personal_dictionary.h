@@ -11,9 +11,13 @@ namespace metasequoia
 enum class PersonalDictionaryKind
 {
     Pinyin,
+    // 86 五笔。
     Wubi,
     QuickPhrase,
-    English
+    English,
+    // 98 五笔与新世纪五笔，编码规则同 86，只是表不同。只追加在末尾，已有的值不变。
+    Wubi98,
+    WubiXsj,
 };
 struct PersonalDictionaryEntry
 {

@@ -3,7 +3,9 @@
 ;
 ; 编译方法：
 ;   1. 安装 Inno Setup 6.6 或更高版本：https://jrsoftware.org/isinfo.php
-;   2. 运行 .\Compile-Installer.ps1（或用 Inno Setup Compiler 打开本文件并按 Ctrl+F9）
+;   2. 运行 .\Compile-Installer.ps1 -TargetVersion <版本>（或用 Inno Setup Compiler 打开本文件并按
+;      Ctrl+F9，此时用下面的默认版本；GUI 编出的包要用 -InstallerPath 交给 Sign-Installer-Local.ps1
+;      和 Install.ps1，它们默认只认 Compile-Installer.ps1 记录的 Output\last-build.json）
 ;   输出安装包默认在：Output\
 ;
 ; 本地测试打包顺序：
@@ -19,11 +21,16 @@
 ; 本仓库不包含任何预置代码签名证书。
 
 #define MyAppName      "Metasequoia IME 水杉输入法"
+; Compile-Installer.ps1 用 ISCC /D 覆盖这两项；保留默认值让直接编译本文件仍然可用。
+#ifndef MyAppVersion
 #define MyAppVersion   "0.0.1"
+#endif
 ; VersionInfoVersion 是 PE 的 VERSIONINFO，只接受数字和点号；dev 构建的 MyAppVersion 带
-; -dev.<日期>.<hash> 后缀（Prepare-PackageFiles.ps1 会把数字部分同步写进这个 define），
+; -dev.<日期>.<hash> 后缀（Compile-Installer.ps1 会把数字部分通过 /DMyVersionInfo 传入），
 ; 文件名与 AppVersion 用完整串，这里只用数字段。
+#ifndef MyVersionInfo
 #define MyVersionInfo  "0.0.1"
+#endif
 #define MyAppPublisher "Metasequoia"
 #define MyAppExeName   "MetasequoiaImeServer.exe"
 #define MySettingsExeName "MetasequoiaImeSettings.exe"
@@ -819,6 +826,13 @@ begin
   Result := CompareText(FileName, 'skins') = 0;
 end;
 
+function IsUserSyncStateFile(const FileName: String): Boolean;
+begin
+  { sync_state.json 存着本机的同步设备标识。丢了它，这台机器在云端会变成一台新设备，
+    旧快照虽然还在但设置页里对不上号，用户会以为数据没了。它没有出厂副本可回退。}
+  Result := CompareText(FileName, 'sync_state.json') = 0;
+end;
+
 function IsUserShuangpinDirectory(const FileName: String): Boolean;
 begin
   { shuangpin\custom 放的是用户自定义双拼方案，安装包不往 shuangpin 里写任何东西，整个目录都归用户。}
@@ -829,7 +843,8 @@ function IsCollocationModelDirectory(const FileName: String): Boolean;
 begin
   { octagram 语法模型包（目录首项为推荐包万象）在 <数据目录>\models\<id>，是设置页按需下载的
     约 390MB，安装包不携带，
-    也不是每次安装都会重写的东西。神经整句效果档模型同样按需下载在 models\neural-desktop。这份名单的语义恰好是「升级保留、卸载删除」——
+    也不是每次安装都会重写的东西。神经整句效果档模型同样按需下载在 models\neural-desktop（旧版 model-v1
+    的文件也在那里，新版下载前继续用）。这份名单的语义恰好是「升级保留、卸载删除」——
     IsPreservedAppDataItem 只被 CleanAppDataExceptUserFiles（覆盖安装）与 RemoveDataDir
     （卸载/换目录）读——所以归这里，不能进 IsRuntimeAppDataItem：后者两条路径都删，
     覆盖安装会把模型一并清掉，用户得重下一次。}
@@ -847,6 +862,7 @@ begin
     IsUserTranslationFile(FileName) or
     IsUserSkinDirectory(FileName) or
     IsUserShuangpinDirectory(FileName) or
+    IsUserSyncStateFile(FileName) or
     IsCollocationModelDirectory(FileName) or
     (CompareText(FileName, DataDirMarkerName) = 0);
 end;
@@ -974,13 +990,17 @@ begin
   Result := True;
 end;
 
+{ 只结束这个映像名本身，不带 /T。安装程序可能正是设置窗口「检查更新」拉起的：提权后
+  它的父进程仍是设置进程，而设置进程又挂在 Server、Watchdog 之下。按进程树杀会顺着
+  这条链把正在运行的安装程序自己也一起结束，表现为点「下一步」后向导直接消失。
+  Server 的子进程（面板、设置窗口）由 StopImeProcesses 按映像名逐个结束。}
 procedure StopProcess(const ImageName: String);
 var
   ResultCode: Integer;
 begin
   Exec(
     ExpandConstant('{sys}\taskkill.exe'),
-    '/F /T /IM "' + ImageName + '"',
+    '/F /IM "' + ImageName + '"',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,
@@ -1017,8 +1037,8 @@ begin
   StopProcess('{#MyWatchdogName}');
   StopProcess('{#MyAppExeName}');
   StopSettingsProcess;
-  { 面板通常是 Server 的子进程、随 /T 一起走；Server 若已崩溃它们会变成孤儿，
-    同样占着 server 目录里的 exe，所以显式再收一遍。}
+  { 面板是 Server 的子进程。StopProcess 不再按进程树结束（见上），它们不会随 Server
+    一起走，Server 若已崩溃它们也会变成孤儿，同样占着 server 目录里的 exe，逐个收掉。}
   StopProcess('{#MyEmojiPanelExeName}');
   StopProcess('{#MyKeyboardPanelExeName}');
   StopProcess('{#MyHandwritingPanelExeName}');
@@ -1538,7 +1558,8 @@ begin
     '"' + RemoveBackslashUnlessRoot(OldDir) + '" "' + RemoveBackslashUnlessRoot(NewDir) + '" ' +
     'msime_user.db msime_user.db-wal msime_user.db-shm msime_user.db-journal ' +
     'stats.db stats.db-wal stats.db-shm stats.db-journal ' +
-    'config.toml config.base.toml custom_translations.txt /MOVE /R:2 /W:1 /NJH /NJS /NP /NFL /NDL',
+    'config.toml config.base.toml custom_translations.txt sync_state.json ' +
+    '/MOVE /R:2 /W:1 /NJH /NJS /NP /NFL /NDL',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,
@@ -1786,7 +1807,9 @@ begin
     exit;
   end;
   { 轻量包不清根目录，但新 Server 同样只认 models\ 下的位置，所以两种包都要挪。
-    哈希分别对应 neural-model/lock.json 和 language-model/lock.json，installer/tests/retired-models.ps1 核对。}
+    哈希分别对应 neural-model/lock.json 的 retired（model-v1 效果档）和 language-model/lock.json，
+    installer/tests/retired-models.ps1 核对。效果档现在是 rerank-v2，落位文件名不同；挪过去的 v1 仍能
+    继续用，设置页显示「有新版本」，下载新版后由下载器删掉它。}
   AdoptRetiredModel('sentence-model-desktop.safetensors', 'neural-desktop', '',
     '0a6ecba69bf1d39c7eb49549c716477dd6c03fdf05757773e1f50435262fb469');
   AdoptRetiredModel('sc.lm', 'language-model', 'libime-lm-NOTICE.md',
@@ -1899,6 +1922,9 @@ begin
     { 设置页「游戏兼容」记下的登记名称。升级时要留着（TSF DLL 注册时读它），卸载时不能留：
       否则日后重装会悄悄沿用别名。}
     RegDeleteValue(HKLM, 'Software\Metasequoia\MetasequoiaIME', 'GameCompatProfileName');
+    { 设置页「输入法图标」记下的选择，道理同上。图标文件本身在 TsfRoot 里，随下面的整树删除一起清掉。}
+    RegDeleteValue(HKLM, 'Software\Metasequoia\MetasequoiaIME', 'ProfileIconFile');
+    RegDeleteValue(HKLM, 'Software\Metasequoia\MetasequoiaIME', 'ProfileIconChoice');
     DeleteWatchdogLogonTask;
     RegDeleteValue(
       HKLM,

@@ -1,6 +1,7 @@
 #include "radical_query.h"
 
 #include "../core/data_path.h"
+#include "../shuangpin/shuangpin_query.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -16,13 +17,17 @@ namespace metasequoia::local_modes
 {
 namespace
 {
-// 一行拆字数据。code 是部件拼音连写、word 是汉字、weight 是字频。两段文字首尾相接存在
-// Table::text 里：十几万行各带两个 std::string 要占十多 MB 常驻内存，压成一块文本池后只剩几 MB。
+// 一行拆字数据。code 是部件拼音连写、word 是汉字、weight 是字频，reading 是可选读音。几段
+// 文字存在 Table::text 里：十几万行各带几个 std::string 要占十多 MB 常驻内存，压成一块文本
+// 池后只剩几 MB。码和字按行首尾相接；读音属于字本身，很多拆法共享同一段，按值去重后只存
+// 一份，Entry 各记自己的偏移。
 struct Entry
 {
     std::uint32_t offset = 0;
+    std::uint32_t reading_offset = 0;
     std::uint16_t code_size = 0;
     std::uint16_t word_size = 0;
+    std::uint16_t reading_size = 0;
     std::int64_t weight = 0;
 };
 
@@ -33,6 +38,8 @@ struct Table
     std::vector<Entry> entries;
     // entries 的下标按 code 排序。前缀命中的行在排序视图里连续，查询只扫这一小段。
     std::vector<std::uint32_t> by_code;
+    // 整张表带读音的行数。旧的三列表没有第 4 列，Server 据此记录数据没刷新。
+    std::size_t entries_with_reading = 0;
 
     std::string_view code(std::size_t index) const
     {
@@ -44,6 +51,12 @@ struct Table
     {
         const Entry &entry = entries[index];
         return std::string_view(text).substr(entry.offset + entry.code_size, entry.word_size);
+    }
+
+    std::string_view reading(std::size_t index) const
+    {
+        const Entry &entry = entries[index];
+        return std::string_view(text).substr(entry.reading_offset, entry.reading_size);
     }
 };
 
@@ -57,6 +70,13 @@ bool is_lower_ascii_code(std::string_view code)
                        [](unsigned char character) { return character >= 'a' && character <= 'z'; });
 }
 
+// 第 4 列只取到下一个 tab 或空白：多出来的列、行尾空格不该混进候选注释，也不该算进宽度。
+std::string_view reading_cell(std::string_view line, std::size_t start)
+{
+    const auto end = line.find_first_of(" \t", start);
+    return end == std::string_view::npos ? line.substr(start) : line.substr(start, end - start);
+}
+
 std::shared_ptr<const Table> load_table(const std::filesystem::path &path)
 {
     auto table = std::make_shared<Table>();
@@ -66,6 +86,7 @@ std::shared_ptr<const Table> load_table(const std::filesystem::path &path)
         return {};
     }
 
+    std::unordered_map<std::string, std::uint32_t> reading_offsets;
     std::string line;
     bool first_line = true;
     while (std::getline(input, line))
@@ -95,21 +116,28 @@ std::shared_ptr<const Table> load_table(const std::filesystem::path &path)
         }
         const std::string_view code = std::string_view(line).substr(0, first_tab);
         const std::string_view word = std::string_view(line).substr(first_tab + 1, second_tab - first_tab - 1);
+        // 第四列读音是可选的（旧表、测试用的最小表都只有三列）。
+        const auto third_tab = line.find('\t', second_tab + 1);
+        const std::string_view weight_text =
+            third_tab == std::string::npos ? std::string_view(line).substr(second_tab + 1)
+                                           : std::string_view(line).substr(second_tab + 1, third_tab - second_tab - 1);
+        const std::string_view reading =
+            third_tab == std::string::npos ? std::string_view{} : reading_cell(line, third_tab + 1);
         // 拆字输入只可能是 a-z，码字域之外的码（繁体、注音、含撇号未归一）没有查询语义。
         if (code.empty() || word.empty() || !is_lower_ascii_code(code))
         {
             continue;
         }
         // 条目里的长度和偏移是定宽整数；真实数据的一行只有几十字节，超出的行不可能是合法拆字。
-        if (code.size() > UINT16_MAX || word.size() > UINT16_MAX ||
-            table->text.size() + code.size() + word.size() > UINT32_MAX)
+        if (code.size() > UINT16_MAX || word.size() > UINT16_MAX || reading.size() > UINT16_MAX ||
+            table->text.size() + code.size() + word.size() + reading.size() > UINT32_MAX)
         {
             continue;
         }
         std::int64_t weight = 0;
         try
         {
-            weight = std::stoll(line.substr(second_tab + 1));
+            weight = std::stoll(std::string(weight_text));
         }
         catch (...)
         {
@@ -119,9 +147,21 @@ std::shared_ptr<const Table> load_table(const std::filesystem::path &path)
         entry.offset = static_cast<std::uint32_t>(table->text.size());
         entry.code_size = static_cast<std::uint16_t>(code.size());
         entry.word_size = static_cast<std::uint16_t>(word.size());
+        entry.reading_size = static_cast<std::uint16_t>(reading.size());
         entry.weight = weight;
         table->text.append(code);
         table->text.append(word);
+        if (!reading.empty())
+        {
+            const auto inserted =
+                reading_offsets.emplace(std::string(reading), static_cast<std::uint32_t>(table->text.size()));
+            if (inserted.second)
+            {
+                table->text.append(reading);
+            }
+            entry.reading_offset = inserted.first->second;
+            ++table->entries_with_reading;
+        }
         table->entries.push_back(entry);
     }
     table->text.shrink_to_fit();
@@ -154,11 +194,39 @@ std::shared_ptr<const Table> cached_table(const std::filesystem::path &path)
     cache.emplace(key, table);
     return table;
 }
-} // namespace
 
-std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code, int limit)
+struct Matches
 {
-    if (limit <= 0 || code.empty() || !is_lower_ascii_code(code))
+    std::vector<std::size_t> exact;
+    std::vector<std::size_t> prefix;
+};
+
+// 拆字码以 code 开头的行：全码命中与仅前缀命中分开，各自按下标（文件顺序即字频降序）排好。
+Matches collect_matches(const Table &table, std::string_view code)
+{
+    Matches matches;
+    const auto lower =
+        std::lower_bound(table.by_code.begin(), table.by_code.end(), code,
+                         [&](std::uint32_t index, std::string_view value) { return table.code(index) < value; });
+    for (auto it = lower; it != table.by_code.end(); ++it)
+    {
+        const std::string_view entry_code = table.code(*it);
+        if (entry_code.size() < code.size() || entry_code.compare(0, code.size(), code) != 0)
+        {
+            // 同一前缀的行在排序视图里连续，越过前缀范围即可停。
+            break;
+        }
+        (entry_code.size() == code.size() ? matches.exact : matches.prefix).push_back(*it);
+    }
+    std::sort(matches.exact.begin(), matches.exact.end());
+    std::sort(matches.prefix.begin(), matches.prefix.end());
+    return matches;
+}
+
+std::vector<WordItem> query_codes(const std::filesystem::path &decomposition_path,
+                                  const std::vector<std::string> &codes, int limit)
+{
+    if (limit <= 0 || codes.empty())
     {
         return {};
     }
@@ -168,34 +236,30 @@ std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_p
         return {};
     }
 
-    const auto lower =
-        std::lower_bound(table->by_code.begin(), table->by_code.end(), std::string_view(code),
-                         [&](std::uint32_t index, std::string_view value) { return table->code(index) < value; });
-
     // 全码命中在前、仅前缀命中在后，各自按字频：打全了某个生僻字的拆法，它不能被一串更高频的
-    // 长码挤出 limit。
-    std::vector<std::size_t> exact_matches;
-    std::vector<std::size_t> prefix_matches;
-    for (auto it = lower; it != table->by_code.end(); ++it)
+    // 长码挤出 limit。有几种读法时（双拼的码与按全拼读的原串）各层里按读法的先后排。
+    std::vector<Matches> per_code;
+    per_code.reserve(codes.size());
+    for (const std::string &code : codes)
     {
-        const std::string_view entry_code = table->code(*it);
-        if (entry_code.size() < code.size() || entry_code.compare(0, code.size(), code) != 0)
-        {
-            // 同一前缀的行在排序视图里连续，越过前缀范围即可停。
-            break;
-        }
-        (entry_code.size() == code.size() ? exact_matches : prefix_matches).push_back(*it);
+        per_code.push_back(collect_matches(*table, code));
     }
-    // 下标就是文件顺序（字频降序），排序后即高频优先。
-    std::sort(exact_matches.begin(), exact_matches.end());
-    std::sort(prefix_matches.begin(), prefix_matches.end());
 
     const auto count = static_cast<std::size_t>(limit);
     std::vector<WordItem> result;
     // 一个字常有几种拆法（駉 = majiong / majiongkou / matongkou），共享同一前缀时只出一次，
     // 位置取它排得最前的那条。
     std::unordered_set<std::string_view> seen;
-    for (const auto *matches : {&exact_matches, &prefix_matches})
+    std::vector<const std::vector<std::size_t> *> tiers;
+    for (const Matches &matches : per_code)
+    {
+        tiers.push_back(&matches.exact);
+    }
+    for (const Matches &matches : per_code)
+    {
+        tiers.push_back(&matches.prefix);
+    }
+    for (const auto *matches : tiers)
     {
         for (const std::size_t index : *matches)
         {
@@ -208,16 +272,55 @@ std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_p
             {
                 continue;
             }
-            // 注音不在这里填：引擎没有汉字→拼音能力，由 Server 组装候选时补。
             result.emplace_back(std::string{}, std::string(word), table->entries[index].weight,
                                 CandidateSource::Generated);
+            // 读音随表烘进来：表里的字远多于运行时拼音词典，候选反显才不会成片空白。
+            result.back().reading = std::string(table->reading(index));
         }
     }
     return result;
 }
+} // namespace
 
-void preload_radical_table(const std::filesystem::path &decomposition_path)
+std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code, int limit)
 {
-    cached_table(decomposition_path);
+    if (code.empty() || !is_lower_ascii_code(code))
+    {
+        return {};
+    }
+    return query_codes(decomposition_path, {code}, limit);
+}
+
+std::vector<WordItem> query_radical(const std::filesystem::path &decomposition_path, const std::string &code,
+                                    SchemeType scheme, const ShuangpinProfile &profile, int limit)
+{
+    if (scheme != SchemeType::Shuangpin)
+    {
+        return query_radical(decomposition_path, code, limit);
+    }
+    // 用 ; 当 ing 韵母的方案（微软、搜狗、紫光），; 只会出现在一对的第二键上，解不出音节时整串作罢。
+    const bool semicolon_final = ShuangpinProfileUsesSemicolonFinal(profile);
+    if (code.empty() || !std::all_of(code.begin(), code.end(), [&](unsigned char character) {
+            return (character >= 'a' && character <= 'z') || (semicolon_final && character == ';');
+        }))
+    {
+        return {};
+    }
+    std::vector<std::string> codes = shuangpin::decode_syllable_pairs(code, profile);
+    if (is_lower_ascii_code(code) && std::find(codes.begin(), codes.end(), code) == codes.end())
+    {
+        codes.push_back(code);
+    }
+    return query_codes(decomposition_path, codes, limit);
+}
+
+RadicalTableStats preload_radical_table(const std::filesystem::path &decomposition_path)
+{
+    const std::shared_ptr<const Table> table = cached_table(decomposition_path);
+    if (!table)
+    {
+        return {};
+    }
+    return {table->entries.size(), table->entries_with_reading};
 }
 } // namespace metasequoia::local_modes

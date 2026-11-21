@@ -22,10 +22,9 @@ std::filesystem::path ExecutableDirectory()
 }
 } // namespace
 
-// cpp-pinyin 的词典由 CMake 的 POST_BUILD 拷到可执行文件旁的 dict\。Server 与设置进程各自
-// 初始化一次：设置页的导入注音也用它，两边共用同一份词典拷贝，只是进程内各持一个实例。
-// 词典缺失或损坏时 cpp-pinyin 会抛出，这里吞掉并留空实例——候选组装在按键路径上，绝不能
-// 让第三方初始化失败把输入法打崩。
+// cpp-pinyin 的词典由 CMake 的 POST_BUILD 拷到设置程序可执行文件旁的 dict\。现在只有设置进程
+// 用它（导入词条时给纯中文词注音）：U 模式候选的读音随拆字表烘进来，Server 不再加载这份词典。
+// 词典缺失或损坏时 cpp-pinyin 会抛出，这里吞掉并留空实例——初始化失败不能把设置页打崩。
 Pinyin::Pinyin *Engine()
 {
     static std::once_flag once;
@@ -42,46 +41,5 @@ Pinyin::Pinyin *Engine()
         }
     });
     return engine.get();
-}
-
-std::string Annotate(const std::string &hanzi)
-{
-    if (hanzi.empty())
-    {
-        return {};
-    }
-    Pinyin::Pinyin *annotator = Engine();
-    if (annotator == nullptr)
-    {
-        return {};
-    }
-    try
-    {
-        // 带调号（jīng）比不带调（jing）更能说清生僻字怎么读；多音字取 cpp-pinyin 的默认读音。
-        const auto results =
-            annotator->hanziToPinyin(hanzi, Pinyin::ManTone::Style::TONE, Pinyin::Error::Default, false, false, false);
-        if (results.empty())
-        {
-            return {};
-        }
-        std::string joined;
-        for (const auto &item : results)
-        {
-            if (item.error)
-            {
-                return {};
-            }
-            if (!joined.empty())
-            {
-                joined.push_back(' ');
-            }
-            joined += item.pinyin;
-        }
-        return joined;
-    }
-    catch (...)
-    {
-        return {};
-    }
 }
 } // namespace HanziPinyin

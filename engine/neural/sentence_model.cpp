@@ -22,8 +22,10 @@ namespace neural
 namespace
 {
 
-// The exact GELU, matching torch.nn.functional.gelu with its default settings. The tanh
-// approximation is a different function and the model was not trained with it.
+// The exact GELU, matching torch.nn.functional.gelu with its default settings, is what the
+// sentence models (model-v1) and the 8x448 reranker were trained with. The tanh form is a different
+// function; only a model whose config says `gelu_tanh` was trained with it (the 6x256 reranker), and
+// each model must be run with its own.
 float erf_approx(float x)
 {
     // Abramowitz and Stegun 7.1.26; error stays below 1.5e-7 across the range.
@@ -38,6 +40,13 @@ float gelu(float x)
 {
     constexpr float kInvSqrt2 = 0.70710678118654752440f;
     return 0.5f * x * (1.0f + erf_approx(x * kInvSqrt2));
+}
+
+// torch.nn.GELU(approximate="tanh").
+float gelu_tanh(float x)
+{
+    constexpr float kSqrt2OverPi = 0.79788456080286535588f;
+    return 0.5f * x * (1.0f + std::tanh(kSqrt2OverPi * (x + 0.044715f * x * x * x)));
 }
 
 // Four independent accumulators, not one.
@@ -230,67 +239,69 @@ float half_to_f32(std::uint16_t bits)
     return result;
 }
 
+// One decoded UTF-8 character: the code point and how many bytes it consumed.
+struct Decoded
+{
+    char32_t code = 0xFFFD;
+    std::size_t length = 1;
+};
+
+// Decodes the character starting at text[i]. Malformed bytes map to U+FFFD and consume one byte,
+// except a sequence cut off by the end of the string, whose remainder is consumed at once.
+Decoded decode_one(const std::string &text, std::size_t i)
+{
+    unsigned char c = static_cast<unsigned char>(text[i]);
+    char32_t code;
+    std::size_t extra;
+    if (c < 0x80)
+    {
+        code = c;
+        extra = 0;
+    }
+    else if ((c & 0xE0) == 0xC0)
+    {
+        code = c & 0x1F;
+        extra = 1;
+    }
+    else if ((c & 0xF0) == 0xE0)
+    {
+        code = c & 0x0F;
+        extra = 2;
+    }
+    else if ((c & 0xF8) == 0xF0)
+    {
+        code = c & 0x07;
+        extra = 3;
+    }
+    else
+    {
+        return {0xFFFD, 1};
+    }
+    if (i + extra >= text.size())
+    {
+        return {0xFFFD, text.size() - i};
+    }
+    for (std::size_t j = 1; j <= extra; ++j)
+    {
+        unsigned char cc = static_cast<unsigned char>(text[i + j]);
+        if ((cc & 0xC0) != 0x80)
+        {
+            return {0xFFFD, 1};
+        }
+        code = (code << 6) | (cc & 0x3F);
+    }
+    return {code, extra + 1};
+}
+
 // Decodes UTF-8 text into Unicode code points. Malformed bytes map to U+FFFD.
 std::vector<char32_t> decode_utf8(const std::string &text)
 {
     std::vector<char32_t> out;
-    std::size_t i = 0;
-    const std::size_t n = text.size();
-    while (i < n)
+    for (std::size_t i = 0; i < text.size();)
     {
-        unsigned char c = static_cast<unsigned char>(text[i]);
-        char32_t code;
-        std::size_t extra;
-        if (c < 0x80)
-        {
-            code = c;
-            extra = 0;
-        }
-        else if ((c & 0xE0) == 0xC0)
-        {
-            code = c & 0x1F;
-            extra = 1;
-        }
-        else if ((c & 0xF0) == 0xE0)
-        {
-            code = c & 0x0F;
-            extra = 2;
-        }
-        else if ((c & 0xF8) == 0xF0)
-        {
-            code = c & 0x07;
-            extra = 3;
-        }
-        else
-        {
-            out.push_back(0xFFFD);
-            ++i;
-            continue;
-        }
-        if (i + extra >= n)
-        {
-            out.push_back(0xFFFD);
-            break;
-        }
-        bool ok = true;
-        for (std::size_t j = 1; j <= extra; ++j)
-        {
-            unsigned char cc = static_cast<unsigned char>(text[i + j]);
-            if ((cc & 0xC0) != 0x80)
-            {
-                ok = false;
-                break;
-            }
-            code = (code << 6) | (cc & 0x3F);
-        }
-        if (!ok)
-        {
-            out.push_back(0xFFFD);
-            ++i;
-            continue;
-        }
-        out.push_back(code);
-        i += extra + 1;
+        const Decoded decoded = decode_one(text, i);
+        out.push_back(decoded.code);
+        i += decoded.length;
     }
     return out;
 }
@@ -483,6 +494,28 @@ std::unique_ptr<SentenceModel> SentenceModel::load(const std::vector<std::uint8_
         model->config_.n_head = config_uint("n_head");
         model->config_.n_embd = config_uint("n_embd");
         model->config_.context = config_uint("context");
+        // Optional flags the converted rerank models carry (scripts/convert-rerank-model.py); format
+        // version 1 files (model-v1) have neither and mean false for both. A present value that is
+        // not a boolean is a file this loader does not understand, and guessing would change every
+        // score without any error.
+        auto config_flag = [&](const std::string &key, bool &out) -> bool {
+            const json::Value *value = config_json.find(key);
+            if (value == nullptr)
+            {
+                return true;
+            }
+            if (value->type != json::Value::Type::Bool)
+            {
+                return false;
+            }
+            out = value->boolean;
+            return true;
+        };
+        if (!config_flag("gelu_tanh", model->config_.gelu_tanh) ||
+            !config_flag("self_normalized", model->config_.self_normalized))
+        {
+            return nullptr;
+        }
         const Config &config = model->config_;
         if (config.n_head == 0 || config.n_embd == 0 || config.n_embd % config.n_head != 0 || config.vocab == 0 ||
             config.n_layer == 0 || config.context == 0)
@@ -710,6 +743,36 @@ std::optional<std::uint32_t> SentenceModel::token(char32_t character) const
     return it->second;
 }
 
+bool SentenceModel::knows(const std::string &text) const
+{
+    for (std::size_t i = 0; i < text.size();)
+    {
+        const Decoded decoded = decode_one(text, i);
+        if (index_.find(decoded.code) == index_.end())
+        {
+            return false;
+        }
+        i += decoded.length;
+    }
+    return true;
+}
+
+std::string SentenceModel::known_characters(const std::string &text) const
+{
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size();)
+    {
+        const Decoded decoded = decode_one(text, i);
+        if (index_.find(decoded.code) != index_.end())
+        {
+            out.append(text, i, decoded.length);
+        }
+        i += decoded.length;
+    }
+    return out;
+}
+
 std::vector<std::uint32_t> SentenceModel::encode(const std::string &text) const
 {
     std::vector<char32_t> chars = decode_utf8(text);
@@ -825,9 +888,19 @@ void SentenceModel::feed_forward(std::vector<float> &x, const Block &block, Work
     layer_norm_into(x.data(), rows, block.ln2_weight, block.ln2_bias, n_embd, workspace.normed);
     linear_into(workspace.normed, block.fc_weight, block.fc_bias, n_embd, 4 * n_embd, workspace.ff_hidden,
                 workspace.linear_scratch);
-    for (float &value : workspace.ff_hidden)
+    if (config_.gelu_tanh)
     {
-        value = gelu(value);
+        for (float &value : workspace.ff_hidden)
+        {
+            value = gelu_tanh(value);
+        }
+    }
+    else
+    {
+        for (float &value : workspace.ff_hidden)
+        {
+            value = gelu(value);
+        }
     }
     linear_into(workspace.ff_hidden, block.out_weight, block.out_bias, 4 * n_embd, n_embd, workspace.ff_out,
                 workspace.linear_scratch);
@@ -904,6 +977,10 @@ std::vector<float> SentenceModel::distribution(const std::vector<float> &hidden)
         logits[row] = logit;
         highest = std::max(highest, logit);
     }
+    if (config_.self_normalized)
+    {
+        return logits;
+    }
     float sum = 0.0f;
     for (float logit : logits)
     {
@@ -934,6 +1011,16 @@ std::vector<float> SentenceModel::target_log_probs(const std::vector<float> &hid
     std::vector<float> out(rows, 0.0f);
     if (active_rows.empty())
     {
+        return out;
+    }
+    // A self-normalized model's score for a character is its raw logit: one row of the token table
+    // per scored position instead of all of them, which on the 12288-entry table is most of the work.
+    if (config_.self_normalized)
+    {
+        for (std::size_t row : active_rows)
+        {
+            out[row] = token_.dot_row(&hidden[row * n_embd], targets[row], n_embd);
+        }
         return out;
     }
 

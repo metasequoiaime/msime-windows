@@ -1,6 +1,48 @@
 #include "window/candidate_view_model.h"
 #include "tests/includes/test_framework.h"
 
+TEST_CASE(fuzzy_pinyin_hint_uses_canonical_quanpin_instead_of_the_typed_code)
+{
+    WordItem quanpin("qin'dian", "亲电", 100, CandidateSource::Database, "qing'dian");
+    CandidateViewItem quanpin_view;
+    quanpin_view.text = quanpin.word;
+    REQUIRE_EQ(FuzzyPinyinDisplayReading(quanpin), std::string("qing'dian"));
+    REQUIRE(ApplyFuzzyPinyinHint(quanpin_view, true, {"qin", "dian"}, {"qing", "dian"}));
+    REQUIRE_EQ(quanpin_view.text, std::string("亲(qing)电"));
+
+    WordItem shuangpin("qidi", "亲电", 100, CandidateSource::Database, "qing'dian");
+    REQUIRE_EQ(FuzzyPinyinDisplayReading(shuangpin), std::string("qing'dian"));
+}
+
+TEST_CASE(fuzzy_pinyin_hint_marks_only_the_characters_with_changed_readings)
+{
+    CandidateViewItem item;
+    item.text = "亲电";
+    REQUIRE(ApplyFuzzyPinyinHint(item, true, {"qin", "dian"}, {"qing", "dian"}));
+    REQUIRE_EQ(item.text, std::string("亲(qing)电"));
+    REQUIRE_EQ(CandidateViewHtml(item), std::string("亲(qing)电"));
+
+    CandidateViewItem both;
+    both.text = "中心";
+    REQUIRE(ApplyFuzzyPinyinHint(both, true, {"zong", "xin"}, {"zhong", "xing"}));
+    REQUIRE_EQ(both.text, std::string("中(zhong)心(xing)"));
+
+    CandidateViewItem hidden;
+    hidden.text = "亲电";
+    REQUIRE(!ApplyFuzzyPinyinHint(hidden, false, {"qin", "dian"}, {"qing", "dian"}));
+    REQUIRE_EQ(hidden.text, std::string("亲电"));
+
+    CandidateViewItem no_difference;
+    no_difference.text = "亲电";
+    REQUIRE(!ApplyFuzzyPinyinHint(no_difference, true, {"qing", "dian"}, {"qing", "dian"}));
+    REQUIRE_EQ(no_difference.text, std::string("亲电"));
+
+    CandidateViewItem mismatched;
+    mismatched.text = "亲";
+    REQUIRE(!ApplyFuzzyPinyinHint(mismatched, true, {"qin", "dian"}, {"qing", "dian"}));
+    REQUIRE_EQ(mismatched.text, std::string("亲"));
+}
+
 TEST_CASE(candidate_view_escapes_text_and_translation_without_turning_them_into_markup)
 {
     CandidateViewItem item;
@@ -202,4 +244,17 @@ TEST_CASE(ai_suggestion_badge_switches_between_robot_and_whale)
     both.badge = AiSuggestionBadge("whale");
     ApplyFixedPositionBadge(both, true, "paperclip");
     REQUIRE_EQ(both.badge, std::string(" \xF0\x9F\x90\xB3 \xF0\x9F\x93\x8E"));
+}
+
+TEST_CASE(candidate_phonetic_is_drawn_before_the_translation)
+{
+    CandidateViewItem view;
+    view.text = "apple";
+    view.translation = "n. 苹果";
+    view.phonetic = "ˈæpl";
+    REQUIRE(CandidateViewHtml(view).find("<span class=\"cand-pos\">/ˈæpl/</span>  <span class=\"cand-translation\">") !=
+            std::string::npos);
+    // 只有音标、没有译文（英文候选的音标不依赖翻译开关）。
+    view.translation.clear();
+    REQUIRE_EQ(CandidateViewHtml(view), std::string("apple<span class=\"cand-pos\">/ˈæpl/</span>"));
 }

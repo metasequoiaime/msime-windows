@@ -31,10 +31,20 @@ D2D1_COLOR_F ColorFromRgb(UINT rgb, float alpha = 1.0f)
     return D2D1::ColorF(((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f, alpha);
 }
 
-constexpr float kShadowPadLeft = 16.0f;
-constexpr float kShadowPadTop = 12.0f;
-constexpr float kShadowPadRight = 16.0f;
-constexpr float kShadowPadBottom = 20.0f;
+// 阴影与候选框默认档一致（candidate_skin_scene.cpp）：light `8px 10px 24px rgba(0,0,0,.18),
+// 2px 3px 8px rgba(0,0,0,.10)`，dark α .34/.22；σ = blur ÷ 2。留白同候选框，模糊不被窗口边缘截断。
+constexpr float kShadowPadLeft = 32.0f;
+constexpr float kShadowPadTop = 20.0f;
+constexpr float kShadowPadRight = 32.0f;
+constexpr float kShadowPadBottom = 40.0f;
+
+std::vector<msimeui::ShadowPass> MenuShadowPasses(bool light)
+{
+    return {
+        {12.0f, light ? 0.18f : 0.34f, 8.0f, 10.0f},
+        {4.0f, light ? 0.10f : 0.22f, 2.0f, 3.0f},
+    };
+}
 
 // 输入方案二级菜单：宽度含 4 DIP 内边距；与主菜单卡片之间留 kSchemeSubmenuGap 的缝。
 constexpr float kSchemeSubmenuWidth = 120.0f;
@@ -144,6 +154,7 @@ struct TrayMenuPresenter::Impl
     bool hostExpanded = false;
     bool hostExpandedLeft = false;
     RECT hostRectBeforeSubmenu{};
+    bool light = false;
     D2D1_COLOR_F fill = ColorFromRgb(0x2B2B2B);
     D2D1_COLOR_F border = ColorFromRgb(0x3A3A3A);
     D2D1_COLOR_F text = ColorFromRgb(0xE0E0E0);
@@ -272,6 +283,7 @@ void TrayMenuPresenter::RebuildScene()
     impl_->schemeSubmenu->SetBorderColor(impl_->border);
     impl_->schemeSubmenu->SetCornerRadius(10.0f);
     impl_->schemeSubmenu->SetShadowEnabled(true);
+    impl_->schemeSubmenu->SetShadowPasses(MenuShadowPasses(impl_->light));
     impl_->schemeSubmenu->SetConstrainToViewport(true);
 
     auto launch = [this](auto fn) {
@@ -297,6 +309,7 @@ void TrayMenuPresenter::RebuildScene()
     brush.radiusX = 10.0f;
     brush.radiusY = 10.0f;
     impl_->card = std::make_shared<msimeui::Card>(brush, 0.0f);
+    impl_->card->SetShadowPasses(MenuShadowPasses(impl_->light));
     impl_->card->AddChild(impl_->items);
     impl_->frame = std::make_shared<msimeui::Container>();
     impl_->frame->SetPadding({kShadowPadLeft, kShadowPadTop, kShadowPadRight, kShadowPadBottom});
@@ -315,6 +328,7 @@ void TrayMenuPresenter::ApplyTheme()
         return;
     }
     const bool light = ResolveConfiguredTheme(GetConfiguredThemeMenu()) == "light";
+    impl_->light = light;
     if (light)
     {
         impl_->fill = ColorFromRgb(0xFFFFFF);

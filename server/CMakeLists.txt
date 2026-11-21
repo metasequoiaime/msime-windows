@@ -134,6 +134,9 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
+# 设置程序导入 fcitx5 / LibIME 的二进制词库（*.dict 第 2 版用 zstd 压缩）。
+find_package(zstd CONFIG REQUIRED)
+set(MSIME_ZSTD_TARGET "$<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>")
 
 # The engine ships its own CMake target. Consume that instead of listing its
 # translation units here, so that adding a file to the engine no longer requires
@@ -256,6 +259,8 @@ set(SRC_FILES
     "./src/cloud/custom_translation.h"
     "./src/cloud/aliyun_mt.cpp"
     "./src/cloud/aliyun_mt.h"
+    "./src/cloud/bilibili_translation.cpp"
+    "./src/cloud/bilibili_translation.h"
     "./src/cloud/niutrans_translation.cpp"
     "./src/cloud/niutrans_translation.h"
     "./src/cloud/tencent_tmt.cpp"
@@ -275,6 +280,7 @@ set(SRC_FILES
     "./src/config/ime_config_keys.cpp"
     "./src/config/ime_config_services.cpp"
     "./src/config/ime_config_shuangpin.cpp"
+    "./src/config/ime_config_sync.cpp"
     "./src/config/ime_config_template.cpp"
     "./src/config/ime_config_theme.cpp"
     "./src/config/ime_config_toml.cpp"
@@ -287,8 +293,11 @@ set(SRC_FILES
     "./src/conversion/traditional_spelling_index.cpp"
     "./src/conversion/traditional_spelling_index.h"
     "./src/defines/defines.h"
+    "./src/english/english_candidate_text_policy.h"
     "./src/english/english_ime.cpp"
     "./src/english/english_ime.h"
+    "./src/english/windows_spell_checker.cpp"
+    "./src/english/windows_spell_checker.h"
     "./src/global/globals.h"
     "./src/ipc/candidate_translation_policy.h"
     "./src/ipc/event_listener.cpp"
@@ -356,8 +365,12 @@ set(SRC_FILES
     "./src/utils/candidate_size_estimator.h"
     "./src/utils/common_utils.cpp"
     "./src/utils/common_utils.h"
-    "./src/utils/hanzi_pinyin.cpp"
-    "./src/utils/hanzi_pinyin.h"
+    "./src/utils/dr_dict_dock.cpp"
+    "./src/utils/dr_dict_dock.h"
+    "./src/utils/dr_dict_dock_policy.h"
+    "./src/utils/dr_dict_lookup.cpp"
+    "./src/utils/dr_dict_lookup.h"
+    "./src/utils/dr_dict_lookup_policy.h"
     "./src/utils/ime_paths.cpp"
     "./src/utils/ime_utils.cpp"
     "./src/utils/ime_utils.h"
@@ -413,6 +426,10 @@ set(SRC_FILES
     "./src/voice-input/system_audio_muter.h"
     "./src/voice-input/doubao_asr_client.cpp"
     "./src/voice-input/doubao_asr_client.h"
+    # 本地离线识别：sherpa-onnx 运行库按需下载、运行时 LoadLibrary，不参与链接。
+    "./src/voice-input/local_asr.cpp"
+    "./src/voice-input/local_asr.h"
+    "./src/voice-input/local_asr_catalog.h"
     "./src/voice-input/voice_batch_protocol.cpp"
     "./src/voice-input/voice_providers.cpp"
     "./src/voice-input/voice_providers.h"
@@ -427,6 +444,8 @@ set(SRC_FILES
     "./src/voice-input/voice_result_card.cpp"
     "./src/voice-input/voice_result_card.h"
     "./src/voice-input/voice_result_card_model.h"
+    "./src/voice-input/voice_notice_window.cpp"
+    "./src/voice-input/voice_notice_window.h"
     "./src/voice-input/voice_overlay_layout.h"
     "./src/voice-input/voice_commit_policy.h"
     "./src/main.cpp"
@@ -446,14 +465,12 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME} PRIVATE MetasequoiaIme::Engine MetasequoiaIme::Voice MetasequoiaIme::VoiceCapture)
 target_link_libraries(${PROJECT_NAME} PRIVATE unofficial::sqlite3::sqlite3 fmt::fmt spdlog::spdlog Boost::locale Boost::json nlohmann_json::nlohmann_json)
-# U 模式候选的注音（utils/hanzi_pinyin）与设置页的导入注音共用 cpp-pinyin。
-target_link_libraries(${PROJECT_NAME} PRIVATE cpp-pinyin::cpp-pinyin)
 target_link_libraries(${PROJECT_NAME} PRIVATE OpenCC::OpenCC)
 add_dependencies(${PROJECT_NAME} Dictionaries)
 target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
-target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 oleaut32 oleacc bcrypt)
+target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 oleaut32 oleacc bcrypt wintrust crypt32)
 target_link_libraries(${PROJECT_NAME} PRIVATE oleaut32)
 
 # The helper executables below already build at /W4. The server itself -- the process that owns
@@ -593,14 +610,28 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/lattice_model.h"
     "./src/settings/model_download.cpp"
     "./src/settings/model_download.h"
+    "./src/settings/local_asr_download.cpp"
+    "./src/settings/local_asr_download.h"
+    "./src/voice-input/local_asr_catalog.h"
     "./src/settings/zip_archive.cpp"
     "./src/settings/zip_archive.h"
     "./src/settings/user_data_backup.cpp"
     "./src/settings/user_data_backup.h"
+    "./src/settings/remote_store.h"
+    "./src/settings/remote_store_internal.h"
+    "./src/settings/remote_store_common.cpp"
+    "./src/settings/remote_store_webdav.cpp"
+    "./src/settings/remote_store_s3.cpp"
+    "./src/settings/sync_merge.h"
+    "./src/settings/sync_merge.cpp"
+    "./src/settings/sync_service.h"
+    "./src/settings/sync_service.cpp"
     "./src/settings/default_input_method.cpp"
     "./src/settings/default_input_method.h"
     "./src/settings/game_compat_name.cpp"
     "./src/settings/game_compat_name.h"
+    "./src/settings/profile_icon.cpp"
+    "./src/settings/profile_icon.h"
     "./src/settings/input_method_install.cpp"
     "./src/settings/input_method_install.h"
     # 设置页要判断通道、读后台下载的结果，只用到通道判定与状态文件，不引轮询线程。
@@ -616,6 +647,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/native/native_settings_pages.h"
     "./src/settings/native/native_settings_search.cpp"
     "./src/settings/native/native_settings_search.h"
+    "./src/settings/native/native_settings_search_field.cpp"
+    "./src/settings/native/native_settings_search_field.h"
     "./src/settings/native/native_settings_pill.cpp"
     "./src/settings/native/native_settings_pill.h"
     "./src/settings/native/native_settings_theme.cpp"
@@ -644,6 +677,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/native/native_page_ai.cpp"
     "./src/settings/native/native_page_floating_toolbar.cpp"
     "./src/settings/native/native_page_stats.cpp"
+    "./src/settings/native/native_page_sync.cpp"
+    "./src/settings/native/native_page_advanced.cpp"
     "./src/settings/native/native_page_help.cpp"
     "./src/settings/native/native_page_help_widgets.cpp"
     "./src/settings/native/native_page_help_widgets.h"
@@ -672,6 +707,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/settings/dictionary_manager.h"
     "./src/settings/dictionary_validation.cpp"
     "./src/settings/dictionary_validation.h"
+    "./src/settings/foreign_dictionary.cpp"
+    "./src/settings/foreign_dictionary.h"
     "./src/statistics/stats_overview.cpp"
     "./src/statistics/stats_overview.h"
     "./src/statistics/stats_store.cpp"
@@ -689,6 +726,7 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/config/ime_config_keys.cpp"
     "./src/config/ime_config_services.cpp"
     "./src/config/ime_config_shuangpin.cpp"
+    "./src/config/ime_config_sync.cpp"
     "./src/config/ime_config_template.cpp"
     "./src/config/ime_config_theme.cpp"
     "./src/config/ime_config_toml.cpp"
@@ -707,6 +745,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/cloud/custom_translation.h"
     "./src/cloud/aliyun_mt.cpp"
     "./src/cloud/aliyun_mt.h"
+    "./src/cloud/bilibili_translation.cpp"
+    "./src/cloud/bilibili_translation.h"
     "./src/cloud/niutrans_translation.cpp"
     "./src/cloud/niutrans_translation.h"
     "./src/cloud/tencent_tmt.cpp"
@@ -744,7 +784,10 @@ target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     cpp-pinyin::cpp-pinyin
     CURL::libcurl
     ZLIB::ZLIB
+    ${MSIME_ZSTD_TARGET}
     bcrypt
+    wintrust
+    crypt32
     winhttp
     dwmapi
     dcomp

@@ -83,6 +83,8 @@ class CCompositionProcessorEngine
     BOOL RemoveVirtualKeyAtCaret();
     void PurgeVirtualKey();
     BOOL MoveCaret(int offset);
+    // Home / End: the start honors the temporary-Japanese R prefix, like MoveCaret.
+    void MoveCaretToEdge(bool toEnd);
     DWORD_PTR GetCaretPosition() const
     {
         return _caretPosition;

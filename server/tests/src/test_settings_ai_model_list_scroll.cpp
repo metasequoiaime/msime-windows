@@ -191,6 +191,15 @@ class AiPageScene
         throw std::runtime_error("Expected field label");
     }
 
+    std::string ProviderValue()
+    {
+        const auto label = LabelBounds(L"服务提供商");
+        auto *dropdown = dynamic_cast<native_settings::Dropdown *>(
+            harness.VisualAt(label.x + 20.0f, label.y + label.height + 20.0f));
+        REQUIRE(dropdown != nullptr);
+        return dropdown->GetValue();
+    }
+
     void Edit(const std::wstring &field)
     {
         const auto label = LabelBounds(field);
@@ -325,6 +334,26 @@ TEST_CASE(settings_ai_model_list_press_on_the_scrollbar_picks_no_model)
     scene.harness.Click(scene.ThumbX(), scene.RowCentre(5, 0.0f));
     REQUIRE(scene.Picked().empty());
     REQUIRE(scene.ListIsOpen());
+}
+
+TEST_CASE(settings_ai_provider_snapshot_keeps_the_current_generate_provider)
+{
+    // 后端切换 provider 时会把旧值记到 generate_provider，供退出 Jev 时恢复。普通生成式页面
+    // 若优先读旧值，第一次切换会被随后到来的快照撤销（用户只能再点一次）。
+    auto &scene = AiPageScene::Feedback();
+    scene.model.Receive(
+        Json{{"type", "configSnapshot"},
+             {"data", {{"ai_assistant", {{"provider", "siliconflow"}, {"generate_provider", "deepseek"}}}}}}
+            .dump());
+    scene.harness.Layout();
+    REQUIRE_EQ(scene.ProviderValue(), "siliconflow");
+
+    scene.model.Receive(
+        Json{{"type", "configSnapshot"},
+             {"data", {{"ai_assistant", {{"provider", "openai"}, {"generate_provider", "siliconflow"}}}}}}
+            .dump());
+    scene.harness.Layout();
+    REQUIRE_EQ(scene.ProviderValue(), "openai");
 }
 
 TEST_CASE(settings_ai_feedback_keeps_both_operations_in_both_response_orders)

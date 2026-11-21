@@ -1,0 +1,84 @@
+# glassy 通透版：降低色调与亮度层的不透明度，其余外观沿用原版。
+# 云母：候选卡片背后是系统云母，取样的是桌面壁纸而不是后面的窗口，只透出壁纸的一点色调。
+# 材质参数基于 Windows 11 云母并提高通透度，高亮、描边和菜单按 Fluent 控件配色。
+# 云母需要 Windows 11，更早的系统上按亚克力画（模糊后面的窗口）。
+#
+# 材质各键的含义见 acrylic 皮肤。系统关闭「透明效果」或不支持时，surface 按不透明画。
+
+schema_version = 1
+id = "mica-glassy"
+name = "云母-通透"
+version = "0.3.0"
+author = "Metasequoia IME contributors"
+description = "候选卡片和悬浮工具栏背后是系统云母：取样桌面壁纸，配 Fluent 风格的高亮与描边。 通透版降低色调与亮度层的不透明度，让候选框和悬浮工具栏更通透。"
+base = "fluent"
+
+[supports]
+layouts = ["horizontal", "vertical"]
+themes = ["dark", "light"]
+
+[candidate_window]
+corner_radius_dip = 8
+border_width_dip = 1
+item_corner_radius_dip = 4
+shadow = "soft"
+backdrop = "mica"
+
+# 深色：云母深色色调 #202020，高亮用 Fluent 的半透明白，强调色取 Win11 默认蓝的深色版。
+[candidate.dark]
+surface = "#202020"
+backdrop_opacity = 0.35
+backdrop_luminosity = 0.55
+border = "rgba(255, 255, 255, 0.08)"
+accent = "#4cc2ff"
+selected = "rgba(255, 255, 255, 0.08)"
+hover = "rgba(255, 255, 255, 0.05)"
+number = "rgba(255, 255, 255, 0.55)"
+
+[candidate.dark.menu]
+background = "#2c2c2c"
+border = "rgba(255, 255, 255, 0.08)"
+text = "#ffffff"
+hover = "rgba(255, 255, 255, 0.06)"
+
+# 浅色：云母浅色色调 #f3f3f3，高亮用 Fluent 的半透明黑，强调色取 Win11 默认蓝。
+[candidate.light]
+surface = "#f3f3f3"
+backdrop_opacity = 0.2
+backdrop_luminosity = 0.55
+border = "rgba(0, 0, 0, 0.07)"
+accent = "#005fb8"
+selected = "rgba(0, 0, 0, 0.06)"
+hover = "rgba(0, 0, 0, 0.04)"
+number = "rgba(0, 0, 0, 0.50)"
+
+[candidate.light.menu]
+background = "#f9f9f9"
+border = "rgba(0, 0, 0, 0.07)"
+text = "#1a1a1a"
+hover = "rgba(0, 0, 0, 0.04)"
+
+# 悬浮工具栏跟候选卡片垫同一层云母，色调取 background；backdrop_opacity / backdrop_luminosity 不写时沿用候选框的。
+[toolbar]
+corner_radius_dip = 8
+icon_corner_radius_dip = 4
+
+[toolbar.dark]
+background = "#202020"
+backdrop_opacity = 0.35
+backdrop_luminosity = 0.55
+border = "rgba(255, 255, 255, 0.08)"
+icon = "#ffffff"
+hover = "rgba(255, 255, 255, 0.06)"
+divider = "rgba(255, 255, 255, 0.08)"
+handle = "#4cc2ff"
+
+[toolbar.light]
+background = "#f3f3f3"
+backdrop_opacity = 0.2
+backdrop_luminosity = 0.55
+border = "rgba(0, 0, 0, 0.07)"
+icon = "#1a1a1a"
+hover = "rgba(0, 0, 0, 0.05)"
+divider = "rgba(0, 0, 0, 0.08)"
+handle = "#005fb8"

@@ -1,9 +1,17 @@
 <#
 .SYNOPSIS
-Converts a PNG into a multi-resolution Windows icon with ImageMagick.
+Converts a PNG or SVG into a multi-resolution Windows icon with ImageMagick.
+
+.DESCRIPTION
+Non-square inputs are centered on a transparent square canvas. SVG inputs are rasterized at
+-Density DPI first (the default renders a 1000 px logo at about 2000 px) so that every frame is a
+downscale; never upscale a small PNG into the 256 px frame.
 
 .EXAMPLE
 .\scripts\convert-png-to-ico.ps1 .\input.png .\output.ico
+
+.EXAMPLE
+.\scripts\convert-png-to-ico.ps1 .\windows\image\msime-logo-v2.svg .\windows\image\msime-logo-v2.ico -Force
 
 .EXAMPLE
 .\scripts\convert-png-to-ico.ps1 .\input.png .\output.ico -PaddingPercent 0 -Force
@@ -21,6 +29,10 @@ param(
 
     [ValidateRange(0, 25)]
     [double] $PaddingPercent = 3,
+
+    # Rasterization DPI for SVG inputs; ignored for raster inputs.
+    [ValidateRange(72, 1200)]
+    [int] $Density = 192,
 
     [switch] $Force
 )
@@ -58,7 +70,13 @@ if ($normalizedSizes.Count -ne $Sizes.Count) {
     throw 'Sizes must be unique values from 16 through 256.'
 }
 
-$dimensions = (& $magick.Source identify -format '%w %h' $resolvedInput).Trim() -split '\s+'
+$isSvg = [System.IO.Path]::GetExtension($resolvedInput) -eq '.svg'
+# -background and -density must precede an SVG input: they set the transparent backdrop and the
+# rasterization resolution, not a post-processing step.
+$densityOptions = if ($isSvg) { @('-density', "$Density") } else { @() }
+$readOptions = if ($isSvg) { @('-background', 'none') + $densityOptions } else { @() }
+
+$dimensions = (& $magick.Source identify @densityOptions -format '%w %h' $resolvedInput).Trim() -split '\s+'
 if ($LASTEXITCODE -ne 0 -or $dimensions.Count -ne 2) {
     throw "ImageMagick could not read the input image dimensions: $resolvedInput"
 }
@@ -75,6 +93,7 @@ Write-Host "Canvas: $canvasSize x $canvasSize ($PaddingPercent% padding per side
 Write-Host "Frames: $sizeList"
 
 & $magick.Source `
+    @readOptions `
     $resolvedInput `
     -background none `
     -gravity center `

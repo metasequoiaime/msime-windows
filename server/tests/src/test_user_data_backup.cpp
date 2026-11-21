@@ -983,3 +983,235 @@ TEST_CASE(user_data_backup_import_reports_partial_failure_for_blocked_target)
     REQUIRE_EQ(ReadFile(destination.data_dir / "config.toml"), std::string("# keep\n"));
     REQUIRE(fs::is_directory(destination.data_dir / ".backup-before-import"));
 }
+
+// 同步恢复（ImportMerging）的核心保证：本机独有的词条不能被远端快照冲掉。
+// 这条测试此前缺失，正好是"落位先覆盖、再拿同一份合并"那个回归的盲区。
+TEST_CASE(user_data_backup_merging_keeps_local_dictionary_rows)
+{
+    Workspace workspace("merging-dictionary");
+    const auto archive = workspace.root / "backup.zip";
+
+    // 远端快照里的用户词库：一条远端的词、一条远端墓碑。
+    const fs::path remote_db = workspace.root / "remote.db";
+    {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(remote_db).c_str(), &db) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(db,
+                             "CREATE TABLE user_dictionary_operations(dictionary TEXT NOT NULL,key TEXT NOT NULL,"
+                             "value TEXT NOT NULL,operation TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+                             "display TEXT NOT NULL DEFAULT '',user_inserted INTEGER NOT NULL DEFAULT 0,"
+                             "weight_edited INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0,"
+                             "PRIMARY KEY(dictionary,key,value));"
+                             "INSERT INTO user_dictionary_operations VALUES"
+                             "('pinyin','shi''jie','世界','upsert',20,'',1,0,200);"
+                             "INSERT INTO user_dictionary_operations VALUES"
+                             "('pinyin','shan''chu','删除','delete',0,'',0,0,150);",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+
+    std::string message;
+    {
+        user_data_zip::Writer writer(archive);
+        user_data_zip::Entry config_entry;
+        REQUIRE(writer.AddBytes("config.toml", "[appearance]\ntheme_mode = \"light\"\n", message, &config_entry));
+        user_data_zip::Entry journal_entry;
+        REQUIRE(writer.AddFile("msime_user.db", remote_db, message, &journal_entry));
+        // 同步包同时带文本词库。合并模式下这批文本必须被跳过，否则 record_user_insert
+        // 会把刚按 updated_at 判过的新旧关系冲掉。
+        user_data_zip::Entry dictionary_entry;
+        REQUIRE(
+            writer.AddBytes("dictionary/quanpin.txt", "从文本导入\tcong'wen'ben\t99\n", message, &dictionary_entry));
+        REQUIRE(writer.AddBytes("manifest.json", SerializeManifest({config_entry, journal_entry, dictionary_entry}),
+                                message));
+        REQUIRE(writer.Finish(message));
+    }
+
+    // 本机：一条本机独有的词，配置里带一条能解开的本机凭据。
+    const SettingsUserDataBackup::Context destination = MakeContext(workspace.root / "destination");
+    WriteFile(destination.data_dir / "config.toml", "[appearance]\ntheme_mode = \"dark\"\n");
+    const fs::path local_db = destination.data_dir / "msime_user.db";
+    {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(local_db).c_str(), &db) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(db,
+                             "CREATE TABLE user_dictionary_operations(dictionary TEXT NOT NULL,key TEXT NOT NULL,"
+                             "value TEXT NOT NULL,operation TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+                             "display TEXT NOT NULL DEFAULT '',user_inserted INTEGER NOT NULL DEFAULT 0,"
+                             "weight_edited INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0,"
+                             "PRIMARY KEY(dictionary,key,value));"
+                             "INSERT INTO user_dictionary_operations VALUES"
+                             "('pinyin','ben''ji','本机','upsert',30,'',1,0,400);",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+
+    auto state = std::make_shared<HookState>();
+    SettingsUserDataBackup::MergeImportReport report;
+    REQUIRE(SettingsUserDataBackup::ImportMerging(destination, archive, MakeHooks(state), report, message));
+    REQUIRE_EQ(state->stop_calls, 1);
+    REQUIRE_EQ(state->start_calls, 1);
+    REQUIRE(report.dictionary_merged);
+    // 合并模式不再走文本词库导入，避免远端权重冲掉刚判过的新旧关系。
+    REQUIRE(state->imported_dictionaries.empty());
+    // 预导入副本必须留下合并前的本地词库，失败时才能回滚。
+    REQUIRE(fs::is_regular_file(destination.data_dir / ".backup-before-import" / "msime_user.db"));
+
+    sqlite3 *db = nullptr;
+    REQUIRE(sqlite3_open(test::Utf8(local_db).c_str(), &db) == SQLITE_OK);
+    sqlite3_stmt *statement = nullptr;
+    // 本机独有的词条必须还在。
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT weight FROM user_dictionary_operations WHERE key='ben''ji'", -1, &statement,
+                               nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 30);
+    sqlite3_finalize(statement);
+    // 远端新增的墓碑必须进来。
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT operation FROM user_dictionary_operations WHERE key='shan''chu'", -1,
+                               &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(std::string(reinterpret_cast<const char *>(sqlite3_column_text(statement, 0))), std::string("delete"));
+    sqlite3_finalize(statement);
+    // 文本词库里的条目不能被导进来。
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE key='cong''wen''ben'", -1,
+                               &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 0);
+    sqlite3_finalize(statement);
+    // 配置按合并规则取到远端改过的值。
+    REQUIRE(ReadFile(destination.data_dir / "config.toml").find("theme_mode = \"light\"") != std::string::npos);
+    sqlite3_close(db);
+}
+
+// 用户把同步包从浏览器下载回来手动导入时走的是普通 Import，不是 ImportMerging。
+// 这条路径同样不能覆盖用户词库日志，否则本机独有的词条会在下次安装回放后消失。
+TEST_CASE(user_data_backup_plain_import_merges_user_dictionary_rows)
+{
+    Workspace workspace("plain-import-dictionary");
+    const auto archive = workspace.root / "backup.zip";
+
+    const fs::path remote_db = workspace.root / "remote.db";
+    {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(remote_db).c_str(), &db) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(db,
+                             "CREATE TABLE user_dictionary_operations(dictionary TEXT NOT NULL,key TEXT NOT NULL,"
+                             "value TEXT NOT NULL,operation TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+                             "display TEXT NOT NULL DEFAULT '',user_inserted INTEGER NOT NULL DEFAULT 0,"
+                             "weight_edited INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0,"
+                             "PRIMARY KEY(dictionary,key,value));"
+                             "INSERT INTO user_dictionary_operations VALUES"
+                             "('pinyin','shi''jie','世界','upsert',20,'',1,0,200);"
+                             "INSERT INTO user_dictionary_operations VALUES"
+                             "('pinyin','shan''chu','删除','delete',0,'',0,0,150);",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+
+    std::string message;
+    {
+        user_data_zip::Writer writer(archive);
+        user_data_zip::Entry config_entry;
+        REQUIRE(writer.AddBytes("config.toml", "[appearance]\ntheme_mode = \"light\"\n", message, &config_entry));
+        user_data_zip::Entry journal_entry;
+        REQUIRE(writer.AddFile("msime_user.db", remote_db, message, &journal_entry));
+        user_data_zip::Entry dictionary_entry;
+        REQUIRE(
+            writer.AddBytes("dictionary/quanpin.txt", "从文本导入\tcong'wen'ben\t99\n", message, &dictionary_entry));
+        REQUIRE(writer.AddBytes("manifest.json", SerializeManifest({config_entry, journal_entry, dictionary_entry}),
+                                message));
+        REQUIRE(writer.Finish(message));
+    }
+
+    const SettingsUserDataBackup::Context destination = MakeContext(workspace.root / "destination");
+    const fs::path local_db = destination.data_dir / "msime_user.db";
+    {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(local_db).c_str(), &db) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(db,
+                             "CREATE TABLE user_dictionary_operations(dictionary TEXT NOT NULL,key TEXT NOT NULL,"
+                             "value TEXT NOT NULL,operation TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+                             "display TEXT NOT NULL DEFAULT '',user_inserted INTEGER NOT NULL DEFAULT 0,"
+                             "weight_edited INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0,"
+                             "PRIMARY KEY(dictionary,key,value));"
+                             "INSERT INTO user_dictionary_operations VALUES"
+                             "('pinyin','ben''ji','本机','upsert',30,'',1,0,400);",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+
+    auto state = std::make_shared<HookState>();
+    REQUIRE(SettingsUserDataBackup::Import(destination, archive, MakeHooks(state), message));
+    // 普通导入不合并配置，整包覆盖的语义保留。
+    REQUIRE(ReadFile(destination.data_dir / "config.toml").find("theme_mode = \"light\"") != std::string::npos);
+    // 日志带在归档里，文本词库同样要跳过。
+    REQUIRE(state->imported_dictionaries.empty());
+
+    sqlite3 *db = nullptr;
+    REQUIRE(sqlite3_open(test::Utf8(local_db).c_str(), &db) == SQLITE_OK);
+    sqlite3_stmt *statement = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT weight FROM user_dictionary_operations WHERE key='ben''ji'", -1, &statement,
+                               nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 30);
+    sqlite3_finalize(statement);
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT operation FROM user_dictionary_operations WHERE key='shan''chu'", -1,
+                               &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(std::string(reinterpret_cast<const char *>(sqlite3_column_text(statement, 0))), std::string("delete"));
+    sqlite3_finalize(statement);
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM user_dictionary_operations WHERE key='cong''wen''ben'", -1,
+                               &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 0);
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+}
+
+// 统计还没按设备分账：同步恢复整份替换 stats.db 就是拿别的设备的统计抹掉本机的。
+// 分账落地之前，同步恢复不动它；普通导入（用户自己选的完整备份）仍然恢复统计。
+TEST_CASE(user_data_backup_merging_keeps_local_statistics)
+{
+    Workspace workspace("merging-statistics");
+    const auto archive = workspace.root / "backup.zip";
+
+    const auto make_stats = [](const fs::path &path, const char *marker) {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(path).c_str(), &db) == SQLITE_OK);
+        const std::string sql =
+            std::string("CREATE TABLE marker(value TEXT);INSERT INTO marker VALUES('") + marker + "');";
+        REQUIRE(sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    };
+    const fs::path remote_stats = workspace.root / "remote-stats.db";
+    make_stats(remote_stats, "remote");
+
+    std::string message;
+    {
+        user_data_zip::Writer writer(archive);
+        user_data_zip::Entry config_entry;
+        REQUIRE(writer.AddBytes("config.toml", "[appearance]\ntheme_mode = \"light\"\n", message, &config_entry));
+        user_data_zip::Entry stats_entry;
+        REQUIRE(writer.AddFile("stats.db", remote_stats, message, &stats_entry));
+        REQUIRE(writer.AddBytes("manifest.json", SerializeManifest({config_entry, stats_entry}), message));
+        REQUIRE(writer.Finish(message));
+    }
+
+    const SettingsUserDataBackup::Context destination = MakeContext(workspace.root / "destination");
+    WriteFile(destination.data_dir / "config.toml", "[appearance]\ntheme_mode = \"dark\"\n");
+    const fs::path local_stats = destination.data_dir / "stats.db";
+    make_stats(local_stats, "local");
+
+    auto state = std::make_shared<HookState>();
+    SettingsUserDataBackup::MergeImportReport report;
+    REQUIRE(SettingsUserDataBackup::ImportMerging(destination, archive, MakeHooks(state), report, message));
+
+    sqlite3 *db = nullptr;
+    REQUIRE(sqlite3_open(test::Utf8(local_stats).c_str(), &db) == SQLITE_OK);
+    sqlite3_stmt *statement = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT value FROM marker", -1, &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(std::string(reinterpret_cast<const char *>(sqlite3_column_text(statement, 0))), std::string("local"));
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+}

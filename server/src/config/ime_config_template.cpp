@@ -69,7 +69,11 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
     static const std::set<std::string> kIds = {
         MakeTomlAssignmentId("general", "emoji_mixed_input"),
         MakeTomlAssignmentId("general", "candidate_translations"),
+        MakeTomlAssignmentId("general", "english_candidate_translations"),
         MakeTomlAssignmentId("general", "floating_toolbar_font_size"),
+        // 0.14.0 起新装默认把符号、快捷短语、日期时间混进候选，并去掉候选第三位的「📅日期」入口；
+        // 老用户的候选列表不因升级多出或少掉东西。
+        MakeTomlAssignmentId("general", "symbol_mixed_input"),
         MakeTomlAssignmentId("association", "sentence_wordlattice"),
         MakeTomlAssignmentId("input", "default_ime_mode"),
         MakeTomlAssignmentId("appearance", "candidate_window_layout"),
@@ -78,12 +82,21 @@ bool KeepsPreviousDefaultOnUpgrade(const std::string &assignment_id)
         MakeTomlAssignmentId("helpcode", "quanpin_helpcode"),
         MakeTomlAssignmentId("utility", "emoji_mode"),
         MakeTomlAssignmentId("utility", "kaomoji_mode"),
+        MakeTomlAssignmentId("utility", "quick_phrase_candidates"),
+        MakeTomlAssignmentId("utility", "date_time_candidates"),
+        MakeTomlAssignmentId("utility", "date_time_menu"),
         MakeTomlAssignmentId("voice_input", "voice_input"),
         MakeTomlAssignmentId("voice_input", "doubao_enable_ddc"),
+        // 新装默认本地离线识别；老用户多半已在豆包上填好 Token，不能升级一次就被换到一个还没下载的本地模型。
+        MakeTomlAssignmentId("voice_input", "asr_provider"),
         MakeTomlAssignmentId("ai_assistant", "enabled"),
         MakeTomlAssignmentId("tencent_tmt", "enabled"),
         MakeTomlAssignmentId("aliyun_mt", "enabled"),
         MakeTomlAssignmentId("niutrans", "enabled"),
+        // 新装默认用哔哩哔哩免费翻译；老用户可能已在别家填好凭据，升级不能替用户换服务商，
+        // 也不能把候选词发给一个用户没选过的服务。
+        MakeTomlAssignmentId("translation", "provider"),
+        MakeTomlAssignmentId("translation", "english_provider"),
     };
     return kIds.count(assignment_id) != 0;
 }
@@ -116,6 +129,33 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
     {
         user_values[enumeration_comma_slash_id] = "false";
     }
+    // 候选词翻译拆成中文、英文两个开关；dr_dict.english_brief（释义写进候选窗）换成了 english_popup
+    // （DR Dict 弹窗停靠在候选窗旁）。老配置没有新键：跟着原来管它的那个开关走，打开过翻译的用户升级后
+    // 英文候选照旧有译文，关掉过 DR Dict 释义的也不会多出弹窗。
+    const auto inherit = [&user_values](const std::string &section, const std::string &key,
+                                        const std::string &from_section, const std::string &from_key) {
+        const auto id = MakeTomlAssignmentId(section, key);
+        const auto from = user_values.find(MakeTomlAssignmentId(from_section, from_key));
+        if (from != user_values.end() && user_values.find(id) == user_values.end())
+            user_values[id] = from->second;
+    };
+    inherit("general", "english_candidate_translations", "general", "candidate_translations");
+    inherit("dr_dict", "english_popup", "dr_dict", "english_brief");
+    // 英文候选的译文显示（词性、单条释义）也拆出来了，升级时照抄中文那边；原来高亮英文候选下方的
+    // 「音标与释义」只剩音标这一半由新开关管（释义归英文候选翻译）。
+    inherit("general", "english_candidate_translation_show_pos", "general", "candidate_translation_show_pos");
+    inherit("general", "english_candidate_translation_single_sense", "general", "candidate_translation_single_sense");
+    inherit("general", "english_candidate_phonetics", "input", "english_candidate_detail");
+    // 很老的配置没有 [translation].provider，靠各家 enabled 布尔推导服务商。模板里的新默认不能替它
+    // 补上，否则推导结果被 bilibili 盖掉；补成空串，加载时照旧推导。
+    const auto translation_provider_id = MakeTomlAssignmentId("translation", "provider");
+    if (!user_values.empty() && user_values.find(translation_provider_id) == user_values.end())
+    {
+        user_values[translation_provider_id] = "\"\"";
+    }
+    // 英文候选的服务拆出来之前两边共用 provider：升级后英文候选沿用同一家（推导中的空串也照抄，加载时
+    // 跟着推导结果走），不会被模板里的新默认换成别家。
+    inherit("translation", "english_provider", "translation", "provider");
     struct ValuePatch
     {
         size_t begin;

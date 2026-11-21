@@ -7,6 +7,7 @@
 #include "CandidateListUIPresenter.h"
 #include "CompositionProcessorEngine.h"
 #include "Compartment.h"
+#include "LanguageBar.h"
 #include "define.h"
 #include <debugapi.h>
 #include <namedpipeapi.h>
@@ -25,6 +26,7 @@
 #include "Utils/FanyUtils.h"
 #include "../Utils/PerfTimer.h"
 #include "MetasequoiaIMEInternal.h"
+#include "KeyEventSinkInternal.h"
 
 using namespace metasequoia_ime_detail;
 
@@ -104,6 +106,7 @@ class CCommitCandidateAndContinueEditSession : public CEditSessionBase
 
 void CMetasequoiaIME::_RefreshLanguageBarThemeIcons()
 {
+    InvalidateTaskbarThemeCache();
     CCompositionProcessorEngine *pEngine = GetCompositionProcessorEngine();
     if (pEngine)
     {
@@ -126,8 +129,7 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
         return;
     }
 
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0,
-                      KEY_NOTIFY, &_themeRegKey) != ERROR_SUCCESS)
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegKeyPersonalizeTheme, 0, KEY_NOTIFY, &_themeRegKey) != ERROR_SUCCESS)
     {
         return;
     }
@@ -149,26 +151,64 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
         return;
     }
 
+    // Accent color changes do not touch Personalize: the taskbar palette step
+    // lives in AccentColorMenu under Explorer\Accent, with DWM\AccentColor as
+    // the fallback IsTaskbarDark reads. Both keys are watched. Optional:
+    // failure here leaves the theme-only watch running, same coverage as
+    // before.
+    auto startOptionalKeyWatch = [](LPCWSTR subKey, HKEY *keyOut, HANDLE *eventOut) {
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, subKey, 0, KEY_NOTIFY, keyOut) != ERROR_SUCCESS)
+        {
+            return;
+        }
+        *eventOut = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!*eventOut ||
+            RegNotifyChangeKeyValue(*keyOut, FALSE, REG_NOTIFY_CHANGE_LAST_SET, *eventOut, TRUE) != ERROR_SUCCESS)
+        {
+            if (*eventOut)
+            {
+                CloseHandle(*eventOut);
+                *eventOut = nullptr;
+            }
+            RegCloseKey(*keyOut);
+            *keyOut = nullptr;
+        }
+    };
+    startOptionalKeyWatch(kRegKeyDwm, &_dwmRegKey, &_dwmRegEvent);
+    startOptionalKeyWatch(kRegKeyExplorerAccent, &_accentRegKey, &_accentRegEvent);
+
     _stopThemeWatcher.store(false);
     _pThemeWatcherThread = new (std::nothrow) std::thread([this]() {
         while (!_stopThemeWatcher.load(std::memory_order_acquire))
         {
-            const DWORD wait = WaitForSingleObject(_themeRegEvent, INFINITE);
+            HANDLE events[3] = {_themeRegEvent, nullptr, nullptr};
+            HKEY keys[3] = {_themeRegKey, nullptr, nullptr};
+            DWORD count = 1;
+            if (_dwmRegEvent)
+            {
+                events[count] = _dwmRegEvent;
+                keys[count] = _dwmRegKey;
+                ++count;
+            }
+            if (_accentRegEvent)
+            {
+                events[count] = _accentRegEvent;
+                keys[count] = _accentRegKey;
+                ++count;
+            }
+            const DWORD wait = WaitForMultipleObjects(count, events, FALSE, INFINITE);
             if (_stopThemeWatcher.load(std::memory_order_acquire))
             {
                 break;
             }
-            if (wait != WAIT_OBJECT_0)
+            if (wait == WAIT_FAILED || wait >= WAIT_OBJECT_0 + count)
             {
                 continue;
             }
-            if (_stopThemeWatcher.load(std::memory_order_acquire))
-            {
-                break;
-            }
 
-            ResetEvent(_themeRegEvent);
-            RegNotifyChangeKeyValue(_themeRegKey, FALSE, REG_NOTIFY_CHANGE_LAST_SET, _themeRegEvent, TRUE);
+            const DWORD fired = wait - WAIT_OBJECT_0;
+            ResetEvent(events[fired]);
+            RegNotifyChangeKeyValue(keys[fired], FALSE, REG_NOTIFY_CHANGE_LAST_SET, events[fired], TRUE);
 
             const HWND ownerWindow = _msgWndHandle;
             if (ownerWindow && IsWindow(ownerWindow))
@@ -180,6 +220,26 @@ void CMetasequoiaIME::_StartThemeRegistryWatcher()
 
     if (!_pThemeWatcherThread)
     {
+        if (_dwmRegEvent)
+        {
+            CloseHandle(_dwmRegEvent);
+            _dwmRegEvent = nullptr;
+        }
+        if (_dwmRegKey)
+        {
+            RegCloseKey(_dwmRegKey);
+            _dwmRegKey = nullptr;
+        }
+        if (_accentRegEvent)
+        {
+            CloseHandle(_accentRegEvent);
+            _accentRegEvent = nullptr;
+        }
+        if (_accentRegKey)
+        {
+            RegCloseKey(_accentRegKey);
+            _accentRegKey = nullptr;
+        }
         CloseHandle(_themeRegEvent);
         _themeRegEvent = nullptr;
         RegCloseKey(_themeRegKey);
@@ -194,6 +254,14 @@ void CMetasequoiaIME::_StopThemeRegistryWatcher()
     {
         SetEvent(_themeRegEvent);
     }
+    if (_dwmRegEvent)
+    {
+        SetEvent(_dwmRegEvent);
+    }
+    if (_accentRegEvent)
+    {
+        SetEvent(_accentRegEvent);
+    }
 
     if (_pThemeWatcherThread)
     {
@@ -203,6 +271,30 @@ void CMetasequoiaIME::_StopThemeRegistryWatcher()
         }
         delete _pThemeWatcherThread;
         _pThemeWatcherThread = nullptr;
+    }
+
+    if (_dwmRegEvent)
+    {
+        CloseHandle(_dwmRegEvent);
+        _dwmRegEvent = nullptr;
+    }
+
+    if (_dwmRegKey)
+    {
+        RegCloseKey(_dwmRegKey);
+        _dwmRegKey = nullptr;
+    }
+
+    if (_accentRegEvent)
+    {
+        CloseHandle(_accentRegEvent);
+        _accentRegEvent = nullptr;
+    }
+
+    if (_accentRegKey)
+    {
+        RegCloseKey(_accentRegKey);
+        _accentRegKey = nullptr;
     }
 
     if (_themeRegEvent)
@@ -578,6 +670,42 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
                 KeystrokeState.Function = FUNCTION_FINALIZE_CANDIDATELIST;
                 pIME->_InvokeKeyHandler(pContext, 0, 0, 0, KeystrokeState, FANY_IME_UNSOLICITED_REQUEST_ID,
                                         std::move(request.text), 0, request.compositionEpoch, request.focusToken);
+                pContext->Release();
+            }
+            pDocMgrFocus->Release();
+        }
+        break;
+    }
+    case WM_CancelServerComposition: {
+        // Worker CancelComposition: the Server caught a shortcut in its keyboard hook (the DR Dict preedit
+        // lookup) and already dropped its own composition. Drop ours the way Esc does, but only for the focus
+        // session and composition epoch the worker saw: a composition started since then is the user's new
+        // input and must survive. There is no reply to read, hence FANY_IME_NO_REQUEST_ID.
+        CMetasequoiaIME::WorkerCandidateCommit request;
+        if (!pIME->_TakeServerCandidateCommit(static_cast<UINT>(wParam), request))
+        {
+            break;
+        }
+        // The Server only sends this after it asked DR Dict to open its popup. This host is the foreground
+        // process and the Server is not, so let the popup take the foreground from here, as the TSF-side
+        // lookup chord does when it sends its key.
+        key_event_sink_detail::AllowDictionaryPopupForeground();
+        if (!pIME->_IsFocusSessionCurrent(request.focusToken) ||
+            !pIME->_IsCompositionEpochCurrent(request.compositionEpoch))
+        {
+            break;
+        }
+        ITfDocumentMgr *pDocMgrFocus = nullptr;
+        ITfContext *pContext = nullptr;
+        if (SUCCEEDED(pIME->_GetThreadMgr()->GetFocus(&pDocMgrFocus)) && pDocMgrFocus)
+        {
+            if (SUCCEEDED(pDocMgrFocus->GetTop(&pContext)) && pContext)
+            {
+                _KEYSTROKE_STATE KeystrokeState;
+                KeystrokeState.Category = CATEGORY_COMPOSING;
+                KeystrokeState.Function = FUNCTION_CANCEL;
+                pIME->_InvokeKeyHandler(pContext, 0, 0, 0, KeystrokeState, FANY_IME_NO_REQUEST_ID, std::wstring(), 0,
+                                        request.compositionEpoch, request.focusToken);
                 pContext->Release();
             }
             pDocMgrFocus->Release();

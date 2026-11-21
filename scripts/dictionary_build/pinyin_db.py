@@ -1,8 +1,9 @@
 """msime.db：全拼表、自定义词条、读音纠错、86 五笔、空的快捷短语表（出厂不带内置快捷短语），以及日文直出候选表 japanese_lexicon。
 
 对应 Rust 构建器 msime.rs 的 quanpin / custom-words / reading-corrections / wubi / quick-phrases 阶段，但全拼表
-不再读 sources/pinyin/ 下的 rime-ice 系列与地名补充，只读 sources/pinyin/wanxiang/ 的万象词库。Release 把五笔
-拆进了 msime-wubi.db，Windows 端仍然一个库：这里全建在 msime.db 里。98 五笔 Windows 端不读，不建。
+不再读 sources/pinyin/ 下的 rime-ice 系列与地名补充，只读 sources/pinyin-next/ 整理好的拼音基础词库（万象加上
+rime-ice 有而万象没有的词）。Release 把五笔
+拆进了 msime-wubi.db，Windows 端仍然一个库：86、98、新世纪三张五笔表全建在 msime.db 里。
 """
 
 from __future__ import annotations
@@ -28,15 +29,25 @@ CREATE_QUANPIN_TABLE = (
     '\ncreate table if not exists {} (\n   "key" text, -- 全拼拼音\n   "jp" text, -- 全拼简拼\n'
     '   "value" text, -- 对应的汉字或者词组\n   "weight" integer default 0 -- 权重\n);\n'
 )
-CREATE_WUBI86 = (
-    '\n            CREATE TABLE wubi86 (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
-    '                "weight" INTEGER NOT NULL DEFAULT 0,\n                UNIQUE("key", "value")\n            )\n            '
-)
-WUBI86_INDEXES = (
-    'CREATE INDEX idx_wubi86_key_weight ON wubi86("key", "weight" DESC)',
-    # 按词条反查五笔编码用。
-    'CREATE INDEX idx_wubi86_value ON wubi86("value")',
-)
+def _create_wubi(table: str) -> str:
+    return (
+        f'\n            CREATE TABLE {table} (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
+        '                "weight" INTEGER NOT NULL DEFAULT 0,\n                UNIQUE("key", "value")\n            )\n            '
+    )
+
+
+def _wubi_indexes(table: str) -> tuple[str, ...]:
+    return (
+        f'CREATE INDEX idx_{table}_key_weight ON {table}("key", "weight" DESC)',
+        # 按词条反查五笔编码用。
+        f'CREATE INDEX idx_{table}_value ON {table}("value")',
+    )
+
+
+# 三版五笔的表结构与索引相同，只是表名不同（与 msime 的 msime-wubi.db 一致）。
+CREATE_WUBI86 = _create_wubi("wubi86")
+WUBI86_INDEXES = _wubi_indexes("wubi86")
+WUBI_TABLES = ("wubi86", "wubi98", "wubixsj")
 CREATE_QUICK_PHRASES = (
     '\n            CREATE TABLE quick_parases (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
     '                "weight" INTEGER NOT NULL DEFAULT 0,\n                UNIQUE("key", "value")\n            )\n            '
@@ -62,30 +73,44 @@ def is_quanpin(key: str) -> bool:
 
 # ---- 全拼表 ----
 
-WANXIANG = "sources/pinyin/wanxiang"
-# 没有权重列（fangyan、mixed 整份都没有）或权重列不是整数的词条取这个权重。
-WANXIANG_DEFAULT_WEIGHT = 1
+# msime-dictionary 整理好的拼音基础词库：万象全部词表（含已从上游删掉的 lianxiang、renming 里的词）加上 rime-ice
+# 有而万象没有的词（权重统一为 1），读音已去调、ü 记为 v、音节以 ' 连接。按字数拆成 1-chars.txt … 8plus-chars.txt，
+# 含字母的词另放 letters.txt。每行 `词<TAB>全拼<TAB>权重`，`#` 开头是注释。
+# msime-dictionary#148 起这些基础词表在 sources/pinyin-next/base/，旁边的 packs/ 是按需导入的专业词库，不进构建；
+# 更早的提交直接放在 sources/pinyin-next/ 下，照旧能重建。
+PINYIN_NEXT = "sources/pinyin-next"
+PINYIN_NEXT_BASE = f"{PINYIN_NEXT}/base"
+PINYIN_NEXT_LETTERS = "letters.txt"
 
 
-def wanxiang_files(directory: Path) -> list[Path]:
-    paths = sorted(directory.glob("*.dict.yaml"))
+def pinyin_next_base(dictionary: Path) -> str:
+    """基础词表所在目录（相对 msime-dictionary 根）：有 base/ 用 base/，否则是旧布局。"""
+    return PINYIN_NEXT_BASE if (dictionary / PINYIN_NEXT_BASE).is_dir() else PINYIN_NEXT
+
+
+def pinyin_next_files(directory: Path) -> list[Path]:
+    """全拼表读的文件：按字数拆的 *-chars.txt，再加 letters.txt——其中读音恰好是小写字母串的（查bug 的 cha'bug、
+    打call 的 da'call）照旧当全拼收，大写、数字读音的自然被跳过，只进字母词表。"""
+    paths = sorted(directory.glob("*-chars.txt"))
     if not paths:
-        raise ValueError(f"{directory} 下没有 *.dict.yaml")
-    return paths
+        raise ValueError(f"{directory} 下没有 *-chars.txt")
+    letters = directory / PINYIN_NEXT_LETTERS
+    if not letters.is_file():
+        raise ValueError(f"{directory} 下没有 {PINYIN_NEXT_LETTERS}")
+    return [*paths, letters]
 
 
 def build_quanpin(connection: sqlite3.Connection, paths: list[Path]) -> str:
-    """万象词库按给定顺序读入；同一 (拼音, 词) 只留一行：权重高的，平手留先读到的。"""
+    """pinyin-next 按给定顺序读入；同一 (拼音, 词) 只留一行：权重高的，平手留先读到的。"""
     with connection:
         for table in QUANPIN_TABLES:
             connection.execute(f"\ndrop table if exists {table};\n")
             connection.execute(CREATE_QUANPIN_TABLE.format(table))
-        count = defaulted = skipped = 0
+        count = skipped = 0
         for path in paths:
-            rows, file_defaulted, file_skipped = read_wanxiang(path)
+            rows, file_skipped = read_pinyin_next(path)
             _insert_quanpin_rows(connection, rows)
             count += len(rows)
-            defaulted += file_defaulted
             skipped += file_skipped
         for table in QUANPIN_TABLES:
             suffix = table.removeprefix("tbl_")
@@ -95,8 +120,7 @@ def build_quanpin(connection: sqlite3.Connection, paths: list[Path]) -> str:
                 f"\ndelete from {table} where exists (select 1 from {table} as kept where kept.key = {table}.key "
                 f"and kept.value = {table}.value and (kept.weight > {table}.weight or "
                 f"(kept.weight = {table}.weight and kept.rowid < {table}.rowid)));\n").rowcount
-    return (f"{count} rows from {len(paths)} files, {defaulted} without a weight set to {WANXIANG_DEFAULT_WEIGHT}, "
-            f"{skipped} readings that are not quanpin left out")
+    return f"{count} rows from {len(paths)} files, {skipped} readings that are not quanpin left out"
 
 
 def _insert_quanpin_rows(connection: sqlite3.Connection, rows: list[tuple[str, str, int]]) -> None:
@@ -109,75 +133,52 @@ def _insert_quanpin_rows(connection: sqlite3.Connection, rows: list[tuple[str, s
 
 
 # 万象词库把嗯、呣记成 n、ng、m，靠方案的拼写运算（wanxiang_algebra.yaml 的 xform/^ng(\d)/eng$1/、
-# xform/^n(\d)/en$1/、xform/^m(\d)/me$1/）改写成 eng、en、me，双拼才打得出来。引擎没有拼写运算，入库时照做。
+# xform/^n(\d)/en$1/、xform/^m(\d)/me$1/）改写成 eng、en、me，双拼才打得出来。pinyin-next 沿用万象的读音，
+# 引擎没有拼写运算，入库时照做。
 _ZERO_INITIAL = {"n": "en", "ng": "eng", "m": "me"}
 
 
-def _toneless():
-    try:
-        from pypinyin.contrib.tone_convert import to_normal
-    except ImportError as error:
-        raise SystemExit("读万象词库需要 pypinyin：python -m pip install pypinyin") from error
-    cache: dict[str, str] = {}
-
-    def convert(syllable: str) -> str:
-        # 音节种类有限，按音节缓存；ü 写成 v（lǜ -> lv，lüè -> lve），和原先的全拼表一致。
-        plain = cache.get(syllable)
-        if plain is None:
-            plain = cache[syllable] = to_normal(syllable)
-        return plain
-
-    return convert
-
-
-def read_wanxiang(path: Path) -> tuple[list[tuple[str, str, int]], int, int]:
-    """Rime 的 `.dict.yaml`：`...` 之后是 `词<TAB>带调拼音（空格分隔）[<TAB>权重[<TAB>...]]`。
-
-    拼音用 pypinyin 去掉声调，音节改用 `'` 连接。返回 ([(词, 全拼, 权重)], 补了默认权重的行数, 跳过的行数)；
-    跳过的是没有读音列、或去调后不是全拼的读音（ê、mixed 里的 `A'ban`、`2B` 这类）。
-    """
-    convert = _toneless()
-    rows: list[tuple[str, str, int]] = []
-    defaulted = skipped = 0
-    in_body = False
-    for line in textutil.universal_lines(textutil.without_bom(textutil.read(path))):
-        if not in_body:
-            in_body = line.strip() == "..."
-            continue
-        if not line.strip() or line.lstrip().startswith("#"):
+def _pinyin_next_lines(path: Path):
+    """逐行给出 (行号, 词, 读音, 权重)。格式错误直接失败。"""
+    for number, line in enumerate(textutil.universal_lines(textutil.without_bom(textutil.read(path))), 1):
+        if not line.strip() or line.startswith("#"):
             continue
         fields = line.split("\t")
-        value = fields[0].strip()
-        reading = fields[1].strip() if len(fields) > 1 else ""
-        if not value or not reading:
-            skipped += 1
-            continue
-        syllables = reading.replace("'", " ").split()
-        # to_normal 把数字当声调去掉（mixed 的 `7z` 会变成 `z`），带数字的读音先挡掉。
-        plain = [convert(syllable) for syllable in syllables] if all(s.isalpha() for s in syllables) else [""]
+        if len(fields) != 3 or not fields[0] or not fields[1]:
+            raise ValueError(f"{path.name}:{number}: 应为 词<TAB>全拼<TAB>权重")
+        weight = textutil.parse_int(fields[2])
+        if weight is None:
+            raise ValueError(f"{path.name}:{number}: 权重 {fields[2]!r} 不是整数")
+        yield number, fields[0], fields[1], weight
+
+
+def read_pinyin_next(path: Path) -> tuple[list[tuple[str, str, int]], int]:
+    """返回 ([(词, 全拼, 权重)], 跳过的行数)；跳过的是读音不是全拼的行（80式 的 `80'shi` 这类）。"""
+    rows: list[tuple[str, str, int]] = []
+    skipped = 0
+    for _, value, reading, weight in _pinyin_next_lines(path):
+        plain = reading.split("'")
         key = "'".join(_ZERO_INITIAL.get(syllable, syllable) for syllable in plain)
         if not is_quanpin(key):
             skipped += 1
             continue
-        weight = textutil.parse_int(fields[2].strip()) if len(fields) > 2 else None
-        if weight is None:
-            weight = WANXIANG_DEFAULT_WEIGHT
-            defaulted += 1
         rows.append((value, key, weight))
         # 单字另留原读音，全拼打 n、ng 仍出嗯。
         if len(plain) == 1 and plain[0] != key and is_quanpin(plain[0]):
             rows.append((value, plain[0], weight))
-    if not in_body:
-        raise ValueError(f"{path}: 没有 `...`，不是 Rime 词库")
-    return rows, defaulted, skipped
+    return rows, skipped
 
 
 # ---- 字母词 ----
 
-# 万象 mixed 里「拉丁字母 + 汉字」的词（T恤、AA制、卡拉OK）。全拼表读它时整条跳过（读音不是全拼），这里单独建表：
+# letters.txt 里「拉丁字母 + 汉字」的词（T恤、AA制、卡拉OK）。全拼表不收（读音不是全拼），这里单独建表：
 # 每个字母自成一段，T恤 记成 t'xu、卡拉OK 记成 ka'la'o'k，引擎按打出的字母串整串或前缀匹配，再交给词格组句。
 # 不进 tbl_*：放进去简拼 tx 会冒出 T恤，i、u、v 开头的词也没有分表可放。
-LATIN_WORDS = f"{WANXIANG}/mixed.dict.yaml"
+def latin_words_path(dictionary: Path) -> str:
+    """letters.txt 相对 msime-dictionary 根的路径，跟着基础词表的目录走。"""
+    return f"{pinyin_next_base(dictionary)}/{PINYIN_NEXT_LETTERS}"
+
+
 CREATE_LATIN_WORDS = (
     '\n            CREATE TABLE latin_words (\n                "key" TEXT NOT NULL,\n                "value" TEXT NOT NULL,\n'
     '                "weight" INTEGER NOT NULL,\n                "exact_only" INTEGER NOT NULL DEFAULT 0,\n'
@@ -185,54 +186,45 @@ CREATE_LATIN_WORDS = (
 )
 _LATIN_WORD = re.compile(r"[A-Za-z一-鿿]+\Z")
 _LATIN_RUN = re.compile(r"[A-Za-z]+")
-# 车牌（川A、浙E）占了 mixed 的三成。收进来，但标成 exact_only：只在整串正好是它时单独出候选，不补全、
+# 车牌（川A、浙E）占了字母词的三成。收进来，但标成 exact_only：只在整串正好是它时单独出候选，不补全、
 # 不进整句——浙E 的 zhe'e 全是完整音节，进了词格会混进普通整句（就浙E养），补全会让 zhe 冒出一串车牌。
 _LICENSE_PLATE = re.compile(r"[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-Z]\Z")
 
 
 def read_latin_words(path: Path) -> tuple[list[tuple[str, str, int, int]], int]:
-    """mixed.dict.yaml 里只含拉丁字母与基本区汉字、两样都有的词。返回 ([(键, 词, 权重, exact_only)], 跳过的行数)。
+    """letters.txt 里只含拉丁字母与基本区汉字、两样都有的词。返回 ([(键, 词, 权重, exact_only)], 跳过的行数)。
 
-    读音里与词中字母串原样相同的段是字母（`kǎ'lā'OK` 的 OK），其余是带调拼音、一个汉字一段。带数字、符号的词
-    （3C认证、USB-C）和读音对不上字数的行不收；车牌收，exact_only 记 1。mixed 没有权重列：按文件顺序给递减的权重，
-    同码的词保持万象的先后。
+    读音里与词中字母串原样相同的段是字母（`ka'la'OK` 的 OK），其余是去调拼音、一个汉字一段。带数字、符号的词
+    （3C认证、USB-C）和读音对不上字数的行不收；车牌收，exact_only 记 1。文件里的权重几乎都是 0：先按权重降序，
+    同权重按文件顺序给递减的权重，同码的词保持文件里的先后。
     """
-    convert = _toneless()
-    entries: list[tuple[str, str, int]] = []
+    entries: list[tuple[str, str, int, int]] = []
     skipped = 0
-    in_body = False
-    for line in textutil.universal_lines(textutil.without_bom(textutil.read(path))):
-        if not in_body:
-            in_body = line.strip() == "..."
-            continue
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        fields = line.split("\t")
-        value = fields[0].strip()
-        reading = fields[1].strip() if len(fields) > 1 else ""
-        if not _LATIN_WORD.match(value) or not _LATIN_RUN.search(value) or _LATIN_RUN.fullmatch(value) or not reading:
+    for _, value, reading, weight in _pinyin_next_lines(path):
+        if not _LATIN_WORD.match(value) or not _LATIN_RUN.search(value) or _LATIN_RUN.fullmatch(value):
             skipped += 1
             continue
         runs = _LATIN_RUN.findall(value)
         syllables: list[str] = []
-        for segment in reading.replace(" ", "'").split("'"):
+        for segment in reading.split("'"):
             if runs and segment == runs[0]:
                 runs.pop(0)
                 continue
-            plain = convert(segment) if segment.isalpha() else ""
-            syllables.append(_ZERO_INITIAL.get(plain, plain))
+            syllables.append(_ZERO_INITIAL.get(segment, segment))
         hanzi = [c for c in value if not c.isascii()]
         if runs or len(syllables) != len(hanzi) or not all(is_quanpin(s) for s in syllables):
             skipped += 1
             continue
         readings = iter(syllables)
         key = "'".join(c.lower() if c.isascii() else next(readings) for c in value)
-        entries.append((key, value, 1 if _LICENSE_PLATE.match(value) else 0))
+        entries.append((key, value, weight, 1 if _LICENSE_PLATE.match(value) else 0))
+    ordered = sorted(range(len(entries)), key=lambda i: (-entries[i][2], i))
     rows, seen = [], set()
-    for order, (key, value, exact_only) in enumerate(entries):
+    for rank, index in enumerate(ordered):
+        key, value, _, exact_only = entries[index]
         if (key, value) not in seen:
             seen.add((key, value))
-            rows.append((key, value, len(entries) - order, exact_only))
+            rows.append((key, value, len(entries) - rank, exact_only))
     return rows, skipped
 
 
@@ -246,7 +238,6 @@ def build_latin_words(connection: sqlite3.Connection, path: Path) -> str:
     plates = sum(row[3] for row in rows)
     return (f"{len(rows)} words ({plates} license plates offered only on an exact match), "
             f"{skipped} lines with digits, symbols or an unmatched reading left out")
-
 
 # ---- 地名补充与自定义词条 ----
 
@@ -410,6 +401,134 @@ def build_wubi86(connection: sqlite3.Connection, paths: list[Path]) -> tuple[int
 
     imported, skipped = _write_code_table(connection, "wubi86", CREATE_WUBI86, WUBI86_INDEXES, rows())
     return imported, skipped, outside
+
+
+# ---- 98 五笔与新世纪五笔（对应 msime crates/dict-builder/src/msime.rs 的 build_wubi98_sources / build_wubixsj） ----
+
+# 同一编码内按名次给的权重步长：最后一名是一步，与 86 表的最低名次相当。
+WUBI_RANK_STEP = 10
+
+
+def _unsupported_wubi_value(value: str) -> bool:
+    """基本区外的字、私用区字符和 CJK 兼容汉字都不进五笔表：候选窗画不出来，或与正规字同形却检索不到。"""
+    return _outside_basic_cjk(value) or any(
+        0xE000 <= ord(c) <= 0xF8FF or 0xF900 <= ord(c) <= 0xFAFF or ord(c) >= 0xF0000 for c in value)
+
+
+def _valid_wubi_code(code: str) -> bool:
+    """1 到 4 个 a–y 字母；z 是万能键和拼音反查键，从不是编码。"""
+    return 1 <= len(code) <= 4 and all("a" <= c <= "y" for c in code)
+
+
+def _rank_weights(parsed: list[tuple[str, str]]) -> list[tuple[str, str, int]]:
+    """`(code, value)` 已按「同一编码内越靠前越好」排好；每行权重是步长乘以该编码从这一行起还剩的行数，先后不变。"""
+    remaining: dict[str, int] = {}
+    for code, _ in parsed:
+        remaining[code] = remaining.get(code, 0) + 1
+    rows = []
+    for code, value in parsed:
+        rows.append((code, value, remaining[code] * WUBI_RANK_STEP))
+        remaining[code] -= 1
+    return rows
+
+
+def _generated_rows(paths: list[Path]):
+    """生成的补充词组表（`value<TAB>code<TAB>weight`），不收的字计入跳过。"""
+    for path in paths:
+        for line in textutil.universal_lines(textutil.without_bom(textutil.read(path))):
+            row = _parse_code_line(line)
+            yield None if row is not None and _unsupported_wubi_value(row[1]) else row
+
+
+def _decode_utf16le(path: Path) -> str:
+    data = path.read_bytes()
+    if len(data) % 2 or not data.startswith(b"\xff\xfe"):
+        raise ValueError(f"{path} 不是带 BOM 的 UTF-16LE")
+    return data[2:].decode("utf-16-le")
+
+
+def build_wubi98(connection: sqlite3.Connection, primary: Path, fcitx: Path, generated: list[Path]) -> tuple[int, int]:
+    """98 五笔：主表（UTF-16LE 的 `字<TAB>编码`，无权重，同码按先后排名次），再并入 Fcitx5 表里主表没有的
+    `编码 词` 行（权重 1），最后是生成的词组补充表。同码同权重按 rowid 排，所以后来的来源排在前面的之后。返回 (导入, 跳过)。"""
+    seen: set[tuple[str, str]] = set()
+    parsed: list[tuple[str, str]] = []
+    skipped = 0
+    for line in textutil.universal_lines(_decode_utf16le(primary)):
+        columns = line.split("\t")
+        if len(columns) == 2 and columns[0] and _valid_wubi_code(columns[1]) and (columns[1], columns[0]) not in seen:
+            seen.add((columns[1], columns[0]))
+            parsed.append((columns[1], columns[0]))
+        else:
+            skipped += 1
+    weighted = _rank_weights(parsed)
+    for line in textutil.universal_lines(textutil.read(fcitx)):
+        code, separator, value = line.partition(" ")
+        code, value = code.strip(), value.strip()
+        valid = separator and 1 <= len(code) <= 4 and code.isascii() and code.isalpha() and code.islower() and value
+        if valid and (code, value) not in seen:
+            seen.add((code, value))
+            weighted.append((code, value, 1))
+        else:
+            skipped += 1
+
+    def rows():
+        for code, value, weight in weighted:
+            yield None if _unsupported_wubi_value(value) else (code, value, weight)
+        yield from _generated_rows(generated)
+
+    imported, written_skipped = _write_code_table(connection, "wubi98", _create_wubi("wubi98"), _wubi_indexes("wubi98"),
+                                                  rows())
+    return imported, skipped + written_skipped
+
+
+def build_wubixsj(connection: sqlite3.Connection, source: Path, generated: list[Path]) -> tuple[int, int, int, int]:
+    """新世纪五笔：上游 Rime 码表（`...` 结束表头，`字<TAB>编码<TAB>权重`）只取基本区单字和 1–4 个 a–y 的编码，
+    上游权重只用来定同码名次，再按名次给权重；上游词组一概不收，词组全部来自生成的补充表。
+    返回 (导入, 跳过, 不收的单字, 丢弃的上游词组)。"""
+    lines = textutil.universal_lines(textutil.without_bom(textutil.read(source)))
+    try:
+        header_end = lines.index("...")
+    except ValueError:
+        raise ValueError(f"{source} 没有结束 Rime 表头的 `...` 行") from None
+    phrases = filtered = skipped = 0
+    by_code: dict[str, list[tuple[str, int]]] = {}
+    for line in lines[header_end + 1:]:
+        if not line or line.startswith("#"):
+            continue
+        columns = line.split("\t")
+        if len(columns) < 3:
+            skipped += 1
+            continue
+        value, code, weight = columns[0], columns[1], textutil.parse_int(columns[2])
+        if weight is None or weight < 0:
+            skipped += 1
+            continue
+        if len(value) != 1:
+            phrases += bool(value)
+            skipped += not value
+            continue
+        if not 0x4E00 <= ord(value) <= 0x9FFF or not _valid_wubi_code(code):
+            filtered += 1
+            continue
+        by_code.setdefault(code, []).append((value, weight))
+    parsed: list[tuple[str, str]] = []
+    for code, candidates in by_code.items():
+        # sorted 是稳定排序：同权重保持文件里的先后。
+        seen: set[str] = set()
+        for value, _ in sorted(candidates, key=lambda candidate: -candidate[1]):
+            if value in seen:
+                skipped += 1
+                continue
+            seen.add(value)
+            parsed.append((code, value))
+
+    def rows():
+        yield from _rank_weights(parsed)
+        yield from _generated_rows(generated)
+
+    imported, written_skipped = _write_code_table(connection, "wubixsj", _create_wubi("wubixsj"),
+                                                  _wubi_indexes("wubixsj"), rows())
+    return imported, skipped + written_skipped, filtered, phrases
 
 
 def build_quick_phrases(connection: sqlite3.Connection) -> None:

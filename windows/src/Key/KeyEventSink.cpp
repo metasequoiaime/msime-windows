@@ -26,6 +26,7 @@
 #include "../Utils/PerfTimer.h"
 #include <chrono>
 #include "../../../engine/contracts/ipc_negotiation.h"
+#include "../../../engine/contracts/dictionary_lookup_keys.h"
 #include "KeyEventSinkInternal.h"
 #include "VimMode.h"
 
@@ -303,6 +304,26 @@ bool IsPinyinCommitShortcut(UINT code, UINT modifiers)
                                           code, modifiers, windowsKeyDown);
 }
 
+bool IsDictionaryCandidateLookupShortcut(UINT code, UINT modifiers)
+{
+    return FanyImeDictionaryLookupKeys::IsCandidateLookupKey(code, modifiers) &&
+           (GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 && (GetAsyncKeyState(VK_RWIN) & 0x8000) == 0 &&
+           FanyUtils::ReadConfiguredSwitchLanguageHotkeys().dr_dict_lookup_candidate;
+}
+
+void AllowDictionaryPopupForeground()
+{
+    // DR Dict's popup host window class (dr-dict app/src/popup.h). Not running yet: the Server
+    // starts it, and the new process has to be allowed as well -- that one-shot grant is consumed
+    // by the next foreground change or input, so it does not outlive this lookup.
+    DWORD process = 0;
+    if (HWND popup = FindWindowW(L"DrDictPopup", nullptr))
+    {
+        GetWindowThreadProcessId(popup, &process);
+    }
+    AllowSetForegroundWindow(process != 0 ? process : ASFW_ANY);
+}
+
 bool IsCharacterSetInputModeToggle(UINT code, UINT modifiers)
 {
     return FanyImeProtocol::IsCharacterSetShortcut(code, modifiers) && (GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 &&
@@ -527,9 +548,14 @@ BOOL CMetasequoiaIME::_IsKeyEaten(         //
         // the translation of the candidate at that position. Shift+Enter commits the Server's
         // converted spelling, including compositions without candidates, unless the user turned
         // that chord off in settings -- then it must fall through to the plain Enter path.
+        // Ctrl+Shift+Enter looks the highlighted candidate up in DR Dict; the Server answers without
+        // committing. (The preedit lookup, Ctrl+Alt+Enter, is caught by the Server's keyboard hook:
+        // Chromium hosts never hand Alt chords to TSF.)
         if (!freshCompositionState &&
             ((_candidateMode != CANDIDATE_NONE && (IsTranslationCommitShortcut(*pCodeOut, shortcutModifiers) ||
                                                    IsTranslationDigitShortcut(*pCodeOut, shortcutModifiers))) ||
+             (!_serverUnavailableFallbackActive && _candidateMode != CANDIDATE_NONE &&
+              IsDictionaryCandidateLookupShortcut(*pCodeOut, shortcutModifiers)) ||
              (!_serverUnavailableFallbackActive && pCompositionProcessorEngine->GetVirtualKeyLength() > 0 &&
               IsPinyinCommitShortcut(*pCodeOut, shortcutModifiers))))
         {
@@ -1433,6 +1459,14 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
         if (includeCaretAnchor)
         {
             (void)ResolveKeyCaretAnchor(this, pContext, _tfClientId, keyPoint);
+        }
+
+        // The DR Dict candidate lookup chord: this host is the foreground process, the Server that opens
+        // the popup is not, so the popup could not take focus without this grant.
+        if (KeystrokeState.Function == FUNCTION_SERVER_CANDIDATE_KEY &&
+            FanyImeDictionaryLookupKeys::IsCandidateLookupKey(code, Global::ModifiersDown))
+        {
+            AllowDictionaryPopupForeground();
         }
 
         PerfTimer writeShmTimer;

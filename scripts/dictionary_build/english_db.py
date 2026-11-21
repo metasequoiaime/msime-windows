@@ -1,4 +1,5 @@
-"""english.db：英文前缀候选表、由 ECDICT 推出的中英双向释义、sources/cn-en/ 的中译英释义、custom/translations.txt 的人工覆盖。
+"""english.db：英文前缀候选表、由 ECDICT 推出的中英双向释义、ECDICT 的短语表、hallelujahIM 的音标、
+sources/cn-en/ 的中译英释义、custom/translations.txt 的人工覆盖。
 
 对应 Rust 构建器 english.rs / english_supplement.rs 的 english / english-glosses / custom-translations 阶段；
 cn-en-translations 是 Rust 构建器还没有的阶段，排在 english-glosses 与 custom-translations 之间。
@@ -568,3 +569,197 @@ def apply_custom_translations(connection: sqlite3.Connection, entries: list[Cust
             else:
                 connection.execute("INSERT OR REPLACE INTO en_zh_glosses(english,chinese_gloss) VALUES(?1,?2)",
                                    (entry.source, entry.gloss))
+
+
+# ---- 短语 ----
+
+CREATE_ENGLISH_PHRASES = (
+    "CREATE TABLE english_phrases (word TEXT COLLATE BINARY NOT NULL, display TEXT NOT NULL, "
+    "weight INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (word, display)) WITHOUT ROWID"
+)
+# 空格或连字符夹在两个字母或数字之间才算短语：-able、zymo- 这类词缀不收。
+_PHRASE_SEPARATOR = re.compile(r"[A-Za-z0-9][^A-Za-z0-9]*[ \-][^A-Za-z0-9]*[A-Za-z0-9]")
+_NON_LETTER = re.compile(r"[^a-z]")
+_WHITESPACE = re.compile(r"\s+")
+# 释义里挑不出中文词头（全是解释性的长句）时，退回用第一行，截到这么多字。
+_PHRASE_GLOSS_FALLBACK_CHARS = 24
+
+
+@dataclass
+class EnglishPhrase:
+    word: str     # 查询键：小写字母，去掉空格、连字符、撇号等，英文模式里连着敲字母就能查到
+    display: str  # ECDICT 的写法
+    gloss: str
+
+
+def phrase_key(display: str) -> str:
+    return _NON_LETTER.sub("", display.lower())
+
+
+def _fallback_phrase_gloss(translation: str) -> str:
+    for raw_line in translation.replace("\\n", "\n").splitlines():
+        line = raw_line.strip()
+        while (found := _LEADING_DOMAIN.match(line)) is not None:
+            line = line[found.end():]
+        found = _LEADING_POS.match(line)
+        line = (line[found.end():] if found else line).strip()
+        if line:
+            return line if len(line) <= _PHRASE_GLOSS_FALLBACK_CHARS else line[:_PHRASE_GLOSS_FALLBACK_CHARS] + "…"
+    return ""
+
+
+def parse_ecdict_phrases(ecdict: Path) -> list[EnglishPhrase]:
+    """ECDICT 里所有纯 ASCII、词与词之间有空格或连字符的条目（according to、well-known），不管有没有词频信号；
+    -able、zymo- 这类词缀不收。
+    键少于两个字母的不要。释义按单词释义的同一套规则挑词头，挑不出来时用第一行。"""
+    text = textutil.without_bom(ecdict.read_bytes().decode("utf-8"))
+    csv.field_size_limit(1 << 30)
+    reader = csv.reader(io.StringIO(text, newline=""))
+    headers = next(reader)
+    if "word" not in headers or "translation" not in headers:
+        raise ValueError("ECDICT CSV is missing the word or translation column")
+    word_column, translation_column = headers.index("word"), headers.index("translation")
+    phrases: dict[str, EnglishPhrase] = {}
+    for record in reader:
+        if word_column >= len(record):
+            continue
+        display = _WHITESPACE.sub(" ", record[word_column]).strip()
+        # 以 # 开头的会被当成文件里的注释行，不收。
+        if not display.isascii() or not _PHRASE_SEPARATOR.search(display) or display.startswith("#"):
+            continue
+        key = phrase_key(display)
+        if len(key) < 2 or display in phrases:
+            continue
+        translation = record[translation_column].strip() if translation_column < len(record) else ""
+        gloss = choose_chinese_gloss(extract_gloss_terms(translation), {}) if translation else ""
+        if not gloss and translation:
+            gloss = _fallback_phrase_gloss(translation)
+        gloss = _WHITESPACE.sub(" ", gloss).strip()
+        phrases[display] = EnglishPhrase(key, display, gloss)
+    if not phrases:
+        raise ValueError("ECDICT has no phrases")
+    return list(phrases.values())
+
+
+PHRASES_FILE = "sources/english/ecdict-phrases.txt"
+
+
+def format_phrases(phrases: list[EnglishPhrase]) -> list[str]:
+    """ecdict-phrases.txt 的数据行：`写法<TAB>释义`（没有释义时只有写法），按字典序。"""
+    ordered = sorted(phrases, key=lambda phrase: (phrase.display.lower(), phrase.display))
+    return [f"{phrase.display}\t{phrase.gloss}" if phrase.gloss else phrase.display for phrase in ordered]
+
+
+def parse_phrases(text: str, name: str) -> list[EnglishPhrase]:
+    """msime-dictionary 的 sources/english/ecdict-phrases.txt（由 scripts/generate-english-extras.py 生成）。"""
+    phrases: list[EnglishPhrase] = []
+    seen = set()
+    for number, line in enumerate(textutil.without_bom(text).splitlines(), start=1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        display, _, gloss = line.partition("\t")
+        key = phrase_key(display)
+        if (display != display.strip() or not display.isascii() or not _PHRASE_SEPARATOR.search(display)
+                or len(key) < 2):
+            raise ValueError(f"{name}:{number}: {display!r} is not an ASCII phrase with a space or a hyphen")
+        if display in seen:
+            raise ValueError(f"{name}:{number}: duplicate phrase {display!r}")
+        seen.add(display)
+        phrases.append(EnglishPhrase(key, display, gloss.strip()))
+    if not phrases:
+        raise ValueError(f"{name}: no phrases found")
+    return phrases
+
+
+def write_phrases(connection: sqlite3.Connection, phrases: list[EnglishPhrase]) -> tuple[int, int]:
+    """短语单独一张表，与 english_words 同样的列。还没有词频，初始权重按字典序给：越靠前越高，
+    前缀查询按权重降序出来就是字典序。释义写进 en_zh_glosses，键是小写写法（同一键的第一个非空释义），
+    不覆盖已有的单词释义。返回 (短语数, 新写入的释义数)。"""
+    ordered = sorted(phrases, key=lambda phrase: (phrase.display.lower(), phrase.display))
+    total = len(ordered)
+    glosses: dict[str, str] = {}
+    for phrase in ordered:
+        if phrase.gloss:
+            glosses.setdefault(phrase.display.lower(), phrase.gloss)
+    with connection:
+        connection.execute("DROP TABLE IF EXISTS english_phrases")
+        connection.execute(CREATE_ENGLISH_PHRASES)
+        connection.executemany("INSERT INTO english_phrases(word, display, weight) VALUES (?, ?, ?)",
+                               ((phrase.word, phrase.display, total - index) for index, phrase in enumerate(ordered)))
+        before = connection.execute("SELECT COUNT(*) FROM en_zh_glosses").fetchone()[0]
+        connection.executemany("INSERT OR IGNORE INTO en_zh_glosses(english, chinese_gloss) VALUES (?, ?)",
+                               sorted(glosses.items()))
+        added = connection.execute("SELECT COUNT(*) FROM en_zh_glosses").fetchone()[0] - before
+    textutil.integrity_check(connection)
+    return total, added
+
+
+# ---- 音标 ----
+
+IPA_FILE = "sources/english/hallelujahim-ipa.txt"
+IPA_NOTICE_SOURCE = "hallelujahIM IPA"
+IPA_NOTICE = (
+    "The en_ipa table is read from msime-dictionary's sources/english/hallelujahim-ipa.txt, which is the ipa field "
+    "of hallelujahIM's dictionary/words_with_frequency_and_translation_and_ipa.json "
+    "(https://github.com/dongyuwei/hallelujahIM, GPL-3.0, by Dong Yuwei). hallelujahIM generated it with "
+    "English-to-IPA (eng_to_ipa, https://github.com/mphilli/English-to-IPA, MIT), which transcribes the "
+    "Carnegie Mellon Pronouncing Dictionary (CMUdict, BSD-2-Clause). Only the ipa field is used; the word "
+    "frequencies and translations in the same file are not.")
+
+CREATE_EN_IPA = "CREATE TABLE en_ipa (english TEXT COLLATE BINARY NOT NULL PRIMARY KEY, ipa TEXT NOT NULL) WITHOUT ROWID"
+
+
+def parse_hallelujah_ipa(data: bytes) -> dict[str, str]:
+    """hallelujahIM 的 `{词: {"frequency", "translation", "ipa"}}`，只取 ipa。
+
+    eng_to_ipa 查不到 CMUdict 的词会原样返回并在末尾加 `*`，这类不是音标，丢掉。
+    """
+    import json
+
+    entries = json.loads(textutil.without_bom(data.decode("utf-8")))
+    result: dict[str, str] = {}
+    for word, value in entries.items():
+        ipa = value.get("ipa") if isinstance(value, dict) else None
+        if not isinstance(ipa, str):
+            continue
+        ipa = ipa.strip()
+        key = word.strip().lower()
+        if not ipa or "*" in ipa or " " in ipa or not _is_ascii_word(key):
+            continue
+        result[key] = ipa
+    return result
+
+
+def format_ipa(ipa: dict[str, str]) -> list[str]:
+    """hallelujahim-ipa.txt 的数据行：`小写单词<TAB>音标`，按单词排序。"""
+    return [f"{word}\t{ipa[word]}" for word in sorted(ipa)]
+
+
+def parse_ipa(text: str, name: str) -> dict[str, str]:
+    """msime-dictionary 的 sources/english/hallelujahim-ipa.txt（由 scripts/generate-english-extras.py 生成）。"""
+    result: dict[str, str] = {}
+    for number, line in enumerate(textutil.without_bom(text).splitlines(), start=1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        word, separator, ipa = line.partition("\t")
+        if not separator or not textutil.is_ascii_lower_word(word) or not ipa.strip() or " " in ipa:
+            raise ValueError(f"{name}:{number}: expected a lowercase word<TAB>IPA, got {line!r}")
+        if word in result:
+            raise ValueError(f"{name}:{number}: duplicate word {word!r}")
+        result[word] = ipa.strip()
+    if not result:
+        raise ValueError(f"{name}: no transcriptions found")
+    return result
+
+
+def write_ipa(connection: sqlite3.Connection, ipa: dict[str, str]) -> int:
+    """只给 english_words 里有的词写音标。返回写入的条数。"""
+    words = {row[0] for row in connection.execute("SELECT DISTINCT word FROM english_words")}
+    rows = sorted((word, value) for word, value in ipa.items() if word in words)
+    with connection:
+        connection.execute("DROP TABLE IF EXISTS en_ipa")
+        connection.execute(CREATE_EN_IPA)
+        connection.executemany("INSERT INTO en_ipa(english, ipa) VALUES (?, ?)", rows)
+        connection.execute("INSERT OR REPLACE INTO source_notices(source, notice) VALUES (?, ?)",
+                           (IPA_NOTICE_SOURCE, IPA_NOTICE))
+    return len(rows)

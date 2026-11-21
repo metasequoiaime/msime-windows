@@ -98,8 +98,10 @@ class DeviceResources
     bool UsesBackdropComposition() const;
     // Rounded rectangle, in DIPs in the coordinates the scene draws in, that the backdrop
     // fills. Call it inside a frame so it lands in the same commit as the content; an
-    // empty rect hides the backdrop. Ignored outside backdrop composition.
-    void SetBackdrop(const RectF &rectDips, float radiusDips);
+    // empty rect hides the backdrop. `opacity` (0–1) fades the backdrop with the content when
+    // the caller fades the whole window: a Direct2D layer cannot reach the composition visual.
+    // Ignored outside backdrop composition.
+    void SetBackdrop(const RectF &rectDips, float radiusDips, float opacity = 1.0f);
     // Material of the backdrop; kept across surface recreation. The default, both opacities
     // 0, shows the blurred source as it is.
     void SetBackdropMaterial(const BackdropMaterial &material);

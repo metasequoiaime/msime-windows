@@ -6,6 +6,7 @@
 #include <string>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <utility>
 #include <unordered_map>
@@ -40,6 +41,8 @@
 #include "conversion/traditional_spelling_index.h"
 #include "log/candidate_diag_log.h"
 #include "ipc/event_listener_internal.h"
+#include "ipc/candidate_interaction_latch_policy.h"
+#include "ipc/candidate_render_sync.h"
 #include "ai/jev_candidate_policy.h"
 
 using namespace event_listener_detail;
@@ -79,6 +82,8 @@ namespace event_listener_detail
 {
 std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 std::string g_candidate_translation_signature;
+std::unordered_map<std::string, std::string> g_candidate_phonetics;
+std::string g_candidate_phonetics_request;
 
 // 副候选框：Ctrl+Enter 在高亮候选有多条译义时，把候选框整个换成那几条译义，让空格/
 // 数字键像选普通候选一样选一条上屏。输入串一个字都没动，所以退出这个子模式时把原来的
@@ -91,10 +96,29 @@ int g_translation_saved_page_index = 0;
 int g_translation_saved_selected_index = 0;
 bool g_translation_saved_selection_started = false;
 
+std::string TranslationTargetLanguage(EnglishIme::TranslationDirection direction)
+{
+    return direction == EnglishIme::TranslationDirection::EnglishToChinese
+               ? GetConfiguredTranslation()->english_target_language
+               : GetConfiguredTencentTmt().target_language;
+}
+
 std::string TranslationIdentity(const EnglishIme::TranslationQuery &query)
 {
-    return GetConfiguredTencentTmt().target_language + ":" +
+    return TranslationTargetLanguage(query.direction) + ":" +
            (query.direction == EnglishIme::TranslationDirection::EnglishToChinese ? "e:" : "z:") + query.key;
+}
+
+bool CandidateTranslationsEnabledFor(EnglishIme::TranslationDirection direction)
+{
+    return direction == EnglishIme::TranslationDirection::EnglishToChinese
+               ? GetConfiguredEnglishCandidateTranslationsEnabled()
+               : GetConfiguredCandidateTranslationsEnabled();
+}
+
+bool AnyCandidateTranslationsEnabled()
+{
+    return GetConfiguredCandidateTranslationsEnabled() || GetConfiguredEnglishCandidateTranslationsEnabled();
 }
 
 bool IsCandidateSubPageActive()
@@ -105,9 +129,13 @@ bool IsCandidateSubPageActive()
 void LatchCandidateUiInteraction()
 {
     const std::uint64_t generation = g_candidate_ui_interaction_generation.exchange(0, std::memory_order_acq_rel);
-    // 只认用户操作时屏幕上那一页；之后已经换了一批候选，就不该冻结新的这批。
-    if (generation != 0 && generation == Global::LoadCandidatePageSnapshot()->generation)
+    const std::uint64_t rendered = Global::rendered_candidate_page_generation.load(std::memory_order_acquire);
+    // 只认用户操作时屏幕上那一页：已发布但还没画出来的一页不算。
+    if (FanyImeIpc::ShouldLatchCandidateInteraction(generation, rendered))
+    {
+        NoteCandidatePageGesture(generation);
         Global::candidate_ui.begin_selection();
+    }
 }
 
 bool CanMergeAsyncCandidates()
@@ -150,7 +178,7 @@ void ApplyUiLessFromPacket(const FanyImeNamedpipeData &pipe_data)
         // A prior non-UILess session may have left the candidate HWND visible;
         // hide it immediately when the host takes over drawing.
         ::is_global_wnd_cand_shown = false;
-        Global::SetCandidateWindowRenderedVisible(false);
+        NoteCandidatePageVisibility(false);
         if (::global_hwnd && IsWindow(::global_hwnd))
         {
             PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
@@ -183,36 +211,198 @@ bool IsDedicatedEnglishAnswerPending()
     return g_dedicated_english_answer_pending && !GlobalIme::composition.creating_word.active &&
            !IsCandidateSubPageActive();
 }
+
+class CandidatePageSurface : public FanyImeIpc::CandidatePages::SurfacePort
+{
+  public:
+    void publish(const FanyImeIpc::CandidatePage &page) override
+    {
+        if (!page.snapshot)
+            return;
+        Global::candidate_page_generation.store(page.generation, std::memory_order_release);
+        Global::PublishCandidatePageSnapshot(page.snapshot);
+        ::WriteDataToSharedMemory(page.snapshot->candidate_string, true);
+    }
+
+    void request_show() override
+    {
+        if (IsUiLessMode() || !::global_hwnd)
+        {
+            CAND_DIAG_LOGF(L"show request skipped uiless={} hwnd_present={}", IsUiLessMode(), ::global_hwnd != nullptr);
+            return;
+        }
+        if (IsDedicatedEnglishAnswerPending())
+        {
+            CAND_DIAG_LOGF(L"show request deferred to english query raw_units={}",
+                           GlobalIme::composition.raw_input_with_cases.size());
+            return;
+        }
+        bool expected = false;
+        if (!g_candidate_show_msg_pending.compare_exchange_strong(expected, true))
+        {
+            CAND_DIAG_LOGF(L"show request coalesced raw_units={} candidate_count={}",
+                           GlobalIme::composition.raw_input_with_cases.size(), Global::candidate_ui.items.size());
+            return;
+        }
+        CAND_DIAG_LOGF(L"show request posted raw_units={} candidate_count={}",
+                       GlobalIme::composition.raw_input_with_cases.size(), Global::candidate_ui.items.size());
+        if (!PostMessage(::global_hwnd, WM_SHOW_MAIN_WINDOW, 0, 0))
+            g_candidate_show_msg_pending.store(false);
+    }
+
+    void hide() override
+    {
+        Global::CandidateString.clear();
+        Global::ClearCandidatePageSnapshot();
+        ::is_global_wnd_cand_shown = false;
+        Global::SetCandidateWindowRenderedVisible(false);
+        if (::global_hwnd && IsWindow(::global_hwnd))
+            PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+    }
+
+    bool visible() const override
+    {
+        return Global::candidate_window_rendered_visible.load(std::memory_order_acquire);
+    }
+
+    bool uiless() const override
+    {
+        return IsUiLessMode();
+    }
+};
+
+struct CandidatePagesRuntime
+{
+    CandidatePageSurface surface;
+    FanyImeIpc::CandidatePages pages{surface,
+                                     std::chrono::milliseconds{FanyImeIpc::kCandidateSelectionRenderWaitMaxMs}};
+};
+
+CandidatePagesRuntime &Pages()
+{
+    static CandidatePagesRuntime runtime;
+    return runtime;
+}
 } // namespace
 
 namespace event_listener_detail
 {
 void RequestShowCandidateWindow()
 {
-    if (IsUiLessMode() || !::global_hwnd)
+    ShowPublishedCandidatePage();
+}
+
+void RequestShowCandidateWindowDeferred()
+{
+    if (IsUiLessMode() || !::global_hwnd || !g_inputSession)
     {
-        CAND_DIAG_LOGF(L"show request skipped uiless={} hwnd_present={}", IsUiLessMode(), ::global_hwnd != nullptr);
+        CAND_DIAG_LOGF(L"async show request skipped uiless={} hwnd_present={} session={}", IsUiLessMode(),
+                       ::global_hwnd != nullptr, g_inputSession != nullptr);
         return;
     }
     if (IsDedicatedEnglishAnswerPending())
     {
-        CAND_DIAG_LOGF(L"show request deferred to english query raw_units={}",
+        CAND_DIAG_LOGF(L"async show request deferred to english query raw_units={}",
                        GlobalIme::composition.raw_input_with_cases.size());
         return;
     }
-    bool expected = false;
-    if (!g_candidate_show_msg_pending.compare_exchange_strong(expected, true))
+    if (!g_inputSession || g_inputSession->get_pinyin_sequence_with_cases().empty() ||
+        Global::candidate_ui.items.empty())
     {
-        CAND_DIAG_LOGF(L"show request coalesced raw_units={} candidate_count={}",
-                       GlobalIme::composition.raw_input_with_cases.size(), Global::candidate_ui.items.size());
+        CAND_DIAG_LOGF(L"async show request skipped empty");
         return;
     }
-    CAND_DIAG_LOGF(L"show request posted raw_units={} candidate_count={}",
-                   GlobalIme::composition.raw_input_with_cases.size(), Global::candidate_ui.items.size());
-    if (!PostMessage(::global_hwnd, WM_SHOW_MAIN_WINDOW, 0, 0))
+    if (!CanMergeAsyncCandidates())
     {
-        g_candidate_show_msg_pending.store(false);
+        CAND_DIAG_LOGF(L"async show request skipped user interaction");
+        return;
     }
+
+    const bool accepted = UpdateCurrentCandidatePage();
+    CAND_DIAG_LOGF(L"async show request accepted={} raw_units={} candidate_count={}", accepted,
+                   g_inputSession->get_pinyin_sequence_with_cases().size(), Global::candidate_ui.items.size());
+}
+
+void PublishCandidatePage(FanyImeIpc::CandidatePage page)
+{
+    Pages().pages.Publish(std::move(page));
+}
+
+void ShowCandidatePage(FanyImeIpc::CandidatePage page)
+{
+    Pages().pages.Show(std::move(page));
+}
+
+void UpdateCandidatePage(FanyImeIpc::CandidatePage page)
+{
+    (void)Pages().pages.Update(std::move(page));
+}
+
+bool UpdateCurrentCandidatePage()
+{
+    return Pages().pages.UpdateCurrent();
+}
+
+void ShowPublishedCandidatePage()
+{
+    Pages().pages.Show();
+}
+
+void HideCandidatePages()
+{
+    Pages().pages.Hide();
+}
+
+void AllowAsyncCandidatePageUpdates()
+{
+    Pages().pages.AllowAsyncUpdates();
+}
+
+void BlockAsyncCandidatePageUpdates()
+{
+    Pages().pages.BlockAsyncUpdates();
+}
+
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateSlot(int index_in_page)
+{
+    return Pages().pages.CommitSlot(index_in_page);
+}
+
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateHighlighted()
+{
+    return Pages().pages.CommitHighlighted();
+}
+
+std::optional<FanyImeIpc::CandidateChoice> CommitCandidateAt(int index_in_page)
+{
+    return Pages().pages.CommitAt(index_in_page);
+}
+
+bool HasCandidatePage()
+{
+    return Pages().pages.HasPage();
+}
+
+void NoteCandidatePagePainted(std::uint64_t generation, bool visible, int shown_count)
+{
+    if (Pages().pages.Painted(generation, visible, shown_count))
+        Global::PublishRenderedCandidatePageGeneration(generation);
+}
+
+std::uint64_t PublishedCandidatePageGeneration()
+{
+    return Pages().pages.PublishedGeneration();
+}
+
+void NoteCandidatePageGesture(std::uint64_t generation)
+{
+    Pages().pages.Gesture(generation);
+}
+
+void NoteCandidatePageVisibility(bool visible)
+{
+    Pages().pages.Visibility(visible);
+    Global::SetCandidateWindowRenderedVisible(visible);
 }
 
 // Drop every published candidate page and hide the candidate window without
@@ -221,21 +411,11 @@ void RequestShowCandidateWindow()
 // because there is nothing left to offer as candidates.
 void HideCandidateWindowAndDropItems()
 {
-    // Drop published candidates before a queued show can re-render an
-    // empty-preedit + stale-candidate view.
-    Global::CandidateString.clear();
-    Global::ClearCandidatePageSnapshot();
+    FanyNamedPipe::ResetRescoreRequeryBudget();
     Global::candidate_ui.set_items({});
     Global::candidate_ui.page_input.clear();
     Global::candidate_ui.page_prefix_end = 0;
-    // Clear the shown flag first so async callbacks refuse to resurrect the
-    // window, then post the actual hide message.
-    ::is_global_wnd_cand_shown = false;
-    Global::SetCandidateWindowRenderedVisible(false);
-    if (::global_hwnd && IsWindow(::global_hwnd))
-    {
-        PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
-    }
+    HideCandidatePages();
 }
 } // namespace event_listener_detail
 
@@ -672,12 +852,27 @@ std::string CandidateOutputText(const WordItem &item)
     return FanyImeIpc::CandidateOutputTextFor(item, convert, ToTraditionalText);
 }
 
+namespace
+{
+// 一次展开里查询写法记录与转换写法的累计墙钟上限，从第一次查询算起。候选很多（单字母追加批）或 CPU 满载时
+// 可能用尽，用尽后剩下的候选按地区默认排序。
+constexpr std::int64_t kRememberedSpellingLookupBudgetMs = 50;
+
+std::int64_t SteadyClockMilliseconds()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+} // namespace
+
 std::vector<WordItem> WithTraditionalVariantsFor(std::vector<WordItem> items, const std::string &character_set)
 {
     if (!ShouldConvertCandidateTextIn(character_set, IsRadicalCandidateListActive()))
         return items;
-    return FanyImeIpc::ExpandTraditionalVariants(std::move(items), ChineseConverter::OpenCcTraditionalSpellingIndex(),
-                                                 ChineseConverter::UserTraditionalRegion());
+    return FanyImeIpc::ExpandTraditionalVariants(
+        std::move(items), ChineseConverter::OpenCcTraditionalSpellingIndex(), ChineseConverter::UserTraditionalRegion(),
+        FanyImeIpc::WithLookupBudget(FanyNamedPipe::RememberedSpellingFromUserJournal(),
+                                     kRememberedSpellingLookupBudgetMs, SteadyClockMilliseconds));
 }
 
 std::vector<WordItem> WithTraditionalVariants(std::vector<WordItem> items)
@@ -691,12 +886,17 @@ void ReorderCandidatesAsOneItemPerWord(std::vector<WordItem> &items,
     items = FanyImeIpc::ReorderAsOneItemPerWord(std::move(items), reorder, WithTraditionalVariants);
 }
 
+std::string RegionalFirstSpellingOfText(const std::string &text)
+{
+    const auto spellings = TraditionalSpellingsOfText(text);
+    return spellings.empty() ? text : spellings.front();
+}
+
 std::string FirstSpellingOfText(const std::string &text)
 {
     if (!ShouldConvertCandidateTextIn(ShownCandidateCharacterSet(), /*radical_candidate_list=*/false))
         return text;
-    const auto spellings = TraditionalSpellingsOfText(text);
-    return spellings.empty() ? text : spellings.front();
+    return RegionalFirstSpellingOfText(text);
 }
 
 FanyImeIpc::ChosenText CreatingWordChosenText()
@@ -714,6 +914,14 @@ FanyImeIpc::CandidateSpellingSettings CandidateListSpellingSettings()
             FanyNamedPipe::CandidateListCharacterSet() == "traditional",
             g_inputSession ? g_inputSession->current_scheme_type() : SchemeType::Quanpin,
             IsRadicalCandidateListActive()};
+}
+
+FanyImeIpc::VariantChoiceScope CurrentVariantChoiceScope(const WordItem &item)
+{
+    const bool japanese_scheme =
+        item.scheme == SchemeType::JapaneseRomaji ||
+        (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji);
+    return {ShownCandidateCharacterSet() == "traditional", japanese_scheme, IsRadicalCandidateListActive()};
 }
 
 WordItem WithFirstTraditionalSpelling(WordItem item)
@@ -793,6 +1001,16 @@ void NoteCandidateUiInteraction(uint64_t page_generation)
 {
     if (page_generation != 0)
         g_candidate_ui_interaction_generation.store(page_generation, std::memory_order_release);
+}
+
+void NoteCandidatePagePainted(uint64_t page_generation, bool visible, int shown_count)
+{
+    event_listener_detail::NoteCandidatePagePainted(page_generation, visible, shown_count);
+}
+
+void NoteCandidatePageVisibility(bool visible)
+{
+    event_listener_detail::NoteCandidatePageVisibility(visible);
 }
 
 FanyImeTemporaryJapanese::Policy TemporaryJapanesePolicy()
@@ -915,6 +1133,7 @@ void PushUiLessCandidatesToOwner()
 void ClearState()
 {
     const auto r_mode_original_session = g_r_mode_original_session;
+    ResetRescoreRequeryBudget();
     ClearSpecialModeTriggers();
     ClearCandidateUiOwner();
     UpdateCloudInput("");

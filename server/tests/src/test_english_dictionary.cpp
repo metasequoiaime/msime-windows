@@ -249,6 +249,80 @@ TEST_CASE(EnglishDictionaryQueriesBothGlossDirections)
     REQUIRE(dictionary.query_chinese_gloss("missing").empty());
 }
 
+TEST_CASE(EnglishDictionaryQueriesIpaAndToleratesDictionariesWithoutIt)
+{
+    // 旧词库没有 en_ipa 表：音标查不到，释义等其他查询照常。
+    {
+        TemporaryEnglishDatabase database;
+        EnglishDictionary dictionary(test::Utf8(database.path()));
+        sqlite3 *db = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(database.path()).c_str(), &db), SQLITE_OK);
+        REQUIRE_EQ(sqlite3_exec(db, "INSERT INTO en_zh_glosses VALUES('apple','n. 苹果');", nullptr, nullptr, nullptr),
+                   SQLITE_OK);
+        sqlite3_close(db);
+        REQUIRE(dictionary.query_ipa("apple").empty());
+        REQUIRE(dictionary.query_ipa("apple").empty());
+        REQUIRE_EQ(dictionary.query_chinese_gloss("apple"), std::string("n. 苹果"));
+    }
+    {
+        TemporaryEnglishDatabase database;
+        sqlite3 *db = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(database.path()).c_str(), &db), SQLITE_OK);
+        REQUIRE_EQ(sqlite3_exec(db,
+                                "CREATE TABLE en_ipa(english TEXT COLLATE BINARY NOT NULL PRIMARY KEY,"
+                                "ipa TEXT NOT NULL) WITHOUT ROWID;"
+                                "INSERT INTO en_ipa VALUES('algorithm','ˈælgərɪðəm');",
+                                nullptr, nullptr, nullptr),
+                   SQLITE_OK);
+        sqlite3_close(db);
+        EnglishDictionary dictionary(test::Utf8(database.path()));
+        REQUIRE_EQ(dictionary.query_ipa("algorithm"), std::string("ˈælgərɪðəm"));
+        REQUIRE(dictionary.query_ipa("missing").empty());
+        REQUIRE(dictionary.query_ipa("").empty());
+    }
+}
+
+TEST_CASE(EnglishDictionaryQueriesPhrasesAndToleratesDictionariesWithoutThem)
+{
+    // 旧词库没有 english_phrases 表：短语查不到，单词查询照常。
+    {
+        TemporaryEnglishDatabase database;
+        EnglishDictionary dictionary(test::Utf8(database.path()));
+        REQUIRE(dictionary.query_phrase_prefix("according", 10).empty());
+        REQUIRE(dictionary.query_phrase_prefix("according", 10).empty());
+        REQUIRE(dictionary.ready());
+    }
+    {
+        TemporaryEnglishDatabase database;
+        sqlite3 *db = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(database.path()).c_str(), &db), SQLITE_OK);
+        REQUIRE_EQ(sqlite3_exec(db,
+                                "CREATE TABLE english_phrases(word TEXT COLLATE BINARY NOT NULL,display TEXT NOT NULL,"
+                                "weight INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(word,display)) WITHOUT ROWID;"
+                                "INSERT INTO english_phrases VALUES('accordingas','according as',3);"
+                                "INSERT INTO english_phrases VALUES('accordingto','according to',2);"
+                                "INSERT INTO english_phrases VALUES('according','ac-cording',1);"
+                                "INSERT INTO english_phrases VALUES('alot','a lot',4);",
+                                nullptr, nullptr, nullptr),
+                   SQLITE_OK);
+        sqlite3_close(db);
+        EnglishDictionary dictionary(test::Utf8(database.path()));
+        const auto phrases = dictionary.query_phrase_prefix("according", 10);
+        REQUIRE_EQ(phrases.size(), size_t{3});
+        // 键正好等于输入的排第一，其余按权重。
+        REQUIRE_EQ(phrases[0].word, std::string("ac-cording"));
+        REQUIRE_EQ(phrases[1].word, std::string("according as"));
+        REQUIRE_EQ(phrases[2].word, std::string("according to"));
+        REQUIRE_EQ(phrases[2].pinyin, std::string("accordingto"));
+        REQUIRE(phrases[2].source == CandidateSource::Generated);
+        REQUIRE(phrases[2].english_phrase);
+        REQUIRE_EQ(dictionary.query_phrase_prefix("accordingt", 10).size(), size_t{1});
+        REQUIRE_EQ(dictionary.query_phrase_prefix("according", 1).size(), size_t{1});
+        REQUIRE(dictionary.query_phrase_prefix("According", 10).empty());
+        REQUIRE(dictionary.query_phrase_prefix("", 10).empty());
+    }
+}
+
 TEST_CASE(EnglishDictionaryPrefersSiblingCustomTranslations)
 {
     TemporaryEnglishDatabase database;

@@ -36,6 +36,8 @@ enum class TaskType
     UiPageDown,
     UiCommitCandidateAt,
     UiExpandCandidates,
+    // DR Dict 查预编辑（Ctrl+Alt+Enter），键盘钩子在候选窗显示时投递。
+    UiDictionaryPreeditLookup,
     ReloadInputSession,
     EnsureInputSessionMatchesConfig,
     ApplyCandidatePageSize,
@@ -45,6 +47,10 @@ enum class TaskType
     ToolbarLanguageToggle,
     ApplyRescoredOrder,
     RefreshWithEnrichment,
+    // 横排固定宽度：候选窗量出当前页一行只放得下几个，回报给工作线程重新划页。
+    UiCandidatePageFitted,
+    // 候选旁的音标（english.db）查完了。
+    ApplyCandidatePhonetics,
 };
 
 // The worker keeps FIFO order within each class.

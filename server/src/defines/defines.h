@@ -41,6 +41,9 @@ inline const UINT WM_COMMIT_CANDIDATE_AT = WM_USER + 126;
 inline const UINT WM_EXPAND_CANDIDATES = WM_USER + 127;
 // 候选窗自己投递给自己：切换卷轴展开面板。放到消息队列里做，免得在鼠标分发途中改场景。
 inline const UINT WM_TOGGLE_CANDIDATE_EXPAND = WM_USER + 128;
+// 工作线程处理完 DR Dict 查词快捷键后投递给候选窗：隐藏候选窗，按候选窗该在的光标位置打开 DR Dict 弹窗。
+// lParam 是 new 出来的 std::wstring*（要查的词），由候选窗窗口过程接管并释放。
+inline const UINT WM_DR_DICT_LOOKUP = WM_USER + 129;
 
 // wParam of WM_PAGE_CANDIDATE / WM_PAGE_CANDIDATE_ARROW; lParam carries how many pages to move.
 inline constexpr WPARAM CANDIDATE_PAGE_PREVIOUS = 0;

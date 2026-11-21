@@ -25,6 +25,13 @@ std::string normalize_input(const std::string &raw_input,
                             const ShuangpinProfile &profile = GetXiaoheShuangpinProfile());
 std::string normalize_input_with_delimiters(const std::string &raw_input,
                                             const ShuangpinProfile &profile = GetXiaoheShuangpinProfile());
+// 本地模式（U 拆字、S 符号、T 日期时间）的编码只由完整音节连成，按双拼从头每两键严格解成一个全拼
+// 音节，不走 pinyin_segmentation 的「两键不成音节就退一键」——那条退路会把一对打错的键解成声母，
+// 查出不相干的结果。返回这串码可能的全拼读法：偶数键时只有一种；末尾落单的一键是下一个音节的开头，
+// 按声母键解（小鹤 v → zh），它若还是零声母音节的引导键（微软 o、国标 a），再补上那些音节可能的
+// 首字母（排好序）。任何一对解不出音节、落单的是 ; 或码为空时返回空。
+std::vector<std::string> decode_syllable_pairs(const std::string &code,
+                                               const ShuangpinProfile &profile = GetXiaoheShuangpinProfile());
 std::string remove_manual_delimiters(const std::string &text);
 size_t effective_input_length(const std::string &raw_input);
 // Maps a length measured in delimiter-stripped space back onto the raw input, so callers can slice a raw prefix that

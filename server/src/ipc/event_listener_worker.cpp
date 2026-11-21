@@ -4,6 +4,8 @@
 #include <array>
 #include <string>
 #include <chrono>
+#include <functional>
+#include <optional>
 #include <cstdint>
 #include <utility>
 #include "ipc.h"
@@ -24,6 +26,7 @@
 #include "english/english_ime.h"
 #include "config/ime_config.h"
 #include "conversion/chinese_converter.h"
+#include "ipc/traditional_variant_choice_journal.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "window/window_hook.h"
 #include "session/input_cadence.h"
@@ -129,7 +132,7 @@ void ReplayDeferredClientActivation()
     }
     FTB_DIAG_LOGF(L"replaying client activation deferred until candidate window existed");
     PostMessage(::global_hwnd, WM_IMEACTIVATE, 0, 0);
-    PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+    HideCandidatePages();
 }
 
 struct Task
@@ -154,6 +157,8 @@ struct Task
     std::vector<EnglishIme::TranslationResult> translation_results;
     uint64_t translation_generation = 0;
     bool translation_merge = false;
+    // ApplyCandidatePhonetics：词库查回来的音标。
+    std::vector<EnglishIme::Phonetic> phonetics;
     MixedCandidates::Result mixed_result;
     std::string mixed_input;
     uint64_t mixed_generation = 0;
@@ -167,6 +172,10 @@ struct Task
     std::wstring candidate_expected_text;
     int fixed_position = 0;
     int page_steps = 0;
+    // UiCandidatePageFitted：量的是哪一版候选页、它从哪个绝对下标开始、一行放下了几个。
+    uint64_t fitted_generation = 0;
+    int fitted_page_start = 0;
+    int fitted_count = 0;
     bool toolbar_from_ime_enabled = false;
 };
 
@@ -296,19 +305,20 @@ void WorkerThread()
                 cadence.CloseGate();
                 SetTypingInProgress(false);
             }
-            const auto gate_deadline = cadence.Deadline(idle_gate_ms);
-            if (gate_deadline == InputCadence::Clock::time_point{})
+            const auto wake_deadline = cadence.Deadline(idle_gate_ms);
+            if (wake_deadline == InputCadence::Clock::time_point{})
             {
                 // 闸门关着（或不在打字）：保持原来的无限等待。
                 pipe_queueCv.wait(lock, has_work);
             }
             else
             {
-                pipe_queueCv.wait_until(lock, gate_deadline, has_work);
+                pipe_queueCv.wait_until(lock, wake_deadline, has_work);
             }
             if (!pipe_running)
                 break;
-            if (cadence.ShouldCloseGate(InputCadence::Clock::now(), idle_gate_ms))
+            const auto now = InputCadence::Clock::now();
+            if (cadence.ShouldCloseGate(now, idle_gate_ms))
             {
                 // 到点且没有新按键：这段连续打字结束。先关闸再排重查，保证
                 // recompute_candidates 里重新应用的配置看到的是 Idle。
@@ -376,7 +386,8 @@ void WorkerThread()
             task.type == TaskType::UiDeleteCandidate || task.type == TaskType::UiFixCandidatePosition ||
             task.type == TaskType::UiClearCandidatePosition || task.type == TaskType::UiPageUp ||
             task.type == TaskType::UiPageDown || task.type == TaskType::UiCommitCandidateAt ||
-            task.type == TaskType::UiExpandCandidates;
+            task.type == TaskType::UiExpandCandidates || task.type == TaskType::UiDictionaryPreeditLookup ||
+            task.type == TaskType::UiCandidatePageFitted;
         if (candidateUiAction && !CandidateUiOwnerIsCurrent({task.client_id, task.activation_epoch}))
         {
             // The page was hidden or replaced after the click was posted.
@@ -570,6 +581,11 @@ void WorkerThread()
             break;
         }
 
+        case TaskType::ApplyCandidatePhonetics: {
+            ApplyCandidatePhonetics(std::move(task.phonetics));
+            break;
+        }
+
         case TaskType::StoreUserPhrase: {
             const auto session = task.phrase_session;
             if (task.session_pinyin_is_canonical)
@@ -760,7 +776,9 @@ void WorkerThread()
                     break;
                 }
             }
-            ProcessSelectionKey(0, task.client_id, task.activation_epoch, index_in_page);
+            ProcessSelectionKey(0, task.client_id, task.activation_epoch, index_in_page,
+                                /*count_first_word=*/true,
+                                /*resolve_live_page=*/task.type == TaskType::UiCommitCandidateAt);
             if (Global::MsgTypeToTsf == Global::DataFromServerMsgType::Normal)
             {
                 // The worker packet is the complete edit-session-owned commit
@@ -783,6 +801,11 @@ void WorkerThread()
                                                         Global::DataFromServerMsgTypeToTsfWorkerThread::CommitCandidate,
                                                         L"");
             }
+            break;
+        }
+
+        case TaskType::UiDictionaryPreeditLookup: {
+            HandleDictionaryPreeditLookupFromHook(task.client_id, task.activation_epoch);
             break;
         }
 
@@ -830,6 +853,7 @@ void WorkerThread()
 
             const bool english_candidate = item.source == CandidateSource::EnglishDictionary;
             const auto ranking_keys = RankingKeysForCandidate(item);
+            const FanyImeIpc::VariantChoiceScope variant_choice_scope = CurrentVariantChoiceScope(item);
             const std::string context_key = english_candidate ? EnglishRankingContextKey() : ranking_keys.first;
             const std::string entry_key = english_candidate ? item.pinyin : ranking_keys.second;
 
@@ -850,7 +874,7 @@ void WorkerThread()
                         CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(),
                         context_key, FanyImeIpc::FirstVariantsOnly(Global::candidate_ui.items), entry_key, item.word,
                         "pin", 1, 1, true, nullptr,
-                        item.scheme == SchemeType::Wubi ? user_dictionary::DictionaryKind::Wubi
+                        item.scheme == SchemeType::Wubi ? ConfiguredWubiDictionaryKind()
                                                         : user_dictionary::DictionaryKind::Pinyin);
             }
             else if (task.type == TaskType::UiDeleteCandidate)
@@ -871,7 +895,9 @@ void WorkerThread()
                     // not mistaken for an equally valid quanpin spelling.
                     const std::string delete_pinyin =
                         item.canonical_pinyin.empty() ? item.pinyin : item.canonical_pinyin;
-                    g_inputSession->remove_candidate(delete_pinyin, item.word, item.scheme);
+                    if (g_inputSession->remove_candidate(delete_pinyin, item.word, item.scheme) ==
+                        IInputSession::kRemoveCandidateSucceeded)
+                        ForgetTraditionalVariantsOfDeletedCandidate(variant_choice_scope, item);
                 }
             }
             else if (task.type == TaskType::UiFixCandidatePosition)
@@ -884,6 +910,11 @@ void WorkerThread()
                 (void)user_dictionary::clear_fixed_position(user_dictionary::default_user_db_path(), context_key,
                                                             entry_key, item.word);
             }
+            // 置顶、固定作用在整组写法上；用户点的若不是这组排第一的写法，按它改写法记录：点中的是地区默认
+            // 第一写法时删掉记录，否则记下它（见 RememberOrForgetSelectedTraditionalVariant）。下面紧接着重建列表，
+            // 要读到新记录，所以这里同步写。
+            if (task.type == TaskType::UiPinCandidate || task.type == TaskType::UiFixCandidatePosition)
+                RememberOrForgetSelectedTraditionalVariant(variant_choice_scope, item);
             g_inputSession->reset_cache();
             g_inputSession->recompute_candidates();
             PrepareCandidateList(task.client_id, task.activation_epoch);
@@ -940,7 +971,7 @@ void WorkerThread()
             g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
-            PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+            HideCandidatePages();
             break;
         }
 
@@ -960,18 +991,30 @@ void WorkerThread()
             g_language_cycle_parked_session.reset();
             g_inputSession = CreateInputSessionFromConfig();
             Global::candidate_ui.set_items({});
-            PostMessage(::global_hwnd, WM_HIDE_MAIN_WINDOW, 0, 0);
+            HideCandidatePages();
             break;
         }
 
         case TaskType::ApplyCandidatePageSize: {
             // 界面线程重读到配置变化后发来这个任务；字形也可能一起变了，那样就按新字形换写法。
             const int pageSize = GetConfiguredCandidatePageSize();
-            const bool page_size_changed = Global::candidate_ui.page_size != pageSize;
+            // 横排固定宽度量出的各页个数只对量的那套版式成立；宽度、字号、字体或皮肤变了就作废重量。
+            static std::string fit_layout_signature;
+            const std::string layout_signature = std::to_string(CandidateWindowFixedWidthActive()) + '|' +
+                                                 std::to_string(GetConfiguredCandidateWindowFixedWidthRatio()) + '|' +
+                                                 std::to_string(GetConfiguredCandidateFontSize()) + '|' +
+                                                 GetConfiguredCandidateEnglishFont() + '|' +
+                                                 GetConfiguredCandidateFont() + '|' + GetConfiguredCandidateSkin();
+            const bool fit_layout_changed = fit_layout_signature != layout_signature;
+            fit_layout_signature = layout_signature;
+            const bool page_size_changed = Global::candidate_ui.page_size != pageSize ||
+                                           (fit_layout_changed && !Global::candidate_ui.fitted_counts.empty());
             if (page_size_changed)
             {
                 Global::candidate_ui.page_size = pageSize;
                 Global::candidate_ui.page_index = 0;
+                Global::candidate_ui.selected_index_in_page = 0;
+                Global::candidate_ui.reset_page_fit();
                 Global::candidate_ui.clear_page();
             }
             if (RespellCandidatesForCharacterSetChange() || !page_size_changed)
@@ -1006,6 +1049,23 @@ void WorkerThread()
             {
                 session->reset_cache();
             }
+            break;
+        }
+
+        case TaskType::UiCandidatePageFitted: {
+            // 只认屏幕上那一版候选页的当前页：之后又按了键、翻了页或换了一批候选，这份回报就过期了，
+            // 新的那一版画出来时界面会再量一次。
+            if (!CandidateWindowFixedWidthActive() || IsUiLessMode() ||
+                task.fitted_generation != PublishedCandidatePageGeneration())
+                break;
+            auto &ui = Global::candidate_ui;
+            if (!ui.note_page_fit(task.fitted_page_start, task.fitted_count))
+                break;
+            CAND_DIAG_LOGF(L"candidate page fitted page={} start={} count={}", ui.page_index, task.fitted_page_start,
+                           task.fitted_count);
+            ui.clear_page();
+            // 页里只剩放得下的那几个，下一页箭头和数字键的范围都跟着变，重新发一版。
+            RefreshCandidatePageUi(true);
             break;
         }
 
@@ -1051,6 +1111,7 @@ void WorkerThread()
             }
             // Global::candidate_ui.items 是按键时那份副本，重查后必须重新组页才看得到新的
             // 整句候选；只刷新页面会把旧列表再发一遍。与 ApplyRescoredOrder 共用同一段。
+            // 首屏变了才请求重画，没变则不动界面。
             (void)RequeryCandidatesPreservingOnline(owner);
             break;
         }
@@ -1158,6 +1219,18 @@ void EnqueueEnglishCandidates(std::vector<WordItem> candidates, const std::strin
     pipe_queueCv.notify_one();
 }
 
+void EnqueueCandidatePhonetics(std::vector<EnglishIme::Phonetic> phonetics)
+{
+    {
+        std::lock_guard lock(queueMutex);
+        Task task;
+        task.type = TaskType::ApplyCandidatePhonetics;
+        task.phonetics = std::move(phonetics);
+        PushTaskLocked(std::move(task));
+    }
+    pipe_queueCv.notify_one();
+}
+
 void EnqueueCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge)
 {
     {
@@ -1252,28 +1325,32 @@ void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::strin
         return;
     }
     const auto &frequency = GetConfiguredFrequencyAdjustment();
-    DictionaryWriter().Post([english, wubi, context_key,
-                             candidates = FanyImeIpc::FirstVariantsOnly(
-                                 ranking_candidates ? *ranking_candidates : Global::candidate_ui.items),
-                             entry_key, word, mode = frequency.mode, linear_step = frequency.linear_step,
-                             trigger_count = frequency.trigger_count] {
-        if (english)
-        {
-            (void)user_dictionary::adjust_english_candidate_ranking(
-                CommonUtils::get_ime_data_path() + "\\english.db", user_dictionary::default_user_db_path(), context_key,
-                candidates, entry_key, word, mode, linear_step, trigger_count, false);
-            return;
-        }
-        bool ranking_changed = false;
-        (void)user_dictionary::adjust_candidate_ranking(
-            CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), context_key,
-            candidates, entry_key, word, mode, linear_step, trigger_count, false, &ranking_changed,
-            wubi ? user_dictionary::DictionaryKind::Wubi : user_dictionary::DictionaryKind::Pinyin);
-        if (ranking_changed)
-        {
-            EnqueueResetInputSessionCacheTask();
-        }
-    });
+    // 五笔有自己的调频方式（默认关闭）：盲打靠固定码序，选一次就挪位置会打乱记忆。码表版本在调用线程上取，
+    // 写线程里不再读配置。
+    const std::string mode = wubi ? frequency.wubi_mode : frequency.mode;
+    const user_dictionary::DictionaryKind kind =
+        wubi ? ConfiguredWubiDictionaryKind() : user_dictionary::DictionaryKind::Pinyin;
+    DictionaryWriter().Post(
+        [english, kind, context_key,
+         candidates =
+             FanyImeIpc::FirstVariantsOnly(ranking_candidates ? *ranking_candidates : Global::candidate_ui.items),
+         entry_key, word, mode, linear_step = frequency.linear_step, trigger_count = frequency.trigger_count] {
+            if (english)
+            {
+                (void)user_dictionary::adjust_english_candidate_ranking(
+                    CommonUtils::get_ime_data_path() + "\\english.db", user_dictionary::default_user_db_path(),
+                    context_key, candidates, entry_key, word, mode, linear_step, trigger_count, false);
+                return;
+            }
+            bool ranking_changed = false;
+            (void)user_dictionary::adjust_candidate_ranking(
+                CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), context_key,
+                candidates, entry_key, word, mode, linear_step, trigger_count, false, &ranking_changed, kind);
+            if (ranking_changed)
+            {
+                EnqueueResetInputSessionCacheTask();
+            }
+        });
 }
 
 void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,
@@ -1363,6 +1440,81 @@ void EnqueueLearnDateTimeOrderTask(const std::string &format_id, uint64_t client
         (void)user_dictionary::learn_date_time_selection(user_dictionary::default_user_db_path(), category, default_ids,
                                                          format_id, mode, linear_step, trigger_count);
     });
+}
+
+// 写法记录同样每次现查，写完不用清缓存。
+const FanyImeIpc::RememberedSpellingLookup &RememberedSpellingFromUserJournal()
+{
+    static const FanyImeIpc::RememberedSpellingLookup lookup =
+        FanyImeIpc::JournalRememberedSpellingLookup(user_dictionary::default_user_db_path);
+    return lookup;
+}
+
+namespace
+{
+// 默认写法不读字形设置，在 scope 判定要读写记录之后才算：同一次判定里字形只在 scope 里读一次。
+// 绝大多数选词选的是组首（variant_rank 为 0）或没有写法的候选，先用 item 自己的字段排除，
+// 免得每次选词都白过三遍 OpenCC。
+std::optional<FanyImeIpc::VariantChoiceChange> VariantChoiceChangeForSelected(
+    const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
+{
+    if (!FanyImeIpc::RemembersVariantChoices(scope) || !FanyImeIpc::SelectionCanChangeVariantChoice(item))
+        return std::nullopt;
+    return FanyImeIpc::VariantChoiceForSelection(scope, item, FanyImeIpc::VariantChoiceKeyOf(item),
+                                                 RegionalFirstSpellingOfText(item.word));
+}
+
+// 要不要入队取决于算出来有没有改动，所以 change 在入队之前算好。
+void EnqueueVariantChoiceWrite(FanyImeIpc::VariantChoiceChange change)
+{
+    DictionaryWriter().Post([change = std::move(change)] {
+        const bool written = FanyImeIpc::RetryVariantChoiceWrite([&change] {
+            return FanyImeIpc::WriteVariantChoiceChange(user_dictionary::default_user_db_path(), change);
+        });
+        if (!written)
+            CAND_DIAG_LOGF(L"traditional variant choice write failed attempts={}",
+                           FanyImeIpc::kVariantChoiceWriteAttempts);
+    });
+}
+} // namespace
+
+void EnqueueRememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope,
+                                                       const WordItem &item)
+{
+    if (auto change = VariantChoiceChangeForSelected(scope, item))
+        EnqueueVariantChoiceWrite(std::move(*change));
+}
+
+void EnqueueRememberOrForgetComposedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope,
+                                                       const FanyImeIpc::ComposedWordSegments &segments,
+                                                       const std::string &key, const std::string &word,
+                                                       const std::string &committed_text)
+{
+    if (!FanyImeIpc::RemembersVariantChoices(scope))
+        return;
+    if (auto change = FanyImeIpc::VariantChoiceForComposedWord(scope, segments, key, word, committed_text,
+                                                               RegionalFirstSpellingOfText(word)))
+        EnqueueVariantChoiceWrite(std::move(*change));
+}
+
+// 同步路径不重试：紧接着要重建列表，重试只会把按键线程拖得更久。失败时与异步路径一样留一条诊断，
+// 否则用户看到的只是「点了置顶 / 固定，写法顺序没变」。
+void RememberOrForgetSelectedTraditionalVariant(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
+{
+    const auto change = VariantChoiceChangeForSelected(scope, item);
+    if (!change)
+        return;
+    if (!FanyImeIpc::WriteVariantChoiceChange(user_dictionary::default_user_db_path(), *change))
+        CAND_DIAG_LOGF(L"traditional variant choice write failed (pin/fix)");
+}
+
+void ForgetTraditionalVariantsOfDeletedCandidate(const FanyImeIpc::VariantChoiceScope &scope, const WordItem &item)
+{
+    const auto word = FanyImeIpc::VariantChoiceWordToForgetOnDelete(scope, item);
+    if (!word)
+        return;
+    if (!user_dictionary::forget_traditional_variants_of_word(user_dictionary::default_user_db_path(), *word))
+        CAND_DIAG_LOGF(L"traditional variant choice forget failed (delete)");
 }
 
 void EnqueueLearnEnteredEnglishWordTask(const std::string &word)
@@ -1512,6 +1664,27 @@ void EnqueueCandidateUiCommitAt(int absolute_index, std::wstring expected_text)
     pipe_queueCv.notify_one();
 }
 
+void EnqueueDictionaryPreeditLookup()
+{
+    if (!pipe_running)
+    {
+        return;
+    }
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner)
+    {
+        return;
+    }
+    {
+        std::lock_guard lock(queueMutex);
+        Task task;
+        task.type = TaskType::UiDictionaryPreeditLookup;
+        task.client_id = owner.client_id;
+        task.activation_epoch = owner.activation_epoch;
+        PushTaskLocked(std::move(task));
+    }
+    pipe_queueCv.notify_one();
+}
 void EnqueueCandidateUiExpand()
 {
     if (!pipe_running)
@@ -1537,6 +1710,42 @@ void EnqueueCandidateUiExpand()
         task.type = TaskType::UiExpandCandidates;
         task.client_id = owner.client_id;
         task.activation_epoch = owner.activation_epoch;
+        PushTaskLocked(std::move(task));
+    }
+    pipe_queueCv.notify_one();
+}
+
+void EnqueueCandidatePageFitted(uint64_t page_generation, int page_start, int count)
+{
+    if (!pipe_running || page_generation == 0 || count <= 0)
+    {
+        return;
+    }
+    const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
+    if (!owner)
+    {
+        return;
+    }
+    {
+        std::lock_guard lock(queueMutex);
+        // 接连几帧的回报只有最后一份有用。
+        std::queue<Task> &queue = TaskQueueFor(TaskType::UiCandidatePageFitted);
+        if (!queue.empty() && queue.back().type == TaskType::UiCandidatePageFitted &&
+            queue.back().client_id == owner.client_id && queue.back().activation_epoch == owner.activation_epoch &&
+            queue.back().enqueue_sequence == lastTaskSequence)
+        {
+            queue.back().fitted_generation = page_generation;
+            queue.back().fitted_page_start = page_start;
+            queue.back().fitted_count = count;
+            return;
+        }
+        Task task;
+        task.type = TaskType::UiCandidatePageFitted;
+        task.client_id = owner.client_id;
+        task.activation_epoch = owner.activation_epoch;
+        task.fitted_generation = page_generation;
+        task.fitted_page_start = page_start;
+        task.fitted_count = count;
         PushTaskLocked(std::move(task));
     }
     pipe_queueCv.notify_one();

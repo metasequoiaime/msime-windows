@@ -329,7 +329,9 @@ jobs:
       - name: Compile the installer
         shell: pwsh
         working-directory: installer
-        run: pwsh -File ./Compile-Installer.ps1
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.display }}
+        run: pwsh -File ./Compile-Installer.ps1 -TargetVersion $env:TARGET_VERSION
       - name: Sign the installer
         shell: pwsh
         working-directory: installer

@@ -7,6 +7,7 @@
 #include <utf8.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <sstream>
 #include <vector>
 
@@ -23,6 +24,31 @@ const std::string &PreferredWubiCode(const WubiCharCodes &char_codes, const std:
     return found == char_codes.end() ? kEmpty : found->second;
 }
 } // namespace
+
+std::vector<int> MapImportFrequencies(const std::vector<std::optional<double>> &frequencies)
+{
+    const auto usable = [](const std::optional<double> &value) { return value && std::isfinite(*value); };
+    std::vector<double> distinct;
+    for (const auto &value : frequencies)
+        if (usable(value))
+            distinct.push_back(*value);
+    std::sort(distinct.begin(), distinct.end());
+    distinct.erase(std::unique(distinct.begin(), distinct.end()), distinct.end());
+
+    std::vector<int> weights(frequencies.size(), kMinImportWeight);
+    if (distinct.size() < 2)
+        return weights;
+    const double steps = static_cast<double>(distinct.size() - 1);
+    for (size_t i = 0; i < frequencies.size(); ++i)
+    {
+        if (!usable(frequencies[i]))
+            continue;
+        const auto rank = std::lower_bound(distinct.begin(), distinct.end(), *frequencies[i]) - distinct.begin();
+        weights[i] =
+            kMinImportWeight + static_cast<int>(std::lround((kMaxImportWeight - kMinImportWeight) * (rank / steps)));
+    }
+    return weights;
+}
 
 std::string ComposeWubiPhraseCode(const std::string &word, const WubiCharCodes &char_codes)
 {

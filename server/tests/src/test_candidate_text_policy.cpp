@@ -13,6 +13,15 @@ TEST_CASE(quick_phrase_display_keeps_first_line_and_marks_the_rest)
     REQUIRE_EQ(FanyImeIpc::QuickPhraseDisplayText(std::string("\nabc")), std::string(" \xE2\x86\xB5"));
 }
 
+TEST_CASE(radical_reading_annotation_splits_multiple_readings)
+{
+    REQUIRE_EQ(FanyImeIpc::ReadingAnnotation("jīng"), std::string("jīng"));
+    REQUIRE_EQ(FanyImeIpc::ReadingAnnotation("zhǎng,cháng"), std::string("zhǎng / cháng"));
+    // 空串与空段不产生多余分隔符：没有读音的候选不显示注解。
+    REQUIRE_EQ(FanyImeIpc::ReadingAnnotation(""), std::string(""));
+    REQUIRE_EQ(FanyImeIpc::ReadingAnnotation(",zhǎng,"), std::string("zhǎng"));
+}
+
 TEST_CASE(candidate_text_policy_extracts_first_and_last_han_character)
 {
     const std::string candidate =

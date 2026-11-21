@@ -64,11 +64,19 @@ const char *name(PersonalDictionaryKind kind)
         return "english";
     case PersonalDictionaryKind::QuickPhrase:
         return "quick";
+    case PersonalDictionaryKind::Wubi98:
+        return "wubi98";
+    case PersonalDictionaryKind::WubiXsj:
+        return "wubixsj";
     }
     throw std::runtime_error("Invalid dictionary kind");
 }
 PersonalDictionaryKind kind(const std::string &value)
 {
+    if (value == "wubi98")
+        return PersonalDictionaryKind::Wubi98;
+    if (value == "wubixsj")
+        return PersonalDictionaryKind::WubiXsj;
     if (value == "pinyin")
         return PersonalDictionaryKind::Pinyin;
     if (value == "wubi")

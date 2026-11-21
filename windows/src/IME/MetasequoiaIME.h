@@ -55,6 +55,8 @@ const DWORD WM_AsyncCycleInputMode = WM_USER + 29;
 const DWORD WM_SyncCapsLockPunctuation = WM_USER + 30;
 const DWORD WM_ApplyUiLessCandidates = WM_USER + 31;
 const DWORD WM_ApplyCapsLockEdge = WM_USER + 32;
+// Worker CancelComposition: drop the composition without committing, as Esc does.
+const DWORD WM_CancelServerComposition = WM_USER + 33;
 constexpr ULONG_PTR SMART_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535050u;
 constexpr ULONG_PTR PAIRED_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535051u;
 // Synthetic input that this tip generates carries a marker meaning "this tip
@@ -754,6 +756,9 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     BOOL _InitThreadMgrEventSink();
     void _UninitThreadMgrEventSink();
     void _HandleFocusedContextStackChange(_In_opt_ ITfContext *changedContext);
+    // Reports the focused document to the Server (FocusFieldState). A non-NULL
+    // document other than the last one, or contextChanged, is a new field.
+    void _ReportFocusField(_In_opt_ ITfDocumentMgr *documentMgr, bool editable, bool contextChanged);
 
     BOOL _InitTextEditSink(_In_opt_ ITfDocumentMgr *pDocMgr);
 
@@ -896,6 +901,10 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     bool _pairedCaretRetryTimerActive = false;
 
     ITfDocumentMgr *_pDocMgrLastFocused;
+    // Last non-NULL focused document, owned. Identifies the field reported to the
+    // Server (UpdateNamedpipeFocusField): focus passing through NULL and back to
+    // it (Win+., Excel cell edit) is the same field, not a new one.
+    ITfDocumentMgr *_pFocusFieldDocMgr = nullptr;
 
     ITfContext *_pContext;
 
@@ -905,6 +914,15 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     HWND _msgWndHandle;
     HKEY _themeRegKey;
     HANDLE _themeRegEvent;
+    // Accent color changes live under different keys than the theme values;
+    // watched alongside _themeRegKey so recoloring the taskbar also refreshes
+    // the language bar icons. IsTaskbarDark reads AccentColorMenu from
+    // Explorer\Accent first and falls back to DWM\AccentColor, so both keys
+    // are watched. Optional: the watcher still runs without them.
+    HKEY _dwmRegKey;
+    HANDLE _dwmRegEvent;
+    HKEY _accentRegKey;
+    HANDLE _accentRegEvent;
     std::thread *_pThemeWatcherThread;
     std::atomic<bool> _stopThemeWatcher;
     std::thread *_pIpcThread;

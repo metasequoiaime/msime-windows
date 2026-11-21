@@ -4,6 +4,7 @@
 #include "engine/contracts/assets/assets.h"
 #include "engine/core/data_path.h"
 #include "engine/core/sentence_association_options.h"
+#include "engine/core/wubi_profile.h"
 #include "engine/local_modes/radical_query.h"
 #include "engine/quanpin/quanpin_utils.h"
 #include "session/input_cadence.h"
@@ -37,13 +38,10 @@ std::string ResolveCollocationModelPath(const std::string &model_id)
 
 std::string ResolveNeuralDesktopModelPath()
 {
-    const std::filesystem::path file = neural_model::ModelFile();
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(file, error) || error)
-    {
-        return {};
-    }
-    return metasequoia::path_to_utf8(file);
+    // 新版没下载时用旧版 model-v1：老用户升级后不会凭空少一个模型。路径变了引擎就换模型
+    // （LazySentenceModel 按路径缓存），所以新版下载落位后下一次按键即用上，不必重启。
+    const std::filesystem::path file = neural_model::ResolveUsableModelFile();
+    return file.empty() ? std::string() : metasequoia::path_to_utf8(file);
 }
 
 std::string ResolveLatticeLanguageModelPath()
@@ -159,6 +157,9 @@ void EngineInputSession::ApplyConfiguration()
     metasequoia::WubiInputOptions wubi_options;
     wubi_options.mixed_pinyin = GetConfiguredWubiMixedPinyin();
     wubi_options.z_wildcard = GetConfiguredWubiZMode() == "wildcard";
+    // 码表版本：配置读入时已把不认识的值归为 wubi86，这里的回退只防万一。
+    wubi_options.profile =
+        metasequoia::wubi_profile_from_name(GetConfiguredWubiSchema()).value_or(metasequoia::WubiProfile::Wubi86);
     session_.set_wubi_input_options(wubi_options);
 }
 
@@ -419,9 +420,11 @@ IInputSession::CreatingWordProgress EngineInputSession::update_creating_word_pro
     return session_.update_creating_word_progress(current_pinyin, current_word, selected_word, selection_transition);
 }
 
-std::vector<IInputSession::WordItem> EngineInputSession::query_radical(const std::string &code) const
+std::vector<IInputSession::WordItem> EngineInputSession::query_radical(const std::string &code, SchemeType scheme,
+                                                                       const ShuangpinProfile &profile) const
 {
-    return metasequoia::local_modes::query_radical(paths_.resource(metasequoia::assets::radical_decomposition), code);
+    return metasequoia::local_modes::query_radical(paths_.resource(metasequoia::assets::radical_decomposition), code,
+                                                   scheme, profile);
 }
 
 std::string EngineInputSession::get_helpcode_annotation(const std::string &word, bool uppercase_all) const

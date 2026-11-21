@@ -10,6 +10,9 @@
 #include <utility>
 #include "ipc.h"
 #include "ipc/candidate_selection_policy.h"
+#include "ipc/candidate_requery_policy.h"
+#include "ipc/candidate_rescore_budget.h"
+#include "ipc/translation_page_visibility.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/traditional_variant_expansion_policy.h"
 #include "global/globals.h"
@@ -19,9 +22,12 @@
 #include "cloud/translation_gloss.h"
 #include "ai/ai_assistant.h"
 #include "ai/jev_candidate_policy.h"
+#include "english/english_candidate_text_policy.h"
 #include "english/english_ime.h"
 #include "config/ime_config.h"
 #include "mixed/mixed_candidates.h"
+#include "utils/common_utils.h"
+#include "log/candidate_diag_log.h"
 
 using namespace event_listener_detail;
 
@@ -30,6 +36,13 @@ namespace
 std::string g_jev_word;
 std::string g_jev_identity;
 uint64_t g_jev_generation = 0;
+// 同一输入的重排回包会连着来：每次都在任务线程上重算整页，但第一页通常两三批就定了。给每个输入一个
+// 上限，超出的批次只让引擎缓存变新，下一键自然读到；组合边界（提交/隐藏）要重置，避免同一串重新输入
+// 时继承上一段用掉的额度。
+FanyImeIpc::RescoreRequeryBudget g_rescore_requery_budget;
+// ui.items 里的混输行属于哪次输入。不合进来的重建会把这些行一并丢掉，所以行在、且这里等于当前输入，
+// 就说明它们是为当前输入查出来的。
+std::string g_mixed_rows_input;
 } // namespace
 
 namespace event_listener_detail
@@ -44,6 +57,11 @@ void ClearJevSelection()
 const std::string &JevSelectionWord()
 {
     return g_jev_word;
+}
+
+const std::string &MixedRowsInput()
+{
+    return g_mixed_rows_input;
 }
 
 void RefreshJevSelection()
@@ -128,13 +146,21 @@ void ApplyCloudCandidate(const std::string &candidate, const std::string &pinyin
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
 }
 
 bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner)
 {
     const std::vector<WordItem> before = g_inputSession->get_candidates();
+    const int live_page_size =
+        Global::candidate_ui.page_size > 0 ? Global::candidate_ui.page_size : GetConfiguredCandidatePageSize();
+    const size_t page_size = static_cast<size_t>((std::max)(live_page_size, 1));
+    const auto first_page = [page_size](const std::vector<WordItem> &items) {
+        const size_t count = (std::min)(page_size, items.size());
+        return std::vector<WordItem>(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(count));
+    };
+    const std::vector<WordItem> before_page = first_page(Global::candidate_ui.items);
     // 云/AI 候选只活在 series cache 里，reset_cache 会把它们一起清掉，而它们的请求早已回来、不会
     // 再发一次——不补回来，重查一落地它们就从列表里消失了。重查不推进在线请求的 generation，
     // 所以用当前的 online_query 原样回填即可；回填时若同一句已被整句候选占了，引擎自己会拒绝。
@@ -154,16 +180,14 @@ bool RequeryCandidatesPreservingOnline(const FanyImeIpc::CandidateUiOwner &owner
                 g_inputSession->apply_online_candidate(*query, item.word, item.source);
         }
     }
-    const std::vector<WordItem> &after = g_inputSession->get_candidates();
-    if (after.size() == before.size() &&
-        std::equal(before.begin(), before.end(), after.begin(),
-                   [](const WordItem &a, const WordItem &b) { return a.word == b.word; }))
-        return false;
-
+    // 首屏没变就不请求重画，但内部列表仍然要更新：用户马上翻页时读的是 ui.items，不能让他看到旧的后几页。
     PrepareCandidateList(owner.client_id, owner.activation_epoch);
-    RequestShowCandidateWindow();
+    const std::vector<WordItem> after_page = first_page(Global::candidate_ui.items);
+    const bool visible_changed = FanyImeIpc::VisibleCandidatePageChanged(before_page, after_page, page_size);
+    if (visible_changed)
+        RequestShowCandidateWindowDeferred();
     PushUiLessCandidatesToOwner();
-    return true;
+    return visible_changed;
 }
 
 // 候选列表当初是按词格的静态顺序发出去的，因为打分那会儿还没算完。现在算完了：把引擎的候选缓存
@@ -184,7 +208,22 @@ void ApplyRescoredOrder()
     const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
     if (!owner || !IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
         return;
+    const std::string input = g_inputSession->get_pinyin_sequence_with_cases();
+    if (!g_rescore_requery_budget.TryAcquire(input))
+    {
+        if (!input.empty())
+        {
+            CAND_DIAG_LOGF(L"rescore requery capped count={} input_units={}", g_rescore_requery_budget.count(),
+                           input.size());
+        }
+        return;
+    }
     (void)RequeryCandidatesPreservingOnline(owner);
+}
+
+void ResetRescoreRequeryBudget()
+{
+    g_rescore_requery_budget.Reset();
 }
 
 void ApplyAiCandidate(const std::string &candidate, const std::string &identity, uint64_t generation,
@@ -220,7 +259,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
         g_jev_word = candidate;
         g_jev_identity = identity;
         g_jev_generation = generation;
-        RefreshCandidatePageUi(true);
+        RefreshCandidatePageUiAsync();
         PushUiLessCandidatesToOwner();
         return;
     }
@@ -252,7 +291,7 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
 }
 
@@ -297,11 +336,25 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
                          candidates.end());
         candidates.insert(candidates.begin(), WordItem("", input, 0, CandidateSource::Generated));
     }
-    else if (candidates.empty() && !input.empty())
+    else if (!input.empty() && std::none_of(candidates.begin(), candidates.end(), [](const WordItem &item) {
+                 return item.source == CandidateSource::EnglishDictionary || item.english_phrase;
+             }))
     {
         // A raw fallback is selectable, but it is not an english.db row
         // and therefore must not participate in dictionary mutations.
-        candidates.emplace_back("", input, 0, CandidateSource::Generated);
+        // 前缀查不到词时后台给的是纠错候选：原文仍排第一，空格上屏的是用户敲的字，改正要自己选。
+        candidates.insert(candidates.begin(), WordItem("", input, 0, CandidateSource::Generated));
+    }
+    // 显示与上屏跟着用户敲的大小写走（Tes → Test、NA → NASA）。word 仍是词库写法，调频、删词、
+    // 固定排位都按它找行；原文那一行本来就是用户敲的字，不用改。
+    for (auto &candidate : candidates)
+    {
+        if (candidate.source == CandidateSource::Generated && candidate.corrected_from.empty() &&
+            !candidate.english_phrase)
+            continue;
+        std::string cased = EnglishIme::WithTypedCase(input, candidate.word);
+        if (cased != candidate.word)
+            candidate.output_text = std::move(cased);
     }
     items = std::move(candidates);
     Global::candidate_ui.item_total_count = static_cast<int>(items.size());
@@ -310,14 +363,56 @@ void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string 
     Global::candidate_ui.selection_started = false;
     Global::candidate_ui.clear_page();
     g_dedicated_english_answer_pending = false;
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
+}
+
+namespace
+{
+std::string EnglishCandidateDetailKey(const WordItem &item)
+{
+    if (item.source != CandidateSource::EnglishDictionary && item.source != CandidateSource::Generated)
+        return {};
+    if (item.english_phrase)
+        return EnglishIme::PhraseDetailKey(item.word);
+    return EnglishIme::DetailKey(item.source == CandidateSource::EnglishDictionary && !item.pinyin.empty(), item.pinyin,
+                                 item.word);
+}
+
+} // namespace
+
+std::string DrDictDockWord(const WordItem &highlighted)
+{
+    // 只在英文候选模式、开了词典联动和停靠弹窗时；UILess 宿主自己画候选，没有可贴的候选窗。
+    if (!g_english_input_mode || !GetConfiguredDrDictEnglishPopup() || IsUiLessMode() || IsCandidateSubPageActive())
+        return {};
+    return EnglishCandidateDetailKey(highlighted);
+}
+
+void ApplyCandidatePhonetics(std::vector<EnglishIme::Phonetic> phonetics)
+{
+    // 这一批答复回来了，之后组页时还缺的（翻页、换词）可以再请求。
+    g_candidate_phonetics_request.clear();
+    bool found_any = false;
+    for (auto &phonetic : phonetics)
+    {
+        if (g_candidate_phonetics.size() >= kMaxCandidatePhonetics &&
+            g_candidate_phonetics.find(phonetic.term) == g_candidate_phonetics.end())
+            g_candidate_phonetics.clear();
+        found_any = found_any || !phonetic.ipa.empty();
+        g_candidate_phonetics[std::move(phonetic.term)] = std::move(phonetic.ipa);
+    }
+    // 只请求过当前页缺的词，查到了就重组这一页把音标画上；一个都没有时画面不会变。
+    if (!found_any || g_inputSession == nullptr || Global::candidate_ui.items.empty() || IsUiLessMode() ||
+        IsCandidateSubPageActive())
+        return;
+    RefreshCandidatePageUiAsync();
 }
 
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge)
 {
-    if (!EnglishIme::IsTranslationCurrent(generation) || !GetConfiguredCandidateTranslationsEnabled() ||
-        IsUiLessMode() || g_candidate_translation_signature.empty() || IsCandidateSubPageActive() ||
+    if (!EnglishIme::IsTranslationCurrent(generation) || !AnyCandidateTranslationsEnabled() || IsUiLessMode() ||
+        g_candidate_translation_signature.empty() || IsCandidateSubPageActive() ||
         (g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji))
         return;
 
@@ -327,6 +422,7 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
     // Most lookups on a new keystroke hit words the previous page already
     // glossed; repainting for them cost a full candidate frame per keystroke.
     bool glosses_changed = false;
+    std::vector<std::string> changed_keys;
     for (auto &result : results)
     {
         std::string gloss = std::move(result.gloss);
@@ -347,13 +443,17 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
                 g_candidate_translation_glosses.clear();
             g_candidate_translation_glosses[identity] = {std::move(gloss), from_dictionary};
             glosses_changed = true;
+            changed_keys.push_back(result.key);
         }
         else if (!merge)
         {
             // The authoritative lookup found nothing: drop what an earlier
             // configuration may have cached for this word.
             if (g_candidate_translation_glosses.erase(identity) > 0)
+            {
                 glosses_changed = true;
+                changed_keys.push_back(result.key);
+            }
             const bool cloud_translatable = result.direction == EnglishIme::TranslationDirection::EnglishToChinese
                                                 ? CloudTranslation::IsCloudTranslatableEnglish(result.key)
                                                 : CloudTranslation::IsCloudTranslatableChinese(result.key);
@@ -362,8 +462,15 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
         }
     }
     const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
-    if (glosses_changed && owner && IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
-        RefreshCandidatePageUi(true);
+    std::vector<std::string> page_words;
+    page_words.reserve(Global::candidate_ui.page_words.size());
+    for (const std::wstring &word : Global::candidate_ui.page_words)
+        page_words.push_back(wstring_to_string(word));
+    const bool visible_gloss_changed =
+        page_words.empty() || FanyImeIpc::AnyTranslatedKeyOnPage(page_words, changed_keys);
+    if (glosses_changed && visible_gloss_changed && owner &&
+        IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
+        RefreshCandidatePageUiAsync();
     if (!merge)
         CloudTranslation::RequestMisses(std::move(misses), generation);
 }
@@ -424,6 +531,7 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
     auto &items = Global::candidate_ui.items;
     const size_t size_before = items.size();
     bool changed = false;
+    g_mixed_rows_input = input;
 
     if (GetConfiguredDateTimeCandidatesEnabled())
     {
@@ -492,7 +600,7 @@ void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &inp
     Global::candidate_ui.page_index = 0;
     Global::candidate_ui.select_first_on_page();
     Global::candidate_ui.clear_page();
-    RefreshCandidatePageUi(true);
+    RefreshCandidatePageUiAsync();
     PushUiLessCandidatesToOwner();
 }
 } // namespace FanyNamedPipe

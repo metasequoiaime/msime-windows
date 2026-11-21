@@ -43,6 +43,7 @@ set(METASEQUOIA_IME_ENGINE_SOURCES
     direct_helpcode/direct_resolver.cpp
     direct_helpcode/spelling_graph.cpp
     english/english_dictionary.cpp
+    english/english_spelling.cpp
     japanese/japanese_matrix_search.cpp
     japanese/japanese_sentence_decoder.cpp
     japanese/romaji_converter.cpp
@@ -257,6 +258,14 @@ if(BUILD_TESTING)
     target_link_libraries(test_neural_sentence PRIVATE MetasequoiaIme::Engine)
     add_test(NAME neural_sentence COMMAND test_neural_sentence)
 
+    # 不依赖发布模型：内存里拼一个极小模型，对拍两种 GELU 与 numpy 参考值。
+    add_executable(test_neural_model_format tests/src/test_neural_model_format.cpp)
+    if(MSVC)
+        target_compile_options(test_neural_model_format PRIVATE /utf-8)
+    endif()
+    target_link_libraries(test_neural_model_format PRIVATE MetasequoiaIme::Engine)
+    add_test(NAME neural_model_format COMMAND test_neural_model_format)
+
     if(MSIME_NEURAL_AVX2)
         add_executable(test_neural_int8_linear tests/src/test_neural_int8_linear.cpp)
         target_link_libraries(test_neural_int8_linear PRIVATE MetasequoiaIme::Engine)
@@ -324,6 +333,7 @@ if(BUILD_TESTING)
     if(MSVC)
         target_compile_options(test_prefix_completion PRIVATE /utf-8)
     endif()
+    target_compile_definitions(test_prefix_completion PRIVATE METASEQUOIA_TEST_PINYIN_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/googlepinyinime-rev/data/dict_pinyin.dat")
     target_link_libraries(test_prefix_completion PRIVATE MetasequoiaIme::Engine)
     add_test(NAME prefix_completion COMMAND test_prefix_completion)
 

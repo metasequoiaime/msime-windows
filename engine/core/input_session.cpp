@@ -646,7 +646,8 @@ void InputSession::set_wubi_input_options(metasequoia::WubiInputOptions options)
     // Server 每次击键都重读配置并调用这里；值没变就不能重建候选，否则五笔会话每键会多跑一轮
     // 码表（混输时再加一轮拼音）查询，而那次结果紧接着被真正按键的重建覆盖。
     const auto &current = engine_.wubi_input_options();
-    if (current.mixed_pinyin == options.mixed_pinyin && current.z_wildcard == options.z_wildcard)
+    if (current.mixed_pinyin == options.mixed_pinyin && current.z_wildcard == options.z_wildcard &&
+        current.profile == options.profile)
     {
         return;
     }
@@ -971,10 +972,13 @@ KeyResult InputSession::handle_local_character(char character)
         local_preedit_.push_back(character);
         return {true, std::nullopt, update_local_candidates()};
     }
-    // 快捷短语码与 U 模式的部件拼音连写都只收小写 a-z：其它键吞掉、预编辑不变。
+    // 快捷短语码与 U 模式的部件拼音连写都只收小写 a-z：其它键吞掉、预编辑不变。双拼下 U 模式打的是
+    // 部件的双拼码，用 ; 当 ing 韵母的方案还收 ;。
     if (local_input_mode_ == LocalInputMode::QuickPhrase || local_input_mode_ == LocalInputMode::Radical)
     {
-        if (character < 'a' || character > 'z')
+        const bool radical_semicolon = local_input_mode_ == LocalInputMode::Radical && character == ';' &&
+                                       accepts_local_mode_semicolon_at(local_preedit_, local_preedit_.size());
+        if ((character < 'a' || character > 'z') && !radical_semicolon)
         {
             return {true, std::nullopt, std::nullopt};
         }
@@ -983,13 +987,16 @@ KeyResult InputSession::handle_local_character(char character)
     }
     if (local_input_mode_ == LocalInputMode::DateTime)
     {
-        // 唤醒词只收小写字母；数字开头的指定日期时间收数字、/ 和 :，形状与 TSF、Server 共用
-        // contracts/date_time_input.h。
-        const bool keyword_letter = character >= 'a' && character <= 'z' &&
-                                    std::all_of(local_preedit_.begin() + 1, local_preedit_.end(),
-                                                [](char ch) { return ch >= 'a' && ch <= 'z'; });
-        if (!keyword_letter && !FanyImeDateTimeInput::AcceptsAt(local_preedit_.data(), local_preedit_.size(),
-                                                                local_preedit_.size(), character))
+        // 唤醒词只收小写字母（双拼的整拼还收 ing 韵母 ;，微软 xingqi 打成 x;qi）；数字开头的指定日期时间
+        // 收数字、/ 和 :，形状与 TSF、Server 共用 contracts/date_time_input.h。
+        const bool keyword_so_far = std::all_of(local_preedit_.begin() + 1, local_preedit_.end(),
+                                                [](char ch) { return (ch >= 'a' && ch <= 'z') || ch == ';'; });
+        const bool keyword_key =
+            keyword_so_far &&
+            ((character >= 'a' && character <= 'z') ||
+             (character == ';' && accepts_local_mode_semicolon_at(local_preedit_, local_preedit_.size())));
+        if (!keyword_key && !FanyImeDateTimeInput::AcceptsAt(local_preedit_.data(), local_preedit_.size(),
+                                                             local_preedit_.size(), character))
         {
             return {true, std::nullopt, std::nullopt};
         }
@@ -1407,7 +1414,7 @@ std::optional<std::string> InputSession::adjust_pinyin_candidate_frequency(const
     const bool pinyin_candidate = is_wubi() && !wubi;
     std::string context_key =
         super_jianpin ? local_modes::jianpin_ranking_context(local_preedit_.substr(1), scheme(), shuangpin_profile_)
-        : wubi        ? engine_.get_request().raw_input
+        : wubi        ? position_context(false, true)
         : pinyin_candidate ? position_context(false, false)
                            : engine_.get_request().normalized_segmentation;
     if (!super_jianpin && context_key.empty())
@@ -1422,7 +1429,8 @@ std::optional<std::string> InputSession::adjust_pinyin_candidate_frequency(const
         path_to_utf8(paths_.dictionary(assets::main_dictionary)), path_to_utf8(paths_.user(assets::user_journal)),
         context_key, ranked, entry_key, selected.word, frequency_mode_name(options.mode), options.linear_step,
         options.trigger_count, force_top, &ranking_changed,
-        (wubi && !super_jianpin) ? user_dictionary::DictionaryKind::Wubi : user_dictionary::DictionaryKind::Pinyin);
+        (wubi && !super_jianpin) ? user_dictionary::wubi_dictionary_kind(wubi_input_options().profile)
+                                 : user_dictionary::DictionaryKind::Pinyin);
     if (!adjusted)
     {
         return std::string("Unable to persist candidate frequency adjustment.");

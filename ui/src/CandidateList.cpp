@@ -22,8 +22,10 @@ using namespace controls_detail;
 
 namespace
 {
-constexpr D2D1_DRAW_TEXT_OPTIONS kColorClipTextOptions =
-    static_cast<D2D1_DRAW_TEXT_OPTIONS>(D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+// NO_SNAP: SnapTextOriginToPixelGrid already put the baseline on a whole pixel. D2D's own snap would add
+// a sub-pixel offset that depends on the composition atlas translation.
+constexpr D2D1_DRAW_TEXT_OPTIONS kColorClipTextOptions = static_cast<D2D1_DRAW_TEXT_OPTIONS>(
+    D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_NO_SNAP);
 
 constexpr float kCandidateItemGap = 1.0f;
 
@@ -161,6 +163,48 @@ const CandidateList::Item *CandidateList::GetItem(size_t index) const
     return index < items_.size() ? &items_[index] : nullptr;
 }
 
+size_t CandidateList::GetItemCount() const
+{
+    return items_.size();
+}
+
+const CandidateList::Appearance &CandidateList::GetAppearance() const
+{
+    return appearance_;
+}
+
+float CandidateList::UniformRowHeight() const
+{
+    // 参照串只含汉字与拉丁字母：行高跟字体走，不跟某个候选里的 emoji 或冷僻字回落字体走。
+    const float text = MeasureTextHeight(L"国Ag", appearance_.fontSize, 4096.0f);
+    const float annotation = MeasureTextHeight(L"Ag", appearance_.annotationFontSize, 4096.0f);
+    return std::max({appearance_.itemHeight, text, annotation});
+}
+
+size_t CandidateList::CountItemsOnFirstLine() const
+{
+    if (itemGeometry_.size() != items_.size() || itemGeometry_.empty())
+        return items_.size();
+    const float firstLineY = itemGeometry_.front().bounds.y;
+    size_t count = 0;
+    while (count < itemGeometry_.size() && itemGeometry_[count].bounds.y == firstLineY)
+        ++count;
+    return count;
+}
+
+void CandidateList::TruncateItems(size_t count)
+{
+    if (count >= items_.size())
+        return;
+    items_.resize(count);
+    itemGeometry_.clear();
+    if (selectedIndex_ >= items_.size() && !items_.empty())
+        selectedIndex_ = items_.size() - 1;
+    hoveredIndex_ = static_cast<size_t>(-1);
+    pressedIndex_ = static_cast<size_t>(-1);
+    InvalidateMeasure();
+}
+
 void CandidateList::SetAppearance(Appearance appearance)
 {
     appearance_ = appearance;
@@ -254,7 +298,11 @@ ComPtr<IDWriteTextLayout> CandidateList::TextLayoutFor(IDWriteFactory *factory, 
     }
     ComPtr<IDWriteTextLayout> layout = CreateCachedTextLayout(
         factory, fontFamily, text, fontSize, DWRITE_FONT_WEIGHT_NORMAL, width, height, DWRITE_TEXT_ALIGNMENT_LEADING,
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_WORD_WRAPPING_WRAP, appearance_.fallbackFontFamilies);
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+        // 定高行只有一行，折行的第二行会被裁掉一半，不如在行尾截断。
+        appearance_.uniformRowHeight && orientation_ == Orientation::Vertical ? DWRITE_WORD_WRAPPING_NO_WRAP
+                                                                              : DWRITE_WORD_WRAPPING_WRAP,
+        appearance_.fallbackFontFamilies);
     if (!layout)
     {
         return {};
@@ -351,6 +399,31 @@ CandidateList::ItemGeometry CandidateList::MeasureItem(size_t index, float width
     const float textX = labelX + labelW + appearance_.labelGap;
     const float contentWidth = std::max(width - textX - appearance_.contentPadRight, 1.0f);
     const float textW = std::min(std::max(EstimateTextWidth(item.text, appearance_.fontSize), 8.0f), contentWidth);
+    if (appearance_.uniformRowHeight && orientation_ == Orientation::Vertical)
+    {
+        // 定高行：文字、辅助码、翻译都排在同一行里，行高不看内容；放不下的部分在行内裁掉。
+        const float rowH = UniformRowHeight();
+        geometry.label = {labelX, 0.0f, labelW, rowH};
+        geometry.text = {textX, 0.0f, textW, rowH};
+        float lineEnd = textW;
+        if (!item.annotation.empty())
+        {
+            const float annotationW = std::min(EstimateTextWidth(item.annotation, appearance_.annotationFontSize),
+                                               std::max(contentWidth - lineEnd - 4.0f, 0.0f));
+            geometry.annotation = {textX + lineEnd + 4.0f, 0.0f, annotationW, rowH};
+            lineEnd += 4.0f + annotationW;
+        }
+        if (!item.translation.empty())
+        {
+            const float fontSize = appearance_.fontSize * 0.78f;
+            const float gap = appearance_.fontSize * 0.65f;
+            const float translationW =
+                std::min(EstimateTextWidth(item.translation, fontSize), std::max(contentWidth - lineEnd - gap, 0.0f));
+            geometry.translation = {textX + lineEnd + gap, 0.0f, translationW, rowH};
+        }
+        geometry.bounds = {0.0f, 0.0f, width, rowH};
+        return geometry;
+    }
     const float textH = std::max(appearance_.itemHeight, MeasureTextHeight(item.text, appearance_.fontSize, textW));
     geometry.label = {labelX, 0.0f, labelW, appearance_.itemHeight};
     geometry.text = {textX, 0.0f, textW, textH};
@@ -518,7 +591,8 @@ SizeF CandidateList::Measure(const SizeF &availableSize)
         }
     }
     layoutWidth_ = measuredWidth;
-    const float height = items_.empty() ? appearance_.itemHeight : y + rowHeight;
+    const float emptyHeight = appearance_.uniformRowHeight && !horizontal ? UniformRowHeight() : appearance_.itemHeight;
+    const float height = items_.empty() ? emptyHeight : y + rowHeight;
     return {measuredWidth, std::min(height, availableSize.height)};
 }
 
@@ -670,23 +744,27 @@ void CandidateList::Render(DeviceResources &deviceResources)
         }
         if (labelLayout && labelBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(labelRect.x, labelRect.y), labelLayout.Get(), labelBrush,
-                                   kColorClipTextOptions);
+            target->DrawTextLayout(
+                SnapTextOriginToPixelGrid(target, labelLayout.Get(), D2D1::Point2F(labelRect.x, labelRect.y)),
+                labelLayout.Get(), labelBrush, kColorClipTextOptions);
         }
         if (textLayout && textBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(textRect.x, textRect.y), textLayout.Get(), textBrush,
-                                   kColorClipTextOptions);
+            target->DrawTextLayout(
+                SnapTextOriginToPixelGrid(target, textLayout.Get(), D2D1::Point2F(textRect.x, textRect.y)),
+                textLayout.Get(), textBrush, kColorClipTextOptions);
         }
         if (annotationLayout && annotationBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(annotationRect.x, annotationRect.y), annotationLayout.Get(),
-                                   annotationBrush, kColorClipTextOptions);
+            target->DrawTextLayout(SnapTextOriginToPixelGrid(target, annotationLayout.Get(),
+                                                             D2D1::Point2F(annotationRect.x, annotationRect.y)),
+                                   annotationLayout.Get(), annotationBrush, kColorClipTextOptions);
         }
         if (translationLayout && translationBrush)
         {
-            target->DrawTextLayout(D2D1::Point2F(translationRect.x, translationRect.y), translationLayout.Get(),
-                                   translationBrush, kColorClipTextOptions);
+            target->DrawTextLayout(SnapTextOriginToPixelGrid(target, translationLayout.Get(),
+                                                             D2D1::Point2F(translationRect.x, translationRect.y)),
+                                   translationLayout.Get(), translationBrush, kColorClipTextOptions);
         }
     }
 }

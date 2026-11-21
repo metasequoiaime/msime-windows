@@ -111,6 +111,69 @@ std::string normalize_input_with_delimiters(const std::string &raw_input, const 
     return to_quanpin_segmentation(segment_input(raw_input, profile), profile);
 }
 
+std::vector<std::string> decode_syllable_pairs(const std::string &code, const ShuangpinProfile &profile)
+{
+    if (code.empty())
+    {
+        return {};
+    }
+    std::string body;
+    std::size_t index = 0;
+    for (; index + 2 <= code.size(); index += 2)
+    {
+        const std::string syllable = ShuangpinUtil::cvt_single_sp_to_pinyin(code.substr(index, 2), profile);
+        if (syllable.empty())
+        {
+            return {};
+        }
+        body += syllable;
+    }
+    if (index == code.size())
+    {
+        return {body};
+    }
+
+    const char key = code[index];
+    if (key < 'a' || key > 'z')
+    {
+        return {};
+    }
+    std::vector<std::string> codes;
+    const auto add = [&](const std::string &head) {
+        std::string candidate = body + head;
+        if (std::find(codes.begin(), codes.end(), candidate) == codes.end())
+        {
+            codes.push_back(std::move(candidate));
+        }
+    };
+    std::string initial(1, key);
+    for (const auto &[source, mapped] : profile.initials)
+    {
+        if (mapped == initial)
+        {
+            initial = source;
+            break;
+        }
+    }
+    add(initial);
+    // zero_initials 是无序表，首字母排好序再查，结果顺序才不随表的内部顺序变。
+    std::string zero_initial_heads;
+    for (const auto &[source, mapped] : profile.zero_initials)
+    {
+        if (!source.empty() && !mapped.empty() && mapped.front() == key &&
+            zero_initial_heads.find(source.front()) == std::string::npos)
+        {
+            zero_initial_heads.push_back(source.front());
+        }
+    }
+    std::sort(zero_initial_heads.begin(), zero_initial_heads.end());
+    for (const char head : zero_initial_heads)
+    {
+        add(std::string(1, head));
+    }
+    return codes;
+}
+
 std::string remove_manual_delimiters(const std::string &text)
 {
     return boost::replace_all_copy(text, "'", "");

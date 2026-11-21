@@ -3,7 +3,7 @@
 VoiceInput 是引擎的一部分。公共 API、构建选项与接入方式见 [公共模块说明](README.md)。处理与录音分别由 `MetasequoiaIme::Voice`、`MetasequoiaIme::VoiceCapture` 提供，按需链接。
 
 - 本产品的语音宿主是仓库里的 `server/`。
-- 本地 Whisper 推理（`MetasequoiaIme::VoiceWhisper`）已随内嵌专门化移除，识别走云端服务商，见 [UPSTREAM.md](../UPSTREAM.md)。
+- 本地 Whisper 推理（`MetasequoiaIme::VoiceWhisper`）已随内嵌专门化移除，见 [UPSTREAM.md](../UPSTREAM.md)。本机离线识别改由宿主提供（`server/src/voice-input/local_asr.*`，运行时载入 sherpa-onnx，运行库与模型按需下载）；本库只带它编译所需的 sherpa-onnx C API 头文件（`third_party/sherpa-onnx/`）。
 - 原独立 Windows 工具保留在 `platforms/windows/`，默认不构建；构建命令、配置和快捷键见 [独立工具说明](platforms/windows/README.md)。它使用云识别。
 
 流式识别由 `server/` 实现，不在本模块内。`MetasequoiaIme::Voice` 提供的是有界的一次性 HTTP

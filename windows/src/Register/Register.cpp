@@ -47,11 +47,43 @@ static const WCHAR TEXTSERVICE_STABLE_ICON_FILE[] = L"MetasequoiaImeTip.ico";
 //
 //  GetStableIconFile
 //
-//  Builds <parent of the DLL's directory>\MetasequoiaImeTip.ico and reports whether that file
-//  exists. Development registrations from a build directory have no such file and keep using the
-//  icon resource embedded in the DLL.
+//  Builds <parent of the DLL's directory>\MetasequoiaImeTip.ico, or the icon chosen in the settings
+//  page when one is recorded and present there, and reports whether that file exists. Development
+//  registrations from a build directory have no such file and keep using the icon resource embedded
+//  in the DLL.
 //
 //----------------------------------------------------------------------------
+
+// The icon the user picked in the settings page (server/src/settings/profile_icon.cpp), stored next to
+// MetasequoiaImeTip.ico under MetasequoiaImeTip-<16 hex digits>.ico. Only that exact shape is accepted: the
+// value is joined to a system directory, so anything with a separator or another name is ignored.
+static BOOL ReadChosenIconFileName(_Out_writes_(cchName) LPWSTR name, size_t cchName)
+{
+    static const WCHAR prefix[] = L"MetasequoiaImeTip-";
+    static const WCHAR suffix[] = L".ico";
+    const size_t prefixLength = ARRAYSIZE(prefix) - 1;
+    const size_t digits = 16;
+    const size_t expected = prefixLength + digits + ARRAYSIZE(suffix) - 1;
+
+    WCHAR value[64] = {};
+    DWORD bytes = sizeof(value) - sizeof(WCHAR);
+    // RRF_SUBKEY_WOW6464KEY: the x86 DLL must read the same value as the x64 one.
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"Software\\Metasequoia\\MetasequoiaIME", L"ProfileIconFile",
+                     RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY, nullptr, value, &bytes) != ERROR_SUCCESS ||
+        wcslen(value) != expected || _wcsnicmp(value, prefix, prefixLength) != 0 ||
+        _wcsicmp(value + prefixLength + digits, suffix) != 0)
+    {
+        return FALSE;
+    }
+    for (size_t i = prefixLength; i < prefixLength + digits; ++i)
+    {
+        if (!iswxdigit(value[i]))
+        {
+            return FALSE;
+        }
+    }
+    return StringCchCopy(name, cchName, value) == S_OK;
+}
 
 static BOOL GetStableIconFile(_In_ LPCWSTR modulePath, _Out_writes_(cchIconFile) LPWSTR iconFile, size_t cchIconFile)
 {
@@ -71,8 +103,25 @@ static BOOL GetStableIconFile(_In_ LPCWSTR modulePath, _Out_writes_(cchIconFile)
         *separator = L'\0';
     }
 
-    if (StringCchCat(iconFile, cchIconFile, L"\\") != S_OK ||
-        StringCchCat(iconFile, cchIconFile, TEXTSERVICE_STABLE_ICON_FILE) != S_OK)
+    if (StringCchCat(iconFile, cchIconFile, L"\\") != S_OK)
+    {
+        return FALSE;
+    }
+    const size_t directoryLength = wcslen(iconFile);
+
+    // The user's choice wins when its file is still there; otherwise fall back to the installed icon.
+    WCHAR chosen[64] = {};
+    if (ReadChosenIconFileName(chosen, ARRAYSIZE(chosen)) && StringCchCat(iconFile, cchIconFile, chosen) == S_OK)
+    {
+        DWORD attributes = GetFileAttributes(iconFile);
+        if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+        {
+            return TRUE;
+        }
+    }
+    iconFile[directoryLength] = L'\0';
+
+    if (StringCchCat(iconFile, cchIconFile, TEXTSERVICE_STABLE_ICON_FILE) != S_OK)
     {
         return FALSE;
     }

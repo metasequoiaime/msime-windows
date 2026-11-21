@@ -9,6 +9,7 @@
 #include "../../quanpin/quanpin_dictionary.h"
 #include "../../schemes/quanpin_scheme.h"
 #include "../../shuangpin/shuangpin_profile.h"
+#include "../../shuangpin/shuangpin_utils.h"
 
 #include <sqlite3.h>
 
@@ -410,6 +411,91 @@ void run_umlaut_alias_session_tests(const std::filesystem::path &data_directory)
                 "Selecting 虐 from 'nue' must update the canonical 'nve' row.");
         require(database.query_integer("SELECT COUNT(*) FROM tbl_1_n WHERE key='nue'") == 0,
                 "No user data may accumulate under the alias key 'nue'.");
+    }
+
+    std::filesystem::remove_all(directory);
+}
+
+// 微软双拼的 üe 在 T 键上记作 ue（jue/que/xue），l/n 后的字典拼法是 ve。方案表只登记
+// {"ue","t"} 时，l/n + t 解出的 lue/nue 不在可接受音节集合里，lt/nt 会退成 l't/n't
+// 两段简拼。这里同时盯住转换函数与会话候选。
+void run_microsoft_umlaut_session_tests(const std::filesystem::path &data_directory)
+{
+    const auto &microsoft = GetMicrosoftShuangpinProfile();
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("lt", microsoft) == "lve",
+            "Microsoft shuangpin 'lt' must decode to lve.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("nt", microsoft) == "nve",
+            "Microsoft shuangpin 'nt' must decode to nve.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("qt", microsoft) == "que",
+            "Microsoft shuangpin 'qt' must keep its ue spelling.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("xt", microsoft) == "xue",
+            "Microsoft shuangpin 'xt' must keep its ue spelling.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("lv", microsoft) == "lve",
+            "Microsoft shuangpin 'lv' must keep decoding to lve.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("lt", GetXiaoheShuangpinProfile()) == "lve",
+            "The Xiaohe layout must keep decoding 'lt' as lve.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("ll", GetShoudaoShuangpinProfile()) == "lai",
+            "A competing final on the same key (Shoudao 'l' = ai/ue) must win over the üe fallback for 'll'.");
+    require(ShuangpinUtil::cvt_single_sp_to_pinyin("nl", GetShoudaoShuangpinProfile()) == "nai",
+            "A competing final on the same key (Shoudao 'l' = ai/ue) must win over the üe fallback for 'nl'.");
+    // lt 成为完整音节后，正向贪心切分先取 lt，后面的键照常切分。
+    require(ShuangpinUtil::pinyin_segmentation("ltia", microsoft) == "lt'ia",
+            "Microsoft 'ltia' must segment as lt'ia.");
+    require(ShuangpinUtil::pinyin_segmentation("ltian", microsoft) == "lt'ia'n",
+            "Microsoft 'ltian' must segment as lt'ia'n.");
+    require(ShuangpinUtil::pinyin_segmentation("nthc", microsoft) == "nt'h'c",
+            "Microsoft 'nthc' must segment as nt'h'c.");
+    // 末尾的分隔符不能留在切分结果里，更不能叠成两个。
+    require(ShuangpinUtil::pinyin_segmentation("lt'", microsoft) == "lt",
+            "A trailing separator must be stripped from the segmentation.");
+
+    const std::filesystem::path directory = data_directory / "microsoft-umlaut";
+    std::filesystem::create_directories(directory);
+    {
+        Database database(directory / "msime.db");
+        database.execute("CREATE TABLE tbl_1_l(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_l VALUES('lve', 'l', '略', 100);"
+                         "CREATE TABLE tbl_1_n(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_n VALUES('nve', 'n', '虐', 100);"
+                         "CREATE TABLE tbl_1_q(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_q VALUES('que', 'q', '确', 100);"
+                         "CREATE TABLE tbl_1_x(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                         "INSERT INTO tbl_1_x VALUES('xue', 'x', '学', 100);");
+    }
+
+    metasequoia::RuntimePaths paths;
+    paths.resources = directory;
+    paths.user_data = directory;
+    paths.cache = directory;
+    paths.dictionaries = directory;
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, microsoft, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        session.set_candidate_learning_enabled(false);
+        type(session, "lt");
+        require(session.get_pinyin_segmentation_with_cases() == "lt",
+                "The Microsoft preedit for 'lt' must keep the typed letters.");
+        require(session.normalized_segmentation() == "lve", "Microsoft 'lt' must normalize to 'lve'.");
+        require(find_candidate_index(session, "略") < session.candidates().size(),
+                "Microsoft 'lt' must offer 略 like the other üe layouts.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, microsoft, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        session.set_candidate_learning_enabled(false);
+        type(session, "nt");
+        require(session.normalized_segmentation() == "nve", "Microsoft 'nt' must normalize to 'nve'.");
+        require(find_candidate_index(session, "虐") < session.candidates().size(),
+                "Microsoft 'nt' must offer 虐 like the other üe layouts.");
+    }
+    {
+        metasequoia::InputSession session(SchemeType::Shuangpin, microsoft, paths);
+        session.set_shuangpin_helpcode_enabled(false);
+        session.set_candidate_learning_enabled(false);
+        type(session, "qt");
+        require(session.normalized_segmentation() == "que", "Microsoft 'qt' must normalize to 'que'.");
+        require(find_candidate_index(session, "确") < session.candidates().size(),
+                "Microsoft 'qt' must offer 确 as a jqxy üe syllable.");
     }
 
     std::filesystem::remove_all(directory);
@@ -3312,6 +3398,7 @@ int run_test()
     }
 
     run_umlaut_alias_session_tests(data_directory);
+    run_microsoft_umlaut_session_tests(data_directory);
     run_word_final_helpcode_lifecycle_tests(data_directory);
     run_caret_prefix_session_tests(data_directory);
     run_autocorrect_mixed_jianpin_tests(data_directory);
@@ -3547,11 +3634,14 @@ int run_test()
     // 拆字查表走数据目录下的 radical/decomposition.txt。写一份最小表，测试不依赖部署数据
     // 目录里的真实表，字频只用来验证「同前缀内高频在前」。
     const std::filesystem::path radical_directory = data_directory / "radical-fixture";
-    write_file(radical_directory / "radical" / "decomposition.txt", "# 部件拼音连写<Tab>汉字<Tab>字频\n"
-                                                                    "ririri\t晶\t106\n"
-                                                                    "ririri\t曑\t1\n"
-                                                                    "heng\t一\t18584\n"
-                                                                    "hengheng\t丁\t900\n");
+    // 第四列读音可选：表里没有读音的行（丁）在候选上留空，不阻断查询。
+    write_file(radical_directory / "radical" / "decomposition.txt", "# 部件拼音连写<Tab>汉字<Tab>字频<Tab>读音\n"
+                                                                    "ririri\t晶\t106\tjīng\n"
+                                                                    "ririri\t曑\t1\tshēn\n"
+                                                                    "heng\t一\t18584\tyī\n"
+                                                                    "hengheng\t丁\t900\n"
+                                                                    "koukoukou\t品\t500\tpǐn\n"
+                                                                    "dingkou\t叮\t2\tdīng\n");
     set_data_directory(radical_directory);
 
     metasequoia::InputSession radical_session(SchemeType::Quanpin);
@@ -3569,8 +3659,9 @@ int run_test()
     }
     require(radical_session.preedit() == "Uririri" && !radical_session.candidates().empty() &&
                 radical_session.candidates().front().word == "晶" &&
+                radical_session.candidates().front().reading == "jīng" &&
                 radical_session.candidates().front().source == CandidateSource::Generated,
-            "Radical mode did not rank the highest-frequency decomposition of 晶 first.");
+            "Radical mode did not rank the highest-frequency decomposition of 晶 first, or lost its reading.");
     const auto radical_commit = radical_session.select_candidate(0);
     require(radical_commit.handled && radical_commit.commit == "晶" && !radical_session.has_composition() &&
                 radical_session.local_input_mode() == metasequoia::LocalInputMode::None,
@@ -3579,9 +3670,11 @@ int run_test()
     // 前缀收窄：连写码 heng 的最高频命中是 一（18584，高于任何 heng* 的更长码）。
     require(radical_session.handle_character('U', true).handled, "Radical mode could not be re-entered for prefixing.");
     type(radical_session, "heng");
-    require(radical_session.preedit() == "Uheng" && !radical_session.candidates().empty() &&
-                radical_session.candidates().front().word == "一",
-            "A radical prefix did not return its highest-frequency character first.");
+    require(radical_session.preedit() == "Uheng" && radical_session.candidates().size() >= 2 &&
+                radical_session.candidates().front().word == "一" &&
+                radical_session.candidates().front().reading == "yī" && radical_session.candidates()[1].word == "丁" &&
+                radical_session.candidates()[1].reading.empty(),
+            "A radical prefix did not return its highest-frequency character first, or invented a reading.");
     require(radical_session.handle_command(metasequoia::Command::Cancel).handled &&
                 radical_session.local_input_mode() == metasequoia::LocalInputMode::None,
             "Cancel did not leave radical mode.");
@@ -3634,6 +3727,22 @@ int run_test()
     require(switch_clears_radical.handle_character('U', true).handled &&
                 switch_clears_radical.local_input_mode() == metasequoia::LocalInputMode::Radical,
             "Shuangpin could not enter radical mode.");
+    // 双拼下按会话的双拼方案解部件码：小鹤 口 = kz。
+    type(switch_clears_radical, "kzkzkz");
+    require(switch_clears_radical.preedit() == "Ukzkzkz" && !switch_clears_radical.candidates().empty() &&
+                switch_clears_radical.candidates().front().word == "品",
+            "Shuangpin radical mode did not decode the components with the session's profile.");
+    // 微软双拼的 ; 是 ing 韵母：开头的 U 不算键，d 后面的 ; 收进拆字码，k 后面（偶数键）的不收。
+    metasequoia::InputSession microsoft_radical(SchemeType::Shuangpin, GetMicrosoftShuangpinProfile());
+    require(microsoft_radical.handle_character('U', true).handled && microsoft_radical.handle_character('d').handled &&
+                microsoft_radical.handle_character(';').handled && microsoft_radical.preedit() == "Ud;",
+            "Microsoft shuangpin radical mode rejected the ; final after an initial.");
+    type(microsoft_radical, "kb");
+    require(microsoft_radical.preedit() == "Ud;kb" && !microsoft_radical.candidates().empty() &&
+                microsoft_radical.candidates().front().word == "叮",
+            "Microsoft shuangpin radical mode did not decode d;kb as dingkou.");
+    microsoft_radical.handle_character(';');
+    require(microsoft_radical.preedit() == "Ud;kb", "Microsoft shuangpin radical mode took ; after a full syllable.");
     switch_clears_radical.switch_scheme(SchemeType::Quanpin);
     require(!switch_clears_radical.has_composition() &&
                 switch_clears_radical.local_input_mode() == metasequoia::LocalInputMode::None,
@@ -3666,6 +3775,21 @@ int run_test()
     require(date_time_session.handle_command(metasequoia::Command::Cancel).handled &&
                 date_time_session.local_input_mode() == metasequoia::LocalInputMode::None,
             "Cancel did not leave date/time mode.");
+
+    // 双拼下唤醒词的整拼按方案读：微软双拼 xingqi 打成 x;qi，; 跟在开头的 T 之后的声母后面才收。
+    metasequoia::InputSession shuangpin_date_time(SchemeType::Shuangpin, GetMicrosoftShuangpinProfile());
+    shuangpin_date_time.set_local_date_time_provider(
+        [] { return metasequoia::local_modes::LocalDateTime{2026, 8, 9, 0, 14, 30, 0}; });
+    require(shuangpin_date_time.handle_character('T', true).handled &&
+                shuangpin_date_time.handle_character('x').handled &&
+                shuangpin_date_time.handle_character(';').handled && shuangpin_date_time.preedit() == "Tx;",
+            "Microsoft shuangpin date/time mode rejected the ; final.");
+    type(shuangpin_date_time, "qi");
+    require(shuangpin_date_time.preedit() == "Tx;qi" && !shuangpin_date_time.candidates().empty() &&
+                shuangpin_date_time.candidates().front().word == "星期日",
+            "Microsoft shuangpin date/time mode did not read x;qi as xingqi.");
+    shuangpin_date_time.handle_character(';');
+    require(shuangpin_date_time.preedit() == "Tx;qi", "Date/time mode took ; after a complete syllable.");
 
     require(date_time_session.handle_character('T', true).handled &&
                 date_time_session.handle_command(metasequoia::Command::Backspace).handled &&

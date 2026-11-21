@@ -2,10 +2,32 @@
 #define NOMINMAX
 #endif
 #include "config/ime_config.h"
+#include "src/config/ime_config_internal.h"
 #include "tests/includes/test_framework.h"
 #include <type_traits>
 #include <fstream>
 #include <iterator>
+
+TEST_CASE(config_write_inserts_missing_keys_under_the_real_section_header)
+{
+    // 注释里提到「[translation].provider」：按子串找段头会把新键插进 [association]，下一次写入在真正的
+    // [translation] 里找不到它又插一遍，重复键让配置解析失败（设置页报「保存失败」）。
+    std::string text =
+        "[association]\nsentence = true\n\n#\n# 实际生效方由 [translation].provider 决定。\n#\n"
+        "[tencent_tmt]\ntarget_language = \"en\"\n\n# 翻译服务\n[translation]\nprovider = \"bilibili\"\n\n"
+        "# 网络代理\n[network]\nproxy_mode = \"system\"\n";
+    using namespace ime_config_detail;
+    for (const char *value : {"\"ja\"", "\"fr\""})
+        if (!ReplaceTomlValuePreservingFormatting(text, "translation", "english_target_language", value))
+            REQUIRE(InsertTomlValuePreservingFormatting(text, "translation", "english_target_language", value));
+    const auto parsed = toml::parse(text);
+    REQUIRE(parsed["translation"]["english_target_language"].value_or(std::string()) == "fr");
+    REQUIRE(!parsed["association"]["english_target_language"]);
+    REQUIRE(!parsed["tencent_tmt"]["english_target_language"]);
+    // 新键紧跟本段最后一个值，不落在写给下一段的注释下面。
+    REQUIRE(text.find("provider = \"bilibili\"\nenglish_target_language = \"fr\"\n\n# 网络代理\n[network]") !=
+            std::string::npos);
+}
 
 TEST_CASE(font_fallback_upgrade_preserves_legacy_fonts_and_order)
 {
@@ -362,6 +384,57 @@ TEST_CASE(config_merge_lets_new_defaults_win_for_untouched_keys)
                "[appearance]\npage_size = 9\nfont_size = 20\n");
 }
 
+// 候选词翻译拆成中文、英文两个开关和两家服务，dr_dict.english_brief 换成 english_popup：老配置没有新键时
+// 跟着原来那个开关走。
+TEST_CASE(split_translation_settings_inherit_the_old_settings_on_upgrade)
+{
+    std::ifstream input(MSIME_DEFAULT_CONFIG_PATH, std::ios::binary);
+    REQUIRE(static_cast<bool>(input));
+    const std::string installed((std::istreambuf_iterator<char>(input)), {});
+
+    const std::string translating =
+        "[general]\ncandidate_translations = true\n"
+        "candidate_translation_show_pos = false\ncandidate_translation_single_sense = true\n"
+        "[input]\nenglish_candidate_detail = true\n"
+        "[translation]\nprovider = \"niutrans\"\n"
+        "[dr_dict]\nenglish_brief = false\n";
+    const auto upgraded = toml::parse(MergeConfigIntoTemplate(installed, translating, ""));
+    // 英文候选的译文显示照抄中文那边；原来的「音标与释义」开着的，英文候选的音标也开着。
+    REQUIRE(!upgraded["general"]["english_candidate_translation_show_pos"].value_or(true));
+    REQUIRE(upgraded["general"]["english_candidate_translation_single_sense"].value_or(false));
+    REQUIRE(upgraded["general"]["english_candidate_phonetics"].value_or(false));
+    REQUIRE(!upgraded["general"]["candidate_translation_phonetics"].value_or(true));
+    REQUIRE(!upgraded["input"]["english_candidate_detail"]);
+    REQUIRE(upgraded["general"]["candidate_translations"].value_or(false));
+    REQUIRE(upgraded["general"]["english_candidate_translations"].value_or(false));
+    REQUIRE_EQ(upgraded["translation"]["english_target_language"].value_or(std::string()), std::string("zh"));
+    // 英文候选沿用原来那家服务，不被模板的新默认换掉。
+    REQUIRE_EQ(upgraded["translation"]["english_provider"].value_or(std::string()), std::string("niutrans"));
+    REQUIRE(!upgraded["dr_dict"]["english_popup"].value_or(true));
+    // 拆掉的键不再出现。
+    REQUIRE(!upgraded["dr_dict"]["english_brief"]);
+    REQUIRE(!upgraded["input"]["english_candidate_phonetic"]);
+
+    // 很老的配置没有 provider：两边都留空串，加载时一起按旧布尔推导。
+    const std::string legacy = "[general]\ncandidate_translations = true\n[niutrans]\nenabled = true\n";
+    const auto derived = toml::parse(MergeConfigIntoTemplate(installed, legacy, ""));
+    REQUIRE_EQ(derived["translation"]["provider"].value_or(std::string("x")), std::string());
+    REQUIRE_EQ(derived["translation"]["english_provider"].value_or(std::string("x")), std::string());
+
+    // 用户已经分别设过就不再继承。
+    const std::string split = "[general]\ncandidate_translations = true\nenglish_candidate_translations = false\n";
+    const auto kept = toml::parse(MergeConfigIntoTemplate(installed, split, ""));
+    REQUIRE(!kept["general"]["english_candidate_translations"].value_or(true));
+
+    // 新装（没有用户配置）用模板默认。
+    const auto fresh = toml::parse(MergeConfigIntoTemplate(installed, "", ""));
+    REQUIRE(!fresh["general"]["english_candidate_translations"].value_or(true));
+    REQUIRE(fresh["general"]["english_candidate_translation_show_pos"].value_or(false));
+    REQUIRE(!fresh["general"]["english_candidate_phonetics"].value_or(true));
+    REQUIRE_EQ(fresh["translation"]["english_provider"].value_or(std::string()), std::string("bilibili"));
+    REQUIRE(fresh["dr_dict"]["english_popup"].value_or(false));
+}
+
 // 0.10.0 把这些键的出厂值改成了新装用户的默认。从 0.9.5 升级上来、一直用着旧默认值的用户，升级后
 // 必须还是原来的行为：辅助码不能被关掉，横竖排和皮肤不能被换掉。
 TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
@@ -370,14 +443,17 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(static_cast<bool>(input));
     const std::string installed((std::istreambuf_iterator<char>(input)), {});
     const std::string previous_defaults = "[general]\nemoji_mixed_input = true\ncandidate_translations = true\n"
-                                          "floating_toolbar_font_size = 24\n"
+                                          "floating_toolbar_font_size = 24\nsymbol_mixed_input = false\n"
                                           "[association]\nsentence_wordlattice = true\n"
                                           "[input]\ndefault_ime_mode = \"english\"\n"
                                           "[appearance]\ncandidate_window_layout = \"vertical\"\n"
                                           "candidate_skin = \"willow_green\"\n"
                                           "[helpcode]\nshuangpin_helpcode = true\nquanpin_helpcode = true\n"
                                           "[utility]\nemoji_mode = true # Shift+E\nkaomoji_mode = true\n"
+                                          "quick_phrase_candidates = false\ndate_time_candidates = false\n"
+                                          "date_time_menu = true\n"
                                           "[voice_input]\nvoice_input = true\ndoubao_enable_ddc = true\n"
+                                          "asr_provider = \"doubao\"\n"
                                           "[ai_assistant]\nenabled = true\n"
                                           "[tencent_tmt]\nenabled = true\n"
                                           "[niutrans]\nenabled = false\n";
@@ -386,6 +462,11 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(upgraded["general"]["emoji_mixed_input"].value_or(false));
     REQUIRE(upgraded["general"]["candidate_translations"].value_or(false));
     REQUIRE_EQ(upgraded["general"]["floating_toolbar_font_size"].value_or(0), 24);
+    // 0.14.0 新装默认混入符号、快捷短语、日期时间并去掉「📅日期」入口；老用户的候选保持原样。
+    REQUIRE(!upgraded["general"]["symbol_mixed_input"].value_or(true));
+    REQUIRE(!upgraded["utility"]["quick_phrase_candidates"].value_or(true));
+    REQUIRE(!upgraded["utility"]["date_time_candidates"].value_or(true));
+    REQUIRE(upgraded["utility"]["date_time_menu"].value_or(false));
     // 0.12.0 起 sc.lm 改为按需下载，新装默认关；升级用户的模型由安装器挪进 models\language-model\，开关保持原样。
     REQUIRE(upgraded["association"]["sentence_wordlattice"].value_or(false));
     REQUIRE_EQ(upgraded["input"]["default_ime_mode"].value_or(std::string()), std::string("english"));
@@ -397,15 +478,32 @@ TEST_CASE(shipped_fresh_install_defaults_do_not_flip_upgraded_users)
     REQUIRE(upgraded["utility"]["kaomoji_mode"].value_or(false));
     REQUIRE(upgraded["voice_input"]["voice_input"].value_or(false));
     REQUIRE(upgraded["voice_input"]["doubao_enable_ddc"].value_or(false));
+    // 新装默认本地离线识别；老用户的豆包（多半填好了 Token）不能被换掉。
+    REQUIRE_EQ(upgraded["voice_input"]["asr_provider"].value_or(std::string()), std::string("doubao"));
     REQUIRE(upgraded["ai_assistant"]["enabled"].value_or(false));
     REQUIRE(upgraded["tencent_tmt"]["enabled"].value_or(false));
     REQUIRE(!upgraded["niutrans"]["enabled"].value_or(true));
+    // 新装默认哔哩哔哩翻译；老用户没有 provider 键时保持空串，加载时照旧按 enabled 布尔推导。
+    REQUIRE_EQ(upgraded["translation"]["provider"].value_or(std::string("missing")), std::string());
+    const std::string chose_nothing = "[translation]\nprovider = \"\"\n[niutrans]\nenabled = true\n";
+    const auto kept = toml::parse(MergeConfigIntoTemplate(installed, chose_nothing, chose_nothing));
+    REQUIRE_EQ(kept["translation"]["provider"].value_or(std::string("missing")), std::string());
+    REQUIRE(kept["niutrans"]["enabled"].value_or(false));
 
     // 新装用户拿到的是模板本身。
     const auto fresh = toml::parse(installed);
     REQUIRE_EQ(fresh["appearance"]["candidate_window_layout"].value_or(std::string()), std::string("horizontal"));
     REQUIRE(!fresh["helpcode"]["shuangpin_helpcode"].value_or(true));
     REQUIRE(!fresh["association"]["sentence_wordlattice"].value_or(true));
+    REQUIRE_EQ(fresh["voice_input"]["asr_provider"].value_or(std::string()), std::string("local"));
+    REQUIRE_EQ(fresh["translation"]["provider"].value_or(std::string()), std::string("bilibili"));
+    REQUIRE_EQ(fresh["bilibili_translate"]["model"].value_or(std::string()), std::string("Index-Translate-2B"));
+    REQUIRE(!fresh["niutrans"]["enabled"].value_or(true));
+    REQUIRE_EQ(fresh["voice_input"]["local_asr_model"].value_or(std::string()), std::string("x-asr-zh-en-streaming"));
+    REQUIRE(fresh["general"]["symbol_mixed_input"].value_or(false));
+    REQUIRE(fresh["utility"]["quick_phrase_candidates"].value_or(false));
+    REQUIRE(fresh["utility"]["date_time_candidates"].value_or(false));
+    REQUIRE(!fresh["utility"]["date_time_menu"].value_or(true));
 }
 
 TEST_CASE(config_merge_drops_keys_and_sections_absent_from_template)

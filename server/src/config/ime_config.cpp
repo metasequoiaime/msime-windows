@@ -20,10 +20,12 @@
 #include "clipboard/clipboard_history.h"
 #include "engine/common/helpcode_utils.h"
 #include "engine/core/data_path.h"
+#include "engine/core/wubi_profile.h"
 #include "engine/contracts/input_state_shortcuts.h"
 #include "statistics/stats_store.h"
 #include "voice-input/voice_providers.h"
 #include "ai/chat_request_params.h"
+#include "cloud/bilibili_translation.h"
 
 using namespace ime_config_detail;
 
@@ -87,6 +89,9 @@ bool g_wubi_mixed_pinyin = false;
 bool g_escape_keeps_selected_word = false;
 // 回车上屏英文时顺带写入英文词库。默认开启，保持原有行为。
 bool g_enter_learns_english_word = true;
+// 英文候选模式下空格、数字键或鼠标上屏后自动补一个空格。默认开启。
+bool g_english_commit_with_space = true;
+// 英文候选模式下在高亮候选下方显示音标与释义。默认开启。
 // 五笔 z 键角色两态：off | wildcard。非法值回落 off（升级用户零变化）。
 std::string g_wubi_z_mode = "off";
 // 四码唯一自动上屏与顶字是两个独立开关，与混输、z 键角色都无关：前者决定第四键落下即上屏，
@@ -148,8 +153,13 @@ int g_floating_toolbar_auto_hide_delay = kFloatingToolbarAutoHideDelayDefault;
 bool g_floating_toolbar_shadow = true;
 bool g_english_candidates_enabled = false;
 bool g_candidate_translations_enabled = false;
+std::atomic_bool g_english_candidate_translations_enabled{false};
 std::atomic_bool g_candidate_translation_show_pos{true};
 std::atomic_bool g_candidate_translation_single_sense{false};
+std::atomic_bool g_english_candidate_translation_show_pos{true};
+std::atomic_bool g_english_candidate_translation_single_sense{false};
+std::atomic_bool g_candidate_translation_phonetics{false};
+std::atomic_bool g_english_candidate_phonetics{false};
 int g_english_mixed_input_min_chars = kEnglishMixedInputMinCharsDefault;
 int g_english_mixed_input_first_page_count = kEnglishMixedInputFirstPageCountDefault;
 bool g_cloud_candidates_enabled = true;
@@ -198,6 +208,12 @@ bool g_language_bar_enabled = true;
 bool g_language_bar_show_ime_mode = true;
 bool g_language_bar_show_double_single_byte = true;
 bool g_language_bar_show_punctuation = true;
+// DR Dict 词典联动：右键菜单「查词典」与两个查词快捷键，默认全部关闭。候选窗右键菜单在界面线程上读，
+// 快捷键在工作线程上读，所以用原子量。
+std::atomic<bool> g_dr_dict_enabled{false};
+std::atomic<bool> g_dr_dict_lookup_candidate_hotkey{false};
+std::atomic<bool> g_dr_dict_lookup_preedit_hotkey{false};
+std::atomic<bool> g_dr_dict_english_popup{true};
 bool g_paging_minus_equal_enabled = true;
 bool g_paging_comma_period_enabled = false;
 bool g_paging_brackets_enabled = false;
@@ -223,6 +239,9 @@ std::string g_candidate_window_layout = "vertical";
 bool g_candidate_window_follow_cursor = true;
 bool g_candidate_window_fit_content = false;
 bool g_candidate_window_single_line = false;
+bool g_candidate_window_fixed_width = false;
+double g_candidate_window_fixed_width_ratio = kCandidateWindowFixedWidthRatioDefault;
+bool g_candidate_window_fixed_height = false;
 std::string g_candidate_skin = "fluent";
 std::string g_candidate_window_preedit_style = "pinyin";
 bool g_candidate_fixed_badge = true;
@@ -262,7 +281,11 @@ TencentTmtConfig g_tencent_tmt;
 AliyunMtConfig g_aliyun_mt;
 CustomTranslationConfig g_custom_translation;
 NiuTransConfig g_niutrans;
+BilibiliTranslateConfig g_bilibili_translate;
 std::string g_translation_provider = "tencent";
+std::string g_translation_english_target_language = "zh";
+std::string g_translation_english_provider = "tencent";
+bool g_translation_english_provider_explicit = false;
 std::mutex g_network_proxy_mutex;
 NetworkProxyConfig g_network_proxy;
 FrequencyAdjustmentConfig g_frequency_adjustment;
@@ -534,10 +557,15 @@ bool LoadImeConfig()
             const std::string schema = tbl["input"]["shuangpin_schema"].value_or(std::string("xiaohe"));
             g_shuangpin_schema = LoadShuangpinSchema(schema) ? schema : "xiaohe";
         }
-        g_wubi_schema = tbl["input"]["wubi_schema"].value_or(std::string("wubi86"));
+        {
+            // 不认识的码表版本（手改写错、或更新的版本加的）按 86 五笔读，不带着一张不存在的表输入。
+            const std::string schema = tbl["input"]["wubi_schema"].value_or(std::string("wubi86"));
+            g_wubi_schema = metasequoia::wubi_profile_from_name(schema) ? schema : "wubi86";
+        }
         g_wubi_mixed_pinyin = tbl["input"]["wubi_mixed_pinyin"].value_or(false);
         g_escape_keeps_selected_word = tbl["input"]["escape_keeps_selected_word"].value_or(false);
         g_enter_learns_english_word = tbl["input"]["enter_learns_english_word"].value_or(true);
+        g_english_commit_with_space = tbl["input"]["english_commit_with_space"].value_or(true);
         const std::string z_mode = tbl["input"]["wubi_z_mode"].value_or(std::string("off"));
         g_wubi_z_mode = z_mode == "wildcard" ? "wildcard" : "off";
         g_wubi_four_code_auto_commit = tbl["input"]["wubi_four_code_auto_commit"].value_or(true);
@@ -647,10 +675,29 @@ bool LoadImeConfig()
         }
         g_english_candidates_enabled = tbl["general"]["cn_en_mixed_input"].value_or(false);
         g_candidate_translations_enabled = tbl["general"]["candidate_translations"].value_or(false);
+        // 拆开之前一个开关管中英两边：没有新键的配置跟着旧开关走。
+        g_english_candidate_translations_enabled.store(
+            tbl["general"]["english_candidate_translations"].value_or(g_candidate_translations_enabled),
+            std::memory_order_relaxed);
         g_candidate_translation_show_pos.store(tbl["general"]["candidate_translation_show_pos"].value_or(true),
                                                std::memory_order_relaxed);
         g_candidate_translation_single_sense.store(tbl["general"]["candidate_translation_single_sense"].value_or(false),
                                                    std::memory_order_relaxed);
+        // 英文候选的译文显示另有一套；没有新键的配置跟着中文候选那边的走。
+        g_english_candidate_translation_show_pos.store(
+            tbl["general"]["english_candidate_translation_show_pos"].value_or(
+                g_candidate_translation_show_pos.load(std::memory_order_relaxed)),
+            std::memory_order_relaxed);
+        g_english_candidate_translation_single_sense.store(
+            tbl["general"]["english_candidate_translation_single_sense"].value_or(
+                g_candidate_translation_single_sense.load(std::memory_order_relaxed)),
+            std::memory_order_relaxed);
+        g_candidate_translation_phonetics.store(tbl["general"]["candidate_translation_phonetics"].value_or(false),
+                                                std::memory_order_relaxed);
+        // 原来的 input.english_candidate_detail（高亮候选下方的音标与释义）拆成了这个开关和英文候选翻译。
+        g_english_candidate_phonetics.store(tbl["general"]["english_candidate_phonetics"].value_or(
+                                                tbl["input"]["english_candidate_detail"].value_or(false)),
+                                            std::memory_order_relaxed);
         {
             const int min_chars =
                 tbl["general"]["cn_en_mixed_input_min_chars"].value_or(kEnglishMixedInputMinCharsDefault);
@@ -729,6 +776,12 @@ bool LoadImeConfig()
         g_language_bar_show_ime_mode = tbl["language_bar"]["show_ime_mode"].value_or(true);
         g_language_bar_show_double_single_byte = tbl["language_bar"]["show_double_single_byte"].value_or(true);
         g_language_bar_show_punctuation = tbl["language_bar"]["show_punctuation"].value_or(true);
+        g_dr_dict_enabled.store(tbl["dr_dict"]["enabled"].value_or(false), std::memory_order_relaxed);
+        g_dr_dict_lookup_candidate_hotkey.store(tbl["dr_dict"]["lookup_candidate_ctrl_shift_enter"].value_or(false),
+                                                std::memory_order_relaxed);
+        g_dr_dict_lookup_preedit_hotkey.store(tbl["dr_dict"]["lookup_preedit_ctrl_alt_enter"].value_or(false),
+                                              std::memory_order_relaxed);
+        g_dr_dict_english_popup.store(tbl["dr_dict"]["english_popup"].value_or(true), std::memory_order_relaxed);
         const auto legacy_paging_mode = tbl["general"]["paging_mode"].value<std::string>();
         g_paging_minus_equal_enabled =
             tbl["general"]["paging_minus_equal"].value_or(!legacy_paging_mode || *legacy_paging_mode == "-/=");
@@ -806,11 +859,13 @@ bool LoadImeConfig()
             }
         }
         {
+            const auto valid_mode = [](const std::string &mode) {
+                return mode == "disabled" || mode == "pin" || mode == "halve" || mode == "linear" || mode == "promote";
+            };
             const std::string mode = tbl["frequency_adjustment"]["mode"].value_or(std::string("promote"));
-            g_frequency_adjustment.mode =
-                mode == "disabled" || mode == "pin" || mode == "halve" || mode == "linear" || mode == "promote"
-                    ? mode
-                    : "promote";
+            g_frequency_adjustment.mode = valid_mode(mode) ? mode : "promote";
+            const std::string wubi_mode = tbl["frequency_adjustment"]["wubi_mode"].value_or(std::string("disabled"));
+            g_frequency_adjustment.wubi_mode = valid_mode(wubi_mode) ? wubi_mode : "disabled";
             const int trigger = tbl["frequency_adjustment"]["trigger_count"].value_or(1);
             const int step = tbl["frequency_adjustment"]["linear_step"].value_or(1);
             g_frequency_adjustment.trigger_count = trigger >= 1 && trigger <= 10 ? trigger : 1;
@@ -821,6 +876,16 @@ bool LoadImeConfig()
         g_candidate_window_follow_cursor = tbl["appearance"]["candidate_window_follow_cursor"].value_or(true);
         g_candidate_window_fit_content = tbl["appearance"]["candidate_window_fit_content"].value_or(false);
         g_candidate_window_single_line = tbl["appearance"]["candidate_window_single_line"].value_or(false);
+        g_candidate_window_fixed_width = tbl["appearance"]["candidate_window_fixed_width"].value_or(false);
+        {
+            const double ratio = tbl["appearance"]["candidate_window_fixed_width_ratio"].value_or(
+                kCandidateWindowFixedWidthRatioDefault);
+            g_candidate_window_fixed_width_ratio =
+                ratio >= kCandidateWindowFixedWidthRatioMin && ratio <= kCandidateWindowFixedWidthRatioMax
+                    ? ratio
+                    : kCandidateWindowFixedWidthRatioDefault;
+        }
+        g_candidate_window_fixed_height = tbl["appearance"]["candidate_window_fixed_height"].value_or(false);
         const std::string skin = tbl["appearance"]["candidate_skin"].value_or(std::string("fluent"));
         g_candidate_skin = IsValidCandidateSkinId(skin) ? skin : "fluent";
         {
@@ -885,7 +950,7 @@ bool LoadImeConfig()
         voice.hotkey_ctrl_win = tbl["voice_input"]["hotkey_ctrl_win"].value_or(false);
         voice.hotkey_rctrl_ralt = tbl["voice_input"]["hotkey_rctrl_ralt"].value_or(false);
         voice.hotkey_hold_space_lock = tbl["voice_input"]["hotkey_hold_space_lock"].value_or(true);
-        voice.asr_provider = tbl["voice_input"]["asr_provider"].value_or(std::string("doubao"));
+        voice.asr_provider = tbl["voice_input"]["asr_provider"].value_or(std::string("local"));
         voice.asr_app_key = tbl["voice_input"]["asr_app_key"].value_or(std::string());
         voice.doubao_auth_mode = VoiceInput::NormalizeDoubaoAuthMode(
             tbl["voice_input"]["doubao_auth_mode"].value_or(std::string()), voice.asr_app_key);
@@ -921,6 +986,7 @@ bool LoadImeConfig()
         voice.doubao_enable_ddc = tbl["voice_input"]["doubao_enable_ddc"].value_or(false);
         voice.doubao_boosting_table_id = tbl["voice_input"]["doubao_boosting_table_id"].value_or(std::string());
         voice.asr_model = tbl["voice_input"]["asr_model"].value_or(std::string());
+        voice.local_asr_model = tbl["voice_input"]["local_asr_model"].value_or(std::string("x-asr-zh-en-streaming"));
         voice.polish_provider = tbl["voice_input"]["polish_provider"].value_or(std::string("siliconflow"));
         voice.polish_token = tbl["voice_input"]["polish_token"].value_or(std::string());
         for (const auto provider : VoiceInput::PolishProviders())
@@ -1099,8 +1165,14 @@ bool LoadImeConfig()
         g_niutrans.enabled = tbl["niutrans"]["enabled"].value_or(false);
         g_niutrans.app_id = tbl["niutrans"]["app_id"].value_or(std::string());
         g_niutrans.apikey = tbl["niutrans"]["apikey"].value_or(std::string());
+        g_bilibili_translate.model = BilibiliTranslation::NormalizeModel(
+            tbl["bilibili_translate"]["model"].value_or(std::string(BilibiliTranslation::kDefaultModel)));
         // [translation].provider 是唯一来源；旧配置缺这个键时从各提供方的 enabled 布尔推导，
         // 再把布尔按 provider 归一，保证旧版读回时选择不丢。
+        g_translation_english_target_language =
+            tbl["translation"]["english_target_language"].value_or(std::string("zh"));
+        if (!IsValidEnglishTranslationTargetLanguage(g_translation_english_target_language))
+            g_translation_english_target_language = "zh";
         g_translation_provider = tbl["translation"]["provider"].value_or(std::string());
         if (IsValidTranslationProvider(g_translation_provider))
         {
@@ -1123,6 +1195,11 @@ bool LoadImeConfig()
         g_niutrans.enabled = g_translation_provider == "niutrans";
         g_aliyun_mt.enabled = g_translation_provider == "aliyun";
         g_custom_translation.enabled = g_translation_provider == "custom";
+        // 英文候选单独选的服务；没有（拆分之前的配置）就跟中文候选用同一家。
+        g_translation_english_provider = tbl["translation"]["english_provider"].value_or(std::string());
+        g_translation_english_provider_explicit = IsValidTranslationProvider(g_translation_english_provider);
+        if (!g_translation_english_provider_explicit)
+            g_translation_english_provider = g_translation_provider;
         PublishTranslationConfig();
         {
             NetworkProxyConfig proxy;
@@ -1132,6 +1209,38 @@ bool LoadImeConfig()
             proxy.server = NormalizeNetworkProxyServer(tbl["network"]["proxy_server"].value_or(std::string()));
             std::lock_guard<std::mutex> proxy_lock(g_network_proxy_mutex);
             g_network_proxy = std::move(proxy);
+        }
+        {
+            SyncConfig sync;
+            sync.enabled = tbl["sync"]["enabled"].value_or(false);
+            sync.backend = tbl["sync"]["backend"].value_or(std::string("off"));
+            if (sync.backend != "off" && sync.backend != "webdav" && sync.backend != "s3")
+                sync.backend = "off";
+            sync.auto_upload_minutes = static_cast<int>(tbl["sync"]["auto_upload_minutes"].value_or(0));
+            if (sync.auto_upload_minutes < 0)
+                sync.auto_upload_minutes = 0;
+            if (sync.auto_upload_minutes > 1440)
+                sync.auto_upload_minutes = 1440;
+            sync.keep_snapshots = static_cast<int>(tbl["sync"]["keep_snapshots"].value_or(5));
+            if (sync.keep_snapshots < 1)
+                sync.keep_snapshots = 1;
+            if (sync.keep_snapshots > 20)
+                sync.keep_snapshots = 20;
+            sync.include_models = tbl["sync"]["include_models"].value_or(false);
+            sync.webdav_url = tbl["sync"]["webdav_url"].value_or(std::string());
+            sync.webdav_username = tbl["sync"]["webdav_username"].value_or(std::string());
+            sync.webdav_password = tbl["sync"]["webdav_password"].value_or(std::string());
+            sync.s3_endpoint = tbl["sync"]["s3_endpoint"].value_or(std::string());
+            sync.s3_region = tbl["sync"]["s3_region"].value_or(std::string("us-east-1"));
+            if (sync.s3_region.empty())
+                sync.s3_region = "us-east-1";
+            sync.s3_bucket = tbl["sync"]["s3_bucket"].value_or(std::string());
+            sync.s3_path_style = tbl["sync"]["s3_path_style"].value_or(true);
+            sync.s3_prefix = tbl["sync"]["s3_prefix"].value_or(std::string("msime"));
+            sync.s3_access_key = tbl["sync"]["s3_access_key"].value_or(std::string());
+            sync.s3_secret_key = tbl["sync"]["s3_secret_key"].value_or(std::string());
+            std::lock_guard<std::mutex> sync_lock(g_sync_mutex);
+            g_sync = std::move(sync);
         }
         RememberConfigWriteTime();
         return true;

@@ -128,6 +128,8 @@ HRESULT CKeyStateCategory::KeyStateHandler(KEYSTROKE_FUNCTION function, KeyHandl
 
     case FUNCTION_MOVE_LEFT:
     case FUNCTION_MOVE_RIGHT:
+    case FUNCTION_MOVE_HOME:
+    case FUNCTION_MOVE_END:
         return HandleKeyArrow(dto);
 
     case FUNCTION_MOVE_LEFT_SEGMENT:

@@ -64,6 +64,11 @@ bool IsDoubaoAsrProvider(std::string_view provider)
     return Lower(provider) == "doubao";
 }
 
+bool IsLocalAsrProvider(std::string_view provider)
+{
+    return Lower(provider) == "local";
+}
+
 std::string NormalizeProviderId(std::string_view provider)
 {
     return Lower(provider);
@@ -304,7 +309,7 @@ std::string DefaultPolishModel(std::string_view provider)
     if (id == "deepseek")
         return "deepseek-v4-flash";
     if (id == "groq")
-        return "llama-3.3-70b-versatile";
+        return "qwen/qwen3.8-27b";
     if (id == "minimax")
         return "MiniMax-M3.1-Flash-Preview";
     if (id == "moonshot")

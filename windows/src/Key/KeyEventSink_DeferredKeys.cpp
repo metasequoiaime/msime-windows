@@ -10,6 +10,7 @@
 #include "KeyFocusRecovery.h"
 #include "KeyRepeatGuard.h"
 #include "CapsLockInputPolicy.h"
+#include "Composition/CandidateDigitPolicy.h"
 #include "stats_collector.h"
 #include "stats_passthrough.h"
 #include "CaretAnchorPolicy.h"
@@ -202,6 +203,13 @@ void ApplyDeferredKeyState(DeferredShadowState &shadow, const _KEYSTROKE_STATE &
         {
             ++shadow.caret;
         }
+        break;
+    case FUNCTION_MOVE_HOME:
+        shadow.caret = FanyImeTemporaryJapanese::MinimumCaret(shadow.japaneseMode, shadow.temporaryJapanesePolicy,
+                                                              shadow.rawInput.data(), shadow.rawInput.size());
+        break;
+    case FUNCTION_MOVE_END:
+        shadow.caret = shadow.rawInput.size();
         break;
     case FUNCTION_FINALIZE_TEXTSTORE:
     case FUNCTION_FINALIZE_CANDIDATELIST:
@@ -455,9 +463,12 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
     const bool projectedInputActive = _deferredKeyProjectionValid
                                           ? _deferredProjectedInputLength > 0
                                           : _pCompositionProcessorEngine->GetVirtualKeyLength() > 0;
+    // DR Dict 查高亮候选（Ctrl+Shift+Enter）同理，与同步分类器一致。
     if (projectedImeOpen && !_IsKeyboardDisabled() &&
         ((projectedCandidateActive && (IsTranslationCommitShortcut(*classifiedCode, capturedModifiers) ||
                                        IsTranslationDigitShortcut(*classifiedCode, capturedModifiers))) ||
+         (!_serverUnavailableFallbackActive && projectedCandidateActive &&
+          IsDictionaryCandidateLookupShortcut(*classifiedCode, capturedModifiers)) ||
          (!_serverUnavailableFallbackActive && projectedInputActive &&
           IsPinyinCommitShortcut(*classifiedCode, capturedModifiers))))
     {
@@ -682,9 +693,9 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
                                                        ? FUNCTION_MOVE_RIGHT_CANDIDATE
                                                        : FUNCTION_MOVE_RIGHT);
         case VK_HOME:
-            return setKeyState(CATEGORY_CANDIDATE, FUNCTION_MOVE_PAGE_TOP);
+            return setKeyState(CATEGORY_COMPOSING, FUNCTION_MOVE_HOME);
         case VK_END:
-            return setKeyState(CATEGORY_CANDIDATE, FUNCTION_MOVE_PAGE_BOTTOM);
+            return setKeyState(CATEGORY_COMPOSING, FUNCTION_MOVE_END);
         case VK_OEM_MINUS:
         case VK_OEM_PLUS:
             if (japaneseKeyMode)
@@ -707,7 +718,20 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
             break;
         }
 
-        if (*classifiedCode >= L'1' && *classifiedCode <= L'9')
+        // Same order as the sync classifier: V-mode Shift+1..9 selects, then a
+        // highlighted-candidate punctuation such as Shift+0 ')' commits with
+        // punctuation, and only then does the digit key code select. Checking the
+        // key code first would turn Shift+digit punctuation into number selection.
+        const bool vModeShiftDigitSelection =
+            (capturedModifiers & 0b00000001) != 0 && *classifiedCode >= L'1' && *classifiedCode <= L'9' &&
+            FanyImeVModeInput::IsComposition(shadow.rawInput.data(), shadow.rawInput.size(),
+                                             Global::VModeTrigger.load(std::memory_order_relaxed));
+        if (!vModeShiftDigitSelection && shadow.candidateActive && *classifiedWch != L'\0' &&
+            Global::CommitWithHighlightedCandPunc.count(*classifiedWch) > 0)
+        {
+            return setKeyState(CATEGORY_COMPOSING, FUNCTION_PUNCTUATION);
+        }
+        if (IsCandidateDigitKey(*classifiedCode))
         {
             return setKeyState(CATEGORY_CANDIDATE, FUNCTION_SELECT_BY_NUMBER);
         }

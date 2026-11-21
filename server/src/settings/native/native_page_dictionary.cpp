@@ -1,4 +1,5 @@
 #include "settings/native/native_page_dictionary_panel.h"
+#include "settings/foreign_dictionary.h"
 
 #include "msimeui/DeviceResources.h"
 #include "msimeui/Window.h"
@@ -212,11 +213,21 @@ VisualPtr BuildDictionaryPage(PageContext &context)
     auto hans = std::make_shared<Hideable>(hansCard);
     page.AddRaw(hans, 0.0f);
 
-    tabs->SetOnSelect([panel](size_t index) {
+    // 五笔标签页管理「输入」页选的那一版码表（86 / 98 / 新世纪）：三版共用一个标签，词库 id 随配置走。
+    SettingsModel *model = &context.model;
+    const auto wubiDictionary = [model]() { return WubiDictionaryId(model->GetString("input.wubi_schema")); };
+    tabs->SetOnSelect([panel, wubiDictionary](size_t index) {
         static const char *const kDictionaries[] = {"quanpin", "wubi", "english", "latin"};
-        panel->SetDictionary(kDictionaries[std::min<size_t>(index, std::size(kDictionaries) - 1)]);
+        const std::string dictionary = kDictionaries[std::min<size_t>(index, std::size(kDictionaries) - 1)];
+        panel->SetDictionary(dictionary == "wubi" ? wubiDictionary() : dictionary);
     });
     std::weak_ptr<DictionaryPanel> weakPanel = panel;
+    context.OnConfig([weakPanel, wubiDictionary]() {
+        // 在五笔标签页上时换了码表版本，跟着换到那一版的表。
+        auto locked = weakPanel.lock();
+        if (locked && IsWubiDictionaryId(locked->Dictionary()) && locked->Dictionary() != wubiDictionary())
+            locked->SetDictionary(wubiDictionary());
+    });
     panel->SetOnModeChanged([weakPanel, hans, hansTitle]() {
         auto locked = weakPanel.lock();
         if (!locked)
@@ -225,9 +236,45 @@ VisualPtr BuildDictionaryPage(PageContext &context)
         const std::string &dictionary = locked->Dictionary();
         hans->SetVisible(dictionary != "english");
         hansTitle->SetText(dictionary == "quanpin" ? L"批量导入纯汉字词组(e.g.人名)到拼音词库"
-                           : dictionary == "latin" ? L"批量导入字母词(e.g.T恤)，每行一个词，自动注音"
-                                                   : L"批量导入纯汉字词组(e.g.人名)到五笔词库");
+                           : dictionary == "latin"
+                               ? L"批量导入字母词(e.g.T恤)，每行一个词，自动注音"
+                               : L"批量导入纯汉字词组(e.g.人名)到" + WubiDictionaryLabel(dictionary));
     });
+
+    // 导入其他词库：左边选格式，右边导入。都是拼音词库，一律进拼音用户词库，与当前标签页无关。
+    {
+        auto body = std::make_shared<Column>(0.0f);
+        body->Add(MakeTitle(L"导入其他词库", L"导入 Rime、LibIME（fcitx5）输入法的词库"));
+        auto description =
+            MakeDescription(L"导入到拼音用户词库，已有的词条会跳过；文件里没有读音或读音不完整的纯汉字词会自动注音。"
+                            L"原词库带词频的按词频高低换算成 10～1000 的权重，没有词频的记 10");
+        description->SetMargin({0.0f, 4.0f, 0.0f, 14.0f});
+        body->Add(description);
+
+        std::vector<DropdownOption> options;
+        for (const auto &format : ForeignDictionary::Formats())
+            options.push_back({format.label, format.id});
+        Dropdown::Options settings;
+        settings.minWidth = 240.0f;
+        settings.menuAlignLeft = true;
+        settings.compact = true;
+        auto formats = std::make_shared<Dropdown>(std::move(options), settings);
+        formats->SetSelectedIndex(0);
+        auto button = std::make_shared<Button>(L"导入", ButtonKind::Primary);
+        button->SetMinWidth(68.0f);
+        std::weak_ptr<Dropdown> weakFormats = formats;
+        button->SetOnClick([panel, weakFormats]() {
+            if (const auto locked = weakFormats.lock())
+                panel->ImportForeign(locked->GetValue());
+        });
+        auto row = std::make_shared<Row>(18.0f);
+        row->SetJustify(Row::Justify::SpaceBetween);
+        row->Add(formats);
+        row->Add(button);
+        body->Add(row);
+        page.AddRaw(std::make_shared<PageCard>(body, PageCard::Style::Section, Thickness{24.0f, 18.0f, 24.0f, 20.0f}),
+                    18.0f);
+    }
 
     // .dict-export-section: padding-top 18px, padding-bottom 0.
     auto exportBody = std::make_shared<Column>(0.0f);
@@ -235,7 +282,10 @@ VisualPtr BuildDictionaryPage(PageContext &context)
     exportTitle->SetMargin({0.0f, 0.0f, 0.0f, 14.0f});
     exportBody->Add(exportTitle);
     exportBody->Add(MakeExportRow(L"导出拼音用户词库", [panel]() { panel->Export("quanpin"); }, 62.0f, true));
-    exportBody->Add(MakeExportRow(L"导出五笔用户词库", [panel]() { panel->Export("wubi"); }, 62.0f, true));
+    // 三版五笔的用户词各记各的，各导各的；86 沿用原来的词库 id 和文件名。
+    exportBody->Add(MakeExportRow(L"导出 86 五笔用户词库", [panel]() { panel->Export("wubi"); }, 62.0f, true));
+    exportBody->Add(MakeExportRow(L"导出 98 五笔用户词库", [panel]() { panel->Export("wubi98"); }, 62.0f, true));
+    exportBody->Add(MakeExportRow(L"导出新世纪五笔用户词库", [panel]() { panel->Export("wubixsj"); }, 62.0f, true));
     exportBody->Add(MakeExportRow(L"导出英文用户词库", [panel]() { panel->Export("english"); }, 62.0f, true));
     exportBody->Add(MakeExportRow(L"导出字母词用户词库", [panel]() { panel->Export("latin"); }, 62.0f, true));
     page.AddRaw(std::make_shared<PageCard>(exportBody, PageCard::Style::Section, Thickness{24.0f, 18.0f, 24.0f, 0.0f}),

@@ -1,8 +1,10 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "engine/core/word_item.h"
 #include "ipc/candidate_translation_policy.h"
 
 // Built once on the candidate worker. Renderers only adapt this presentation data;
@@ -16,7 +18,56 @@ struct CandidateViewItem
     std::string badge;
     std::string translation;
     bool fixed_position = false;
+    // 音标（不带斜杠），画在译文前面：英文候选是它自己的，中文候选译成英语时是英文译文的。
+    // 放在最后：已有的按位置聚合初始化（{text, annotation, badge, translation, fixed}）不受影响。
+    std::string phonetic;
 };
+
+// 模糊音查询的 pinyin 保留用户实际匹配码，双拼下还会还原成双拼编码；规范全拼只在
+// canonical_pinyin。旧数据缺规范字段时才回退，绝不能拿匹配码当纠正提示。
+inline const std::string &FuzzyPinyinDisplayReading(const WordItem &item)
+{
+    return item.canonical_pinyin.empty() ? item.pinyin : item.canonical_pinyin;
+}
+
+// 模糊音候选逐字对比原始读音与实际读音，只在读音变化的字后反显规范音节。原始输入仍由
+// 预编辑区保留；每页只给首个能标出差异的模糊音候选加提示。提示只是展示，不进入上屏文本。
+inline bool ApplyFuzzyPinyinHint(CandidateViewItem &view, bool show, const std::vector<std::string> &typed,
+                                 const std::vector<std::string> &actual)
+{
+    if (!show || typed.size() < actual.size() || actual.empty())
+        return false;
+
+    std::vector<std::pair<std::size_t, std::size_t>> characters;
+    std::size_t begin = 0;
+    while (begin < view.text.size())
+    {
+        std::size_t end = begin + 1;
+        while (end < view.text.size() && (static_cast<unsigned char>(view.text[end]) & 0xC0) == 0x80)
+            ++end;
+        characters.emplace_back(begin, end);
+        begin = end;
+    }
+    if (characters.size() != actual.size())
+        return false;
+
+    std::string annotated;
+    annotated.reserve(view.text.size() + actual.size() * 5);
+    bool changed = false;
+    for (std::size_t i = 0; i < actual.size(); ++i)
+    {
+        const auto &[start, end] = characters[i];
+        annotated.append(view.text, start, end - start);
+        if (typed[i] != actual[i])
+        {
+            annotated += "(" + actual[i] + ")";
+            changed = true;
+        }
+    }
+    if (changed)
+        view.text = std::move(annotated);
+    return changed;
+}
 
 inline std::string EscapeCandidateViewHtml(const std::string &text)
 {
@@ -112,8 +163,10 @@ inline std::string CandidateViewHtml(const CandidateViewItem &item)
     std::string html = EscapeCandidateViewHtml(item.text + item.annotation + item.badge);
     if (item.fixed_position)
         html = "<span style=\"color:#379AD3\">" + html + "</span>";
+    if (!item.phonetic.empty())
+        html += "<span class=\"cand-pos\">/" + EscapeCandidateViewHtml(item.phonetic) + "/</span>";
     if (!item.translation.empty())
-        html += CandidateTranslationHtml(item.translation);
+        html += (item.phonetic.empty() ? "" : "  ") + CandidateTranslationHtml(item.translation);
     return html;
 }
 

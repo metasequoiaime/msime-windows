@@ -38,8 +38,12 @@ TaskClass ClassifyTask(TaskType type)
     case TaskType::UiDeleteCandidate:
     case TaskType::UiFixCandidatePosition:
     case TaskType::UiClearCandidatePosition:
+    // A key the user just pressed, like any other; the keys after it must see its cleared composition.
+    case TaskType::UiDictionaryPreeditLookup:
     case TaskType::ReloadInputSession:
     case TaskType::EnsureInputSessionMatchesConfig:
+    // The page split it reports must land before the next key pages or selects.
+    case TaskType::UiCandidatePageFitted:
         return TaskClass::Foreground;
 
     // Other UI actions keep their existing priority.
@@ -56,6 +60,7 @@ TaskClass ClassifyTask(TaskType type)
     case TaskType::ApplyMixedCandidates:
     case TaskType::ApplyRescoredOrder:
     case TaskType::RefreshWithEnrichment:
+    case TaskType::ApplyCandidatePhonetics:
         return TaskClass::Enrichment;
 
     // 没有人在等结果，但丢不得、也不能无限期拖着的事。

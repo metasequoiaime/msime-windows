@@ -122,6 +122,14 @@ constexpr std::uint32_t PuncSwitch = 8;
 constexpr std::uint32_t DoubleSingleByteSwitch = 9;
 // Main, negotiated InputStateShortcuts: keycode is the stable input-state Action ID.
 constexpr std::uint32_t InputStateAction = 17;
+// Main, negotiated FocusFieldAttestation: the TSF document this client has
+// focused right now. request_id is the focus token the state belongs to (the
+// one its ClientActivated carried), keycode is 1 when the document has a
+// context that is not read-only and 0 otherwise, and modifiers_down is a
+// per-thread serial that changes whenever the focused document or its top
+// context changes. Sent after every activation and on every change; never
+// activates the route by itself.
+constexpr std::uint32_t FocusFieldState = 18;
 constexpr bool IsRouteDeactivation(std::uint32_t event_type)
 {
     return event_type == ClientDeactivated || event_type == ClientSuspended;
@@ -486,11 +494,10 @@ constexpr std::uint32_t EnumerationCommaKeysChanged = 38;
 // FanyImePipeFlags::HorizontalArrowSelection and applies the Server's answer instead of moving the caret itself.
 // Older DLLs ignore the opcode and keep moving the caret.
 constexpr std::uint32_t HorizontalArrowSelectionChanged = 39;
-// The Server has a finished, checksum-verified installer. Payload is three tab-separated fields:
-// version, absolute installer path, installer file name. The TSF side only asks the user and, on
-// agreement, sends "InstallUpdate|<file name>" down the Aux pipe; it launches nothing itself. The
-// Server re-derives the path from its own state and starts the installer. Broadcast to every
-// connected client: the download usually finishes while the user types elsewhere.
+// Retired: the Server no longer sends this. A finished background download is offered from the
+// settings window's About page instead of a modal prompt in the host, and the Server no longer
+// handles "InstallUpdate|<file name>" on the Aux pipe. The number stays reserved so older DLLs
+// never misread a future opcode. Former payload: version, installer path, installer file name.
 constexpr std::uint32_t UpdateInstallerReady = 40;
 // Which keys enter the shuangpin end helpcode while direct helpcode is on (helpcode.shuangpin_direct_helpcode_end_
 // trigger, keys from the end helpcode trigger settings). Payload one character, FanyImeEndHelpcode::PayloadFor with
@@ -499,7 +506,12 @@ constexpr std::uint32_t UpdateInstallerReady = 40;
 // Backspace over the end block it opened (IsEndTriggerBackspaceAt), as Server-authoritative keys and rebuilds its
 // buffer from the Server's CompositionRestored reply. Older DLLs ignore the opcode and keep the keys as punctuation.
 constexpr std::uint32_t DirectHelpcodeEndTriggerChanged = 41;
-constexpr std::uint32_t MaxKnown = DirectHelpcodeEndTriggerChanged;
+// Drop the current composition without committing anything, as Esc does. Sent only to a client that
+// negotiated FanyImeProtocol::ServerCompositionCancel, after the Server cleared its own composition for a
+// shortcut it caught in its keyboard hook (the DR Dict preedit lookup, which some hosts never hand to TSF).
+// The DLL applies it only to the focus session and composition epoch current when it arrives. Payload empty.
+constexpr std::uint32_t CancelComposition = 42;
+constexpr std::uint32_t MaxKnown = CancelComposition;
 // Source compatibility for the Server's historical spellings.
 constexpr std::uint32_t SwitchToEn = SwitchToEnglish;
 constexpr std::uint32_t SwitchToCn = SwitchToChinese;

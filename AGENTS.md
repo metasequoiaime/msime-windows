@@ -61,15 +61,12 @@ cmake -S ui      -B ui/build -A x64                # GUI 框架
 
 **格式化会卡 CI，提交前务必自查，注意两个坑：**
 
-- **版本必须是 clang-format `18.1.8`**。`format.sh` 把版本钉死在这个值并从 PyPI 装，不同版本的默认排版不一致，用系统自带的 clang-format 本地过了、CI 仍可能红。`quality.yml` 的 `Check formatting` 步骤只跑 C++（`server`/`windows`/`ui`/`log`/`engine`）。
-- **`format.sh` 在 Windows 上跑不起来**：它假设 venv 是 Unix 布局（`bin/pip`、`bin/clang-format`），而 Windows 的 `python -m venv` 生成的是 `Scripts/`，脚本会以 `No such file or directory` 退出。在 Windows 上改了 C++ 就直接调 18.1.8 的 clang-format 自查，绕过这个脚本：
+- **版本必须是 clang-format `18.1.8`**。`format.sh` 把版本钉死在这个值并从 PyPI 装，不同版本的默认排版不一致，用系统自带的 clang-format 本地过了、CI 仍可能红。`quality.yml` 的 `Check formatting` 步骤只跑 C++（`server`/`windows`/`ui`/`log`/`engine`）。**PATH 上的 `clang-format` 几乎肯定不是这个版本**，它会报一堆不存在的排版问题。
+- **`format.sh` 在 Windows 上跑不起来**：它假设 venv 是 Unix 布局（`bin/pip`、`bin/clang-format`），而 Windows 的 `python -m venv` 生成的是 `Scripts/`，脚本会以 `No such file or directory` 退出。用同一个钉版工具的 PowerShell 入口：
 
   ```powershell
-  # 确认版本是 18.1.8（可用 pip 装：pip install clang-format==18.1.8）
-  clang-format --version
-  # 对本次改动的 C++ 文件做等价于 CI 的 --check
-  clang-format --dry-run --Werror --style=file <改动的 .cpp/.h 文件...>
-  # 要就地修复去掉 --dry-run --Werror，加 -i
+  .\scripts\format.ps1 <改动的 .cpp/.h 文件...>        # 等价于 CI 的 --check
+  .\scripts\format.ps1 -Write <改动的 .cpp/.h 文件...>  # 就地修复
   ```
 
   `--style=file` 会就近找每个子树自己的 `.clang-format`（`server/`、`engine/voice/` 等各有一份，列宽等规则不同），别用固定 `--style` 覆盖。

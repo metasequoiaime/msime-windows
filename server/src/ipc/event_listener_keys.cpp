@@ -12,6 +12,7 @@
 #include "ipc/candidate_commit_guard_policy.h"
 #include "ipc/input_key_policy.h"
 #include "engine/contracts/date_time_input.h"
+#include "engine/contracts/dictionary_lookup_keys.h"
 #include "engine/contracts/direct_helpcode.h"
 #include "engine/contracts/ipc_negotiation.h"
 #include "engine/contracts/mid_sentence_helpcode.h"
@@ -22,6 +23,7 @@
 #include "utils/common_utils.h"
 #include "global/globals.h"
 #include "window/caret_state_indicator_policy.h"
+#include "utils/dr_dict_lookup_policy.h"
 #include "utils/ime_utils.h"
 #include "config/ime_config.h"
 #include "conversion/chinese_converter.h"
@@ -296,7 +298,7 @@ bool IsSelectionKey(UINT keycode)
 {
     if (keycode == VK_SPACE)
         return true;
-    if (keycode >= '0' && keycode <= '9')
+    if (FanyImeIpc::IsCandidateDigitKey(keycode))
     {
         const std::string raw = g_inputSession ? g_inputSession->get_pinyin_sequence_with_cases() : std::string{};
         // T 模式指定日期时间：接得上的数字是编码键；V 模式里的数字也是。
@@ -393,6 +395,14 @@ bool ApplyCompositionEditKey(UINT keycode, WCHAR wch, UINT modifiers_down, bool 
         {
             ++composition.caret_position;
         }
+        resegment_by_caret();
+        return true;
+    }
+
+    // Home / End: TSF moves its own caret to the same edge, as it does for plain Left / Right.
+    if (keycode == VK_HOME || keycode == VK_END)
+    {
+        composition.caret_position = keycode == VK_HOME ? 0 : raw.size();
         resegment_by_caret();
         return true;
     }
@@ -805,7 +815,7 @@ void RebuildDateTimeCandidatePage()
     const int page_index = ui.page_index;
     const int selected_index = ui.selected_index_in_page;
     ui.set_items(OrderedDateTimeCandidates(g_date_time_page_keyword));
-    if (page_index > 0 && page_index * ui.page_size < static_cast<int>(ui.items.size()))
+    if (page_index > 0 && ui.page_start(page_index) < static_cast<int>(ui.items.size()))
     {
         ui.page_index = page_index;
     }
@@ -823,7 +833,7 @@ void HandleTranslationCommitKey(uint64_t client_id, uint64_t activation_epoch, u
     // 而且这条回复既不上屏也不给 wch 补标点。
     Global::MsgTypeToTsf = Global::DataFromServerMsgType::NavigationIgnored;
     const bool japanese = g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji;
-    if (IsCandidateSubPageActive() || IsUiLessMode() || japanese || !GetConfiguredCandidateTranslationsEnabled() ||
+    if (IsCandidateSubPageActive() || IsUiLessMode() || japanese || !AnyCandidateTranslationsEnabled() ||
         Global::candidate_ui.items.empty())
     {
         SendCurrentDataToClient(client_id, activation_epoch, request_id);
@@ -873,6 +883,88 @@ void HandleTranslationCommitKey(uint64_t client_id, uint64_t activation_epoch, u
     g_translation_candidates_active = true;
     RefreshCandidatePageUi(true);
     SendCurrentDataToClient(client_id, activation_epoch, request_id);
+}
+
+namespace
+{
+// 把查词交给候选窗的界面线程（WM_DR_DICT_LOOKUP）：隐藏候选窗和定位弹窗都在那里做。弹窗要开在候选窗本该在的
+// 光标处，那个锚点（TSF 光标、UIA 兜底光标、会话锚点）只在界面线程上，而且得在隐藏把它清掉之前读——所以调用方
+// 要先调这里，再 ClearState（它投递的隐藏消息排在这条后面）。没有可查的词或投递失败时返回 false。
+bool PostDictionaryLookup(std::wstring word)
+{
+    word = DrDictLookup::NormalizeWord(word);
+    if (word.empty() || !::global_hwnd || !IsWindow(::global_hwnd))
+        return false;
+    auto *text = new (std::nothrow) std::wstring(std::move(word));
+    if (!text)
+        return false;
+    if (!PostMessageW(::global_hwnd, WM_DR_DICT_LOOKUP, 0, reinterpret_cast<LPARAM>(text)))
+    {
+        delete text;
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+// Ctrl+Shift+Enter：在 DR Dict 里查高亮候选。
+// 查得到词时，效果等于先按 Esc 退出输入再打开词典：清掉组合、什么也不上屏。必须在弹窗抢走焦点之前清，
+// 否则宿主失焦时会把还挂着的预编辑当成文字留下。清法与造词态 Esc 相同（HandleCreatingWordEscape）：
+// ClearState，回空负载的 CompositionRestored，TSF 据此取消组合。
+// 没有可查的词（开关关着时 TSF 读到的配置比这里新或旧的那一瞬、没有候选）就什么也不动，回 NavigationIgnored：
+// TSF 已经吃了这颗键，必须给一条既不上屏也不补标点的回复，不能落进下面的普通回车分支把预编辑上屏。
+// 查预编辑（Ctrl+Alt+Enter）不走这里，见 HandleDictionaryPreeditLookupFromHook。
+void HandleDictionaryLookupKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
+{
+    Global::MsgTypeToTsf = Global::DataFromServerMsgType::NavigationIgnored;
+    std::wstring word;
+    if (GetConfiguredDrDictLookupCandidateHotkey() && !Global::candidate_ui.items.empty())
+    {
+        // 和译文上屏一样，先等画面追上已发布的那一页，查的才是用户看见的那个高亮候选。
+        WaitForCandidateRenderSync(Global::Keycode);
+        EnsureCandidatePageReady();
+        const auto &ui = Global::candidate_ui;
+        const size_t index = static_cast<size_t>((std::max)(0, ui.selected_index_in_page));
+        if (index < ui.page_words.size())
+        {
+            word = ui.page_words[index];
+        }
+    }
+    if (!PostDictionaryLookup(std::move(word)))
+    {
+        SendCurrentDataToClient(client_id, activation_epoch, request_id);
+        return;
+    }
+    // 不认 CompositionRestored 的旧 TSF 没法让它取消组合，只能保留组合、回空。
+    if (ClientNegotiatedCompositionRestore(client_id))
+    {
+        ClearState();
+        Global::MsgTypeToTsf = Global::DataFromServerMsgType::CompositionRestored;
+        Global::candidate_ui.selected_text = L"\t\t\t0";
+    }
+    SendCurrentDataToClient(client_id, activation_epoch, request_id);
+}
+
+// Ctrl+Alt+Enter：在 DR Dict 里查当前预编辑。按键由 Server 的低级键盘钩子在候选窗显示时截下（Edge / Chrome
+// 不把按着 Alt 的键交给 TSF），这里在工作线程上、按候选页所属的客户端执行。效果与上面相同：查得到词就先
+// 打开词典，再像 Esc 一样清掉组合。TSF 没收到这颗键，没有回复可带，所以经 Worker 管道主动发 CancelComposition；
+// 只对声明了 ServerCompositionCancel 的 TSF 这样做，旧 TSF 会忽略这条消息，两边就只查词、都不动组合。
+void HandleDictionaryPreeditLookupFromHook(uint64_t client_id, uint64_t activation_epoch)
+{
+    if (!GetConfiguredDrDictLookupPreeditHotkey())
+        return;
+    const auto &composition = GlobalIme::composition;
+    std::wstring word =
+        DrDictLookup::PreeditLookupText(string_to_wstring(composition.creating_word.prefix_text),
+                                        string_to_wstring(composition.raw_input_with_cases), g_r_mode_triggered);
+    if (!PostDictionaryLookup(std::move(word)))
+        return;
+    if (ClientNegotiatedServerCompositionCancel(client_id) &&
+        SendToTsfWorkerThreadClientViaNamedpipe(client_id, activation_epoch,
+                                                Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition, L""))
+    {
+        ClearState();
+    }
 }
 
 // 真顶字与自动上屏的推送负载："<消费字符数>\t<上屏文本>"。TSF 拿这个数字裁自己的
@@ -934,8 +1026,9 @@ void PublishRestoredCompositionCandidates(uint64_t client_id, uint64_t activatio
         if (rebuilt_page_prefix == restored_highlight.page_prefix && ui.item_total_count > 0 && ui.page_size > 0)
         {
             const int position = std::min(restored_highlight.absolute_index, ui.item_total_count - 1);
-            ui.page_index = position / ui.page_size;
-            ui.selected_index_in_page = position % ui.page_size;
+            const auto [page, index_in_page] = ui.locate(position);
+            ui.page_index = page;
+            ui.selected_index_in_page = index_in_page;
             ui.begin_selection();
             RefreshCandidatePageUi(false);
         }
@@ -958,6 +1051,8 @@ void HandleCreatingWordEscape(uint64_t client_id, uint64_t activation_epoch, uin
     if (FanyImeIpc::ShouldEscapeKeepSelectedWord(GetConfiguredEscapeKeepsSelectedWord(), input_before_key.size(),
                                                  g_r_mode_triggered))
     {
+        ResetRescoreRequeryBudget();
+        BlockAsyncCandidatePageUpdates();
         g_inputSession->set_pinyin_sequence("");
         g_inputSession->set_pinyin_sequence_with_cases("");
         g_inputSession->recompute_candidates();
@@ -1112,6 +1207,8 @@ void HandleToolbarLanguageToggle(bool from_ime_enabled)
 void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
 {
     const ScopedServerKeyLatency latency{client_id, activation_epoch, request_id};
+    // 新的一键就是新的一段输入：上一段选词时挡住的异步刷新，到这一段要重新放行。
+    AllowAsyncCandidatePageUpdates();
     /* 先清理一下状态 */
     Global::MsgTypeToTsf = Global::DataFromServerMsgType::Normal;
     ScopedKeyStage read_packet{client_id, activation_epoch, request_id, L"handle-read-packet"};
@@ -1189,6 +1286,13 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         return;
     }
 
+    // DR Dict 查高亮候选（Ctrl+Shift+Enter）。放在子页退出之前。查预编辑的 Ctrl+Alt+Enter 由键盘钩子
+    // 截下，TSF 不会发来，见 HandleDictionaryPreeditLookupFromHook。
+    if (FanyImeDictionaryLookupKeys::IsCandidateLookupKey(Global::Keycode, Global::ModifiersDown))
+    {
+        HandleDictionaryLookupKey(client_id, activation_epoch, request_id);
+        return;
+    }
     if (FanyImeIpc::IsTranslationCommitKey(Global::Keycode, Global::ModifiersDown))
     {
         HandleTranslationCommitKey(client_id, activation_epoch, request_id, -1);
@@ -1370,10 +1474,12 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
          !is_v_mode_input_key && !is_v_mode_shift_digit_selection &&
          IsCommitWithHighlightedCandidatePunctuationInCandidateMode(Global::Keycode, Global::Wch));
     const bool is_selection_key = IsSelectionKey(Global::Keycode);
-    // 移高亮的左右键不碰组合，交给下面的候选导航分支。
-    const bool is_composition_edit_key =
+    // 移高亮的左右键不碰组合，交给下面的候选导航分支。Home / End 把光标移到串首 / 串尾。
+    const bool is_caret_move_key =
         ((Global::Keycode == VK_LEFT || Global::Keycode == VK_RIGHT) && !arrow_moves_selection) ||
-        Global::Keycode == VK_BACK || Global::Keycode == VK_DELETE ||
+        Global::Keycode == VK_HOME || Global::Keycode == VK_END;
+    const bool is_composition_edit_key =
+        is_caret_move_key || Global::Keycode == VK_BACK || Global::Keycode == VK_DELETE ||
         (Global::Keycode >= 'A' && Global::Keycode <= 'Z') || is_manual_pinyin_separator ||
         is_microsoft_shuangpin_ing_key || is_mid_sentence_helpcode_marker || is_direct_helpcode_slash ||
         is_direct_helpcode_end_trigger || is_japanese_long_vowel || is_date_time_input_key || is_v_mode_input_key;
@@ -1616,7 +1722,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         Global::candidate_ui.select_first_on_page();
         ScopedKeyStage select_auto_commit{client_id, activation_epoch, request_id, L"handle-selection"};
         ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0,
-                            /*count_first_word=*/false);
+                            /*count_first_word=*/false, /*resolve_live_page=*/true);
         select_auto_commit.Stop();
         ScopedKeyStage push_auto_commit{client_id, activation_epoch, request_id, L"handle-worker-push"};
         if (Global::MsgTypeToTsf == Global::DataFromServerMsgType::Normal)
@@ -1664,7 +1770,8 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         prepare_top_commit.Stop();
         Global::candidate_ui.select_first_on_page();
         ScopedKeyStage select_top_commit{client_id, activation_epoch, request_id, L"handle-selection"};
-        ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0);
+        ProcessSelectionKey(VK_SPACE, client_id, activation_epoch, /*forced_index_in_page=*/0,
+                            /*count_first_word=*/true, /*resolve_live_page=*/true);
         select_top_commit.Stop();
         const std::wstring committed_text = Global::candidate_ui.selected_text;
 
@@ -1850,8 +1957,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
             }
         }
     }
-    else if (IsUiLessMode() && is_composition_edit_key && Global::Keycode != VK_LEFT && Global::Keycode != VK_RIGHT &&
-             Global::Keycode != VK_BACK)
+    else if (IsUiLessMode() && is_composition_edit_key && !is_caret_move_key && Global::Keycode != VK_BACK)
     {
         ScopedKeyStage prepare_edit_uiless{client_id, activation_epoch, request_id, L"handle-candidates"};
         PrepareCandidateList(client_id, activation_epoch);
@@ -1869,14 +1975,14 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     //
     /* VK_SPACE, Digits (T-mode digits that extend a date/time are input) */
     if (Global::Keycode == VK_SPACE ||
-        (!is_date_time_input_key && !is_v_mode_input_key && Global::Keycode > '0' && Global::Keycode <= '9'))
+        (!is_date_time_input_key && !is_v_mode_input_key && FanyImeIpc::IsCandidateDigitKey(Global::Keycode)))
     {
         ScopedKeyStage select_space_digit{client_id, activation_epoch, request_id, L"handle-selection"};
         ProcessSelectionKey(Global::Keycode, client_id, activation_epoch);
         select_space_digit.Stop();
         SendCurrentDataToClient(client_id, activation_epoch, request_id);
     }
-    else if ((Global::Keycode == VK_LEFT || Global::Keycode == VK_RIGHT) && !arrow_moves_selection)
+    else if (is_caret_move_key)
     {
         if (IsUiLessMode())
         {

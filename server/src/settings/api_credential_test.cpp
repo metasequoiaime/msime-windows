@@ -7,6 +7,7 @@
 #include "cloud/ai_translation.h"
 #include "cloud/aliyun_mt.h"
 #include "cloud/custom_translation.h"
+#include "cloud/bilibili_translation.h"
 #include "cloud/niutrans_translation.h"
 #include "cloud/tencent_tmt.h"
 #include "cloud/translation_gloss.h"
@@ -296,8 +297,8 @@ ApiCredentialTest::Result TestTranslationOnce(const ApiCredentialTest::Request &
     if (!AiTranslation::IsUsableConfig(config))
     {
         if (config.provider == "jev")
-            return {false, "Jev 只能从已有候选中挑选，不能用于翻译；请在「AI 与云联想」页换成生成式服务商。"};
-        return {false, "请先在「AI 与云联想」页面填写有效的接口地址、Token（Ollama 不需要）和模型。"};
+            return {false, "Jev 只能从已有候选中挑选，不能用于翻译；请在「整句与云候选」页换成生成式服务商。"};
+        return {false, "请先在「整句与云候选」页面填写有效的接口地址、Token（Ollama 不需要）和模型。"};
     }
     std::string failure;
     const auto translated = AiTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en", &failure);
@@ -414,6 +415,14 @@ ApiCredentialTest::Result TestTranslation(const ApiCredentialTest::Request &requ
         if (!AliyunMt::IsUsableCredentials(credentials))
             return {false, "请先填写有效的 AccessKey ID 和 AccessKey Secret。"};
         translated = AliyunMt::TextTranslateBatch(credentials, {"测试"}, "zh", "en");
+    }
+    else if (request.service == "translation.bilibili")
+    {
+        const BilibiliTranslation::Config config{BilibiliTranslation::NormalizeModel(Value(request, "model"))};
+        std::string detail;
+        translated = BilibiliTranslation::TextTranslateBatch(config, {"测试"}, "zh", "en", &detail);
+        if (translated.empty() || translated.front().empty())
+            return {false, "测试失败：" + (detail.empty() ? std::string("服务未返回有效译文") : detail)};
     }
     else if (request.service == "translation.niutrans")
     {

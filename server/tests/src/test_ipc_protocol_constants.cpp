@@ -72,7 +72,8 @@ TEST_CASE(ipc_pipe_ready_is_a_distinct_server_reply)
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::HorizontalArrowSelectionChanged, 39u);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::UpdateInstallerReady, 40u);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged, 41u);
-    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown, 41u);
+    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition, 42u);
+    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown, 42u);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::FocusSessionReady >
             Global::DataFromServerMsgTypeToTsfWorkerThread::PagingCommaPeriodChanged);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::PipeReady >
@@ -137,8 +138,10 @@ TEST_CASE(ipc_pipe_ready_is_a_distinct_server_reply)
             Global::DataFromServerMsgTypeToTsfWorkerThread::HorizontalArrowSelectionChanged);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged >
             Global::DataFromServerMsgTypeToTsfWorkerThread::UpdateInstallerReady);
+    REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition >
+            Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown,
-               Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged);
+               Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition);
 }
 
 TEST_CASE(ipc_client_suspension_is_a_distinct_nonterminal_route_reset)
@@ -146,6 +149,7 @@ TEST_CASE(ipc_client_suspension_is_a_distinct_nonterminal_route_reset)
     REQUIRE_EQ(FanyImePipeEventType::InputStateAction, 17u);
     REQUIRE_EQ(FanyImeProtocol::InputStateShortcuts, 1u << 7);
     REQUIRE_EQ(FanyImeProtocol::TemporaryJapaneseLongVowel, 1u << 8);
+    REQUIRE_EQ(FanyImeProtocol::ServerCompositionCancel, 1u << 9);
     REQUIRE_EQ(FanyImePipeEventType::ClientActivated, 11u);
     REQUIRE_EQ(FanyImePipeEventType::ClientDeactivated, 12u);
     REQUIRE_EQ(FanyImePipeEventType::StatusSnapshot, 13u);
@@ -172,6 +176,16 @@ TEST_CASE(ipc_hide_caret_state_is_append_only_and_not_a_candidate_or_route_reset
     REQUIRE(!FanyImePipeEventType::IsRouteDeactivation(FanyImePipeEventType::HideCaretState));
     REQUIRE(!FanyImePipeEventType::IsTerminalDeactivation(FanyImePipeEventType::HideCaretState));
     REQUIRE_EQ(sizeof(FanyImeNamedpipeData), 304u);
+}
+
+TEST_CASE(ipc_focus_field_state_is_an_appended_optional_event)
+{
+    REQUIRE_EQ(FanyImePipeEventType::FocusFieldState, 18u);
+    REQUIRE_EQ(FanyImeProtocol::FocusFieldAttestation, 1u << 10);
+    REQUIRE((FanyImeProtocol::Capabilities & FanyImeProtocol::FocusFieldAttestation) == 0u);
+    REQUIRE((FanyImeProtocol::RequiredCapabilities & FanyImeProtocol::FocusFieldAttestation) == 0u);
+    REQUIRE(!FanyImePipeEventType::IsRouteDeactivation(FanyImePipeEventType::FocusFieldState));
+    REQUIRE(!FanyImePipeEventType::IsTerminalDeactivation(FanyImePipeEventType::FocusFieldState));
 }
 
 TEST_CASE(ipc_uiless_flag_is_outside_key_modifier_mask)

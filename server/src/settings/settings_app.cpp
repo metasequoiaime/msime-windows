@@ -7,13 +7,18 @@
 #include "settings/api_credential_test.h"
 #include "settings/collocation_model.h"
 #include "settings/lattice_model.h"
+#include "settings/local_asr_download.h"
 #include "settings/neural_model.h"
+#include "voice-input/local_asr_catalog.h"
 #include "settings/default_input_method.h"
 #include "settings/game_compat_name.h"
+#include "settings/profile_icon.h"
 #include "settings/input_method_install.h"
 #include "settings/dictionary_manager.h"
 #include "settings/native/native_settings_window.h"
 #include "settings/user_data_backup.h"
+#include "settings/sync_merge.h"
+#include "settings/sync_service.h"
 
 #include "msimeui/DeviceResources.h"
 #include "settings/serial_task_queue.h"
@@ -66,6 +71,8 @@ constexpr UINT kWorkerCompleted = WM_APP + 4;
 constexpr UINT kQuitSettings = WM_APP + 5;
 // 模型更新探测线程完成：UI 线程重新取一份快照，探测线程不碰 g_worker。
 constexpr UINT kModelUpdateChecked = WM_APP + 6;
+// Server 的语音提示框点了「打开设置」：激活并停在语音输入页。与 settings_launcher.cpp 同值。
+constexpr UINT kOpenVoiceSection = WM_APP + 7;
 // Timer 1 is msimeui's caret blink in the Direct2D window, so ours start elsewhere.
 constexpr UINT_PTR kConfigReloadTimer = 0x5301;
 constexpr UINT_PTR kLingerTimer = 0x5302;
@@ -77,7 +84,8 @@ constexpr int kRestartRefreshTicks = 10; // 500ms × 10 = 5s，覆盖 Watchdog �
 std::unique_ptr<native_settings::SettingsWindow> g_native;
 
 bool g_window_minimized = false;
-bool g_open_about_on_ready = false;
+// 启动参数指定的首页（--about / --voice），空串表示默认页。窗口建好后清空。
+std::string g_initial_page;
 HWND g_settings_hwnd = nullptr;
 std::optional<CandidateSkinCatalog::ScanResult> g_candidate_skin_catalog;
 uint64_t g_candidate_skin_catalog_revision = 0;
@@ -94,6 +102,9 @@ int g_restart_refresh_remaining = 0;
 // A DPI rebuild recreates the About page, so page-local button state cannot be
 // the only guard against a second import queueing behind the first one.
 std::atomic<bool> g_user_data_backup_busy{false};
+// 同步上传、下载、恢复都不能并行，和备份用同一个 worker 但独立一把锁：
+// 用户可以在一次备份完成后立刻开始同步，不需要等前一个 flag 释放。
+std::atomic<bool> g_user_data_sync_busy{false};
 // appearance.settings_window_linger 的 UI 线程副本，由 ConfigCompletion 更新。
 std::string g_settings_window_linger = "off";
 std::wstring g_last_config_message;
@@ -116,6 +127,14 @@ bool PostToPage(const std::wstring &message)
     return true;
 }
 
+// 宿主侧的失败提示走窗口内的 toast，不弹系统 MessageBox：后者的字体随系统界面语言，
+// 英文系统上中文渲染很差，也和设置窗口的外观对不上。只在 UI 线程调用。
+void ShowSettingsFailure(const std::wstring &message)
+{
+    if (g_native)
+        g_native->ShowToast(message, false);
+}
+
 // 给页面回一条只在宿主侧产生的消息。契约里的 server 段是穷举的，新类型必须同时写进
 // engine/contracts/webview/messages.json，否则 Validate 会拒。
 void PostToSettingsPage(const json::value &message)
@@ -131,6 +150,55 @@ void PostRestartServerDone(bool ok)
 {
     PostToSettingsPage(
         json::value{{"type", "restartServerDone"}, {"protocolVersion", metasequoia::webview::Version}, {"ok", ok}});
+}
+
+// 按 [sync] 配置造一个传输层实例。凭据已在配置层解密，这里直接用。
+// 配置不完整时返回空指针并把原因写进 message，调用方据此回执给页面。
+//
+// allow_disabled 只给「测试连接」用：那个按钮就是在用户开同步之前验证地址和凭据的，
+// 被 enabled 挡住会看到一个和连接无关的「请先在设置里打开」。
+std::unique_ptr<user_data_sync::RemoteStore> MakeSyncStore(const SyncConfig &config, bool allow_disabled,
+                                                           std::string &message)
+{
+    if (!config.enabled && !allow_disabled)
+    {
+        message = "同步未开启，请先在设置里打开。";
+        return nullptr;
+    }
+    if (config.backend == "webdav")
+    {
+        if (config.webdav_url.empty())
+        {
+            message = "请先填写 WebDAV 地址。";
+            return nullptr;
+        }
+        user_data_sync::WebDavOptions options;
+        options.base_url = config.webdav_url;
+        options.username = config.webdav_username;
+        options.password = config.webdav_password;
+        return user_data_sync::MakeWebDavStore(std::move(options));
+    }
+    if (config.backend == "s3")
+    {
+        if (config.s3_endpoint.empty() || config.s3_bucket.empty())
+        {
+            message = "请先填写 S3 服务地址与存储桶。";
+            return nullptr;
+        }
+        user_data_sync::S3Options options;
+        options.endpoint = config.s3_endpoint;
+        options.region = config.s3_region;
+        options.bucket = config.s3_bucket;
+        options.access_key = config.s3_access_key;
+        options.secret_key = config.s3_secret_key;
+        // 路径风格完全按用户勾选：AWS 官方域名需要虚拟主机风格（不勾），MinIO / R2 / B2
+        // 需要路径风格（勾）。不做域名猜测，否则勾选框显示的状态会和实际行为相反。
+        options.path_style = config.s3_path_style;
+        options.prefix = config.s3_prefix;
+        return user_data_sync::MakeS3Store(std::move(options));
+    }
+    message = "请先选择同步方式。";
+    return nullptr;
 }
 
 // 冷启动打点：设置 METASEQUOIA_IME_SETTINGS_TRACE=1 后，各阶段距进程启动的毫秒数追加到
@@ -165,11 +233,11 @@ void TraceStartup(const char *stage)
     }
 }
 
-void ShowAboutSection()
+void ShowSection(const char *page)
 {
     if (g_native)
     {
-        g_native->ShowPage("about-settings");
+        g_native->ShowPage(page);
     }
 }
 
@@ -296,8 +364,10 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
     const CustomTranslationConfig &custom_translation = GetConfiguredCustomTranslation();
     const AliyunMtConfig &aliyun_mt = GetConfiguredAliyunMt();
     const NiuTransConfig &niutrans = GetConfiguredNiuTrans();
+    const BilibiliTranslateConfig &bilibili_translate = GetConfiguredBilibiliTranslate();
     const auto translation = GetConfiguredTranslation();
     const NetworkProxyConfig network_proxy = GetConfiguredNetworkProxy();
+    const SyncConfig sync = GetConfiguredSync();
     const FrequencyAdjustmentConfig &frequency = GetConfiguredFrequencyAdjustment();
     const FloatingToolbarItemsConfig &toolbar = GetConfiguredFloatingToolbarItems();
     const std::filesystem::path skins_root = std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"skins";
@@ -324,6 +394,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
                  {"layouts", skin.layouts},
                  {"themes", skin.themes},
                  {"decorationTopDip", skin.decorationTopDip},
+                 {"decorationLayouts", skin.decorationLayouts},
                  {"compatible", CandidateSkinCatalog::Supports(skin, skin_layout, skin_theme)}});
         }
     }
@@ -360,6 +431,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"wubi_mixed_pinyin", GetConfiguredWubiMixedPinyin()},
             {"escape_keeps_selected_word", GetConfiguredEscapeKeepsSelectedWord()},
             {"enter_learns_english_word", GetConfiguredEnterLearnsEnglishWord()},
+            {"english_commit_with_space", GetConfiguredEnglishCommitWithSpace()},
             {"wubi_z_mode", GetConfiguredWubiZMode()},
             {"wubi_four_code_auto_commit", GetConfiguredWubiFourCodeAutoCommit()},
             {"wubi_fifth_code_top_commit", GetConfiguredWubiFifthCodeTopCommit()},
@@ -407,8 +479,13 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"floating_toolbar_shadow", GetConfiguredFloatingToolbarShadow()},
             {"cn_en_mixed_input", GetConfiguredEnglishCandidatesEnabled()},
             {"candidate_translations", GetConfiguredCandidateTranslationsEnabled()},
+            {"english_candidate_translations", GetConfiguredEnglishCandidateTranslationsEnabled()},
             {"candidate_translation_show_pos", GetConfiguredCandidateTranslationShowPos()},
             {"candidate_translation_single_sense", GetConfiguredCandidateTranslationSingleSense()},
+            {"english_candidate_translation_show_pos", GetConfiguredEnglishCandidateTranslationShowPos()},
+            {"english_candidate_translation_single_sense", GetConfiguredEnglishCandidateTranslationSingleSense()},
+            {"candidate_translation_phonetics", GetConfiguredCandidateTranslationPhonetics()},
+            {"english_candidate_phonetics", GetConfiguredEnglishCandidatePhonetics()},
             {"cn_en_mixed_input_min_chars", GetConfiguredEnglishMixedInputMinChars()},
             {"cn_en_mixed_input_first_page_count", GetConfiguredEnglishMixedInputFirstPageCount()},
             {"emoji_mixed_input", GetConfiguredEmojiMixedInputEnabled()},
@@ -437,8 +514,10 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"sentence_neural_desktop", GetConfiguredAssocSentenceNeuralDesktop()},
             {"sentence_neural_desktop_model_status", [] {
                  const auto status = neural_model::GetModelStatus();
-                 return nlohmann::json{
-                     {"state", status.state}, {"progress", status.progress}, {"error", status.error}};
+                 return nlohmann::json{{"state", status.state},
+                                       {"progress", status.progress},
+                                       {"error", status.error},
+                                       {"updateAvailable", status.update_available}};
              }()},
             {"sentence_neural_desktop_model_url", neural_model::SourceUrl()},
             {"sentence_neural_keyboard", GetConfiguredAssocSentenceNeuralKeyboard()},
@@ -481,6 +560,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()}}},
           {"frequency_adjustment",
            {{"mode", frequency.mode},
+            {"wubi_mode", frequency.wubi_mode},
             {"trigger_count", frequency.trigger_count},
             {"linear_step", frequency.linear_step}}},
           {"utility",
@@ -505,6 +585,11 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"show_ime_mode", GetConfiguredLanguageBarShowImeMode()},
             {"show_double_single_byte", GetConfiguredLanguageBarShowDoubleSingleByte()},
             {"show_punctuation", GetConfiguredLanguageBarShowPunctuation()}}},
+          {"dr_dict",
+           {{"enabled", GetConfiguredDrDictEnabled()},
+            {"lookup_candidate_ctrl_shift_enter", GetConfiguredDrDictLookupCandidateHotkeySwitch()},
+            {"lookup_preedit_ctrl_alt_enter", GetConfiguredDrDictLookupPreeditHotkeySwitch()},
+            {"english_popup", GetConfiguredDrDictEnglishPopupSwitch()}}},
           {"appearance",
            {{"settings_window_linger", GetConfiguredSettingsWindowLinger()},
             {"settings_launch_animation", GetConfiguredSettingsLaunchAnimation()},
@@ -513,6 +598,9 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"candidate_window_follow_cursor", GetConfiguredCandidateWindowFollowCursor()},
             {"candidate_window_fit_content", GetConfiguredCandidateWindowFitContent()},
             {"candidate_window_single_line", GetConfiguredCandidateWindowSingleLine()},
+            {"candidate_window_fixed_width", GetConfiguredCandidateWindowFixedWidth()},
+            {"candidate_window_fixed_width_ratio", GetConfiguredCandidateWindowFixedWidthRatio()},
+            {"candidate_window_fixed_height", GetConfiguredCandidateWindowFixedHeight()},
             {"candidate_skin", GetConfiguredCandidateSkin()},
             {"candidate_window_preedit_style", GetConfiguredCandidateWindowPreeditStyle()},
             {"candidate_window_preedit_shuangpin_quanpin", GetConfiguredCandidateWindowPreeditShuangpinQuanpin()},
@@ -567,6 +655,35 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"doubao_enable_ddc", voice.doubao_enable_ddc},
             {"doubao_boosting_table_id", voice.doubao_boosting_table_id},
             {"asr_model", voice.asr_model},
+            {"local_asr_model", voice.local_asr_model},
+            {"local_asr_status", [] {
+                 nlohmann::json statuses = nlohmann::json::object();
+                 for (const auto &[model_id, status] : local_asr_download::GetStatuses())
+                     statuses[model_id] = nlohmann::json{{"state", status.state},
+                                                         {"progress", status.progress},
+                                                         {"error", status.error},
+                                                         {"detail", status.detail},
+                                                         {"modelInstalled", status.model_installed}};
+                 return statuses;
+             }()},
+            {"local_asr_catalog", [] {
+                 // 页面不自持目录副本：id、下载地址与校验和留在宿主，只下发展示字段。
+                 nlohmann::json catalog = nlohmann::json::array();
+                 for (const auto &entry : local_asr::Catalog())
+                 {
+                     catalog.push_back(nlohmann::json{{"id", entry.id},
+                                                      {"title", entry.title},
+                                                      {"description", entry.description},
+                                                      {"sizeHint", entry.size_hint},
+                                                      {"memoryHint", entry.memory_hint},
+                                                      {"license", entry.license},
+                                                      {"url", local_asr::SourceUrl(entry.archive)},
+                                                      {"needsVad", local_asr::NeedsVad(entry)}});
+                 }
+                 return catalog;
+             }()},
+            {"local_asr_runtime_url", local_asr::SourceUrl(local_asr::RuntimeArchive())},
+            {"local_asr_vad_url", local_asr::SourceUrl(local_asr::VadModel())},
             {"polish_provider", voice.polish_provider},
             {"polish_token", voice.polish_token},
             {"polish_tokens", voice.polish_tokens},
@@ -617,8 +734,28 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"endpoint", custom_translation.endpoint},
             {"api_key", custom_translation.api_key}}},
           {"niutrans", {{"enabled", niutrans.enabled}, {"app_id", niutrans.app_id}, {"apikey", niutrans.apikey}}},
-          {"translation", {{"provider", translation->provider}}},
+          {"bilibili_translate", {{"model", bilibili_translate.model}}},
+          {"translation",
+           {{"provider", translation->provider},
+            {"english_provider", translation->english_provider},
+            {"english_target_language", translation->english_target_language}}},
           {"network", {{"proxy_mode", network_proxy.mode}, {"proxy_server", network_proxy.server}}},
+          {"sync",
+           {{"enabled", sync.enabled},
+            {"backend", sync.backend},
+            {"auto_upload_minutes", sync.auto_upload_minutes},
+            {"keep_snapshots", sync.keep_snapshots},
+            {"include_models", sync.include_models},
+            {"webdav_url", sync.webdav_url},
+            {"webdav_username", sync.webdav_username},
+            {"webdav_password", sync.webdav_password},
+            {"s3_endpoint", sync.s3_endpoint},
+            {"s3_region", sync.s3_region},
+            {"s3_bucket", sync.s3_bucket},
+            {"s3_path_style", sync.s3_path_style},
+            {"s3_prefix", sync.s3_prefix},
+            {"s3_access_key", sync.s3_access_key},
+            {"s3_secret_key", sync.s3_secret_key}}},
           {"helpcode",
            {{"shuangpin_helpcode", GetConfiguredShuangpinHelpcodeEnabled()},
             {"shuangpin_helpcode_direct", GetConfiguredShuangpinHelpcodeDirect()},
@@ -717,6 +854,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEscapeKeepsSelectedWord(json::value_to<bool>(data.at("value")));
     if (path == "input.enter_learns_english_word")
         return SetConfiguredEnterLearnsEnglishWord(json::value_to<bool>(data.at("value")));
+    if (path == "input.english_commit_with_space")
+        return SetConfiguredEnglishCommitWithSpace(json::value_to<bool>(data.at("value")));
     if (path == "input.wubi_z_mode")
         return SetConfiguredWubiZMode(json::value_to<std::string>(data.at("value")));
     if (path == "input.wubi_four_code_auto_commit")
@@ -771,6 +910,16 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredCandidateWindowFitContent(json::value_to<bool>(data.at("value")));
     if (path == "appearance.candidate_window_single_line")
         return SetConfiguredCandidateWindowSingleLine(json::value_to<bool>(data.at("value")));
+    if (path == "appearance.candidate_window_fixed_width")
+        return SetConfiguredCandidateWindowFixedWidth(json::value_to<bool>(data.at("value")));
+    if (path == "appearance.candidate_window_fixed_width_ratio")
+    {
+        const json::value &value = data.at("value");
+        const double ratio = value.is_double() ? value.as_double() : static_cast<double>(value.as_int64());
+        return SetConfiguredCandidateWindowFixedWidthRatio(ratio);
+    }
+    if (path == "appearance.candidate_window_fixed_height")
+        return SetConfiguredCandidateWindowFixedHeight(json::value_to<bool>(data.at("value")));
     if (path == "appearance.candidate_skin")
         return SetConfiguredCandidateSkin(json::value_to<std::string>(data.at("value")));
     if (path == "appearance.candidate_window_preedit_style")
@@ -855,10 +1004,20 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredEnglishCandidatesEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.candidate_translations")
         return SetConfiguredCandidateTranslationsEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "general.english_candidate_translations")
+        return SetConfiguredEnglishCandidateTranslationsEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.candidate_translation_show_pos")
         return SetConfiguredCandidateTranslationShowPos(json::value_to<bool>(data.at("value")));
     if (path == "general.candidate_translation_single_sense")
         return SetConfiguredCandidateTranslationSingleSense(json::value_to<bool>(data.at("value")));
+    if (path == "general.english_candidate_translation_show_pos")
+        return SetConfiguredEnglishCandidateTranslationShowPos(json::value_to<bool>(data.at("value")));
+    if (path == "general.english_candidate_translation_single_sense")
+        return SetConfiguredEnglishCandidateTranslationSingleSense(json::value_to<bool>(data.at("value")));
+    if (path == "general.candidate_translation_phonetics")
+        return SetConfiguredCandidateTranslationPhonetics(json::value_to<bool>(data.at("value")));
+    if (path == "general.english_candidate_phonetics")
+        return SetConfiguredEnglishCandidatePhonetics(json::value_to<bool>(data.at("value")));
     if (path == "general.cn_en_mixed_input_min_chars")
         return SetConfiguredEnglishMixedInputMinChars(static_cast<int>(data.at("value").as_int64()));
     if (path == "general.cn_en_mixed_input_first_page_count")
@@ -931,6 +1090,14 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredLanguageBarShowDoubleSingleByte(json::value_to<bool>(data.at("value")));
     if (path == "language_bar.show_punctuation")
         return SetConfiguredLanguageBarShowPunctuation(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.enabled")
+        return SetConfiguredDrDictEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.lookup_candidate_ctrl_shift_enter")
+        return SetConfiguredDrDictLookupCandidateHotkey(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.lookup_preedit_ctrl_alt_enter")
+        return SetConfiguredDrDictLookupPreeditHotkey(json::value_to<bool>(data.at("value")));
+    if (path == "dr_dict.english_popup")
+        return SetConfiguredDrDictEnglishPopup(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_minus_equal")
         return SetConfiguredPagingMinusEqualEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.paging_tab")
@@ -1039,16 +1206,37 @@ bool ApplyConfigUpdate(const json::object &data)
         return value.is_string() && SetConfiguredNiuTransString(path.substr(std::string("niutrans.").size()),
                                                                 json::value_to<std::string>(value));
     }
-    if (path == "translation.provider")
+    if (path.rfind("bilibili_translate.", 0) == 0)
     {
         const json::value &value = data.at("value");
-        return value.is_string() && SetConfiguredTranslationString("provider", json::value_to<std::string>(value));
+        return value.is_string() &&
+               SetConfiguredBilibiliTranslateString(path.substr(std::string("bilibili_translate.").size()),
+                                                    json::value_to<std::string>(value));
+    }
+    if (path == "translation.provider" || path == "translation.english_provider" ||
+        path == "translation.english_target_language")
+    {
+        const json::value &value = data.at("value");
+        return value.is_string() && SetConfiguredTranslationString(path.substr(std::string("translation.").size()),
+                                                                   json::value_to<std::string>(value));
     }
     if (path.rfind("network.", 0) == 0)
     {
         const json::value &value = data.at("value");
         return value.is_string() && SetConfiguredNetworkString(path.substr(std::string("network.").size()),
                                                                json::value_to<std::string>(value));
+    }
+    if (path.rfind("sync.", 0) == 0)
+    {
+        const json::value &value = data.at("value");
+        const std::string key = path.substr(std::string("sync.").size());
+        if (value.is_bool())
+            return SetConfiguredSyncBool(key, json::value_to<bool>(value));
+        if (value.is_int64())
+            return SetConfiguredSyncInt(key, static_cast<int>(value.as_int64()));
+        if (value.is_string())
+            return SetConfiguredSyncString(key, json::value_to<std::string>(value));
+        return false;
     }
     if (path == "helpcode.show_sp_helpcode_in_candidate_window")
         return SetConfiguredShowShuangpinHelpcodeInCandidateWindow(json::value_to<bool>(data.at("value")));
@@ -1409,6 +1597,29 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
         {
             PostConfig(false);
         }
+        else if (type == "localAsrModelDownload")
+        {
+            // 本地语音模型：缺什么补什么（运行库、VAD、模型），进度随快照回放，页面在忙碌态轮询。
+            local_asr_download::StartDownload(json::value_to<std::string>(value.at("data").at("modelId")));
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelImport")
+        {
+            const std::string model_id = json::value_to<std::string>(value.at("data").at("modelId"));
+            const std::filesystem::path source = local_asr_download::PromptForFile(hwnd);
+            if (!source.empty())
+                local_asr_download::Import(model_id, source);
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelDelete")
+        {
+            local_asr_download::Delete(json::value_to<std::string>(value.at("data").at("modelId")));
+            PostConfig(false);
+        }
+        else if (type == "localAsrModelStatusRequest")
+        {
+            PostConfig(false);
+        }
         else if (type == "neuralModelDownload")
         {
             // 与八股文模型同一套：后台下载，进度随快照回放，页面在下载态轮询。
@@ -1466,7 +1677,7 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                 return [saved, completion = std::move(completion)] {
                     completion();
                     if (!saved)
-                        MessageBoxW(g_settings_hwnd, L"设置保存失败，请重试。", L"水杉输入法", MB_OK | MB_ICONWARNING);
+                        ShowSettingsFailure(L"设置保存失败，请重试");
                 };
             });
         }
@@ -1585,8 +1796,7 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
             const bool ok = NotifyImeServerRestart();
             if (!ok)
             {
-                MessageBoxW(g_settings_hwnd, L"未能重启输入法进程，请稍后重试。", L"水杉输入法",
-                            MB_OK | MB_ICONWARNING);
+                ShowSettingsFailure(L"未能重启输入法进程，请稍后重试");
             }
             else
             {
@@ -1668,6 +1878,189 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                 {
                     g_user_data_backup_busy.store(false);
                     post_done(action, false, "用户数据备份失败，请重试。");
+                }
+            }
+        }
+        else if (type == "userDataSyncRequest")
+        {
+            const auto &data = value.at("data").as_object();
+            const std::string request_id = json::value_to<std::string>(data.at("requestId"));
+            const std::string action = json::value_to<std::string>(data.at("action"));
+            const std::string device_id =
+                data.contains("deviceId") ? json::value_to<std::string>(data.at("deviceId")) : std::string();
+            const auto post_sync = [](const std::string &request_id, const std::string &action, const bool ok,
+                                      const std::string &message, const json::array &devices,
+                                      const bool include_devices, const std::string &local_device_id) {
+                json::value response = {{"type", "userDataSyncResponse"},
+                                        {"requestId", request_id},
+                                        {"action", action},
+                                        {"ok", ok},
+                                        {"message", message},
+                                        {"protocolVersion", metasequoia::webview::Version}};
+                // 列表类回执必须始终带 devices，哪怕是空数组：页面靠它判断"云端已经清空"
+                // 并重建设备列表。只在非空时下发会让旧行留在界面上。
+                if (include_devices)
+                    response.as_object()["devices"] = devices;
+                if (!local_device_id.empty())
+                    response.as_object()["localDeviceId"] = local_device_id;
+                if (metasequoia::webview::Validate(response, "server"))
+                    PostToSettingsPage(response);
+            };
+            if (action != "probe" && action != "listDevices" && action != "upload" && action != "download")
+            {
+                post_sync(request_id, action, false, "未知的同步操作。", json::array{}, false, {});
+            }
+            else if (g_user_data_sync_busy.exchange(true))
+            {
+                // 上传会生成完整归档、下载会覆盖本地数据，两者都不能并行。
+                post_sync(request_id, action, false, "已有同步操作正在进行，请稍后再试。", json::array{}, false, {});
+            }
+            else
+            {
+                try
+                {
+                    const bool submitted = g_worker->Submit([request_id, action, device_id,
+                                                             post_sync]() -> SerialTaskQueue::Completion {
+                        std::string message;
+                        bool ok = false;
+                        json::array devices;
+                        bool import_after_download = false;
+                        std::filesystem::path downloaded;
+                        std::string local_device_id;
+                        // 本机设备标识不依赖 store 是否构造成功：probe / upload 失败时也要能标出
+                        // 本机那一行并禁用它的「恢复…」，否则用户可以对自己的快照点恢复。
+                        {
+                            std::string id_message;
+                            local_device_id = user_data_sync::LoadOrCreateDeviceId(
+                                std::filesystem::path(CommonUtils::get_ime_data_path_w()), id_message);
+                        }
+                        try
+                        {
+                            const SyncConfig config = GetConfiguredSync();
+                            auto store = MakeSyncStore(config, action == "probe", message);
+                            if (!store)
+                            {
+                                // MakeSyncStore 已经把原因写进 message。
+                            }
+                            else
+                            {
+                                user_data_sync::SyncOptions options;
+                                options.keep_snapshots = config.keep_snapshots;
+                                options.include_models = config.include_models;
+                                user_data_sync::SyncService service(
+                                    std::move(store), std::filesystem::path(CommonUtils::get_ime_data_path_w()),
+                                    options);
+                                if (action == "probe")
+                                {
+                                    ok = service.Probe(message);
+                                }
+                                else if (action == "listDevices")
+                                {
+                                    std::vector<user_data_sync::DeviceInfo> listed;
+                                    ok = service.ListDevices(listed, message);
+                                    for (const user_data_sync::DeviceInfo &info : listed)
+                                    {
+                                        devices.push_back(json::value{{"deviceId", info.device_id},
+                                                                      {"hostname", info.hostname},
+                                                                      {"uploadedUnix", info.uploaded_unix},
+                                                                      {"size", static_cast<std::int64_t>(info.size)}});
+                                    }
+                                }
+                                else if (action == "upload")
+                                {
+                                    const SettingsUserDataBackup::Context context =
+                                        SettingsUserDataBackup::DefaultContext();
+                                    const SettingsUserDataBackup::Hooks hooks =
+                                        SettingsUserDataBackup::ProductionHooks();
+                                    // 上传不重算凭据：归档里的 config.toml 在写之前就被清洗掉，
+                                    // 远端永远不会出现 DPAPI 密文。
+                                    const user_data_sync::UploadResult result = service.Upload(
+                                        [&context, &hooks, include_models = config.include_models](
+                                            const std::filesystem::path &destination, std::string &build_message) {
+                                            return SettingsUserDataBackup::ExportSanitized(
+                                                context, destination, include_models, hooks,
+                                                [](const std::string &text) {
+                                                    return user_data_sync::StripCredentials(text);
+                                                },
+                                                build_message);
+                                        },
+                                        {});
+                                    ok = result.ok;
+                                    message = result.message;
+                                }
+                                else // download
+                                {
+                                    const user_data_sync::DownloadResult result = service.Download(device_id, {});
+                                    ok = result.ok;
+                                    message = result.message;
+                                    if (result.ok)
+                                    {
+                                        downloaded = result.archive;
+                                        import_after_download = true;
+                                    }
+                                }
+                            }
+                        }
+                        catch (...)
+                        {
+                            ok = false;
+                            message = "同步操作失败，请重试。";
+                        }
+                        // 恢复的落位必须在 worker 上做：Import 会停 Server 并等待进程退出，
+                        // 对 Server 与 Watchdog 各等最多 15 秒。放到 Completion（UI 线程）会把
+                        // 设置窗口冻住整段时间，和 userDataBackupRequest 的既有做法也不一致。
+                        if (import_after_download && ok)
+                        {
+                            std::string import_message;
+                            try
+                            {
+                                SettingsUserDataBackup::MergeImportReport report;
+                                ok = SettingsUserDataBackup::ImportMerging(
+                                    downloaded, SettingsUserDataBackup::ProductionHooks(), report, import_message);
+                                // 合并后的配置已经落盘，设置进程要跟上磁盘。
+                                InitImeConfig();
+                                if (ok)
+                                {
+                                    // 日志合并了但没回放时要说清楚：墓碑与远端权重要等下次
+                                    // 安装才生效，不能只报"已恢复"。
+                                    import_message = report.replay_skipped
+                                                         ? "已从云端恢复并导入。部分词条改动要等下次安装时才生效。"
+                                                         : "已从云端恢复并导入。";
+                                }
+                            }
+                            catch (...)
+                            {
+                                ok = false;
+                                import_message = "导入下载的备份失败，请重试。";
+                            }
+                            std::error_code remove_error;
+                            std::filesystem::remove(downloaded, remove_error);
+                            message = import_message;
+                            import_after_download = false;
+                        }
+                        return [request_id, action, ok, message = std::move(message), devices, local_device_id,
+                                post_sync] {
+                            g_user_data_sync_busy.store(false);
+                            post_sync(request_id, action, ok, message, devices, action == "listDevices",
+                                      local_device_id);
+                            // 配置被合并过才需要刷新快照；这里无法区分，统一刷一次代价很小。
+                            if (action == "download" && ok)
+                                PostConfig(true);
+                        };
+                    });
+                    // Submit 在队列已经停止时返回 false。不处理的话 busy 会永久停在 true，
+                    // 之后所有同步请求都回「已有同步操作正在进行」。
+                    if (!submitted)
+                    {
+                        g_user_data_sync_busy.store(false);
+                        post_sync(request_id, action, false, "设置窗口正在关闭，同步已取消。", json::array{}, false,
+                                  {});
+                    }
+                }
+                catch (...)
+                {
+                    g_user_data_sync_busy.store(false);
+                    post_sync(request_id, action, false, "同步操作失败，请重试。", json::array{}, false, {});
                 }
             }
         }
@@ -1775,6 +2168,54 @@ void HandleClientMessage(HWND hwnd, const std::string &raw)
                 auto serialized = string_to_wstring(json::serialize(response));
                 return [serialized = std::move(serialized)] { PostToPage(serialized); };
             });
+        }
+        else if (type == "profileIconRequest")
+        {
+            const auto &data = value.at("data").as_object();
+            const std::string request_id = json::value_to<std::string>(data.at("requestId"));
+            const std::string action = json::value_to<std::string>(data.at("action"));
+            const std::string icon = data.contains("icon") ? json::value_to<std::string>(data.at("icon")) : "";
+            // The picker is modal on the window thread; conversion and the UAC wait run on the worker.
+            std::filesystem::path image;
+            bool cancelled = false;
+            if (action == "import")
+            {
+                image = profile_icon::PromptForImage(hwnd);
+                cancelled = image.empty();
+            }
+            const std::filesystem::path assets =
+                std::filesystem::path(CommonUtils::get_ime_data_path_w()) / L"assets" / L"settings";
+            g_worker->Submit(
+                [request_id, action, icon, image, cancelled, assets, hwnd]() -> SerialTaskQueue::Completion {
+                    bool ok = true;
+                    std::string message;
+                    if (action == "apply")
+                    {
+                        ok = profile_icon::ApplyBuiltin(hwnd, icon, assets, message);
+                        if (ok)
+                            message = "已更换输入法图标。";
+                    }
+                    else if (action == "import" && !cancelled)
+                    {
+                        ok = profile_icon::ApplyCustom(hwnd, image, message);
+                        if (ok)
+                            message = "已更换为自定义图标。";
+                    }
+                    const profile_icon::Status status = profile_icon::QueryStatus();
+                    json::value response = {{"type", "profileIconResponse"},
+                                            {"requestId", request_id},
+                                            {"action", action},
+                                            {"ok", ok},
+                                            {"message", message},
+                                            {"cancelled", cancelled},
+                                            {"icon", status.choice},
+                                            {"iconFile", wstring_to_string(status.iconFile)},
+                                            {"protocolVersion", metasequoia::webview::Version}};
+                    if (!metasequoia::webview::Validate(response, "server"))
+                        throw std::runtime_error("Invalid profile icon response");
+                    auto serialized = string_to_wstring(json::serialize(response));
+                    return [serialized = std::move(serialized)] { PostToPage(serialized); };
+                });
         }
         else if (type == "statsRequest")
         {
@@ -1931,7 +2372,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
         return 0;
     case kOpenAboutSection:
         ActivateWindow(hwnd);
-        ShowAboutSection();
+        ShowSection("about-settings");
+        return 0;
+    case kOpenVoiceSection:
+        ActivateWindow(hwnd);
+        ShowSection("voice");
         return 0;
     case kScanSkinCatalog:
         PostConfig(true);
@@ -2093,8 +2538,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     // The elevated half of the game-compat switch: write HKLM and exit, no window, no single-instance check.
     if (const int elevated_result = game_compat_name::RunElevatedApplyIfRequested(command_line); elevated_result >= 0)
         return elevated_result;
+    // The elevated half of the profile icon choice, same shape as the one above.
+    if (const int icon_result = profile_icon::RunElevatedApplyIfRequested(command_line); icon_result >= 0)
+        return icon_result;
     const std::wstring arguments = command_line ? command_line : L"";
-    g_open_about_on_ready = arguments.find(L"--about") != std::wstring::npos;
+    UINT open_section_message = kActivateExistingWindow;
+    if (arguments.find(L"--about") != std::wstring::npos)
+    {
+        g_initial_page = "about-settings";
+        open_section_message = kOpenAboutSection;
+    }
+    else if (arguments.find(L"--voice") != std::wstring::npos)
+    {
+        g_initial_page = "voice";
+        open_section_message = kOpenVoiceSection;
+    }
     // Older shortcuts may still pass --d2d / --webview2, which used to pick the renderer
     // for one run. There is only the Direct2D window now; both are ignored.
     // The Direct2D window's first frame spends ~200ms bringing up the GPU driver. Start
@@ -2119,7 +2577,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
         HWND existing = FindWindowW(kWindowClass, nullptr);
         if (existing)
         {
-            PostMessageW(existing, g_open_about_on_ready ? kOpenAboutSection : kActivateExistingWindow, 0, 0);
+            PostMessageW(existing, open_section_message, 0, 0);
             SetForegroundWindow(existing);
         }
         return 0;
@@ -2147,13 +2605,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     if (!hwnd)
         return 1;
     g_settings_hwnd = hwnd;
-    g_worker = std::make_unique<SerialTaskQueue>(
-        [hwnd] { PostMessageW(hwnd, kWorkerCompleted, 0, 0); },
-        [] { MessageBoxW(g_settings_hwnd, L"设置操作失败，请重试。", L"水杉输入法", MB_OK | MB_ICONWARNING); },
-        [] {
-            if (g_worker_com_initialized)
-                CoUninitialize();
-        });
+    g_worker = std::make_unique<SerialTaskQueue>([hwnd] { PostMessageW(hwnd, kWorkerCompleted, 0, 0); },
+                                                 [] { ShowSettingsFailure(L"设置操作失败，请重试"); },
+                                                 [] {
+                                                     if (g_worker_com_initialized)
+                                                         CoUninitialize();
+                                                 });
     auto initial_config = std::make_shared<std::promise<bool>>();
     std::future<bool> initial_light = initial_config->get_future();
     g_worker->Submit([initial_config] {
@@ -2199,12 +2656,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     // The Direct2D window draws its first frame at once, so there is no splash.
     native_settings::SettingsWindow::Callbacks callbacks;
     callbacks.postToHost = [hwnd](const std::string &message) { HandleClientMessage(hwnd, message); };
-    g_native = std::make_unique<native_settings::SettingsWindow>(hwnd, std::move(callbacks),
-                                                                 g_open_about_on_ready ? "about-settings" : "");
+    g_native = std::make_unique<native_settings::SettingsWindow>(hwnd, std::move(callbacks), g_initial_page);
     g_native->SetLightTheme(g_settings_light);
     g_native->SetLaunchAnimation(launch_animation);
     TraceStartup("ui: native window built");
-    g_open_about_on_ready = false;
+    g_initial_page.clear();
     // Cloaked until the first frame is drawn, so the compositor never shows the
     // surface before it is painted (white, whatever the theme).
     BOOL cloak = TRUE;

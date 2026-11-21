@@ -8,6 +8,11 @@
 #include <vector>
 #include <windows.h>
 
+namespace FanyImeUi
+{
+struct CandidateMenuMetrics;
+}
+
 class CandidatePresenter
 {
   public:
@@ -24,6 +29,8 @@ class CandidatePresenter
     // deriving it from the caret, for when no caret position is known at all.
     // nullptr returns to caret placement; Hide() clears it too.
     void SetPinnedCardOrigin(const POINT *origin);
+    // 横排固定宽度时上一帧只画出了前几个候选；没有裁掉时为 -1。去重路径回显绘制时要带上它。
+    int LastShownCount() const;
 
   private:
     CandidatePresenter();
@@ -57,8 +64,9 @@ class CandidatePresenter
     void CloseContextMenu(bool restoreHost);
     void OpenFixSubmenu();
     void CloseFixSubmenu();
-    void ExpandHostForMenu(POINT clientPoint);
-    void RestoreHostAfterMenu();
+    void ExpandHostForMenu(POINT clickScreen, const FanyImeUi::CandidateMenuMetrics &metrics);
+    // Returns whether the host was grown and has been moved back.
+    bool RestoreHostAfterMenu();
     // 动图的帧时钟：Present 之后按场景给出的下一次换帧时刻排一个一次性定时器，到点再 Present。
     // 只在候选窗显示时排；隐藏、换皮肤、窗口销毁时停。
     void ScheduleAnimationFrame();
@@ -99,6 +107,9 @@ class CandidatePresenter
     // Largest card size kept for the current input (preedit + caret + page,
     // stickyCardKey_); a new key or Hide() starts from the natural size.
     std::wstring stickyCardKey_;
+    // 这一页要停靠在候选窗旁的 DR Dict 弹窗显示的词（页面快照的 dr_dict_dock_word）。PlaceAndShow
+    // 放好卡片之后连同卡片的屏幕矩形交给 DrDictDock。
+    std::wstring drDictDockWord_;
     float stickyCardWidthDip_ = 0.0f;
     float stickyCardHeightDip_ = 0.0f;
     int wheelDeltaAccumulator_ = 0;
@@ -111,4 +122,7 @@ class CandidatePresenter
     size_t expandRequestedCount_ = 0;
     int expandRows_ = 4;
     float expandRowStepDip_ = 30.0f;
+    // 最近一次画的候选页第一个候选的绝对下标，横排固定宽度回报「这一页放得下几个」时带上。
+    int renderedPageStart_ = 0;
+    int lastShownCount_ = -1;
 };

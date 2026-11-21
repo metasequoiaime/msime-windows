@@ -60,10 +60,20 @@ void EnqueueEnglishCandidates(std::vector<WordItem> candidates, const std::strin
 void EnqueueCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation,
                                   bool merge = false);
 void EnqueueMixedCandidates(MixedCandidates::Result result, const std::string &input, uint64_t generation);
+// 候选旁的音标（english.db）查完了。任意线程调用。
+void EnqueueCandidatePhonetics(std::vector<EnglishIme::Phonetic> phonetics);
 void EnqueueCandidateUiAction(CandidateUiAction action, int one_based_index, int fixed_position = 0);
 // 鼠标开始操作当前显示的候选页时，通知工作线程保持这批候选的顺序。界面线程调用，只记下页面
 // 代次，由工作线程在处理下一个任务前认领（见 LatchCandidateUiInteraction）。
 void NoteCandidateUiInteraction(uint64_t page_generation);
+// 候选窗实际画出了哪一代页面：界面线程在绘制完成（含去重命中）后回显，选词以它为准。
+// shown_count >= 0 表示只画出了前 shown_count 个（横排固定宽度一行放不下），后面的不能选。
+void NoteCandidatePagePainted(uint64_t page_generation, bool visible, int shown_count = -1);
+// 横排固定宽度：候选窗量出 page_generation 那一版、从 page_start 起的当前页一行只放得下 count 个。
+// 界面线程调用，工作线程据此重新划页并重发一版。
+void EnqueueCandidatePageFitted(uint64_t page_generation, int page_start, int count);
+// 候选窗显示/隐藏：隐藏后迟到页不得复活，选词也不再等一次不会到来的绘制。
+void NoteCandidatePageVisibility(bool visible);
 // Paging carries a step count rather than a candidate index. Steps coalesce
 // into a page task already queued for the same client, so spinning the wheel
 // cannot outrun the worker with a long run of engine-backed page moves.
@@ -73,6 +83,9 @@ void EnqueueCandidateUiPaging(CandidateUiAction action, int steps);
 void EnqueueCandidateUiCommitAt(int absolute_index, std::wstring expected_text);
 // 卷轴展开面板打开或滚到底部：向会话再要一批候选，并重新发布带后续候选的候选页。
 void EnqueueCandidateUiExpand();
+// DR Dict 查预编辑（Ctrl+Alt+Enter）：键盘钩子在候选窗显示时调用，按当前候选页所属的客户端排进工作线程。
+// 只投递任务，不碰输入状态，钩子回调里可以直接调。
+void EnqueueDictionaryPreeditLookup();
 void EnqueuePipeSessionInvalidatedTask(uint64_t client_id, uint64_t invalidation_epoch);
 void EnqueueReloadInputSessionTask();
 void EnqueueEnsureInputSessionMatchesConfigTask();

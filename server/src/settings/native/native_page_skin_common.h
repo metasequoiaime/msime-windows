@@ -35,6 +35,9 @@ bool IsBuiltinSkin(const std::string &id);
 
 // External skin entry of appearance.external_candidate_skins, or null.
 const Json *FindExternalSkin(const SettingsModel &model, const std::string &id);
+// The external skin draws its [candidate_window.decoration] image in this layout: top_inset_dip
+// is positive and decoration.layouts is empty or lists the layout (same rule as the candidate window).
+bool HasDecorationInLayout(const Json *external, bool horizontal);
 // Base of a skin id: the id itself for a built-in skin, the manifest's base otherwise (a built-in
 // skin or canvas; shared bases arrive already mapped to fluent).
 std::string SkinBase(const SettingsModel &model, const std::string &id);

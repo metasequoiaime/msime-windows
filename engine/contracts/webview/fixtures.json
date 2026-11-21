@@ -267,6 +267,54 @@
     "direction": "client"
   },
   {
+    "name": "dictionary foreign import",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-2",
+        "dictionary": "quanpin",
+        "action": "importForeign",
+        "format": "libimebin",
+        "path": "C:\\Users\\me\\Downloads\\sogou-network.dict"
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "dictionary foreign import proprietary format is not accepted",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-4",
+        "dictionary": "quanpin",
+        "action": "importForeign",
+        "format": "scel",
+        "path": "C:\\a.scel"
+      }
+    },
+    "valid": false,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "dictionary foreign import unknown format",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-3",
+        "dictionary": "quanpin",
+        "action": "importForeign",
+        "format": "zip",
+        "path": "C:\\a.zip"
+      }
+    },
+    "valid": false,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
     "name": "dictionary request unknown action",
     "message": {
       "type": "dictionaryRequest",
@@ -274,6 +322,49 @@
         "requestId": "1",
         "dictionary": "quanpin",
         "action": "eval"
+      }
+    },
+    "valid": false,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "dictionary batch delete",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-4",
+        "dictionary": "quanpin",
+        "action": "deleteMany",
+        "entries": [
+          {
+            "code": "ni'hao",
+            "word": "你好"
+          },
+          {
+            "code": "shi'jie",
+            "word": "世界"
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "dictionary batch delete without word",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-5",
+        "dictionary": "quanpin",
+        "action": "deleteMany",
+        "entries": [
+          {
+            "code": "ni'hao"
+          }
+        ]
       }
     },
     "valid": false,
@@ -360,6 +451,22 @@
           "weight": 10
         }
       ]
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "server"
+  },
+  {
+    "name": "dictionary batch delete partial",
+    "message": {
+      "type": "dictionaryResponse",
+      "requestId": "dict-6",
+      "action": "deleteMany",
+      "dictionary": "quanpin",
+      "ok": true,
+      "message": "已删除 1 条词条，1 条未删除：原词条不存在或已被删除",
+      "rows": [],
+      "failed": 1
     },
     "valid": true,
     "surface": "settings",
@@ -1001,6 +1108,63 @@
       "name": "拼音输入法",
       "registeredName": "拼音输入法",
       "defaultName": "拼音输入法"
+    },
+    "direction": "server",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "profile icon apply request",
+    "message": {
+      "type": "profileIconRequest",
+      "protocolVersion": 1,
+      "data": {
+        "requestId": "profile-icon-1",
+        "action": "apply",
+        "icon": "logo-v2"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": true
+  },
+  {
+    "name": "profile icon request rejects unknown action",
+    "message": {
+      "type": "profileIconRequest",
+      "data": {
+        "requestId": "profile-icon-1",
+        "action": "delete"
+      }
+    },
+    "direction": "client",
+    "surface": "settings",
+    "valid": false
+  },
+  {
+    "name": "profile icon request rejected from toolbar",
+    "message": {
+      "type": "profileIconRequest",
+      "data": {
+        "requestId": "profile-icon-1",
+        "action": "status"
+      }
+    },
+    "direction": "client",
+    "surface": "toolbar",
+    "valid": false
+  },
+  {
+    "name": "profile icon status response",
+    "message": {
+      "type": "profileIconResponse",
+      "protocolVersion": 1,
+      "requestId": "profile-icon-1",
+      "action": "status",
+      "ok": true,
+      "message": "",
+      "icon": "default",
+      "iconFile": "C:\\Windows\\system32\\IME\\MetasequoiaIME\\MetasequoiaImeTip.ico"
     },
     "direction": "server",
     "surface": "settings",

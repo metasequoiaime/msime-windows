@@ -1,5 +1,6 @@
 #include "tests/includes/test_framework.h"
 #include "tests/includes/test_utf8_path.h"
+#include "src/ipc/candidate_expansion_policy.h"
 #include "src/ipc/candidate_selection_policy.h"
 #include "src/ipc/queried_candidate_arrangement_policy.h"
 #include "engine/core/input_session.h"
@@ -9,6 +10,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -1636,4 +1638,188 @@ TEST_CASE(AnchorAfterTheFirstPageYieldsToTheSpellingGroupThatCrossesIt)
     RequireWords(items, {"中文0", "中文1", "T恤", "T恤衫", "T恤衫", "中文4", "中文2", "中文3", "中文5", "中文6"});
     REQUIRE_EQ(items[4].variant_rank, 1);
     REQUIRE_EQ(items[5].fixed_position, 5);
+}
+
+// 中英混输精确英文命中：整串输入恰好是一个英文词、且输入含简拼或没打完的音节（如 markdown）时，简拼展开
+// 猜出来的整句（sentence_association）不再显示；完整拼音输入（如 banana）命中精确英文时整句是正常候选，保留。
+// 普通词、单字、前缀补全、快捷短语、emoji 与用户固定了位置的候选都不动；只有前缀补全不算精确命中。
+// 判据用 WordItem::pinyin、EnglishPlacement::input（EnglishInputKey 已经把输入转成小写）与
+// EnglishPlacement::hide_guessed_sentences（生产侧取自 is_all_complete_pure_pinyin）。
+namespace
+{
+WordItem ExactEnglish(const std::string &word)
+{
+    return WordItem(word, word, 0, CandidateSource::EnglishDictionary);
+}
+
+WordItem GuessedSentence(const std::string &word, const std::string &pinyin = "ma'r'k'do'w'n", std::int64_t weight = 1)
+{
+    WordItem item(pinyin, word, weight, CandidateSource::Generated);
+    item.sentence_association = true;
+    return item;
+}
+
+// 模拟 EnglishInputKey：大小写不影响精确命中判据，placement.input 只拿到小写后的整串输入。
+// markdown 这类简拼/不完整输入在生产侧会置 hide_guessed_sentences，测试辅助函数同样置位。
+FanyImeIpc::EnglishPlacement ExactEnglishPlacement(const std::string &raw_input, size_t page_size)
+{
+    FanyImeIpc::EnglishPlacement placement;
+    placement.page_size = page_size;
+    placement.require_exact = true;
+    placement.hide_guessed_sentences = true;
+    placement.input = raw_input;
+    std::transform(placement.input.begin(), placement.input.end(), placement.input.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return placement;
+}
+
+// markdown 的候选：精确英文、整句猜测、三条普通中文词。
+std::vector<WordItem> MarkdownItems()
+{
+    return {ExactEnglish("markdown"), GuessedSentence("骂人看到欧文你"), WordItem("ma'r'k'do'w'n", "骂人", 100),
+            WordItem("ma'r'k'do'w'n", "麻仁", 90), WordItem("ma'r'k'do'w'n", "马睿", 80)};
+}
+
+// banana 的候选：完整拼音（ba'na'na）的精确英文、正常整句猜测、三条普通中文词。
+std::vector<WordItem> BananaItems()
+{
+    return {ExactEnglish("banana"), GuessedSentence("爸拿拿", "ba'na'na"), WordItem("ba'na'na", "爸", 100),
+            WordItem("ba'na'na", "把", 90), WordItem("ba'na'na", "拿", 80)};
+}
+
+size_t CountGuessedSentences(const std::vector<WordItem> &items)
+{
+    return static_cast<size_t>(
+        std::count_if(items.begin(), items.end(), [](const WordItem &item) { return item.sentence_association; }));
+}
+
+bool ContainsWord(const std::vector<WordItem> &items, const std::string &word)
+{
+    return std::any_of(items.begin(), items.end(), [&](const WordItem &item) { return item.word == word; });
+}
+} // namespace
+
+TEST_CASE(ExactEnglishHidesGuessedSentencesAndLeavesOtherCandidatesInPlace)
+{
+    auto items = MarkdownItems();
+    auto control = items;
+    control.erase(control.begin() + 1); // 同一份列表去掉整句，作为英文与普通词位置的对照。
+    const auto placement = ExactEnglishPlacement("markdown", 6);
+    FanyImeIpc::NormalizeMixedCandidateOrder(control, 1, placement);
+    FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, placement);
+
+    REQUIRE_EQ(CountGuessedSentences(items), size_t{0});
+    RequireWords(items, WordsOf(control));
+    REQUIRE(ContainsWord(items, "markdown"));
+    REQUIRE(ContainsWord(items, "骂人"));
+    REQUIRE(ContainsWord(items, "麻仁"));
+    REQUIRE(ContainsWord(items, "马睿"));
+}
+
+TEST_CASE(CompletePinyinKeepsGuessedSentencesOnExactEnglish)
+{
+    // 完整拼音命中精确英文时整句是正常候选；生产侧 CurrentEnglishPlacement 只在输入不是完整拼音时
+    // 置 hide_guessed_sentences（引擎判据见 test_engine_shuangpin_session.cpp）。
+    auto placement = ExactEnglishPlacement("banana", 6);
+    placement.hide_guessed_sentences = false;
+
+    auto items = BananaItems();
+    FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, placement);
+    REQUIRE_EQ(CountGuessedSentences(items), size_t{1});
+    REQUIRE(ContainsWord(items, "爸拿拿"));
+    REQUIRE(ContainsWord(items, "banana"));
+
+    // 选词中扩展只追加，不走归一化：完整拼音下引擎重建出来的整句同样保留。
+    Global::CandidateUiState ui;
+    ui.page_size = 6;
+    ui.set_items(items);
+    ui.begin_selection();
+    auto expanded = BananaItems();
+    expanded.push_back(GuessedSentence("爸拿拿呀", "ba'na'na"));
+    expanded.emplace_back("ba'na'na", "拿拿", 70);
+    REQUIRE(FanyImeIpc::SetExpandedCandidatesKeepingPagePosition(ui, std::move(expanded), placement));
+    REQUIRE_EQ(CountGuessedSentences(ui.items), size_t{2});
+    REQUIRE(ContainsWord(ui.items, "爸拿拿呀"));
+}
+
+TEST_CASE(EnglishPrefixCompletionDoesNotHideGuessedSentences)
+{
+    for (const auto &[input, word] :
+         std::vector<std::pair<std::string, std::string>>{{"markdo", "markdown"}, {"zai", "zaire"}})
+    {
+        auto items = MarkdownItems();
+        items[0] = ExactEnglish(word);
+        FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, ExactEnglishPlacement(input, 6));
+        REQUIRE_EQ(CountGuessedSentences(items), size_t{1});
+        REQUIRE(ContainsWord(items, "骂人看到欧文你"));
+    }
+}
+
+TEST_CASE(GuessedSentencesRemainWithoutAnExactEnglishCandidate)
+{
+    // 没有英文候选时，input 再像精确命中也不删。
+    auto items = MarkdownItems();
+    items.erase(items.begin());
+    FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, ExactEnglishPlacement("markdown", 6));
+    REQUIRE_EQ(CountGuessedSentences(items), size_t{1});
+
+    // 英文还没异步回来（input 为空）时同样不动列表。
+    items = MarkdownItems();
+    FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, PageOf(6));
+    REQUIRE_EQ(CountGuessedSentences(items), size_t{1});
+}
+
+TEST_CASE(ExactEnglishKeepsFixedSentencesAndOtherGeneratedCandidates)
+{
+    auto items = MarkdownItems();
+    items[1].fixed_position = 3; // 用户显式固定了位置的整句保留。
+    items.emplace_back("ma'r'k'do'w'n", "简拼展开", 1, CandidateSource::Generated);
+    FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, ExactEnglishPlacement("markdown", 6));
+    REQUIRE_EQ(CountGuessedSentences(items), size_t{1});
+    REQUIRE(ContainsWord(items, "骂人看到欧文你"));
+    REQUIRE(ContainsWord(items, "简拼展开"));
+}
+
+TEST_CASE(ExactEnglishHidesGuessedSentencesAtEveryPageSizeAndWithAFixedEnglish)
+{
+    for (size_t page_size : {size_t{1}, size_t{2}, size_t{0}})
+    {
+        auto items = MarkdownItems();
+        FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, ExactEnglishPlacement("markdown", page_size));
+        REQUIRE_EQ(CountGuessedSentences(items), size_t{0});
+        REQUIRE_EQ(items.size(), size_t{4});
+        REQUIRE(ContainsWord(items, "markdown"));
+    }
+
+    // 用户固定了位置的英文也是精确命中。
+    auto items = MarkdownItems();
+    items[0].fixed_position = 2;
+    FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, ExactEnglishPlacement("markdown", 6));
+    REQUIRE_EQ(CountGuessedSentences(items), size_t{0});
+
+    std::vector<WordItem> empty;
+    FanyImeIpc::NormalizeMixedCandidateOrder(empty, 1, ExactEnglishPlacement("markdown", 6));
+    REQUIRE(empty.empty());
+}
+
+TEST_CASE(HiddenGuessedSentencesStayHiddenThroughRenormalizationAndCandidateExpansion)
+{
+    auto items = MarkdownItems();
+    const auto placement = ExactEnglishPlacement("markdown", 6);
+    FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, placement);
+    const auto once = items;
+    FanyImeIpc::NormalizeMixedCandidateOrder(items, 1, placement);
+    RequireWords(items, WordsOf(once));
+
+    // 选词中翻页/候选扩展只追加不重排，引擎重建出来的整句同样不追加。
+    Global::CandidateUiState ui;
+    ui.page_size = 6;
+    ui.set_items(items);
+    ui.begin_selection();
+    auto expanded = MarkdownItems();
+    expanded.push_back(GuessedSentence("骂人看到欧文你二"));
+    expanded.emplace_back("ma'r'k'do'w'n", "马睿", 70);
+    REQUIRE(FanyImeIpc::SetExpandedCandidatesKeepingPagePosition(ui, std::move(expanded), placement));
+    REQUIRE_EQ(CountGuessedSentences(ui.items), size_t{0});
+    REQUIRE_EQ(ui.items.back().word, std::string("马睿"));
 }

@@ -121,6 +121,13 @@ void ModelDownloader::InstallPart(bool imported)
         Fail("模型落位失败");
         return;
     }
+    if (spec_.superseded_file != nullptr)
+    {
+        // 删不掉（比如被别的程序打开着）也不影响新模型：解析总是先认新文件，旧的只多占些空间，
+        // 下次落位或删除模型时还会再清。
+        std::error_code remove_error;
+        std::filesystem::remove(Directory() / spec_.superseded_file, remove_error);
+    }
     std::ofstream notice(Directory() / "NOTICE.md", std::ios::binary | std::ios::trunc);
     if (notice)
     {

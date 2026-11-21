@@ -206,6 +206,22 @@ TEST_CASE(composition_selection_snapshots_restore_the_traditional_spelling_state
     REQUIRE(composition.creating_word.prefix_text.empty());
 }
 
+// 「各段字形相同」标记变假之后，撤回到变假之前的快照时回到真；清空时回到初值。
+TEST_CASE(composition_selection_snapshots_restore_the_same_character_set_mark)
+{
+    GlobalIme::CompositionState composition;
+    composition.creating_word = MakeCreatingWord("kai", "开");
+    composition.push_selection_snapshot("fa");
+
+    composition.creating_word.all_segments_same_character_set = false;
+    REQUIRE(composition.restore_last_selection());
+    REQUIRE(composition.creating_word.all_segments_same_character_set);
+
+    composition.creating_word.all_segments_same_character_set = false;
+    composition.clear_creating_word();
+    REQUIRE(composition.creating_word.all_segments_same_character_set);
+}
+
 TEST_CASE(composition_terminal_helpcode_restore_preserves_current_suffix_and_caret)
 {
     for (const std::string tail : {"f", "fR", "|f", "|fR", "Fr"})

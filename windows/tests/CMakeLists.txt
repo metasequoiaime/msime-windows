@@ -35,6 +35,11 @@ target_include_directories(test_caps_lock_input_policy PRIVATE ../src)
 target_compile_features(test_caps_lock_input_policy PRIVATE cxx_std_17)
 add_test(NAME caps_lock_input_policy COMMAND test_caps_lock_input_policy)
 
+add_executable(test_candidate_digit_policy candidate_digit_policy.cpp)
+target_include_directories(test_candidate_digit_policy PRIVATE ../src)
+target_compile_features(test_candidate_digit_policy PRIVATE cxx_std_17)
+add_test(NAME candidate_digit_policy COMMAND test_candidate_digit_policy)
+
 add_executable(test_pinyin_commit_shortcut_policy pinyin_commit_shortcut_policy.cpp)
 target_include_directories(test_pinyin_commit_shortcut_policy PRIVATE ../src)
 target_compile_features(test_pinyin_commit_shortcut_policy PRIVATE cxx_std_17)

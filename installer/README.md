@@ -32,7 +32,7 @@
 
 **Nightly 永远进不了 Latest。** GitHub 的 Latest 只指向非预发布 Release，nightly 每次都带 `--prerelease`，所以首页那个 Latest 链接始终是正式版。
 
-版本号不是固定的，由 `Prepare-PackageFiles.ps1` 的 `-TargetVersion` 决定，默认 `0.0.1`；正式发布时 CI 传入真实版本。
+版本号不是固定的，由 `Compile-Installer.ps1` 的 `-TargetVersion` 决定（`Prepare-PackageFiles.ps1` 接同一个值，只做提前校验），默认 `0.0.1`；`test.ps1` / `test-light.ps1` / `test-symbols.ps1` 默认从 `version.txt` 派生 `<版本>-local`，正式发布时 CI 传入真实版本。
 
 本仓库 **不包含** 正式代码签名证书、私钥、指纹，也不包含编译好的 EXE/DLL、词库或安装包。唯一的公钥是 `nightly-signing.cer`，它随仓库分发，用于给用户导入 nightly 通道的信任。
 
@@ -183,11 +183,15 @@ pwsh -File .\test.ps1
 `test.ps1` 会按顺序做这些事：
 
 1. 编译本仓 TSF、Server，并构建设置页；缺少组件入口则失败
-2. `Prepare-PackageFiles.ps1` — 收集 `server_exe\`、`tsf_dll\`、`app_data\`，并把 `msime_setup.iss` 的版本写成 `0.0.1`
+2. `Prepare-PackageFiles.ps1` — 收集 `server_exe\`、`tsf_dll\`、`app_data\`，并提前校验版本号
 3. `Sign-PackageBinaries-Local.ps1` — 本机自签名包内 EXE/DLL
-4. `Compile-Installer.ps1` — 编译出 `Output\MetasequoiaIME_Setup_v0.0.1.exe`
-5. `Sign-Installer-Local.ps1` — 本机自签名安装包
-6. `Install.ps1` — 启动安装程序
+4. `Compile-Installer.ps1 -TargetVersion <版本>` — 编译出 `Output\MetasequoiaIME_Setup_v<版本>.exe`，并把产物记进 `Output\last-build.json`
+5. `Sign-Installer-Local.ps1` — 本机自签名 `last-build.json` 记录的安装包
+6. `Install.ps1` — 启动同一个安装包
+
+版本默认从仓库根的 `version.txt` 派生 `<版本>-local`，可用 `-TargetVersion` 覆盖。只构建不安装时加 `-NoInstall`；它仍会做本机自签名，只适合开发机。`Compile-Installer.ps1` 不改写受版本控制的 `msime_setup.iss`，版本由调用方显式传入，经 ISCC `/D` 覆盖；不传时用 `.iss` 里的默认值 `0.0.1`。
+
+`Sign-Installer-Local.ps1` 和 `Install.ps1` 只认 `last-build.json`（解析规则在 `Resolve-LocalInstaller.ps1`）：`-Light` 与上次编译的模式不符、记录的包已不存在、或 `Output\` 里有比记录更新的安装包时直接报错，不会去猜文件名。用 Inno Setup GUI 编译的包请用 `-InstallerPath` 指定。
 
 也可以按上面的顺序逐步运行。
 

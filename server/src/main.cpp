@@ -1,4 +1,5 @@
 #include "ipc/event_listener.h"
+#include "log/candidate_diag_log.h"
 #include "log/fanylog.h"
 #include "window/ime_windows.h"
 #include <commctrl.h>
@@ -24,7 +25,7 @@
 #include "engine/local_modes/radical_query.h"
 #include "global/globals.h"
 #include "utils/common_utils.h"
-#include "utils/hanzi_pinyin.h"
+#include "utils/dr_dict_dock.h"
 #include "utils/process_priority.h"
 #include "utils/single_instance.h"
 #include "session/session_factory.h"
@@ -210,6 +211,12 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
         [](std::vector<EnglishIme::TranslationResult> results, uint64_t generation) {
             FanyNamedPipe::EnqueueCandidateTranslations(std::move(results), generation);
         });
+    // 候选旁的音标（english.db 的 en_ipa）。
+    EnglishIme::SetPhoneticsCallback([](std::vector<EnglishIme::Phonetic> phonetics) {
+        FanyNamedPipe::EnqueueCandidatePhonetics(std::move(phonetics));
+    });
+    // 英文候选模式里停靠在候选窗旁的 DR Dict 弹窗（词典里的音标与释义）。
+    DrDictDock::Start();
     CloudTranslation::Start(CommonUtils::get_ime_data_path() + "\\english.db",
                             [](std::vector<EnglishIme::TranslationResult> results, uint64_t generation) {
                                 FanyNamedPipe::EnqueueCandidateTranslations(std::move(results), generation, true);
@@ -219,15 +226,21 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
                            [](MixedCandidates::Result result, const std::string &input, uint64_t generation) {
                                FanyNamedPipe::EnqueueMixedCandidates(std::move(result), input, generation);
                            });
-    // U 模式第一次查询要解析十几万行的拆字表、加载 cpp-pinyin 词典，放在按键回复里会卡住 Shift+U
-    // 之后的第一个字母。没开这个模式的用户不多读这两份数据。
+    // U 模式第一次查询要解析十几万行的拆字表，放在按键回复里会卡住 Shift+U 之后的第一个字母。
+    // 没开这个模式的用户不读这份数据。
     std::thread radical_warmup;
     if (GetConfiguredRadicalModeEnabled())
     {
         radical_warmup = std::thread([] {
-            metasequoia::local_modes::preload_radical_table(
+            const auto stats = metasequoia::local_modes::preload_radical_table(
                 metasequoia::RuntimePaths::legacy().resource(metasequoia::assets::radical_decomposition));
-            (void)HanziPinyin::Engine();
+            // 旧的三列拆字表加载也成功，只是没有读音；U 模式仍能出字，但候选上不会显示注音，
+            // 记一条诊断日志，便于排查数据目录没刷新。
+            if (stats.entries > 0 && stats.entries_with_reading == 0)
+            {
+                DIAG_LOGF(L"radical decomposition table has no reading column; U mode candidates will not show "
+                          L"readings; update the data directory or reinstall");
+            }
         });
     }
 
@@ -236,17 +249,19 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
     if (GetConfiguredCharacterSet() == "traditional")
         ChineseConverter::PreloadInBackground();
 
+    // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
+    // 这正是把下载放在 Server 而不是设置进程的原因。必须排在 CreateCandidateWindow
+    // 之前：那里面就是消息循环，进程活着期间不会返回，排在后面等于等到退出才起线程。
+    update_check::StartPolling();
+
     int ret = CreateCandidateWindow(hInstance);
     if (radical_warmup.joinable())
         radical_warmup.join();
     ChineseConverter::JoinBackgroundPreload();
 
-    // 自动下载安装包的后台轮询。只在开着输入法进程时跑；用户关掉设置窗口不影响它，
-    // 这正是把下载放在 Server 而不是设置进程的原因。
-    update_check::StartPolling();
-
     FanyNamedPipe::RegisterStatusSnapshotWindow(nullptr);
 
+    DrDictDock::Stop();
     EnglishIme::Stop();
     CloudTranslation::Stop();
     MixedCandidates::Stop();

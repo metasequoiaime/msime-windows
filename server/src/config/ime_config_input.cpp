@@ -11,6 +11,7 @@
 #include "engine/contracts/input_state_shortcuts.h"
 #include "engine/contracts/mid_sentence_helpcode.h"
 #include "engine/core/data_path.h"
+#include "engine/core/wubi_profile.h"
 #include "engine/shuangpin/shuangpin_profile.h"
 
 using namespace ime_config_detail;
@@ -240,7 +241,7 @@ const std::string &GetConfiguredWubiSchema()
 
 bool SetConfiguredWubiSchema(const std::string &schema)
 {
-    if (schema != "wubi86")
+    if (!metasequoia::wubi_profile_from_name(schema))
     {
         return false;
     }
@@ -343,6 +344,21 @@ bool SetConfiguredEnterLearnsEnglishWord(bool enabled)
         return false;
     }
     g_enter_learns_english_word = enabled;
+    return true;
+}
+
+bool GetConfiguredEnglishCommitWithSpace()
+{
+    return g_english_commit_with_space;
+}
+
+bool SetConfiguredEnglishCommitWithSpace(bool enabled)
+{
+    if (!WriteConfiguredValue("input", "english_commit_with_space", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_english_commit_with_space = enabled;
     return true;
 }
 
@@ -1112,11 +1128,11 @@ const FrequencyAdjustmentConfig &GetConfiguredFrequencyAdjustment()
 
 bool SetConfiguredFrequencyAdjustmentString(const std::string &key, const std::string &value)
 {
-    if (key != "mode" ||
+    if ((key != "mode" && key != "wubi_mode") ||
         (value != "disabled" && value != "pin" && value != "halve" && value != "linear" && value != "promote") ||
         !WriteConfiguredValue("frequency_adjustment", key, EscapeTomlBasicString(value)))
         return false;
-    g_frequency_adjustment.mode = value;
+    (key == "mode" ? g_frequency_adjustment.mode : g_frequency_adjustment.wubi_mode) = value;
     return true;
 }
 

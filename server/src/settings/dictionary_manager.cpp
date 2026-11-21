@@ -5,6 +5,7 @@
 #include "config/ime_config.h"
 #include "defines/defines.h"
 #include "settings/dictionary_validation.h"
+#include "settings/foreign_dictionary.h"
 #include "utils/common_utils.h"
 #include "utils/hanzi_pinyin.h"
 #include "engine/common/helpcode_utils.h"
@@ -22,8 +23,12 @@
 #include <utf8.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <exception>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -59,19 +64,61 @@ json::object Result(bool ok, std::string message)
     return {{"ok", ok}, {"message", std::move(message)}, {"rows", json::array{}}};
 }
 
+// 批量删除专用：`ok` 只说「这一批处理完了」，`failed` 单独回答「有几条没删掉」。
+// 合成一个 ok=false 会让面板分不清「一条都没删」和「删了一部分」：前者值得重试，
+// 后者重试只会拿到「原词条不存在或已被删除」。不走批量路径的响应不带这个字段。
+json::object BatchResult(bool ok, std::string message, size_t failed)
+{
+    json::object result = Result(ok, std::move(message));
+    result["failed"] = static_cast<std::int64_t>(failed);
+    return result;
+}
+
 // 快捷短语允许首尾空行（模板类短语常以空行结尾），但整条不能只有空白。
 bool IsBlankQuickPhrase(const std::string &phrase)
 {
     return phrase.find_first_not_of(" \t\r\n") == std::string::npos;
 }
 
-void NotifyImeServerClearDictCache()
+void PostDictCacheReset()
 {
     if (const HWND hwnd = FindWindowW(L"metasequoiaime_windows", L"metaseuqoiaimecandwnd"))
         PostMessageW(hwnd, WM_CLS_DICT_CACHE, 0, 0);
     else if (const HWND anyClassHwnd = FindWindowW(L"metasequoiaime_windows", nullptr))
         PostMessageW(anyClassHwnd, WM_CLS_DICT_CACHE, 0, 0);
 }
+
+// 批量操作里逐条通知会把 ResetInputSessionCache 任务推 N 遍，攒到结尾发一次。
+int g_cacheNotifyDepth = 0;
+bool g_cacheNotifyPending = false;
+
+void NotifyImeServerClearDictCache()
+{
+    if (g_cacheNotifyDepth > 0)
+    {
+        g_cacheNotifyPending = true;
+        return;
+    }
+    PostDictCacheReset();
+}
+
+struct DictCacheNotifyBatch
+{
+    DictCacheNotifyBatch()
+    {
+        ++g_cacheNotifyDepth;
+    }
+    ~DictCacheNotifyBatch()
+    {
+        if (--g_cacheNotifyDepth == 0 && g_cacheNotifyPending)
+        {
+            g_cacheNotifyPending = false;
+            PostDictCacheReset();
+        }
+    }
+    DictCacheNotifyBatch(const DictCacheNotifyBatch &) = delete;
+    DictCacheNotifyBatch &operator=(const DictCacheNotifyBatch &) = delete;
+};
 
 std::string NormalizeAnnotatedSyllable(std::string syllable)
 {
@@ -226,6 +273,46 @@ bool BindText(sqlite3_stmt *stmt, int index, const std::string &value)
     return sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK;
 }
 
+int64_t CountRows(sqlite3 *db, const std::string &from_where, const std::vector<std::string> &bindings,
+                  std::string &error)
+{
+    Stmt stmt = Prepare(db, "SELECT COUNT(*) " + from_where, error);
+    if (!stmt)
+        return -1;
+    for (size_t index = 0; index < bindings.size(); ++index)
+    {
+        if (!BindText(stmt.get(), static_cast<int>(index + 1), bindings[index]))
+        {
+            error = sqlite3_errmsg(db);
+            return -1;
+        }
+    }
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW)
+    {
+        error = sqlite3_errmsg(db);
+        return -1;
+    }
+    return sqlite3_column_int64(stmt.get(), 0);
+}
+
+// 数据查询保持 ORDER BY … LIMIT，总数用相同 FROM/WHERE 单独 COUNT；
+// 且只在新搜索的第一页统计，后续翻页由设置页缓存第一页的 total。
+// 之前的 COUNT(*) OVER() 会让 SQLite 每次翻页都先取出并排好全部匹配行。
+std::optional<int64_t> PageTotal(sqlite3 *db, const std::string &from_where, const std::vector<std::string> &bindings,
+                                 const json::object &request, std::string &error, bool &ok)
+{
+    ok = true;
+    if (!Paging::WantsTotal(request))
+        return std::nullopt;
+    const int64_t total = CountRows(db, from_where, bindings, error);
+    if (total < 0)
+    {
+        ok = false;
+        return std::nullopt;
+    }
+    return total;
+}
+
 std::string SanitizeExportField(std::string value)
 {
     std::replace(value.begin(), value.end(), '\t', ' ');
@@ -234,34 +321,73 @@ std::string SanitizeExportField(std::string value)
     return value;
 }
 
+// 三版五笔码表。设置页的词库 id、msime.db 里的表、日志种类各一一对应；86 沿用原来的 id「wubi」
+// 和导出文件名，旧版本导出的文件、已有的日志行照旧可用。
+struct WubiTable
+{
+    const char *dictionary;
+    const char *table;
+    user_dictionary::DictionaryKind kind;
+    const char *label;
+    const char *export_filename;
+};
+
+constexpr WubiTable kWubiTables[] = {
+    {"wubi", "wubi86", user_dictionary::DictionaryKind::Wubi, "86 五笔", "水杉IME-五笔用户词库.txt"},
+    {"wubi98", "wubi98", user_dictionary::DictionaryKind::Wubi98, "98 五笔", "水杉IME-98五笔用户词库.txt"},
+    {"wubixsj", "wubixsj", user_dictionary::DictionaryKind::WubiXsj, "新世纪五笔", "水杉IME-新世纪五笔用户词库.txt"},
+};
+
+const WubiTable *FindWubiTable(const std::string &dictionary)
+{
+    for (const auto &table : kWubiTables)
+    {
+        if (dictionary == table.dictionary)
+            return &table;
+    }
+    return nullptr;
+}
+
+// 日志里 `dictionary` 列的取值。未知词库返回 nullptr。
+const char *JournalKind(const std::string &dictionary)
+{
+    if (dictionary == "quanpin")
+        return "pinyin";
+    if (const auto *wubi = FindWubiTable(dictionary))
+        return user_dictionary::dictionary_kind_name(wubi->kind);
+    if (dictionary == "english")
+        return "english";
+    if (dictionary == "quick")
+        return "quick";
+    return nullptr;
+}
+
+// 用户词库的只读连接；调用方先确认文件存在，schema 升级由 ensure_user_database 负责。
+Db OpenUserDatabaseReadOnly(const std::string &path, std::string &error)
+{
+    sqlite3 *raw = nullptr;
+    if (sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
+    {
+        error = raw ? sqlite3_errmsg(raw) : "无法打开用户词库";
+        if (raw)
+            sqlite3_close(raw);
+        return nullptr;
+    }
+    Db db(raw);
+    sqlite3_busy_timeout(db.get(), 3000);
+    return db;
+}
+
 json::object ExportUserDictionary(const std::string &dictionary)
 {
-    std::string journal_kind;
-    std::string filename;
-    if (dictionary == "quanpin")
-    {
-        journal_kind = "pinyin";
-        filename = "水杉IME-拼音用户词库.txt";
-    }
-    else if (dictionary == "wubi")
-    {
-        journal_kind = "wubi";
-        filename = "水杉IME-五笔用户词库.txt";
-    }
-    else if (dictionary == "english")
-    {
-        journal_kind = "english";
-        filename = "水杉IME-英文用户词库.txt";
-    }
-    else if (dictionary == "quick")
-    {
-        journal_kind = "quick";
-        filename = "水杉IME-快捷短语用户词库.txt";
-    }
-    else
-    {
+    const char *journal_kind = JournalKind(dictionary);
+    if (journal_kind == nullptr)
         return Result(false, "未知词库");
-    }
+    const auto *wubi = FindWubiTable(dictionary);
+    const std::string filename = dictionary == "quanpin"   ? "水杉IME-拼音用户词库.txt"
+                                 : wubi != nullptr         ? wubi->export_filename
+                                 : dictionary == "english" ? "水杉IME-英文用户词库.txt"
+                                                           : "水杉IME-快捷短语用户词库.txt";
 
     const std::string path = user_dictionary::default_user_db_path();
     if (!std::filesystem::exists(path))
@@ -269,18 +395,11 @@ json::object ExportUserDictionary(const std::string &dictionary)
     if (!user_dictionary::ensure_user_database(path))
         return Result(false, "升级用户词库格式失败");
 
-    sqlite3 *raw = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
-    {
-        const std::string error = raw ? sqlite3_errmsg(raw) : "无法打开用户词库";
-        if (raw)
-            sqlite3_close(raw);
-        return Result(false, "打开用户词库失败：" + error);
-    }
-    Db db(raw);
-    sqlite3_busy_timeout(db.get(), 3000);
-
     std::string error;
+    Db db = OpenUserDatabaseReadOnly(path, error);
+    if (!db)
+        return Result(false, "打开用户词库失败：" + error);
+
     const std::string export_filter = dictionary == "quanpin"
                                           ? "WHERE dictionary=?1 AND operation='upsert' "
                                           : "WHERE dictionary=?1 AND operation='upsert' AND user_inserted=1 ";
@@ -308,7 +427,7 @@ json::object ExportUserDictionary(const std::string &dictionary)
 
         if (dictionary == "quanpin" && HelpcodeUtils::count_utf8_chars(value) <= 1)
             continue;
-        if (dictionary == "quanpin" || dictionary == "wubi")
+        if (dictionary == "quanpin" || wubi != nullptr)
             content << value << '\t' << key << '\t' << weight << '\n';
         else if (dictionary == "quick")
             content << key << '\t' << Validation::EscapeQuickPhraseField(value) << '\t' << weight << '\n';
@@ -324,6 +443,51 @@ json::object ExportUserDictionary(const std::string &dictionary)
     result["filename"] = std::move(filename);
     result["entryCount"] = count;
     return result;
+}
+
+// 词库页的默认视图：只列用户新增或亲手改过权重的条目，最近修改在前。
+// 自动调频的行 user_inserted 和 weight_edited 都是 0，那不是用户编辑，不进列表。
+json::object QueryUserEntries(const std::string &dictionary, const json::object &request)
+{
+    const bool latin = dictionary == "latin";
+    const char *journal_kind = latin ? nullptr : JournalKind(dictionary);
+    if (!latin && journal_kind == nullptr)
+        return Result(false, "未知词库");
+
+    const std::string path = user_dictionary::default_user_db_path();
+    if (!std::filesystem::exists(path))
+    {
+        json::object empty = Result(true, "没有找到词条");
+        empty["hasMore"] = false;
+        empty["offset"] = Paging::Integer(request, "offset", 0, 2147483647);
+        empty["total"] = 0;
+        return empty;
+    }
+    if (!user_dictionary::ensure_user_database(path))
+        return Result(false, "升级用户词库格式失败");
+
+    std::string error;
+    Db db = OpenUserDatabaseReadOnly(path, error);
+    if (!db)
+        return Result(false, "打开用户词库失败：" + error);
+
+    Stmt stmt;
+    const std::string from_where =
+        latin ? "FROM user_latin_words"
+              : "FROM user_dictionary_operations WHERE dictionary=?1 AND operation='upsert' AND "
+                "(user_inserted=1 OR weight_edited=1)";
+    const std::vector<std::string> bindings =
+        latin ? std::vector<std::string>{} : std::vector<std::string>{journal_kind};
+    bool total_ok = true;
+    const std::optional<int64_t> total = PageTotal(db.get(), from_where, bindings, request, error, total_ok);
+    if (!total_ok)
+        return Result(false, "查询用户词库失败：" + error);
+    stmt = Prepare(
+        db.get(),
+        "SELECT key,value,weight " + from_where + " ORDER BY updated_at DESC,key,value" + Paging::Sql(request), error);
+    if (!stmt || (!latin && !BindText(stmt.get(), 1, journal_kind)))
+        return Result(false, "查询用户词库失败：" + error);
+    return Paging::Read(stmt.get(), request, dictionary == "english", total);
 }
 
 bool NormalizePinyin(const std::string &mode, const std::string &input, quanpin::Segments &segments,
@@ -393,13 +557,17 @@ json::object QueryChinese(const std::string &mode, const std::string &search, co
     if (!normalized.empty())
     {
         const std::string table = quanpin::build_table_name(segments);
-        Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM \"" + table + "\" WHERE key=?1 ORDER BY weight DESC,value" +
-                                Paging::Sql(request),
-                            error);
+        const std::string from_where = "FROM \"" + table + "\" WHERE key=?1";
+        bool total_ok = true;
+        const std::optional<int64_t> total = PageTotal(db.get(), from_where, {normalized}, request, error, total_ok);
+        if (!total_ok)
+            return Result(false, "查询失败：" + error);
+        Stmt stmt = Prepare(
+            db.get(), "SELECT key,value,weight " + from_where + " ORDER BY weight DESC,value" + Paging::Sql(request),
+            error);
         if (!stmt || !BindText(stmt.get(), 1, normalized))
             return Result(false, "查询失败：" + error);
-        return Paging::Read(stmt.get(), request);
+        return Paging::Read(stmt.get(), request, false, total);
     }
     json::object result = Result(true, rows.empty() ? "没有找到词条" : "查询成功");
     result["rows"] = std::move(rows);
@@ -482,7 +650,7 @@ json::object SummarizeImport(int inserted, int skipped, int failed, const std::v
 // wubi86，只看 wubi86 分不出来；不排除的话，给「张」自造的 aaaa 会按字典序压过出厂的
 // xtay，此后每个含「张」的词都取错码，导入还照样报成功。读不到日志时返回空集，退回
 // 只看 wubi86 的行为。
-std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars()
+std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars(const WubiTable &wubi)
 {
     std::set<std::pair<std::string, std::string>> entries;
     const std::string path = user_dictionary::default_user_db_path();
@@ -490,22 +658,17 @@ std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars()
     if (!std::filesystem::exists(path, exists_error))
         return entries;
 
-    sqlite3 *raw = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
-    {
-        if (raw)
-            sqlite3_close(raw);
+    std::string open_error;
+    Db db = OpenUserDatabaseReadOnly(path, open_error);
+    if (!db)
         return entries;
-    }
-    Db db(raw);
-    sqlite3_busy_timeout(db.get(), 3000);
 
     std::string error;
     Stmt stmt = Prepare(db.get(),
                         "SELECT key,value FROM user_dictionary_operations "
-                        "WHERE dictionary='wubi' AND operation='upsert' AND user_inserted=1 AND length(value)=1",
+                        "WHERE dictionary=?1 AND operation='upsert' AND user_inserted=1 AND length(value)=1",
                         error);
-    if (!stmt)
+    if (!stmt || !BindText(stmt.get(), 1, user_dictionary::dictionary_kind_name(wubi.kind)))
         return entries;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW)
     {
@@ -517,11 +680,14 @@ std::set<std::pair<std::string, std::string>> LoadUserInsertedWubiChars()
     return entries;
 }
 
-bool LoadWubiCharCodes(sqlite3 *db, Validation::WubiCharCodes &codes, std::string &error)
+// 三版五笔的词组取码规则相同，只是单字码从各自的表里取。
+bool LoadWubiCharCodes(sqlite3 *db, const WubiTable &wubi, Validation::WubiCharCodes &codes, std::string &error)
 {
     // 排序是为了让「多个 4 级全码时取第一个」确定：同值内按 key 升序，先遇到的就是
     // 字典序最小的那个，不依赖 SQLite 的扫描顺序。
-    Stmt stmt = Prepare(db, "SELECT key, value FROM wubi86 WHERE length(value)=1 ORDER BY value, key", error);
+    Stmt stmt = Prepare(
+        db, std::string("SELECT key, value FROM \"") + wubi.table + "\" WHERE length(value)=1 ORDER BY value, key",
+        error);
     if (!stmt)
         return false;
     const auto text = [](sqlite3_stmt *s, int column) {
@@ -543,7 +709,7 @@ bool LoadWubiCharCodes(sqlite3 *db, Validation::WubiCharCodes &codes, std::strin
             existing->second = key;
     };
 
-    const auto user_inserted = LoadUserInsertedWubiChars();
+    const auto user_inserted = LoadUserInsertedWubiChars(wubi);
     Validation::WubiCharCodes user_codes;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW)
     {
@@ -559,9 +725,23 @@ bool LoadWubiCharCodes(sqlite3 *db, Validation::WubiCharCodes &codes, std::strin
     return true;
 }
 
-bool ParseImportLine(const std::string &line, std::string &word, std::string &code, int &weight, std::string &message)
+// 还没带 98、新世纪表的旧词库里没有这一版的表：直接报出来，不把「no such table」原样丢给用户。
+bool WubiTableExists(sqlite3 *db, const WubiTable &wubi)
 {
-    return Validation::ParseCodedImportLine(line, word, code, weight, message);
+    std::string error;
+    Stmt stmt = Prepare(db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1", error);
+    return stmt && BindText(stmt.get(), 1, wubi.table) && sqlite3_step(stmt.get()) == SQLITE_ROW;
+}
+
+std::string MissingWubiTableMessage(const WubiTable &wubi)
+{
+    return std::string("当前词库里没有") + wubi.label + "码表，请更新词库后再试";
+}
+
+bool BoolValue(const json::object &obj, const char *key)
+{
+    const auto *value = obj.if_contains(key);
+    return value && value->is_bool() && value->as_bool();
 }
 
 // ---- 字母词（T恤、卡拉OK，dictionary == "latin"）----
@@ -610,8 +790,32 @@ struct LatinImportLine
     int line_no = 0;
     std::string word;
     std::string reading; // 空：自动注音
-    int weight = Validation::kDefaultPinyinImportWeight;
+    // 文件里写的权重或词频；没写为空。写库前由 AssignImportWeights 换算成 weight。
+    std::optional<double> frequency;
+    int weight = Validation::kMinImportWeight;
 };
+
+// 全拼批量导入的一行：词语<Tab>全拼[<Tab>权重]。
+struct PinyinImportLine
+{
+    int line_no = 0;
+    std::string word;
+    std::string code;
+    std::optional<double> frequency;
+    int weight = Validation::kMinImportWeight;
+};
+
+// 带码导入行的第三列：写了就是词频，没写（或是 Rime 的 key=value 列）为空。
+// ParseCodedImportLine 没写权重时回填 default_weight，传 -1 才分得出「没写」。
+bool ParseImportLineFrequency(const std::string &line, std::string &word, std::string &code,
+                              std::optional<double> &frequency, std::string &message)
+{
+    int weight = -1;
+    if (!Validation::ParseCodedImportLine(line, word, code, weight, message, -1))
+        return false;
+    frequency = weight >= 0 ? std::optional<double>(weight) : std::nullopt;
+    return true;
+}
 
 // 一行：词语[<Tab>读音[<Tab>权重]]。只有一列时自动注音。
 bool ParseLatinImportLine(const std::string &line, LatinImportLine &parsed, std::string &message)
@@ -622,7 +826,7 @@ bool ParseLatinImportLine(const std::string &line, LatinImportLine &parsed, std:
         const auto end = line.find_last_not_of(' ');
         parsed.word = begin == std::string::npos ? std::string{} : line.substr(begin, end - begin + 1);
         parsed.reading.clear();
-        parsed.weight = Validation::kDefaultPinyinImportWeight;
+        parsed.frequency.reset();
         if (parsed.word.empty())
         {
             message = "词语不能为空";
@@ -630,7 +834,33 @@ bool ParseLatinImportLine(const std::string &line, LatinImportLine &parsed, std:
         }
         return true;
     }
-    return Validation::ParseCodedImportLine(line, parsed.word, parsed.reading, parsed.weight, message);
+    return ParseImportLineFrequency(line, parsed.word, parsed.reading, parsed.frequency, message);
+}
+
+// 设置页拼音类导入的权重：同一份文件里的词频一起排名次换算（见 MapImportFrequencies），
+// 拼音词条和分流出去的字母词共用一套名次。keep_weights 是备份恢复：导出的权重原样写回。
+template <typename... Lists> void AssignImportWeights(bool keep_weights, Lists &...lists)
+{
+    std::vector<std::optional<double>> frequencies;
+    (
+        [&frequencies](auto &list) {
+            for (const auto &line : list)
+                frequencies.push_back(line.frequency);
+        }(lists),
+        ...);
+    const std::vector<int> mapped = Validation::MapImportFrequencies(frequencies);
+    size_t index = 0;
+    (
+        [&](auto &list) {
+            for (auto &line : list)
+            {
+                line.weight = keep_weights
+                                  ? static_cast<int>(line.frequency.value_or(Validation::kDefaultPinyinImportWeight))
+                                  : mapped[index];
+                ++index;
+            }
+        }(lists),
+        ...);
 }
 
 // 规范、校验后整批写进词库和日志（一个事务）。结果计进三个计数。
@@ -713,6 +943,7 @@ json::object ImportLatin(const json::object &request)
         }
         lines.push_back(std::move(parsed));
     }
+    AssignImportWeights(false, lines);
     ImportLatinLines(lines, inserted, skipped, append_error);
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
@@ -744,21 +975,27 @@ json::object QueryLatin(const json::object &request)
         json::object result = Result(true, "没有找到词条");
         result["hasMore"] = false;
         result["offset"] = 0;
+        result["total"] = 0;
         return result;
     }
     exists.reset();
     std::string upper = code;
     ++upper.back(); // 只有 a-z，加一就是前缀的上界
+    const std::string from_where = "FROM latin_words WHERE replace(\"key\",'''','')>=?1 AND "
+                                   "replace(\"key\",'''','')<?2";
+    bool total_ok = true;
+    const std::optional<int64_t> total = PageTotal(db.get(), from_where, {code, upper}, request, error, total_ok);
+    if (!total_ok)
+        return Result(false, "查询失败：" + error);
     Stmt stmt = Prepare(db.get(),
-                        "SELECT \"key\",\"value\",\"weight\" FROM latin_words "
-                        "WHERE replace(\"key\",'''','')>=?1 AND replace(\"key\",'''','')<?2 "
-                        "ORDER BY CASE WHEN replace(\"key\",'''','')=?1 THEN 0 ELSE 1 END,\"weight\" DESC,\"key\","
-                        "\"value\"" +
+                        "SELECT \"key\",\"value\",\"weight\" " + from_where +
+                            " ORDER BY CASE WHEN replace(\"key\",'''','')=?1 THEN 0 ELSE 1 END,\"weight\" DESC,\"key\","
+                            "\"value\"" +
                             Paging::Sql(request),
                         error);
     if (!stmt || !BindText(stmt.get(), 1, code) || !BindText(stmt.get(), 2, upper))
         return Result(false, "查询失败：" + error);
-    return Paging::Read(stmt.get(), request);
+    return Paging::Read(stmt.get(), request, false, total);
 }
 
 json::object MutateLatin(const json::object &request)
@@ -880,8 +1117,9 @@ json::object ImportChinese(const json::object &request)
     // 含英文字母的词（Rime 词库里混着的 T恤、卡拉OK）按字母词导入：它们不是拼音表的词，拼音表也
     // 存不下（T 不是音节；写成 te'xu 硬塞进去，txu 反而打不出来）。拼音这批提交之后再写：字母词另开
     // 连接和事务，不能等在这批的写锁后面。
+    // 权重要看整份文件的词频名次才定得下来，所以先读完全部行，再写库。
+    std::vector<PinyinImportLine> pinyin_lines;
     std::vector<LatinImportLine> latin_lines;
-    sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
     std::istringstream stream(content);
     std::string line;
     int line_no = 0;
@@ -895,34 +1133,39 @@ json::object ImportChinese(const json::object &request)
             continue;
 
         std::string word, code;
-        int weight = 0;
+        std::optional<double> frequency;
         std::string message;
-        if (!ParseImportLine(line, word, code, weight, message))
+        if (!ParseImportLineFrequency(line, word, code, frequency, message))
         {
             append_error(line_no, message);
             continue;
         }
         if (quanpin::contains_latin_letter(word))
-        {
-            latin_lines.push_back({line_no, word, code, weight});
-            continue;
-        }
+            latin_lines.push_back({line_no, std::move(word), std::move(code), frequency});
+        else
+            pinyin_lines.push_back({line_no, std::move(word), std::move(code), frequency});
+    }
+    AssignImportWeights(BoolValue(request, "keepWeights"), pinyin_lines, latin_lines);
 
+    sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
+    for (const auto &entry : pinyin_lines)
+    {
         quanpin::Segments segments;
         std::string key;
-        if (!ValidateChineseEntry("quanpin", code, word, segments, key, message))
+        std::string message;
+        if (!ValidateChineseEntry("quanpin", entry.code, entry.word, segments, key, message))
         {
-            append_error(line_no, message);
+            append_error(entry.line_no, message);
             continue;
         }
-        if (ChineseExists(db.get(), segments, key, word))
+        if (ChineseExists(db.get(), segments, key, entry.word))
         {
             ++skipped;
             continue;
         }
-        if (!InsertChineseWord(db.get(), segments, key, word, weight, message))
+        if (!InsertChineseWord(db.get(), segments, key, entry.word, entry.weight, message))
         {
-            append_error(line_no, "写入失败：" + message);
+            append_error(entry.line_no, "写入失败：" + message);
             continue;
         }
         ++inserted;
@@ -954,7 +1197,8 @@ json::object ImportHans(const json::object &request)
     if (!db)
         return Result(false, "打开拼音词库失败：" + error);
 
-    constexpr int kDefaultWeight = Validation::kDefaultPinyinImportWeight;
+    // 纯汉字名单只有位置没有词频：一律最低档。
+    constexpr int kDefaultWeight = Validation::kMinImportWeight;
     int inserted = 0;
     int skipped = 0;
     int failed = 0;
@@ -1012,9 +1256,123 @@ json::object ImportHans(const json::object &request)
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
 
+// 导入其他输入法的词库（Rime、LibIME）到拼音用户词库。
+// 文件由设置窗口选好后把路径交过来，在这里读：整套词库动辄几十万条，不经消息通道搬内容。
+// 解析见 foreign_dictionary.cpp；写库与「批量导入」同一套校验、去重和用户日志。
+// 外来词频与本词库不在一个量级，只取它在文件里的名次换算成权重（MapImportFrequencies）；
+// 没写词频的词条一律最低档。
+json::object ImportForeign(const json::object &request)
+{
+    const std::string format = StringValue(request, "format");
+    if (!ForeignDictionary::FindFormat(format))
+        return Result(false, "不支持的词库格式");
+    const std::string path = StringValue(request, "path");
+    if (path.empty())
+        return Result(false, "没有选择词库文件");
+
+    std::string bytes;
+    {
+        std::error_code size_error;
+        const std::filesystem::path file(string_to_wstring(path));
+        const auto size = std::filesystem::file_size(file, size_error);
+        // 已知最大的细胞词库也只有几十 MB；再大只会是选错了文件。
+        constexpr std::uintmax_t kMaxFileSize = 512ull * 1024 * 1024;
+        if (size_error)
+            return Result(false, "读取文件失败");
+        if (size > kMaxFileSize)
+            return Result(false, "文件过大，不是可导入的词库");
+        std::ifstream stream(file, std::ios::binary);
+        if (!stream)
+            return Result(false, "读取文件失败");
+        bytes.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    }
+    if (bytes.empty())
+        return Result(false, "文件内容为空");
+
+    std::vector<ForeignDictionary::Entry> entries;
+    std::string parse_error;
+    if (!ForeignDictionary::Parse(format, bytes, entries, parse_error))
+        return Result(false, parse_error);
+    bytes.clear();
+    bytes.shrink_to_fit();
+    if (entries.empty())
+        return Result(false, "文件中没有可导入的词条，请确认选择的格式与文件一致");
+
+    std::string error;
+    Db db = OpenDatabase("msime.db", error);
+    if (!db)
+        return Result(false, "打开拼音词库失败：" + error);
+
+    std::vector<std::optional<double>> frequencies;
+    frequencies.reserve(entries.size());
+    for (const auto &entry : entries)
+        frequencies.push_back(entry.frequency);
+    const std::vector<int> weights = Validation::MapImportFrequencies(frequencies);
+
+    int inserted = 0;
+    int skipped = 0;
+    int failed = 0;
+    std::vector<std::string> error_details;
+    const auto append_error = [&](int index, const std::string &detail) {
+        ++failed;
+        if (error_details.size() < 5)
+            error_details.push_back("第 " + std::to_string(index) + " 条：" + detail);
+    };
+
+    // 含英文字母的词（T恤、卡拉OK）按字母词导入并自动注音，理由同 ImportChinese。
+    std::vector<LatinImportLine> latin_lines;
+    sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+        const int index = static_cast<int>(i + 1);
+        const ForeignDictionary::Entry &entry = entries[i];
+        if (quanpin::contains_latin_letter(entry.word))
+        {
+            latin_lines.push_back({index, entry.word, std::string(), entry.frequency, weights[i]});
+            continue;
+        }
+
+        // 文件里的读音不可用（没给、是简拼、音节数对不上）时，纯汉字词改用自动注音。
+        quanpin::Segments segments;
+        std::string key;
+        std::string message;
+        bool valid =
+            !entry.pinyin.empty() && ValidateChineseEntry("quanpin", entry.pinyin, entry.word, segments, key, message);
+        if (!valid && IsPureHanPhrase(entry.word))
+        {
+            std::string annotated;
+            std::string annotate_message;
+            if (AnnotateHansToPinyin(entry.word, annotated, annotate_message))
+                valid = ValidateChineseEntry("quanpin", annotated, entry.word, segments, key, message);
+            else if (message.empty())
+                message = annotate_message;
+        }
+        if (!valid)
+        {
+            append_error(index, entry.word + "：" + (message.empty() ? std::string("没有可用的读音") : message));
+            continue;
+        }
+        if (ChineseExists(db.get(), segments, key, entry.word))
+        {
+            ++skipped;
+            continue;
+        }
+        if (!InsertChineseWord(db.get(), segments, key, entry.word, weights[i], message))
+        {
+            append_error(index, "写入失败：" + message);
+            continue;
+        }
+        ++inserted;
+    }
+    sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr);
+    ImportLatinLines(latin_lines, inserted, skipped, append_error);
+
+    return SummarizeImport(inserted, skipped, failed, error_details);
+}
+
 // 纯汉字词组 -> 五笔码的导入。与 ImportHans 同构，差别只在码从哪来：
-// 拼音走 cpp-pinyin 注音，五笔走 wubi86 单字码按 86 词组取码规则组合。
-json::object ImportHansWubi(const json::object &request)
+// 拼音走 cpp-pinyin 注音，五笔走所选那一版码表的单字码，按（三版共用的）词组取码规则组合。
+json::object ImportHansWubi(const json::object &request, const WubiTable &wubi)
 {
     std::string content = StringValue(request, "content");
     if (content.size() >= 3 && static_cast<unsigned char>(content[0]) == 0xEF &&
@@ -1028,16 +1386,20 @@ json::object ImportHansWubi(const json::object &request)
     if (!db)
         return Result(false, "打开五笔词库失败：" + error);
 
+    if (!WubiTableExists(db.get(), wubi))
+        return Result(false, MissingWubiTableMessage(wubi));
     Validation::WubiCharCodes char_codes;
-    if (!LoadWubiCharCodes(db.get(), char_codes, error))
+    if (!LoadWubiCharCodes(db.get(), wubi, char_codes, error))
         return Result(false, "读取五笔码表失败：" + error);
     if (char_codes.empty())
         return Result(false, "五笔码表未就绪，请确认词库完整");
 
-    Stmt insert = Prepare(db.get(),
-                          "INSERT INTO wubi86(key,value,weight) SELECT ?1,?2,?3 "
-                          "WHERE NOT EXISTS (SELECT 1 FROM wubi86 WHERE key=?1 AND value=?2)",
-                          error);
+    const std::string table = std::string("\"") + wubi.table + "\"";
+    Stmt insert =
+        Prepare(db.get(),
+                "INSERT INTO " + table + "(key,value,weight) SELECT ?1,?2,?3 WHERE NOT EXISTS (SELECT 1 FROM " + table +
+                    " WHERE key=?1 AND value=?2)",
+                error);
     if (!insert)
         return Result(false, "准备导入失败：" + error);
 
@@ -1094,8 +1456,8 @@ json::object ImportHansWubi(const json::object &request)
             ++skipped;
             continue;
         }
-        (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(),
-                                                  user_dictionary::DictionaryKind::Wubi, code, word, kWeight);
+        (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(), wubi.kind, code, word,
+                                                  kWeight);
         ++inserted;
     }
     sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr);
@@ -1327,15 +1689,21 @@ json::object HandleEnglish(const json::object &request)
             return Result(false, "请输入英文单词前缀");
         std::string upper = word;
         ++upper.back(); // ASCII prefix upper bound, compatible with the BINARY primary key.
+        const std::string from_where = "FROM english_words WHERE word>=?1 AND word<?3";
+        bool total_ok = true;
+        const std::optional<int64_t> total =
+            PageTotal(db.get(), from_where, {word, word, upper}, request, error, total_ok);
+        if (!total_ok)
+            return Result(false, "查询失败：" + error);
         Stmt stmt = Prepare(db.get(),
-                            "SELECT word,display,weight FROM english_words WHERE word>=?1 AND word<?3 "
-                            "ORDER BY CASE WHEN word=?2 THEN 0 ELSE 1 END,weight DESC,length(word),word,display" +
+                            "SELECT word,display,weight " + from_where +
+                                " ORDER BY CASE WHEN word=?2 THEN 0 ELSE 1 END,weight DESC,length(word),word,display" +
                                 Paging::Sql(request),
                             error);
         if (!stmt || !BindText(stmt.get(), 1, word) || !BindText(stmt.get(), 2, word) ||
             !BindText(stmt.get(), 3, upper))
             return Result(false, "查询失败：" + error);
-        return Paging::Read(stmt.get(), request, true);
+        return Paging::Read(stmt.get(), request, true, total);
     }
 
     if (!IsAsciiWord(word) || display.empty())
@@ -1394,7 +1762,7 @@ json::object HandleEnglish(const json::object &request)
                          : std::string(label) + "失败：" + sqlite3_errmsg(db.get()));
 }
 
-json::object ImportWubi(const json::object &request)
+json::object ImportWubi(const json::object &request, const WubiTable &wubi)
 {
     std::string content = StringValue(request, "content");
     if (content.size() >= 3 && static_cast<unsigned char>(content[0]) == 0xEF &&
@@ -1407,10 +1775,14 @@ json::object ImportWubi(const json::object &request)
     Db db = OpenDatabase("msime.db", error);
     if (!db)
         return Result(false, "打开五笔词库失败：" + error);
-    Stmt insert = Prepare(db.get(),
-                          "INSERT INTO wubi86(key,value,weight) SELECT ?1,?2,?3 "
-                          "WHERE NOT EXISTS (SELECT 1 FROM wubi86 WHERE key=?1 AND value=?2)",
-                          error);
+    if (!WubiTableExists(db.get(), wubi))
+        return Result(false, MissingWubiTableMessage(wubi));
+    const std::string table = std::string("\"") + wubi.table + "\"";
+    Stmt insert =
+        Prepare(db.get(),
+                "INSERT INTO " + table + "(key,value,weight) SELECT ?1,?2,?3 WHERE NOT EXISTS (SELECT 1 FROM " + table +
+                    " WHERE key=?1 AND value=?2)",
+                error);
     if (!insert)
         return Result(false, "准备导入失败：" + error);
 
@@ -1473,8 +1845,8 @@ json::object ImportWubi(const json::object &request)
             ++skipped;
             continue;
         }
-        (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(),
-                                                  user_dictionary::DictionaryKind::Wubi, code, word, weight);
+        (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(), wubi.kind, code, word,
+                                                  weight);
         ++inserted;
     }
     sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr);
@@ -1482,11 +1854,11 @@ json::object ImportWubi(const json::object &request)
     return SummarizeImport(inserted, skipped, failed, error_details);
 }
 
-json::object HandleWubi(const json::object &request)
+json::object HandleWubi(const json::object &request, const WubiTable &wubi)
 {
     const std::string action = StringValue(request, "action");
     if (action == "import")
-        return ImportWubi(request);
+        return ImportWubi(request, wubi);
     std::string code = StringValue(request, "code");
     const std::string word = StringValue(request, "word");
     const int weight = (std::max)(0, IntValue(request, "weight", 10));
@@ -1496,18 +1868,25 @@ json::object HandleWubi(const json::object &request)
     Db db = OpenDatabase("msime.db", error);
     if (!db)
         return Result(false, "打开五笔词库失败：" + error);
+    if (!WubiTableExists(db.get(), wubi))
+        return Result(false, MissingWubiTableMessage(wubi));
+    const std::string table = std::string("\"") + wubi.table + "\"";
     if (action == "query")
     {
         if (code.empty() ||
             !std::all_of(code.begin(), code.end(), [](unsigned char ch) { return ch >= 'a' && ch <= 'z'; }))
             return Result(false, "请输入合法的五笔编码");
-        Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM wubi86 WHERE key LIKE ?1 ORDER BY weight DESC,key,value" +
-                                Paging::Sql(request),
-                            error);
+        const std::string from_where = "FROM " + table + " WHERE key LIKE ?1";
+        bool total_ok = true;
+        const std::optional<int64_t> total = PageTotal(db.get(), from_where, {code + "%"}, request, error, total_ok);
+        if (!total_ok)
+            return Result(false, "查询失败：" + error);
+        Stmt stmt = Prepare(
+            db.get(),
+            "SELECT key,value,weight " + from_where + " ORDER BY weight DESC,key,value" + Paging::Sql(request), error);
         if (!stmt || !BindText(stmt.get(), 1, code + "%"))
             return Result(false, "查询失败：" + error);
-        return Paging::Read(stmt.get(), request);
+        return Paging::Read(stmt.get(), request, false, total);
     }
     if (code.empty() || word.empty() ||
         !std::all_of(code.begin(), code.end(), [](unsigned char ch) { return ch >= 'a' && ch <= 'z'; }))
@@ -1516,11 +1895,11 @@ json::object HandleWubi(const json::object &request)
     const std::string old_word = StringValue(request, "oldWord");
     std::string sql;
     if (action == "create")
-        sql = "INSERT INTO wubi86(key,value,weight) VALUES(?1,?2,?3)";
+        sql = "INSERT INTO " + table + "(key,value,weight) VALUES(?1,?2,?3)";
     else if (action == "update")
-        sql = "UPDATE wubi86 SET key=?1,value=?2,weight=?3 WHERE key=?4 AND value=?5";
+        sql = "UPDATE " + table + " SET key=?1,value=?2,weight=?3 WHERE key=?4 AND value=?5";
     else if (action == "delete")
-        sql = "DELETE FROM wubi86 WHERE key=?1 AND value=?2";
+        sql = "DELETE FROM " + table + " WHERE key=?1 AND value=?2";
     else
         return Result(false, "未知操作");
     Stmt stmt = Prepare(db.get(), sql, error);
@@ -1537,23 +1916,19 @@ json::object HandleWubi(const json::object &request)
     ok = ok && sqlite3_step(stmt.get()) == SQLITE_DONE && sqlite3_changes(db.get()) > 0;
     if (ok)
     {
-        const bool user_inserted = action == "create" || user_dictionary::is_user_inserted(
-                                                             user_dictionary::default_user_db_path(),
-                                                             user_dictionary::DictionaryKind::Wubi, old_code, old_word);
+        const auto journal = user_dictionary::default_user_db_path();
+        const bool user_inserted =
+            action == "create" || user_dictionary::is_user_inserted(journal, wubi.kind, old_code, old_word);
         if (action == "delete")
-            (void)user_dictionary::record_delete(user_dictionary::default_user_db_path(),
-                                                 user_dictionary::DictionaryKind::Wubi, old_code, old_word);
+            (void)user_dictionary::record_delete(journal, wubi.kind, old_code, old_word);
         else
         {
             if (action == "update" && (old_code != code || old_word != word))
-                (void)user_dictionary::record_delete(user_dictionary::default_user_db_path(),
-                                                     user_dictionary::DictionaryKind::Wubi, old_code, old_word);
+                (void)user_dictionary::record_delete(journal, wubi.kind, old_code, old_word);
             if (user_inserted)
-                (void)user_dictionary::record_user_insert(user_dictionary::default_user_db_path(),
-                                                          user_dictionary::DictionaryKind::Wubi, code, word, weight);
+                (void)user_dictionary::record_user_insert(journal, wubi.kind, code, word, weight);
             else
-                (void)user_dictionary::record_weight_edit(user_dictionary::default_user_db_path(),
-                                                          user_dictionary::DictionaryKind::Wubi, code, word, weight);
+                (void)user_dictionary::record_weight_edit(journal, wubi.kind, code, word, weight);
         }
     }
     const char *label = action == "create" ? "新增" : action == "update" ? "修改" : "删除";
@@ -1739,14 +2114,20 @@ json::object HandleQuickPhrase(const json::object &request)
     {
         if (!code.empty() && !valid_code(code))
             return Result(false, "编码只能包含英文字母");
-        Stmt stmt = Prepare(db.get(),
-                            "SELECT key,value,weight FROM quick_parases WHERE key LIKE ?1 "
-                            "ORDER BY weight DESC,key,value" +
-                                Paging::Sql(request),
-                            error);
-        if (!stmt || !BindText(stmt.get(), 1, code + "%"))
+        // 默认按编码前缀查；精确匹配只认编码完全相同的行。编码留空时两种方式都列出全部。
+        const bool exact = !code.empty() && StringValue(request, "match") == "exact";
+        const std::string from_where = std::string("FROM quick_parases WHERE ") + (exact ? "key = ?1" : "key LIKE ?1");
+        bool total_ok = true;
+        const std::optional<int64_t> total =
+            PageTotal(db.get(), from_where, {exact ? code : code + "%"}, request, error, total_ok);
+        if (!total_ok)
             return Result(false, "查询失败：" + error);
-        return Paging::Read(stmt.get(), request);
+        Stmt stmt = Prepare(
+            db.get(),
+            "SELECT key,value,weight " + from_where + " ORDER BY weight DESC,key,value" + Paging::Sql(request), error);
+        if (!stmt || !BindText(stmt.get(), 1, exact ? code : code + "%"))
+            return Result(false, "查询失败：" + error);
+        return Paging::Read(stmt.get(), request, false, total);
     }
 
     if (action == "create" || action == "update")
@@ -1812,27 +2193,110 @@ json::object HandleQuickPhrase(const json::object &request)
 }
 } // namespace
 
+namespace
+{
+// 批量删除：每一条都走目标词库自己的删除路径（日志、内置词不能删之类的规则都在那里），
+// 只把 action 换成 delete 再按原请求分发一遍。
+json::object DeleteMany(const json::object &request)
+{
+    const auto *entries = request.if_contains("entries");
+    if (entries == nullptr || !entries->is_array() || entries->as_array().empty())
+        return BatchResult(false, "没有选中要删除的条目", 0);
+
+    const json::string dictionary = StringValue(request, "dictionary");
+    size_t deleted = 0;
+    size_t failed = 0;
+    std::string first_error;
+    {
+        DictCacheNotifyBatch batch;
+        for (const auto &item : entries->as_array())
+        {
+            if (!item.is_object())
+            {
+                ++failed;
+                if (first_error.empty())
+                    first_error = "条目格式错误";
+                continue;
+            }
+            const auto &entry = item.as_object();
+            const std::string word = StringValue(entry, "word");
+            const std::string code = StringValue(entry, "code");
+            const std::string display = StringValue(entry, "display");
+            json::object single = request;
+            single.erase("entries");
+            single["action"] = "delete";
+            single["code"] = code;
+            single["word"] = word;
+            single["oldCode"] = code;
+            single["oldWord"] = word;
+            if (!display.empty())
+            {
+                single["display"] = display;
+                single["oldDisplay"] = display;
+            }
+            // 单条抛异常不能把整批拖下水：已经删掉的要算数，这条记进 failed 和首个原因里。
+            try
+            {
+                const json::object response = HandleRequest(single);
+                if (response.at("ok").as_bool())
+                {
+                    ++deleted;
+                    continue;
+                }
+                if (first_error.empty())
+                    first_error = std::string(response.at("message").as_string());
+            }
+            catch (const std::exception &error)
+            {
+                if (first_error.empty())
+                    first_error = std::string("删除失败：") + error.what();
+            }
+            ++failed;
+        }
+    }
+
+    const std::string what = dictionary == "quick" ? "快捷短语" : "词条";
+    if (failed == 0)
+        return BatchResult(true, "已删除 " + std::to_string(deleted) + " 条" + what, 0);
+    if (deleted == 0)
+        return BatchResult(false, first_error, failed);
+    // 删掉一部分也算成功，列表要刷新；没删掉的原因一并在提示里说出来。
+    return BatchResult(true,
+                       "已删除 " + std::to_string(deleted) + " 条" + what + "，" + std::to_string(failed) +
+                           " 条未删除：" + first_error,
+                       failed);
+}
+} // namespace
+
 json::object HandleRequest(const json::object &request)
 {
     const std::string dictionary = StringValue(request, "dictionary");
     const std::string action = StringValue(request, "action");
+    if (action == "deleteMany")
+        return DeleteMany(request);
+    if (action == "query" && StringValue(request, "scope") == "user")
+        return QueryUserEntries(dictionary, request);
+    // 其他输入法的词库都是拼音词库，只导入全拼用户词库。
+    if (action == "importForeign")
+        return dictionary == "quanpin" ? ImportForeign(request) : Result(false, "其他词库只能导入到拼音词库");
     if (dictionary == "latin")
         return HandleLatin(request);
     if (action == "export")
         return ExportUserDictionary(dictionary);
-    // 纯汉字导入按目标词库分发出码方式：拼音走注音引擎，五笔走 wubi86 单字码组合。
+    const auto *wubi = FindWubiTable(dictionary);
+    // 纯汉字导入按目标词库分发出码方式：拼音走注音引擎，五笔走所选那一版码表的单字码组合。
     if (action == "importHans")
     {
-        if (dictionary == "wubi")
-            return ImportHansWubi(request);
+        if (wubi != nullptr)
+            return ImportHansWubi(request, *wubi);
         if (dictionary == "english" || dictionary == "quick")
             return Result(false, "该词库不支持纯汉字导入");
         return ImportHans(request);
     }
     if (dictionary == "english")
         return HandleEnglish(request);
-    if (dictionary == "wubi")
-        return HandleWubi(request);
+    if (wubi != nullptr)
+        return HandleWubi(request, *wubi);
     if (dictionary == "quick")
         return HandleQuickPhrase(request);
     if (dictionary != "quanpin")

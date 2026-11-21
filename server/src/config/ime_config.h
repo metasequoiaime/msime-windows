@@ -22,8 +22,10 @@ struct VoiceInputConfig
     bool hotkey_ctrl_win = false;
     bool hotkey_rctrl_ralt = false;
     bool hotkey_hold_space_lock = true;
-    // doubao | openai | siliconflow | groq
-    std::string asr_provider = "doubao";
+    // doubao | openai | siliconflow | groq | local
+    std::string asr_provider = "local";
+    // asr_provider == "local" 时使用的本地模型 id（voice-input/local_asr_catalog.h）；空 = 未选择。
+    std::string local_asr_model = "x-asr-zh-en-streaming";
     // Doubao console generation: api_key (new console, single API Key) | legacy (App ID + Access Token).
     // Empty means "infer from asr_app_key", which keeps configs written before this setting working.
     std::string doubao_auth_mode = "api_key";
@@ -185,18 +187,32 @@ struct NiuTransConfig
     std::string apikey;
 };
 
+// [bilibili_translate] 段：哔哩哔哩 Index-Translate 免费接口，不需要凭据，只选模型。
+struct BilibiliTranslateConfig
+{
+    std::string model = "Index-Translate-2B";
+};
+
 // 候选词翻译读取的整份配置快照。provider 来自 [translation].provider，旧配置没有这个键时由
 // [tencent_tmt]/[aliyun_mt]/[custom_translation]/[niutrans] 的 enabled 布尔在加载时推导；其余字段是各提供方
 // 配置的副本，ai 复用 AI 辅助当前服务商。配置加载和相关设置写入后整份替换，翻译 worker 与
 // 候选线程只读快照，不直接读会被重载改写的各段全局字符串。
 struct TranslationConfig
 {
-    // tencent | aliyun | niutrans | custom | ai
+    // tencent | aliyun | niutrans | custom | ai | bilibili
     std::string provider = "tencent";
+    // 英文候选（英文候选模式与中文里混输的英文）译成的语种，来自 [translation].english_target_language：
+    // zh / fr / ja / es / ru / de / ko / th / vi / it。中文候选的目标语种仍是 tencent.target_language。
+    std::string english_target_language = "zh";
+    // 英文候选用的在线翻译服务，来自 [translation].english_provider，取值同 provider。配置里没有或不合法时
+    // 跟着 provider 走（english_provider_explicit 为假，腾讯云的旧门禁也跟着中文那边）。
+    std::string english_provider = "tencent";
+    bool english_provider_explicit = false;
     TencentTmtConfig tencent;
     AliyunMtConfig aliyun;
     CustomTranslationConfig custom;
     NiuTransConfig niutrans;
+    BilibiliTranslateConfig bilibili;
     struct Ai
     {
         std::string provider;
@@ -218,8 +234,32 @@ struct NetworkProxyConfig
 struct FrequencyAdjustmentConfig
 {
     std::string mode = "promote"; // disabled | pin | halve | linear | promote
+    // 五笔候选单独的调频方式，取值同 mode，默认关闭：五笔靠固定码序盲打，选一次就挪位置会打乱记忆。
+    // trigger_count 与 linear_step 两边共用。
+    std::string wubi_mode = "disabled";
     int trigger_count = 1;
     int linear_step = 1;
+};
+
+// [sync] 段：把用户数据备份到用户自己的 WebDAV 或 S3 兼容存储。
+// 默认关闭。密码与密钥在 config.toml 里按 IsCredentialKey 走 DPAPI 加密。
+struct SyncConfig
+{
+    bool enabled = false;
+    std::string backend = "off"; // off | webdav | s3
+    int auto_upload_minutes = 0; // 0 = 只手动触发
+    int keep_snapshots = 5;
+    bool include_models = false;
+    std::string webdav_url;
+    std::string webdav_username;
+    std::string webdav_password;
+    std::string s3_endpoint;
+    std::string s3_region = "us-east-1";
+    std::string s3_bucket;
+    bool s3_path_style = true;
+    std::string s3_prefix = "msime";
+    std::string s3_access_key;
+    std::string s3_secret_key;
 };
 
 void InitImeConfig();
@@ -354,6 +394,8 @@ bool GetConfiguredEscapeKeepsSelectedWord();
 bool SetConfiguredEscapeKeepsSelectedWord(bool enabled);
 bool GetConfiguredEnterLearnsEnglishWord();
 bool SetConfiguredEnterLearnsEnglishWord(bool enabled);
+bool GetConfiguredEnglishCommitWithSpace();
+bool SetConfiguredEnglishCommitWithSpace(bool enabled);
 // 五笔 z 键角色："off" | "wildcard"。混输已拆成独立开关，这里只剩通配两态。
 const std::string &GetConfiguredWubiZMode();
 bool SetConfiguredWubiZMode(const std::string &mode);
@@ -532,12 +574,27 @@ bool GetConfiguredFloatingToolbarShadow();
 bool SetConfiguredFloatingToolbarShadow(bool enabled);
 bool GetConfiguredEnglishCandidatesEnabled();
 bool SetConfiguredEnglishCandidatesEnabled(bool enabled);
+// 中文候选的译文（译成 tencent_tmt.target_language）。
 bool GetConfiguredCandidateTranslationsEnabled();
 bool SetConfiguredCandidateTranslationsEnabled(bool enabled);
+// 英文候选的译文（英文候选模式与中文里混输的英文，译成 translation.english_target_language）。
+bool GetConfiguredEnglishCandidateTranslationsEnabled();
+bool SetConfiguredEnglishCandidateTranslationsEnabled(bool enabled);
 bool GetConfiguredCandidateTranslationShowPos();
 bool SetConfiguredCandidateTranslationShowPos(bool show);
 bool GetConfiguredCandidateTranslationSingleSense();
 bool SetConfiguredCandidateTranslationSingleSense(bool single);
+// 英文候选（含中文候选里混输的英文）译文的显示方式，与上面中文候选那一套分开设。
+bool GetConfiguredEnglishCandidateTranslationShowPos();
+bool SetConfiguredEnglishCandidateTranslationShowPos(bool show);
+bool GetConfiguredEnglishCandidateTranslationSingleSense();
+bool SetConfiguredEnglishCandidateTranslationSingleSense(bool single);
+// 音标（english.db 的 en_ipa，由 CMUdict 转写）：中文候选那边只在目标语种是英语时生效，
+// 标的是英文译文的音标；英文候选那边标候选词本身的音标，不依赖英文候选翻译开关。
+bool GetConfiguredCandidateTranslationPhonetics();
+bool SetConfiguredCandidateTranslationPhonetics(bool show);
+bool GetConfiguredEnglishCandidatePhonetics();
+bool SetConfiguredEnglishCandidatePhonetics(bool show);
 int GetConfiguredEnglishMixedInputMinChars();
 bool SetConfiguredEnglishMixedInputMinChars(int min_chars);
 int GetConfiguredEnglishMixedInputFirstPageCount();
@@ -637,6 +694,21 @@ bool GetConfiguredLanguageBarShowDoubleSingleByte();
 bool SetConfiguredLanguageBarShowDoubleSingleByte(bool enabled);
 bool GetConfiguredLanguageBarShowPunctuation();
 bool SetConfiguredLanguageBarShowPunctuation(bool enabled);
+// DR Dict 词典联动（[dr_dict]）。enabled 是总开关，管候选右键菜单的「查词典」；两个快捷键各自另有开关，
+// 总开关关着时它们也不生效（GetConfiguredDrDictLookup*Hotkey 已经把总开关算进去了）。
+bool GetConfiguredDrDictEnabled();
+bool SetConfiguredDrDictEnabled(bool enabled);
+bool GetConfiguredDrDictLookupCandidateHotkeySwitch();
+bool SetConfiguredDrDictLookupCandidateHotkey(bool enabled);
+bool GetConfiguredDrDictLookupPreeditHotkeySwitch();
+bool SetConfiguredDrDictLookupPreeditHotkey(bool enabled);
+bool GetConfiguredDrDictLookupCandidateHotkey();
+bool GetConfiguredDrDictLookupPreeditHotkey();
+// 英文候选模式里把 DR Dict 弹窗停靠在候选窗旁，显示高亮候选的词典释义；开关本身与总开关合起来的结果
+// 分开取，同上。
+bool GetConfiguredDrDictEnglishPopupSwitch();
+bool SetConfiguredDrDictEnglishPopup(bool enabled);
+bool GetConfiguredDrDictEnglishPopup();
 bool GetConfiguredPagingMinusEqualEnabled();
 bool SetConfiguredPagingMinusEqualEnabled(bool enabled);
 bool GetConfiguredPagingCommaPeriodEnabled();
@@ -702,6 +774,20 @@ bool SetConfiguredCandidateWindowFitContent(bool enabled);
 // 横排强制单行：候选框最宽放开到当前屏幕宽度（默认半屏），超出才换行；竖排不受影响。
 bool GetConfiguredCandidateWindowSingleLine();
 bool SetConfiguredCandidateWindowSingleLine(bool enabled);
+// 横排固定宽度：候选框宽度始终是当前屏幕宽度的 ratio 倍，一行放不下的候选挪到下一页，
+// page_size 只作每页个数的上限。竖排不受影响。
+inline constexpr double kCandidateWindowFixedWidthRatioMin = 0.125;
+inline constexpr double kCandidateWindowFixedWidthRatioMax = 0.75;
+inline constexpr double kCandidateWindowFixedWidthRatioDefault = 0.25;
+bool GetConfiguredCandidateWindowFixedWidth();
+bool SetConfiguredCandidateWindowFixedWidth(bool enabled);
+double GetConfiguredCandidateWindowFixedWidthRatio();
+bool SetConfiguredCandidateWindowFixedWidthRatio(double ratio);
+// 横排且开了固定宽度：分页按界面量出的每页实际个数走。
+bool CandidateWindowFixedWidthActive();
+// 竖排固定高度：候选框始终保持放得下 page_size 个候选的高度。横排不受影响。
+bool GetConfiguredCandidateWindowFixedHeight();
+bool SetConfiguredCandidateWindowFixedHeight(bool enabled);
 // 固定排位候选词徽标：总开关 + 样式枚举（"paperclip" | "pushpin" | "dot"）。
 bool GetConfiguredCandidateFixedBadge();
 bool SetConfiguredCandidateFixedBadge(bool enabled);
@@ -771,8 +857,13 @@ bool SetConfiguredAliyunMtString(const std::string &key, const std::string &valu
 const NiuTransConfig &GetConfiguredNiuTrans();
 bool SetConfiguredNiuTransBool(const std::string &key, bool value);
 bool SetConfiguredNiuTransString(const std::string &key, const std::string &value);
+const BilibiliTranslateConfig &GetConfiguredBilibiliTranslate();
+bool SetConfiguredBilibiliTranslateString(const std::string &key, const std::string &value);
 bool IsValidTranslationProvider(const std::string &provider);
+// 英文候选可选的目标语种：中文，加上中文候选可选的除英语外的那些。
+bool IsValidEnglishTranslationTargetLanguage(const std::string &language);
 std::shared_ptr<const TranslationConfig> GetConfiguredTranslation();
+// key 为 provider、english_provider 或 english_target_language。
 bool SetConfiguredTranslationString(const std::string &key, const std::string &value);
 // Snapshot by value: download threads and the cloud worker read it while the settings host rewrites it.
 NetworkProxyConfig GetConfiguredNetworkProxy();
@@ -783,6 +874,11 @@ std::string NormalizeNetworkProxyServer(const std::string &value);
 const FrequencyAdjustmentConfig &GetConfiguredFrequencyAdjustment();
 bool SetConfiguredFrequencyAdjustmentString(const std::string &key, const std::string &value);
 bool SetConfiguredFrequencyAdjustmentInt(const std::string &key, int value);
+// [sync] 段。快照按值返回：后台上传线程与设置页会同时读它。
+SyncConfig GetConfiguredSync();
+bool SetConfiguredSyncBool(const std::string &key, bool value);
+bool SetConfiguredSyncInt(const std::string &key, int value);
+bool SetConfiguredSyncString(const std::string &key, const std::string &value);
 bool SetConfiguredAiAssistantString(const std::string &key, const std::string &value);
 // 按服务商写 endpoint / model：落槽位键 endpoint_<id> / model_<id>，单值键只在目标就是活动服务商时改写。
 // 设置页在多提供商之间切换时用它，免得"写单值键"被当成写给后端此刻的活动服务商。

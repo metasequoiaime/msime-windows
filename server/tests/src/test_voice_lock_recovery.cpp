@@ -31,6 +31,7 @@
 #include "voice-input/doubao_asr_client.h"
 #include "voice-input/voice_input_gesture.h"
 #include "voice-input/voice_input_service.h"
+#include "voice-input/voice_notice_window.h"
 #include "voice-input/voice_result_card.h"
 #include "voice-input/voice_target.h"
 #include "voice-input/wave_overlay.h"
@@ -1569,6 +1570,10 @@ void WaveOverlay::set_actions_visible(bool visible)
     if (visible)
         ++g_actions_true_count;
     NotifyEffects();
+}
+
+void ShowVoiceNoticeWindow(VoiceNoticeKind, std::wstring)
+{
 }
 
 VoiceResultCard::VoiceResultCard() = default;

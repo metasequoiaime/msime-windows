@@ -7,6 +7,7 @@
 #endif // !UNICODE
 
 #include "Globals.h"
+#include "Composition/CandidateDigitPolicy.h"
 
 //---------------------------------------------------------------------
 //
@@ -243,27 +244,11 @@ CCandidateRange::~CCandidateRange(void)
 
 BOOL CCandidateRange::IsRange(UINT vKey)
 {
-    DWORD value = vKey - L'0';
-    if (value > 0 && value < 10) // Start from 1
-    {
-        return TRUE;
-    }
-
-    for (UINT i = 0; i < _CandidateListIndexRange.Count(); i++)
-    {
-        if (value == *_CandidateListIndexRange.GetAt(i))
-        {
-            return TRUE;
-        }
-        else if ((VK_NUMPAD0 <= vKey) && (vKey <= VK_NUMPAD9))
-        {
-            if ((vKey - VK_NUMPAD0) == *_CandidateListIndexRange.GetAt(i))
-            {
-                return TRUE;
-            }
-        }
-    }
-    return FALSE;
+    // Every main-row and numpad digit selects, zero included: the Server answers
+    // zero as out of range, which selects nothing instead of cancelling the
+    // composition. Selection keys follow the shared contract, not the configured
+    // index range, so TSF and Server cannot disagree on them.
+    return IsCandidateDigitKey(vKey) ? TRUE : FALSE;
 }
 
 int CCandidateRange::GetIndex(UINT vKey)

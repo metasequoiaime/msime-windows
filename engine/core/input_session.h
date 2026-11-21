@@ -333,6 +333,8 @@ class InputSession
     KeyResult commit(std::size_t index);
     KeyResult handle_local_character(char character);
     KeyResult insert_at_caret(char character);
+    // U/T 模式下光标停在 text[caret] 时 ; 能否作为双拼码的 ing 韵母。
+    bool accepts_local_mode_semicolon_at(const std::string &text, std::size_t caret) const;
     // 光标停在 caret 处时大写字母 character 能否作为句中辅助码收下：紧跟在反引号之后（第一码），
     // 或紧跟在「反引号 + 第一码」之后（第二码）。
     bool accepts_mid_sentence_code_at(std::size_t caret, char character) const;

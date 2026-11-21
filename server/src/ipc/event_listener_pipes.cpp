@@ -15,7 +15,6 @@
 #include "fmt/xchar.h"
 #include "global/globals.h"
 #include "config/ime_config.h"
-#include "settings/update_check.h"
 #include "window/window_hook.h"
 #include "watchdog/watchdog_protocol.h"
 #include "log/candidate_diag_log.h"
@@ -209,6 +208,7 @@ bool IsKnownMainPipeEvent(UINT event_type)
     case FanyImePipeEventType::ClientSuspended:
     case FanyImePipeEventType::FocusRestored:
     case FanyImePipeEventType::HideCaretState:
+    case FanyImePipeEventType::FocusFieldState:
         return true;
     default:
         return false;
@@ -241,6 +241,11 @@ bool IsValidMainPipeFrame(const FanyImeNamedpipeData &pipe_data)
     {
         // FocusSessionReady can never acknowledge token zero. Reject the
         // activation instead of creating a server epoch that TSF cannot fence.
+        return false;
+    }
+    if (pipe_data.event_type == FanyImePipeEventType::FocusFieldState &&
+        (pipe_data.request_id == 0 || pipe_data.keycode > 1))
+    {
         return false;
     }
     return true;
@@ -484,6 +489,14 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             {
                 EnqueueTask(TaskType::ClientActivated, pipeData, activation.epoch);
             }
+            continue;
+        }
+        if (pipeData.event_type == FanyImePipeEventType::FocusFieldState)
+        {
+            // State only: it describes this client's focused document under
+            // the token it carries and never claims or changes routing.
+            RecordPipeClientFocusField(clientId, mainRegistrationId, pipeData.request_id, pipeData.modifiers_down,
+                                       pipeData.keycode == 1);
             continue;
         }
         if (FanyImePipeEventType::IsRouteDeactivation(pipeData.event_type))
@@ -1028,16 +1041,6 @@ void AuxPipeEventListenerLoopThread()
                     // of relaunching, so the settings process can apply files without a
                     // writer on the other end.
                     ExitProcess(WatchdogProtocol::kStopExitCode);
-                }
-                else if (message.rfind(L"InstallUpdate|", 0) == 0)
-                {
-                    // 用户在弹窗里同意安装新版本。安装程序要替换本进程映射着的 TSF DLL，
-                    // 所以先退出让 Watchdog 立刻拉起一份新的 Server，安装程序启动时就不再
-                    // 有旧 DLL 被占用。安装包本身由 Server 在退出前拉起：路径只认数据目录
-                    // 里校验过的那一份，消息里的文件名只用于核对，不直接当成路径信任。
-                    const std::wstring installer = message.substr(std::wstring(L"InstallUpdate|").size());
-                    update_check::LaunchPendingInstaller(installer);
-                    RestartServerProcess();
                 }
                 else if (message == L"ConfigChanged" || message == L"InputSchemeChanged" ||
                          message == L"CandidateSkinRefresh")

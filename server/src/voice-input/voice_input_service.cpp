@@ -7,6 +7,7 @@
 #include "voice_input_gesture.h"
 #include "config/ime_config.h"
 #include "doubao_asr_client.h"
+#include "local_asr.h"
 #include "log/candidate_diag_log.h"
 #include "voice_providers.h"
 #include "voice_batch_protocol.h"
@@ -17,6 +18,7 @@
 #include "cue_player.h"
 #include "voice_target.h"
 #include "voice_result_card.h"
+#include "voice_notice_window.h"
 #include "voice_commit_policy.h"
 #include "voice_control_policy.h"
 #include "voice_input_delivery.h"
@@ -57,7 +59,8 @@ constexpr long kPolishThinkingTimeoutMs = 30000L;
 metasequoia::voice::AudioCapture g_capture;
 std::mutex g_mutex;
 std::vector<float> g_samples;
-std::unique_ptr<DoubaoAsrClient> g_doubao_asr;
+// 录音期间边收边识别的会话（豆包，或本地流式模型）；整句识别时为空，音频攒在 g_samples。
+std::unique_ptr<StreamingAsr> g_stream_asr;
 std::atomic<std::size_t> g_recorded_frames{0};
 std::atomic<std::uint64_t> g_voice_session{0};
 std::atomic<std::uint64_t> g_dismissed_overlay_session{0};
@@ -142,6 +145,7 @@ void StopRecording(std::uint64_t voice_session, std::uintptr_t lock_ticket);
 void CancelRecording(std::uintptr_t lock_ticket);
 void CancelRecordingForSession(std::uint64_t session_cookie, std::uintptr_t lock_ticket);
 void DiscardRecording(const VoiceInputConfig &config);
+void ShowVoiceNotice(std::wstring message, VoiceNoticeKind kind = VoiceNoticeKind::Error);
 
 void MuteSystemAudioIfEnabled(const VoiceInputConfig &config)
 {
@@ -680,6 +684,15 @@ std::string JsonErrorMessage(const std::string &body)
 
 RecognitionResult Recognize(const std::vector<float> &samples, const VoiceInputConfig &config)
 {
+    if (VoiceInput::IsLocalAsrProvider(config.asr_provider))
+    {
+        local_asr::RecognitionResult local = local_asr::Recognize(samples, config.local_asr_model, config.language);
+        // 本地识别不会因为「没说话」报错（那只是空文本），出错都是运行库或模型载不进来，属于配置问题，
+        // 静默吞掉用户就只看到每次都没字，所以照配置类错误的做法提示。
+        if (!local.error.empty())
+            ShowVoiceNotice(string_to_wstring(local.error) + L"。");
+        return {std::move(local.text), std::move(local.error)};
+    }
     const std::string asr_token = VoiceInput::ResolveAsrToken(config);
     if (asr_token.empty() || config.asr_endpoint.empty())
         return {{}, "ASR Token 或接口地址为空。"};
@@ -896,8 +909,14 @@ bool IsPipeRouteCurrent(const VoiceInput::Target &target)
         return false;
     }
     const PipeClientActivation active = GetActivePipeClient();
-    return active.client_id == target.client && active.epoch == target.epoch &&
-           active.focus_token == target.focus_token;
+    if (active.client_id != target.client || active.epoch != target.epoch || active.focus_token != target.focus_token)
+    {
+        return false;
+    }
+    // An attested target is the field TSF reported; it stays current only
+    // while that client still reports the same, still editable, field.
+    return !target.tsf_attested ||
+           (active.focus_field_known && active.focus_field_editable && active.focus_field_serial == target.tsf_field);
 }
 
 // SendInput fallback guarded by a final no-COM re-validation. On failure the
@@ -990,10 +1009,17 @@ bool CommitCtrlVViaClipboard(const std::wstring &text, const VoiceInput::Target 
     return false;
 }
 
+// 录音期间就能出字的识别：豆包流式接口，或本地的流式模型。
+bool UsesStreamingAsr(const VoiceInputConfig &config)
+{
+    return VoiceInput::IsDoubaoAsrProvider(config.asr_provider) ||
+           (VoiceInput::IsLocalAsrProvider(config.asr_provider) &&
+            local_asr::SupportsStreaming(config.local_asr_model));
+}
+
 bool ShouldStreamInlinePreedit(const VoiceInputConfig &config)
 {
-    return config.stream_inline_preedit && VoiceInput::IsDoubaoAsrProvider(config.asr_provider) &&
-           config.commit_mode == "tsf";
+    return config.stream_inline_preedit && UsesStreamingAsr(config) && config.commit_mode == "tsf";
 }
 
 // The TSF client id is a PID<<32|TID of the IME thread inside either the
@@ -1049,6 +1075,14 @@ bool IsForegroundPipeClient(const VoiceInput::Target &target, std::uint64_t clie
 // client/epoch/focus token when that client belongs to the captured foreground
 // host or the focused child route. The COM/UIA work happens in the platform
 // adapter and must always run outside g_send_mutex.
+//
+// When that bound client reported an editable focused document for this focus
+// token, TSF decides: the target is editable and the TSF field serial is its
+// identity. This is the document the voice preview and commit are written into,
+// so UIA's view of the host (an empty tree under WebView2 visual hosting, a
+// UIA element in another process than the focused HWND, a Chromium tree that is
+// still being built) no longer decides it. A missing or read-only TSF report
+// leaves the UIA verdict in place, exactly as before attestation existed.
 VoiceInput::Target CaptureVoiceTarget()
 {
     VoiceInput::Target target = VoiceInput::CaptureTarget();
@@ -1058,6 +1092,12 @@ VoiceInput::Target CaptureVoiceTarget()
         target.client = active.client_id;
         target.epoch = active.epoch;
         target.focus_token = active.focus_token;
+        if (active.focus_field_known && active.focus_field_editable)
+        {
+            target.editable = true;
+            target.tsf_attested = true;
+            target.tsf_field = active.focus_field_serial;
+        }
     }
     return target;
 }
@@ -1133,6 +1173,50 @@ void PushInlinePreedit(const std::wstring &text)
         // commit path, which reconciles the captured identity outside the lock.
         g_last_inline_preedit.clear();
     }
+}
+
+// Retry budget for binding the inline owner after recording has started. Only
+// the recognition callback thread of one session touches it.
+struct InlineLateBind
+{
+    int attempts = 0;
+    ULONGLONG last_attempt = 0;
+};
+
+// Start binds the inline owner once. If that capture found no bound route yet
+// (the client was still activating, or its focus state had not arrived), retry
+// from the first few recognition results instead of showing the whole session
+// on the overlay. The capture runs outside g_send_mutex like every other one;
+// the bind is re-validated under it and only while this session still records.
+void TryLateBindInlineOwner(std::uint64_t voice_session, InlineLateBind &state)
+{
+    constexpr int kMaxAttempts = 5;
+    constexpr ULONGLONG kRetryIntervalMs = 300;
+    if (g_stream_inline_this_session.load() || !g_recording.load() || state.attempts >= kMaxAttempts)
+    {
+        return;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (state.attempts != 0 && now - state.last_attempt < kRetryIntervalMs)
+    {
+        return;
+    }
+    ++state.attempts;
+    state.last_attempt = now;
+    const VoiceInput::Target owner = CaptureVoiceTarget();
+    std::lock_guard<std::mutex> send_lock(g_send_mutex);
+    if (g_voice_session != voice_session || !g_recording.load() || g_stream_inline_this_session.load() ||
+        owner.client == 0 || owner.epoch == 0 || !OwnerRouteValid(owner))
+    {
+        return;
+    }
+    g_inline_owner = owner;
+    g_inline_owner_session = voice_session;
+    g_last_inline_preedit.clear();
+    g_stream_inline_this_session.store(true);
+    // From here the text goes into the field; the overlay keeps only the level.
+    g_overlay.set_show_transcript(false);
+    g_overlay.set_transcript(L"");
 }
 
 // Shared teardown of the inline preedit state. Must be called under g_send_mutex.
@@ -1352,9 +1436,9 @@ void AudioCallback(const float *samples, std::size_t frames)
     const float normalized = (std::min)(1.0f, speech_level * 14.0f);
     g_overlay.set_input_level(std::pow(normalized, 0.55f));
     g_recorded_frames += frames;
-    if (g_doubao_asr)
+    if (g_stream_asr)
     {
-        g_doubao_asr->PushFloatSamples(samples, frames);
+        g_stream_asr->PushFloatSamples(samples, frames);
         return;
     }
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -1413,21 +1497,19 @@ void AbortPendingStart(const char *reason)
     (void)reason;
     // The control loop owns the startup/completion flags.
     InvalidateVoiceSession();
-    if (g_doubao_asr)
+    if (g_stream_asr)
     {
-        g_doubao_asr->Cancel();
-        g_doubao_asr.reset();
+        g_stream_asr->Cancel();
+        g_stream_asr.reset();
     }
 }
 
 // 配置类错误仍要告知用户，但绝不能在控制线程上模态等待——弹窗挂着的期间，
-// 下一次语音的指令队列整个被卡住（提示条卡死的元凶之一）。挪到独立线程展示，
-// 队列照常运转；连点几次也只是多几个各自可关闭的窗口。
-void ShowVoiceNotice(std::wstring message, unsigned icon = MB_ICONERROR)
+// 下一次语音的指令队列整个被卡住（提示条卡死的元凶之一）。提示框在自己的线程上显示，
+// 队列照常运转；连点几次也只留最新的一个。
+void ShowVoiceNotice(std::wstring message, VoiceNoticeKind kind)
 {
-    std::thread([message = std::move(message), icon] {
-        MessageBoxW(nullptr, message.c_str(), L"水杉 IME", MB_OK | icon);
-    }).detach();
+    ShowVoiceNoticeWindow(kind, std::move(message));
 }
 
 bool StartRecording()
@@ -1447,10 +1529,21 @@ bool StartRecording()
     if (!config.enabled)
         return false;
     const bool use_doubao = VoiceInput::IsDoubaoAsrProvider(config.asr_provider);
+    const bool use_local = VoiceInput::IsLocalAsrProvider(config.asr_provider);
     const std::string asr_token = VoiceInput::ResolveAsrToken(config);
-    if (asr_token.empty())
+    if (use_local)
     {
-        ShowVoiceNotice(L"请先在设置的“语音输入”分区填写当前 ASR 提供商的 API Token。", MB_ICONINFORMATION);
+        // 本地识别不要 Token，但模型与运行库要先下载；缺了就在开麦之前告诉用户，而不是录完才静默失败。
+        if (const std::string error = local_asr::ReadinessError(config.local_asr_model); !error.empty())
+        {
+            ShowVoiceNotice(string_to_wstring(error) + L"。", VoiceNoticeKind::SettingsNeeded);
+            return false;
+        }
+    }
+    else if (asr_token.empty())
+    {
+        ShowVoiceNotice(L"请先在设置的“语音输入”分区填写当前 ASR 提供商的 API Token。",
+                        VoiceNoticeKind::SettingsNeeded);
         return false;
     }
     {
@@ -1458,7 +1551,8 @@ bool StartRecording()
         g_samples.clear();
     }
     g_recorded_frames = 0;
-    const bool want_inline = use_doubao && ShouldStreamInlinePreedit(config);
+    const bool use_streaming = UsesStreamingAsr(config);
+    const bool want_inline = ShouldStreamInlinePreedit(config);
     const VoiceOverlayAnchor overlay_anchor = CaptureVoiceOverlayAnchor();
     std::uint64_t voice_session = 0;
     // Clear the previous session's inline composition before the new session
@@ -1497,26 +1591,37 @@ bool StartRecording()
     // 没有按钮就等于没有任何办法把它关掉。
     g_overlay.set_actions_visible(true);
     g_overlay.set_transcript(L"");
-    if (use_doubao)
+    if (use_streaming)
     {
-        g_doubao_asr = std::make_unique<DoubaoAsrClient>(
-            config.asr_endpoint, VoiceInput::UsesDoubaoLegacyAuth(config), config.asr_app_key, asr_token,
-            config.asr_resource_id, config.doubao_enable_itn, config.doubao_enable_punc, config.doubao_enable_ddc,
-            config.doubao_boosting_table_id, [voice_session](const std::string &text) {
-                if (g_voice_session != voice_session)
-                    return;
-                const std::wstring wide = string_to_wstring(text);
-                std::lock_guard<std::mutex> send_lock(g_send_mutex);
-                if (g_voice_session != voice_session)
-                    return;
-                if (!g_stream_inline_this_session.load())
-                    g_overlay.set_transcript(wide);
-                PushInlinePreedit(wide);
-            });
-        if (!g_doubao_asr->Start())
+        // 识别中的文字：inline 时写进光标处的预编辑，否则显示在提示条上。
+        // 开录那一刻没绑上 inline（路由还在激活、焦点状态还没报上来）时，前几次出字再各试一次。
+        auto late_bind = std::make_shared<InlineLateBind>();
+        auto on_partial = [voice_session, want_inline, late_bind](const std::string &text) {
+            if (g_voice_session != voice_session)
+                return;
+            const std::wstring wide = string_to_wstring(text);
+            if (want_inline)
+                TryLateBindInlineOwner(voice_session, *late_bind);
+            std::lock_guard<std::mutex> send_lock(g_send_mutex);
+            if (g_voice_session != voice_session)
+                return;
+            if (!g_stream_inline_this_session.load())
+                g_overlay.set_transcript(wide);
+            PushInlinePreedit(wide);
+        };
+        if (use_doubao)
+            g_stream_asr = std::make_unique<DoubaoAsrClient>(
+                config.asr_endpoint, VoiceInput::UsesDoubaoLegacyAuth(config), config.asr_app_key, asr_token,
+                config.asr_resource_id, config.doubao_enable_itn, config.doubao_enable_punc, config.doubao_enable_ddc,
+                config.doubao_boosting_table_id, std::move(on_partial));
+        else
+            g_stream_asr = std::make_unique<local_asr::StreamingSession>(config.local_asr_model, config.language,
+                                                                         std::move(on_partial));
+        if (!g_stream_asr->Start())
         {
             AbortPendingStart("asr start failed");
-            ShowVoiceNotice(L"无法启动豆包流式语音识别。请检查 config.toml。");
+            ShowVoiceNotice(use_doubao ? L"无法启动豆包流式语音识别。请检查 config.toml。"
+                                       : L"无法启动本地流式语音识别，请在设置的“语音输入”里检查本地模型。");
             return false;
         }
     }
@@ -1598,8 +1703,8 @@ void StopRecording(std::uint64_t voice_session, std::uintptr_t lock_ticket)
     RestoreSystemAudioIfMuted();
     if (config.end_sound)
         g_cue_player.play_end();
-    auto doubao_asr = std::move(g_doubao_asr);
-    const bool batch_recognition = !doubao_asr;
+    auto stream_asr = std::move(g_stream_asr);
+    const bool batch_recognition = !stream_asr;
     if (!stream_inline)
     {
         g_overlay.set_compact_status(batch_recognition ? WaveOverlay::CompactStatus::Recognizing
@@ -1628,10 +1733,10 @@ void StopRecording(std::uint64_t voice_session, std::uintptr_t lock_ticket)
         g_overlay.hide();
         g_overlay.set_actions_visible(false);
         g_overlay.set_transcript(L"");
-        if (doubao_asr)
+        if (stream_asr)
         {
             g_network_tasks.emplace_back(
-                std::async(std::launch::async, [client = std::move(doubao_asr)]() mutable { client->Cancel(); }));
+                std::async(std::launch::async, [client = std::move(stream_asr)]() mutable { client->Cancel(); }));
         }
         return;
     }
@@ -1641,13 +1746,16 @@ void StopRecording(std::uint64_t voice_session, std::uintptr_t lock_ticket)
                                          }),
                           g_network_tasks.end());
     g_network_tasks.emplace_back(
-        std::async(std::launch::async, [samples = std::move(samples), client = std::move(doubao_asr), config,
+        std::async(std::launch::async, [samples = std::move(samples), client = std::move(stream_asr), config,
                                         batch_recognition, stream_inline, voice_session, stop_target]() mutable {
             RecognitionResult recognition;
             if (client)
             {
                 recognition.text = client->Finish();
                 recognition.error = client->LastError();
+                // 同整句的本地识别：出错只会是运行库或模型载不进来，静默吞掉用户就只看到每次都没字。
+                if (!recognition.error.empty() && VoiceInput::IsLocalAsrProvider(config.asr_provider))
+                    ShowVoiceNotice(string_to_wstring(recognition.error) + L"。");
             }
             else
                 recognition = Recognize(samples, config);
@@ -1821,13 +1929,13 @@ void DiscardRecording(const VoiceInputConfig &config)
     RestoreSystemAudioIfMuted();
     if (config.end_sound)
         g_cue_player.play_end();
-    auto doubao_asr = std::move(g_doubao_asr);
+    auto stream_asr = std::move(g_stream_asr);
     std::lock_guard<std::mutex> lock(g_mutex);
     g_samples.clear();
-    if (doubao_asr)
+    if (stream_asr)
     {
         g_network_tasks.emplace_back(
-            std::async(std::launch::async, [client = std::move(doubao_asr)]() mutable { client->Cancel(); }));
+            std::async(std::launch::async, [client = std::move(stream_asr)]() mutable { client->Cancel(); }));
     }
 }
 } // namespace

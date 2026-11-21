@@ -251,6 +251,10 @@ CMetasequoiaIME::CMetasequoiaIME()
     _msgWndHandle = nullptr;
     _themeRegKey = nullptr;
     _themeRegEvent = nullptr;
+    _dwmRegKey = nullptr;
+    _dwmRegEvent = nullptr;
+    _accentRegKey = nullptr;
+    _accentRegEvent = nullptr;
     _pThemeWatcherThread = nullptr;
     _stopThemeWatcher = false;
 
@@ -1071,6 +1075,11 @@ STDAPI CMetasequoiaIME::Deactivate()
     {
         _pDocMgrLastFocused->Release();
         _pDocMgrLastFocused = nullptr;
+    }
+    if (_pFocusFieldDocMgr)
+    {
+        _pFocusFieldDocMgr->Release();
+        _pFocusFieldDocMgr = nullptr;
     }
 
     /* 清理消息窗口 */

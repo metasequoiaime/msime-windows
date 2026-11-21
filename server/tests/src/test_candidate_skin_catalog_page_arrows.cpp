@@ -62,15 +62,15 @@ void Cleanup(const fs::path &root)
 TEST_CASE(candidate_skin_page_arrows_follow_default_manifest_for_built_in_skin)
 {
     const auto root = MakeSkinsRoot(L"builtin");
-    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "graphite", nullptr) ==
+    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "graphite", nullptr, true) ==
             CandidateSkinCatalog::kDefaultPageArrows);
 
     // Arrows are off unless a manifest turns them on.
     REQUIRE(!CandidateSkinCatalog::kDefaultPageArrows);
     WriteDefaultSkin(root, "graphite", "[candidate_window]\npage_arrows = true\n");
-    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "graphite", nullptr));
+    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "graphite", nullptr, true));
     // Another built-in skin is not affected by graphite's manifest.
-    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "fluent", nullptr) ==
+    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "fluent", nullptr, true) ==
             CandidateSkinCatalog::kDefaultPageArrows);
 
     const auto defaults = CandidateSkinCatalog::LoadDefault(root, "graphite");
@@ -90,11 +90,11 @@ TEST_CASE(candidate_skin_page_arrows_external_skin_overrides_or_inherits_base)
     const auto inherit = CandidateSkinCatalog::Load(root, "inherit");
     REQUIRE(inherit.has_value());
     REQUIRE(!inherit->pageArrows.has_value());
-    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "inherit", &*inherit));
+    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "inherit", &*inherit, true));
 
     const auto explicitOff = CandidateSkinCatalog::Load(root, "override");
     REQUIRE(explicitOff.has_value());
-    REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(root, "override", &*explicitOff));
+    REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(root, "override", &*explicitOff, true));
     Cleanup(root);
 }
 
@@ -111,7 +111,7 @@ TEST_CASE(candidate_skin_page_arrows_reject_non_boolean_values)
     REQUIRE(!CandidateSkinCatalog::LoadDefault(root, "fluent", &error).has_value());
     REQUIRE(!error.empty());
     // A broken default manifest falls back to the shipped default.
-    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "fluent", nullptr) ==
+    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "fluent", nullptr, true) ==
             CandidateSkinCatalog::kDefaultPageArrows);
     Cleanup(root);
 }
@@ -121,28 +121,54 @@ TEST_CASE(candidate_skin_fit_content_resolves_like_page_arrows)
 {
     const auto root = MakeSkinsRoot(L"fit-content");
     REQUIRE(!CandidateSkinCatalog::kDefaultFitContent);
-    REQUIRE(!CandidateSkinCatalog::ResolveFitContent(root, "graphite", nullptr));
+    REQUIRE(!CandidateSkinCatalog::ResolveFitContent(root, "graphite", nullptr, true));
 
     WriteDefaultSkin(root, "graphite", "[candidate_window]\nfit_content = true\n");
-    REQUIRE(CandidateSkinCatalog::ResolveFitContent(root, "graphite", nullptr));
-    REQUIRE(!CandidateSkinCatalog::ResolveFitContent(root, "fluent", nullptr));
+    REQUIRE(CandidateSkinCatalog::ResolveFitContent(root, "graphite", nullptr, true));
+    REQUIRE(!CandidateSkinCatalog::ResolveFitContent(root, "fluent", nullptr, true));
     // The two switches are independent.
-    REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(root, "graphite", nullptr));
+    REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(root, "graphite", nullptr, true));
 
     WriteExternalSkin(root, "inherit", "graphite", "");
     WriteExternalSkin(root, "override", "graphite", "fit_content = false\n");
     const auto inherit = CandidateSkinCatalog::Load(root, "inherit");
     REQUIRE(inherit.has_value());
     REQUIRE(!inherit->fitContent.has_value());
-    REQUIRE(CandidateSkinCatalog::ResolveFitContent(root, "inherit", &*inherit));
+    REQUIRE(CandidateSkinCatalog::ResolveFitContent(root, "inherit", &*inherit, true));
     const auto explicitOff = CandidateSkinCatalog::Load(root, "override");
     REQUIRE(explicitOff.has_value());
-    REQUIRE(!CandidateSkinCatalog::ResolveFitContent(root, "override", &*explicitOff));
+    REQUIRE(!CandidateSkinCatalog::ResolveFitContent(root, "override", &*explicitOff, true));
 
     WriteExternalSkin(root, "bad", "fluent", "fit_content = \"yes\"\n");
     std::string error;
     REQUIRE(!CandidateSkinCatalog::Load(root, "bad", &error).has_value());
     REQUIRE(!error.empty());
+    Cleanup(root);
+}
+
+// 横排 / 竖排子表可以单独改这两个开关，没写的按共用表，再沿 base 默认皮肤。
+TEST_CASE(candidate_skin_layout_tables_override_fit_content_and_page_arrows)
+{
+    const auto root = MakeSkinsRoot(L"layout-switches");
+    WriteExternalSkin(root, "layout", "fluent",
+                      "page_arrows = false\nfit_content = false\n\n"
+                      "[candidate_window.horizontal]\npage_arrows = true\nfit_content = true\n\n"
+                      "[candidate_window.vertical]\npage_arrows = false\nfit_content = false\n");
+    const auto package = CandidateSkinCatalog::Load(root, "layout");
+    REQUIRE(package.has_value());
+    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "layout", &*package, true));
+    REQUIRE(CandidateSkinCatalog::ResolveFitContent(root, "layout", &*package, true));
+    REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(root, "layout", &*package, false));
+    REQUIRE(!CandidateSkinCatalog::ResolveFitContent(root, "layout", &*package, false));
+
+    // 只写共用表时两种排布都跟着变。
+    WriteExternalSkin(root, "shared", "fluent", "page_arrows = true\nfit_content = true\n");
+    const auto shared = CandidateSkinCatalog::Load(root, "shared");
+    REQUIRE(shared.has_value());
+    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "shared", &*shared, true));
+    REQUIRE(CandidateSkinCatalog::ResolvePageArrows(root, "shared", &*shared, false));
+    REQUIRE(CandidateSkinCatalog::ResolveFitContent(root, "shared", &*shared, true));
+    REQUIRE(CandidateSkinCatalog::ResolveFitContent(root, "shared", &*shared, false));
     Cleanup(root);
 }
 
@@ -156,7 +182,7 @@ TEST_CASE(candidate_skin_expand_panel_resolves_like_page_arrows)
     WriteDefaultSkin(root, "wechat", "[candidate_window]\nexpand_panel = true\n");
     REQUIRE(CandidateSkinCatalog::ResolveExpandPanel(root, "wechat", nullptr));
     REQUIRE(!CandidateSkinCatalog::ResolveExpandPanel(root, "fluent", nullptr));
-    REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(root, "wechat", nullptr));
+    REQUIRE(!CandidateSkinCatalog::ResolvePageArrows(root, "wechat", nullptr, true));
 
     WriteExternalSkin(root, "inherit", "wechat", "");
     WriteExternalSkin(root, "override", "wechat", "expand_panel = false\n");

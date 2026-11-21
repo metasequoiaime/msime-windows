@@ -25,6 +25,8 @@ dependencies are installed beside it as DLLs rather than linked into it.
   OpenCC                  Apache-2.0    https://github.com/byvoid/opencc
   cpp-pinyin              Apache-2.0    https://github.com/wolfgitpr/cpp-pinyin
   kenlm                   LGPL-2.1+     https://github.com/kpu/kenlm
+  zstd                    BSD-3-Clause  https://github.com/facebook/zstd
+  imewlconverter (ported) GPL-3.0       https://github.com/studyzy/imewlconverter
   utfcpp                  BSL-1.0       https://github.com/nemtrif/utfcpp
   fmt                     MIT           https://github.com/fmtlib/fmt
   spdlog                  MIT           https://github.com/gabime/spdlog
@@ -35,6 +37,7 @@ dependencies are installed beside it as DLLs rather than linked into it.
   SQLite                  public domain https://www.sqlite.org/
   Boost                   BSL-1.0       https://www.boost.org/
   miniaudio               MIT-0         https://github.com/mackron/miniaudio
+  sherpa-onnx (C API)     Apache-2.0    https://github.com/k2-fsa/sherpa-onnx
 
 Interface resources
 -------------------
@@ -61,20 +64,26 @@ Sources:
   engine/, ui/ and server/assets/settings/ in this repository
 
 ------------------------------------------------------------------------------
-2. googlepinyinime-rev, OpenCC and cpp-pinyin - Apache License 2.0
+2. googlepinyinime-rev, OpenCC, cpp-pinyin and sherpa-onnx - Apache License 2.0
 ------------------------------------------------------------------------------
 
 googlepinyinime-rev is a continuation of the Google Pinyin IME sources; the files
 under googlepinyinime-rev/src/share are compiled into the engine. OpenCC provides
 the Simplified and Traditional Chinese conversion the Server performs on output.
-cpp-pinyin provides Han-to-pinyin conversion used by the Server.
+cpp-pinyin provides Han-to-pinyin conversion, used by the settings process to
+annotate imported entries. The sherpa-onnx
+C API header (engine/voice/third_party/sherpa-onnx/c-api.h, version 1.13.8)
+supplies the structure definitions the Server's on-device speech recognition
+uses; the sherpa-onnx and ONNX Runtime libraries themselves are not in the
+installer (see "Downloaded on request" below).
 
-All three are distributed under the Apache License 2.0, reproduced once below.
+All four are distributed under the Apache License 2.0, reproduced once below.
 
 Sources:
   https://github.com/metasequoiaime/Google-PinyinIME-Rev
   https://github.com/byvoid/opencc
   https://github.com/wolfgitpr/cpp-pinyin
+  https://github.com/k2-fsa/sherpa-onnx
 
                                  Apache License
                            Version 2.0, January 2004
@@ -1091,6 +1100,81 @@ necessary.  Here is a sample; alter the names:
 That's all there is to it!
 
 ------------------------------------------------------------------------------
+14. imewlconverter - GNU General Public License version 3
+------------------------------------------------------------------------------
+
+The settings window's "导入其他词库" (import other dictionaries) feature reads
+Rime and LibIME (text and binary) dictionaries. Its format readers in
+server/src/settings/foreign_dictionary.cpp are a C++ port of the importers in
+the "深蓝词库转换" project imewlconverter, Copyright studyzy and contributors,
+licensed under the GNU General Public License version 3, the same license as
+this project; its full text is in the LICENSE file at the root of this
+repository.
+
+Source: https://github.com/studyzy/imewlconverter
+
+------------------------------------------------------------------------------
+15. zstd - BSD License
+------------------------------------------------------------------------------
+
+Zstandard decompression, used by the settings process to read LibIME (fcitx5)
+binary dictionaries. zstd is dual licensed under BSD and GPLv2; it is used here
+under the BSD license, reproduced below.
+
+Source: https://github.com/facebook/zstd
+
+BSD License
+
+For Zstandard software
+
+Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook, nor Meta, nor the names of its contributors may
+   be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------------
+Downloaded on request
+------------------------------------------------------------------------------
+
+On-device speech recognition (voice input, provider "local") uses components
+that the installer does not carry. The settings window downloads them only when
+the user asks, verifies each against a pinned SHA-256, and installs them under
+the application data directory in models\voice-asr\, writing a NOTICE.md with
+the source and license beside each one:
+
+  sherpa-onnx 1.13.8 runtime  Apache-2.0  https://github.com/k2-fsa/sherpa-onnx
+  ONNX Runtime (in it)        MIT         https://github.com/microsoft/onnxruntime
+  Silero VAD                  MIT         https://github.com/snakers4/silero-vad
+  X-ASR zh-en models          Apache-2.0  https://github.com/Gilgamesh-J/X-ASR
+  SenseVoice-Small            FunASR Model License 1.1
+                                          https://github.com/FunAudioLLM/SenseVoice
+  Fun-ASR-Nano-2512           Apache-2.0  https://github.com/FunAudioLLM/Fun-ASR
+
+The models are the ONNX conversions published by the k2-fsa/sherpa-onnx project.
+
+------------------------------------------------------------------------------
 Bundled data files
 ------------------------------------------------------------------------------
 
@@ -1120,6 +1204,9 @@ Sources of msime.db, others.db and english.db:
   CustomPinyinDictionary  none       https://github.com/wuhgit/CustomPinyinDictionary
   pinyin-data             MIT        https://github.com/mozillazg/pinyin-data
   rime-wubi86-jidian      Apache-2.0 https://github.com/KyleBing/rime-wubi86-jidian
+  98wubi-tables           Unlicense  https://github.com/yanhuacuo/98wubi-tables
+  fcitx5-table-extra      GPL-3.0+   https://github.com/fcitx/fcitx5-table-extra
+  wubi06_rime             GPL-3.0    https://github.com/byujiang/wubi06_rime
   rime-jp_sela            none       https://github.com/Selaube/rime-jp_sela
   rime_kaomoji_dict       MIT        https://github.com/aoguai/rime_kaomoji_dict
   ECDICT                  MIT        https://github.com/skywind3000/ECDICT
@@ -1129,10 +1216,27 @@ Sources of msime.db, others.db and english.db:
   rime-wanxiang           CC-BY-4.0  https://github.com/amzxyz/rime-wanxiang
   typst/codex             Apache-2.0 https://github.com/typst/codex
   rime-prelude            LGPL-3.0   https://github.com/rime/rime-prelude
+  hallelujahIM            GPL-3.0    https://github.com/dongyuwei/hallelujahIM
+  English-to-IPA          MIT        https://github.com/mphilli/English-to-IPA
+  CMUdict                 BSD-2      https://github.com/cmusphinx/cmudict
+
+The en_ipa table in english.db (the phonetic transcriptions shown under the highlighted candidate in English candidate mode) is read from sources/english/hallelujahim-ipa.txt in msime-dictionary, which is the ipa field of dictionary/words_with_frequency_and_translation_and_ipa.json in hallelujahIM, copyright Dong Yuwei, licensed under the GNU General Public License version 3, the same license this project is distributed under; this notice serves as its attribution. hallelujahIM generated the field with English-to-IPA, which transcribes the Carnegie Mellon Pronouncing Dictionary. Only the ipa field is used; the word frequencies and translations in that file are not.
+
+The english_phrases table in english.db (the phrases offered in English candidate mode) and their Chinese glosses are read from sources/english/ecdict-phrases.txt in msime-dictionary, which is generated from ecdict.csv of ECDICT, copyright Linwei, licensed under the MIT License: every ASCII entry whose words are joined by a space or a hyphen is kept (affixes such as -able are left out), keyed by its letters only. Their initial order is alphabetical; ECDICT's frequency fields are not used for them.
+
+The English spelling correction in English candidate mode (engine/english/english_spelling.cpp and server/src/english/) follows the approach of hallelujahIM's ConversionEngine: when no word starts with the typed letters, words with the same Phonex code within three edits are offered, followed by the system spell checker's suggestions. The Phonex encoder is a C++ port of talisman's phonetics/phonex (https://github.com/Yomguithereal/talisman), Copyright (c) 2016 Guillaume Plique, licensed under the MIT License:
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 The symbol tables in others.db (symbol_catalog and symbol_code, used by the emoji panel, S mode and mixed symbol candidates) are built from wanxiang_symbols.yaml and lua/data/codex_sym.txt of rime-wanxiang v18.0.16, copyright amzxyz and contributors, licensed under Creative Commons Attribution 4.0 International (https://creativecommons.org/licenses/by/4.0/). The data was changed: only the symbol groups are kept, the emoji, periodic table and XCompose sections are left out, symbols that Windows' bundled fonts cannot display are removed, and the groups are regrouped under Chinese headings and keyed for typing. wanxiang_symbols.yaml started as Rime's symbols.yaml from rime-prelude; codex_sym.txt was generated by rime-wanxiang from the symbol names of typst/codex.
 
 The Chinese tables that msime.db is built from (cn/BaseDictAllV1Part1.txt and cn/BaseDictAllV1Part2.txt) merge rime-ice with CustomPinyinDictionary. rime-ice is licensed under the GNU General Public License version 3, which is the same license this project is distributed under, so its terms are satisfied by the distribution as a whole; this notice serves as its attribution, and its source remains available at the URL above.
+
+The 98 Wubi table in msime.db (wubi98) is built from the 98 Wubi group's table in 98wubi-tables, whose author released it under the Unlicense, and from tables/wubi98.txt of fcitx5-table-extra, licensed under the GNU General Public License version 3 or later; the GPL-3.0 terms are satisfied by this project's own GPL-3.0 distribution. The Xinshiji Wubi table (wubixsj) takes only the single characters of dicts/wubi06.dict.yaml in wubi06_rime and ranks them by its weights; its phrases are derived by this project from the other tables listed here. The GPL-3.0 grant for that file comes from the repository's maintainer, not from the table's compiler, and the table's origin is not recorded upstream; msime-dictionary's NOTICE.md documents what is known about it. The names "98 Wubi" and "Xinshiji Wubi" only describe the encoding schemes; this project is not affiliated with Wangma or its products.
 
 sc.lm is the Simplified Chinese trigram language model distributed with libime, converted from its ARPA form by kenlm's build_binary. It is copyright 2022~2026 CSSlayer and licensed under the GNU Lesser General Public License version 2.1 or later; that text is the one reproduced in section 13 below. Its notice is installed beside the model as libime-lm-NOTICE.md.
 
@@ -1150,10 +1254,12 @@ Sources of helpcodes/*.txt, via MSIME-HelpCode:
   shouyou2_0_helpcode.txt         shouyou2_0   首右 2.0 helpcode scheme
   shouyouplus_helpcode.txt        shouyouplus  首右 plus helpcode scheme
   xiaohe_helpcode.txt             xiaohe       小鹤 shape-code scheme
-  jiajia_helpcode.txt             jiajia       加加辅助码, aligned with the helpcode table
-                                               embedded in the commercial 拼音加加 5.x
-                                               installer (fzm.bin); not an official
-                                               拼音加加 table
+  jiajia_helpcode.txt             jiajia       加加辅助码, common characters aligned with
+                                               the helpcode table embedded in the
+                                               commercial 拼音加加 5.x installer (fzm.bin);
+                                               the rest generated from the rime-radical-pinyin
+                                               decomposition data by the same rule; not an
+                                               official 拼音加加 table
 
 Sources of radical/decomposition.txt, the U-mode radical-reverse-lookup table:
 
@@ -1162,5 +1268,11 @@ Sources of radical/decomposition.txt, the U-mode radical-reverse-lookup table:
                                (CC-BY-3.0), CHISE (GPL-2.0-or-later) and
                                yi-bai/ids (MIT); the converted table keeps the
                                GPL-3.0 terms
+  pinyin-data          MIT      https://github.com/mozillazg/pinyin-data
+                               the reading column holds up to two readings per
+                               character from pinyin-data 0.16.0 (pinyin.txt
+                               plus its kHanyuPinlu, kXHC1983 and kTGHZ2013
+                               standard-reading tables), which merge the
+                               Unicode Unihan kMandarin and related fields
 
 Unresolved: CustomPinyinDictionary, rime-jp_sela and ZRM_Aux-code publish no license; the English word list in english.db includes word forms extracted from a commercial dictionary, whose rights belong to its publisher; and the helpcode tables reproduce input schemes whose rights belong to their respective authors. jiajia_helpcode.txt additionally aligns its codes with a data table extracted from the commercial 拼音加加 5.x installer. Redistributors who need an explicit grant for those parts should raise it with the Metasequoia IME maintainers rather than assume one. This notice will be updated as those terms are clarified.

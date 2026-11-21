@@ -50,6 +50,8 @@ void SetSelectedTranslationColors(CandSkinTokens &tokens, UINT rgb, float alpha,
 CandSkinTokens LegacyTokens(const std::string &baseSkin, bool candLight, bool horizontalLayout, float fontSize)
 {
     CandSkinTokens tokens;
+    // 选中条宽度跟字号走：所有内置清单都写 "0.17em"，18 号字时正好是原来的 3。
+    tokens.selectedBarWidth = std::round(fontSize * 0.17f);
     if (candLight)
     {
         tokens.number = D2D1::ColorF(26.0f / 255.0f, 26.0f / 255.0f, 26.0f / 255.0f, 0.55f);
@@ -239,7 +241,6 @@ CandSkinTokens LegacyTokens(const std::string &baseSkin, bool candLight, bool ho
         }
         tokens.labelScale = 1.0f;
         tokens.labelGap = std::round(fontSize * 0.2f);
-        tokens.selectedBarWidth = 3.0f;
         tokens.selectedBarHeightEm = 0.9f;
         tokens.selectedBarInside = true;
         tokens.trianglePager = true;
@@ -390,6 +391,23 @@ TEST_CASE(builtin_skin_manifests_keep_canvas_without_a_default_shadow)
     CandidateSkinCatalog::Package package;
     package.shadow = "soft";
     REQUIRE_EQ(ResolveCandidateSkinShadow(CandidateSkinCatalog::FactoryLook("canvas"), &package), std::string("soft"));
+}
+
+// 写在 horizontal / vertical 子表里的最小宽度只对那一种排布生效，两边都没写时为 0。
+TEST_CASE(candidate_skin_tokens_min_width_follows_the_layout_table)
+{
+    CandidateSkinCatalog::Package package;
+    package.verticalGeometry.minWidthDip = CandidateSkinCatalog::Length{180.0, false};
+    const CandSkinTokens horizontal =
+        ResolveCandidateSkinTokens(CandidateSkinCatalog::FactoryLook("fluent"), &package, false, true, 16.0f);
+    const CandSkinTokens vertical =
+        ResolveCandidateSkinTokens(CandidateSkinCatalog::FactoryLook("fluent"), &package, false, false, 16.0f);
+    REQUIRE_EQ(horizontal.minWidthDip, 0.0f);
+    REQUIRE_EQ(vertical.minWidthDip, 180.0f);
+    package.horizontalGeometry.minWidthDip = CandidateSkinCatalog::Length{2.0, true};
+    REQUIRE_EQ(ResolveCandidateSkinTokens(CandidateSkinCatalog::FactoryLook("fluent"), &package, false, true, 20.0f)
+                   .minWidthDip,
+               40.0f);
 }
 
 // 外部皮肤的圆角覆盖：贴角的高亮跟着新圆角走，圆角为 0 时贴角规则仍保持开启。

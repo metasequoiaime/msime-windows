@@ -387,6 +387,15 @@ BOOL CCompositionProcessorEngine::MoveCaret(int offset)
     return TRUE;
 }
 
+void CCompositionProcessorEngine::MoveCaretToEdge(bool toEnd)
+{
+    const std::size_t length = static_cast<std::size_t>(_keystrokeBuffer.GetLength());
+    _caretPosition = toEnd ? static_cast<DWORD_PTR>(length)
+                           : static_cast<DWORD_PTR>(FanyImeTemporaryJapanese::MinimumCaret(
+                                 Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed),
+                                 GetTemporaryJapanesePolicy(), _keystrokeBuffer.Get(), length));
+}
+
 void CCompositionProcessorEngine::SetRenderedPreedit(std::wstring preedit, size_t prefixLength,
                                                      std::vector<size_t> caretMap)
 {

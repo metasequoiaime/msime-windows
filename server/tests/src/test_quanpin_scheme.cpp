@@ -134,6 +134,16 @@ TEST_CASE(HelpcodeSchemaSelectionLoadsAllSupportedSchemas)
     REQUIRE(HelpcodeUtils::select_helpcode_schema("lantian"));
 }
 
+TEST_CASE(JiajiaHelpcodeCoversRareCharacters)
+{
+    REQUIRE(HelpcodeUtils::select_helpcode_schema("jiajia"));
+    // GBK 扩展字与扩展 A 的字也要有码：双码筛选按码表过滤，缺码的候选会直接消失。
+    REQUIRE_EQ(HelpcodeUtils::compute_helpcodes("錸", true), std::string("(JL)"));
+    REQUIRE_EQ(HelpcodeUtils::compute_helpcodes("䶮", true), std::string("(LT)"));
+    REQUIRE_EQ(HelpcodeUtils::compute_helpcodes("龘", true), std::string("(LL)"));
+    REQUIRE(HelpcodeUtils::select_helpcode_schema("lantian"));
+}
+
 TEST_CASE(QuanpinSchemeResegmentsEachManualApostrophePart)
 {
     QuanpinScheme scheme;

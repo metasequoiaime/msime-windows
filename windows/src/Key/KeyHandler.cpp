@@ -1321,9 +1321,17 @@ HRESULT CMetasequoiaIME::_HandleCompositionDelete(TfEditCookie ec, _In_ ITfConte
 HRESULT CMetasequoiaIME::_HandleCompositionArrowKey(TfEditCookie ec, _In_ ITfContext *pContext,
                                                     KEYSTROKE_FUNCTION keyFunction, uint64_t requestId)
 {
-    if (keyFunction == FUNCTION_MOVE_LEFT || keyFunction == FUNCTION_MOVE_RIGHT)
+    if (keyFunction == FUNCTION_MOVE_LEFT || keyFunction == FUNCTION_MOVE_RIGHT || keyFunction == FUNCTION_MOVE_HOME ||
+        keyFunction == FUNCTION_MOVE_END)
     {
-        _pCompositionProcessorEngine->MoveCaret(keyFunction == FUNCTION_MOVE_LEFT ? -1 : 1);
+        if (keyFunction == FUNCTION_MOVE_HOME || keyFunction == FUNCTION_MOVE_END)
+        {
+            _pCompositionProcessorEngine->MoveCaretToEdge(keyFunction == FUNCTION_MOVE_END);
+        }
+        else
+        {
+            _pCompositionProcessorEngine->MoveCaret(keyFunction == FUNCTION_MOVE_LEFT ? -1 : 1);
+        }
         (void)_SetCompositionCaretSelection(ec, pContext);
         if (Global::IsUiLessMode() && _pCandidateListUIPresenter)
         {

@@ -1,5 +1,5 @@
 // 在线服务配置：语音输入（识别与润色的提供商、凭证槽位、热键）、AI 助手、翻译服务（腾讯 TMT、自定义翻译、小牛翻译）
-// 和这些服务共用的网络代理。
+// 和这些服务共用的网络代理。哔哩哔哩 Index-Translate 不需要凭据，只存模型。
 #include "config/ime_config_internal.h"
 #include <algorithm>
 #include <cctype>
@@ -8,6 +8,7 @@
 #include <string>
 #include "config/ai_provider.h"
 #include "ai/chat_request_params.h"
+#include "cloud/bilibili_translation.h"
 #include "voice-input/voice_providers.h"
 
 using namespace ime_config_detail;
@@ -93,6 +94,8 @@ bool SetConfiguredVoiceInputString(const std::string &key, const std::string &va
         target = &VoiceInputConfig::doubao_boosting_table_id;
     else if (key == "asr_model")
         target = &VoiceInputConfig::asr_model;
+    else if (key == "local_asr_model")
+        target = &VoiceInputConfig::local_asr_model;
     else if (key == "polish_provider")
         target = &VoiceInputConfig::polish_provider;
     else if (key == "polish_token")
@@ -374,10 +377,30 @@ bool SetConfiguredNiuTransString(const std::string &key, const std::string &valu
     return true;
 }
 
+const BilibiliTranslateConfig &GetConfiguredBilibiliTranslate()
+{
+    return g_bilibili_translate;
+}
+
+bool SetConfiguredBilibiliTranslateString(const std::string &key, const std::string &value)
+{
+    if (key != "model" || !BilibiliTranslation::IsSupportedModel(value) ||
+        !WriteConfiguredValue("bilibili_translate", key, EscapeTomlBasicString(value)))
+        return false;
+    g_bilibili_translate.model = value;
+    PublishTranslationConfig();
+    return true;
+}
+
 bool IsValidTranslationProvider(const std::string &provider)
 {
     return provider == "tencent" || provider == "aliyun" || provider == "niutrans" || provider == "custom" ||
-           provider == "ai";
+           provider == "ai" || provider == "bilibili";
+}
+
+bool IsValidEnglishTranslationTargetLanguage(const std::string &language)
+{
+    return language == "zh" || (language != "en" && IsValidTranslationTargetLanguage(language));
 }
 
 namespace
@@ -390,10 +413,14 @@ void ime_config_detail::PublishTranslationConfig()
 {
     auto snapshot = std::make_shared<TranslationConfig>();
     snapshot->provider = g_translation_provider;
+    snapshot->english_target_language = g_translation_english_target_language;
+    snapshot->english_provider = g_translation_english_provider;
+    snapshot->english_provider_explicit = g_translation_english_provider_explicit;
     snapshot->tencent = g_tencent_tmt;
     snapshot->aliyun = g_aliyun_mt;
     snapshot->custom = g_custom_translation;
     snapshot->niutrans = g_niutrans;
+    snapshot->bilibili = g_bilibili_translate;
     // 候选词翻译只走 Chat Completions，选择器（jev）没有 chat 接口。AI 联想处在选择器模式时，
     // 复用「生成式上次用的那家」，这样选了排序也不会把翻译一起关掉。
     const std::string &translation_provider =
@@ -422,6 +449,26 @@ std::shared_ptr<const TranslationConfig> GetConfiguredTranslation()
 
 bool SetConfiguredTranslationString(const std::string &key, const std::string &value)
 {
+    if (key == "english_target_language")
+    {
+        if (!IsValidEnglishTranslationTargetLanguage(value) ||
+            !WriteConfiguredValue("translation", key, EscapeTomlBasicString(value)))
+            return false;
+        g_translation_english_target_language = value;
+        PublishTranslationConfig();
+        return true;
+    }
+    if (key == "english_provider")
+    {
+        // 只换英文候选用的服务；各家凭据与旧版 enabled 布尔都跟着中文那边的 provider，不动。
+        if (!IsValidTranslationProvider(value) ||
+            !WriteConfiguredValue("translation", key, EscapeTomlBasicString(value)))
+            return false;
+        g_translation_english_provider = value;
+        g_translation_english_provider_explicit = true;
+        PublishTranslationConfig();
+        return true;
+    }
     if (key != "provider" || !IsValidTranslationProvider(value))
         return false;
     // 旧布尔与 provider 一次写入；旧版不认识的提供方对应布尔保持 false。
@@ -436,6 +483,8 @@ bool SetConfiguredTranslationString(const std::string &key, const std::string &v
                                 {"custom_translation", "enabled", custom ? "true" : "false"}}))
         return false;
     g_translation_provider = value;
+    if (!g_translation_english_provider_explicit)
+        g_translation_english_provider = value; // 英文候选还没单独选过：跟着走
     g_tencent_tmt.enabled = tencent;
     g_aliyun_mt.enabled = aliyun;
     g_niutrans.enabled = niutrans;

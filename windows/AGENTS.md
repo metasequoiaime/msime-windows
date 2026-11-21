@@ -135,9 +135,27 @@ session 直接消费；session 自己那次读（`TryReadCommitReplyFromServerPi
 - CLSID、profile GUID、compartment GUID、语言栏 GUID 与注册表路径属于持久身份。除非明确进行迁移，
   不要重新生成或改写；改动时同时核对 `Register/`、`Globals.*`、`.rc` 与卸载路径。
 - 新增/替换图标时同步资源 ID、`.rc`、`CMakeLists.txt` 和 `LanguageBar` 的索引；浅色/深色图标应成对。
+- **ICO 一律用 `scripts/convert-png-to-ico.ps1` 生成**（SVG 或大 PNG 都能直接喂），不要手敲
+  `magick ... icon:auto-resize=256,128,64,48,32,24,16`：那组尺寸缺 20/28/36/40/44，任务栏和 Win+Space 在
+  125%/175% 等缩放下会拿相邻帧缩放而发虚；SVG 不先加 `-background none` 会得到白底。源文件（SVG）与 ICO
+  同目录一起提交，生成后看一眼 16/24/32 帧。细节见 [docs/windows-tsf-dev.md](../docs/windows-tsf-dev.md#图标资源ico的制作)。
 - 语言配置（profile）图标：安装器把 `image/msime.ico` 装成 DLL 上一级目录的 `MetasequoiaImeTip.ico`，
   `RegisterProfiles` 发现它就注册这个固定路径，否则退回 DLL 内嵌的 `IDIS_METASEQUOIAIME`。不要改回总是
   注册 DLL 路径：版本目录每次升级都变，任务栏会在换目录时取图标失败，改显示「简体」直到资源管理器重启。
+- 用户可在设置页「输入法图标」换掉这个 profile 图标（`server/src/settings/profile_icon.*`，提权流程照抄游戏兼容名称）。
+  所选图标以 `MetasequoiaImeTip-<16 位内容哈希>.ico` 存在两个 TSF 根目录（System32 与 SysWOW64 下的
+  `IME\MetasequoiaIME`），文件名记在 `HKLM\Software\Metasequoia\MetasequoiaIME\ProfileIconFile`；`RegisterProfiles`
+  经 `GetStableIconFile` 优先注册它，文件不在时退回 `MetasequoiaImeTip.ico`。约束：
+  - **文件名必须随内容变**，不能原地覆盖 `MetasequoiaImeTip.ico`：shell 按路径缓存 profile 图标，覆盖后 Win+Space
+    会一直显示旧图标直到资源管理器重启。
+  - 注册表值会被拼到系统目录上，DLL 只认 `MetasequoiaImeTip-` + 16 位十六进制 + `.ico` 这一种形状，别放宽。
+  - 安装/升级重新注册时要读这条记录，否则用户的选择会被静默覆盖；卸载在 `CurUninstallStepChanged` 里删掉
+    `ProfileIconFile` / `ProfileIconChoice` 两个值。
+  - 即使路径变了，explorer.exe 也要重启才会显示新图标（真机确认过），设置页因此提示用户在任务管理器里重启
+    「Windows 资源管理器」。不要让程序自己去杀 explorer：那是用户的桌面会话，静默重启会丢掉打开的窗口状态。
+  - 这只换 Win+Space 与系统设置里的图标；任务栏「中 / 英」按钮来自 `CLangBarItemButton::GetIcon` 的内嵌资源，两者无关。
+  - 可选的内置图标放在 `image/profile-icons/<id>.{svg,ico}`，`id` 与 `profile_icon.cpp` 的 `Builtins()` 对应，
+    打包到数据目录 `assets\settings\profile-icons\`。
 - 安装器把 DLL 装到 `System32\IME\MetasequoiaIME\msime_v*\`（x86 在 `SysWOW64` 下同名目录），不要挪回
   Program Files：CS2 等开启 Trusted Mode 的游戏只放行「位于系统目录且有代码签名」的第三方 in-proc DLL，
   否则输入法在游戏里根本切不出来。用 `linstall.ps1` 从构建目录注册的开发版不满足这一条，游戏内不可用。

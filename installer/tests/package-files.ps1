@@ -32,6 +32,8 @@ try {
         'server/assets/config/config.toml',
         'server/src/resource/MetasequoiaIME.ico',
         'windows/image/msime.ico',
+        'windows/image/profile-icons/logo-v2.ico',
+        'windows/image/profile-icons/logo-v2.svg',
         'engine/helpcode/helpcodes/helpcode.txt',
         'engine/radical/decomposition.txt',
         'engine/googlepinyinime-rev/data/dict_pinyin.dat',
@@ -72,7 +74,12 @@ strings = "あ亜".encode()
 '@ (Join-Path $fixture 'MetasequoiaImeDict/out')
     if ($LASTEXITCODE -ne 0) { throw 'Failed to create packaging fixture' }
     & (Join-Path $installer 'Prepare-PackageFiles.ps1') -RepoRoot $fixture -TargetVersion '2026.9.1' -IncludeSymbols
+    if (Test-Path (Join-Path $installer 'app_data/assets/settings/profile-icons/logo-v2.svg')) {
+        throw 'Profile icon sources (.svg) must not be packaged'
+    }
     foreach ($file in @('app_data/assets/settings/arrow.svg', 'app_data/assets/settings/sidebar/about.svg',
+                         'app_data/assets/settings/profile-icons/default.ico',
+                         'app_data/assets/settings/profile-icons/logo-v2.ico',
                          'app_data/dictionary-manifest.json',
                          'app_data/dict_pinyin.dat',
                          'app_data/sentence-model.safetensors', 'app_data/chinese-ime-lm-NOTICE.md',

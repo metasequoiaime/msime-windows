@@ -114,6 +114,36 @@ inline std::vector<Segments> fuzzy_segmentations(const Segments &segments, metas
 template <typename Group>
 std::vector<WordItem> merge_fuzzy_candidates(std::vector<WordItem> exact, std::vector<WordItem> fuzzy, Group group)
 {
+    // 词格和 Google 整句会猜出模糊读音的整词：qingdian 打开 in/ing 时，词格可能把
+    // 「亲电」当整句先生成出来，而词库里 qin'dian 本来就有这一行。原来按词去重保留先到的
+    // 那一项，留下的是猜出来的整句（权重是路径分，不是词频），真正带频率的词库行被删掉。
+    // 选它时 adjust_candidate_ranking 只认 Database/UserDatabase，一行权重都写不进去，
+    // 用户怎么选都调不动（#1172）。同一条整句的 canonical 是猜出来的读音，和词库行的
+    // 模糊读音本来就可能不同（zhixin 的「执行」猜成 zhi'xin，词库行在 zhi'xing），所以
+    // 只按词比对：同词时让出猜出来的整句，留下词库行，调频才能落到真实的权重上。
+    // 精确读音的词库行不算猜出来的整句，照旧由它去重掉模糊行。
+    std::unordered_set<std::string> fuzzy_dictionary_words;
+    for (const auto &item : fuzzy)
+    {
+        if (item.source == CandidateSource::Database || item.source == CandidateSource::UserDatabase)
+        {
+            fuzzy_dictionary_words.insert(item.word);
+        }
+    }
+    if (!fuzzy_dictionary_words.empty())
+    {
+        exact.erase(std::remove_if(exact.begin(), exact.end(),
+                                   [&](const WordItem &item) {
+                                       const bool guessed_sentence = item.sentence_association && !item.fuzzy &&
+                                                                     (item.source == CandidateSource::Fallback ||
+                                                                      item.source == CandidateSource::Generated ||
+                                                                      item.source == CandidateSource::Collocation ||
+                                                                      item.source == CandidateSource::NeuralKeyboard ||
+                                                                      item.source == CandidateSource::NeuralDesktop);
+                                       return guessed_sentence && fuzzy_dictionary_words.count(item.word) != 0;
+                                   }),
+                    exact.end());
+    }
     std::unordered_set<std::string> seen;
     for (const auto &item : exact)
         seen.insert(item.word);

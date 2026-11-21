@@ -680,7 +680,9 @@ jobs:
       - name: Compile the installer
         shell: pwsh
         working-directory: installer
-        run: pwsh -File ./Compile-Installer.ps1
+        env:
+          TARGET_VERSION: ${{ needs.prepare.outputs.version }}
+        run: pwsh -File ./Compile-Installer.ps1 -TargetVersion $env:TARGET_VERSION
 
       - name: Sign the installer
         if: ${{ steps.signing.outputs.signing_provider == 'certificate' }}

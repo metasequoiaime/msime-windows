@@ -59,12 +59,22 @@ cn_en_mixed_input = true
 cn_en_mixed_input_min_chars = 2
 # 首页最多展示的英文候选数，范围 1–3；保留中文首选，小候选页会减少英文项
 cn_en_mixed_input_first_page_count = 1
-# 在竖排候选窗口中显示中英文互译（每项最多两个简短释义）
+# 在竖排候选窗口中把中文候选译成 [tencent_tmt].target_language 所选语种（每项最多两个简短释义）
 candidate_translations = false
+# 把英文候选（英文候选模式与中文里混输的英文）译成 [translation].english_target_language 所选语种
+english_candidate_translations = false
 # 在候选译文中显示 n.、v. 等词性标记，关闭后仅显示释义
 candidate_translation_show_pos = true
 # 候选译文只显示第一条释义，关闭时最多显示两条
 candidate_translation_single_sense = false
+# 中文候选的目标语种是英语时，在英文译文前显示它的音标（english.db 的 en_ipa）
+candidate_translation_phonetics = false
+# 英文候选的译文是否显示词性、只显示第一条释义；与上面中文候选那两项分开设
+english_candidate_translation_show_pos = true
+english_candidate_translation_single_sense = false
+# 英文候选（英文候选模式与中文里混输的英文）显示音标（english.db 的 en_ipa），不依赖 english_candidate_translations；
+# 词典里的音标与释义由停靠在候选窗旁的 DR Dict 弹窗显示，见 [dr_dict].english_popup
+english_candidate_phonetics = false
 # 中文输入状态下输入恰好等于 emoji 关键词时显示 emoji 候选（排在候选项列表最后，不做前缀匹配）
 emoji_mixed_input = false
 # 中文输入状态下显示颜文字前缀候选（排在 emoji 之后）
@@ -162,18 +172,29 @@ api_key = ""
 # enabled 布尔仅为旧版兼容保留，实际生效方由 [translation].provider 决定。
 #
 [niutrans]
-enabled = true
+enabled = false
 app_id = ""
 apikey = ""
 
 #
-# 候选词翻译当前生效的在线提供方：tencent | aliyun | niutrans | custom | ai。
-# ai 表示复用 AI 辅助当前服务商的接口地址、Token 与模型。
+# 哔哩哔哩 Index-Translate 免费翻译接口（https://index-translate.bilibili.com），不需要凭据。
+# model 可选 Index-Translate-2B | Index-Translate-9B | Index-Translate-35B-A3B。
+#
+[bilibili_translate]
+model = "Index-Translate-2B"
+
+#
+# 候选词翻译当前生效的在线提供方：bilibili | tencent | aliyun | niutrans | custom | ai。
+# bilibili 是出厂默认；ai 表示复用 AI 辅助当前服务商的接口地址、Token 与模型。
 # 留空表示按 [tencent_tmt]/[aliyun_mt]/[custom_translation]/[niutrans] 的旧 enabled 布尔自动推导，
 # 在设置页选择过一次后会写入具体值。
 #
 [translation]
-provider = ""
+provider = "bilibili"
+# 英文候选译成的语种：zh / fr / ja / es / ru / de / ko / th / vi / it。中文优先用本地词库
+english_target_language = "zh"
+# 英文候选用的在线翻译服务，取值同 provider；英文与中文候选可以选不同的服务，各家凭据共用
+english_provider = "bilibili"
 
 #
 # 网络代理：云输入、模型下载、AI 联想、翻译、语音识别等需要联网的功能共用。
@@ -186,10 +207,47 @@ proxy_server = ""
 [frequency_adjustment]
 # disabled / pin / halve / linear / promote
 mode = "promote"
+# 五笔候选的调频方式，取值同上，默认关闭（保持码表固定码序）；触发频次与线性步长两边共用
+wubi_mode = "disabled"
 # 每选中几次执行一次调频，范围 1~10
 trigger_count = 1
 # 线性调频每次前移数量，范围 1~10
 linear_step = 1
+
+#
+# User data sync
+# 用户数据同步
+#
+# 把配置、用户词条和统计备份到 WebDAV 或 S3 兼容存储。默认关闭：开启后会把个人数据
+# 上传到用户自己指定的位置，不是官方服务器。凭据永远不参与同步，远端那份是别的账户的
+# DPAPI 密文，传上去既解不开也多一份泄露面。
+# backend：off 不启用 / webdav / s3
+# 远端按设备分目录（devices/<设备标识>/），多台机器各写各的，不会互相覆盖。
+[sync]
+enabled = false
+backend = "off"
+# 自动上传间隔（分钟）。0 表示只在设置页手动触发。
+auto_upload_minutes = 0
+# 每台设备在远端保留的快照份数，1~20。
+keep_snapshots = 5
+# 是否把 models/ 下的已下载模型一起打包。模型动辄几百 MB，默认不带。
+include_models = false
+# WebDAV：网盘上放备份的位置，例如坚果云填 https://dav.jianguoyun.com/dav。
+# 不用先在网盘里建文件夹：数据写在它下面的 msime 目录里，第一次上传时自动创建。
+webdav_url = ""
+webdav_username = ""
+# 密码用 DPAPI 加密后存在这里，设置页写入时自动加密。
+webdav_password = ""
+# S3 兼容（AWS S3、MinIO、Cloudflare R2、Backblaze B2、阿里云 OSS 等）
+s3_endpoint = ""
+s3_region = "us-east-1"
+s3_bucket = ""
+# 路径风格：MinIO、R2、B2 需要打开；AWS S3 与阿里云 OSS 通常关闭，改用虚拟主机风格。
+s3_path_style = true
+# 对象前缀，可为空。
+s3_prefix = "msime"
+s3_access_key = ""
+s3_secret_key = ""
 
 #
 # Appearance
@@ -239,6 +297,13 @@ candidate_window_follow_cursor = true
 candidate_window_layout = "vertical"
 # 横向排列时强制单行：候选窗口最宽可到当前屏幕宽度，放不下才换行；关闭时最宽为屏幕一半
 candidate_window_single_line = false
+# 横向排列时固定宽度：候选窗口宽度始终为屏幕宽度的 candidate_window_fixed_width_ratio，
+# 一行放不下的候选移到下一页，page_size 变为每页候选数量上限
+candidate_window_fixed_width = false
+# 固定宽度占当前屏幕宽度的比例，可选：0.125–0.75
+candidate_window_fixed_width_ratio = 0.25
+# 纵向排列时固定高度：候选窗口始终保持放得下 page_size 个候选的高度
+candidate_window_fixed_height = false
 # 候选窗口与悬浮工具栏皮肤，可选："fluent", "wechat", "wechat_scroll", "graphite", "willow_green", "autumn_osmanthus", "microsoft"，或外部皮肤的 id
 candidate_skin = "fluent"
 # 候选窗口顶部预编辑，可选："pinyin", "empty"
@@ -334,7 +399,7 @@ shuangpin_preedit_mode = "shuangpin"
 # 或 "custom/<文件名>"（数据目录 shuangpin\custom\<文件名>.toml 中的自定义方案，写法见 docs/custom-shuangpin.example.toml）
 # shuangpin_schema = "xiaohe"
 shuangpin_schema = "xiaohe"
-# 五笔方案，当前仅支持 "wubi86"；98 版待词库发布后另开任务接线
+# 五笔码表版本，可选："wubi86"（86 五笔）、"wubi98"（98 五笔）、"wubixsj"（新世纪五笔）
 wubi_schema = "wubi86"
 # 五笔拼音混输：同一串字母同时给五笔码表和全拼，五笔候选在前、拼音候选按权重追加在后
 wubi_mixed_pinyin = false
@@ -353,6 +418,9 @@ japanese_schema = "romaji"
 escape_keeps_selected_word = false
 # 回车上屏英文时把该英文单词写入英文词库，下次可作为候选
 enter_learns_english_word = true
+# 英文候选模式（Ctrl+Shift+E）下用空格、数字键或鼠标上屏英文候选后自动补一个空格；
+# 回车与标点上屏不补，数字开头或以撇号结尾的词也不补
+english_commit_with_space = true
 # 模糊音，全拼与双拼均生效；默认全部关闭，升级用户零行为变化
 # 总开关：关闭时所有规则不生效，已选规则保留，便于临时停用后恢复
 fuzzy_pinyin = false
@@ -496,9 +564,15 @@ hotkey_ctrl_f9 = true
 hotkey_ctrl_win = false
 hotkey_rctrl_ralt = false
 hotkey_hold_space_lock = true
-# ASR 服务: doubao | openai | siliconflow | groq
+# ASR 服务: doubao | openai | siliconflow | groq | local
 # openai / siliconflow / groq 均走 OpenAI 兼容的 /v1/audio/transcriptions。
-asr_provider = "doubao"
+# local 在本机离线识别，不联网也不需要 Token；模型不随安装包分发，需在设置页下载。
+# 新装默认 local；升级用户保留原来的服务商。
+asr_provider = "local"
+# asr_provider = "local" 时使用的本地模型：
+#   x-asr-zh-en-streaming | x-asr-zh-en-offline | sense-voice-small | fun-asr-nano
+# 默认中英流式：边说边出字，内存占用最小。留空表示尚未选择。
+local_asr_model = "x-asr-zh-en-streaming"
 # 豆包鉴权方式: api_key | legacy
 #   api_key：新版控制台，只需一个 API Key，填入 asr_token 即可，asr_app_key 不使用。
 #   legacy：旧版控制台，App ID + Access Token（Secret Key 不使用），两项都要填。
@@ -563,8 +637,8 @@ end_sound = true
 # 录音时暂时静音其他应用的播放声音，结束后自动恢复
 mute_system_audio = false
 polish_text = false
-# 豆包流式识别时，将已识别文本显示在输入框 inline preedit 中，松开录音键后上屏。
-# 仅在豆包流式识别且 commit_mode = "tsf" 时生效。
+# 边说边出字的识别（豆包，或 Fun-ASR-Nano 以外的本地模型）时，将已识别文本显示在输入框 inline preedit 中，松开录音键后上屏。
+# 仅在上述识别且 commit_mode = "tsf" 时生效。
 stream_inline_preedit = false
 # 上屏方式: tsf | sendinput | ctrl_v
 commit_mode = "tsf"
@@ -602,6 +676,15 @@ y_mode = true # Shift+Y 进入临时英文模式（中文状态下直接打英�
 r_mode = true # Shift+R 进入临时日语模式（中文状态下使用罗马字输入日语，上屏后回到中文）
 v_mode = true # V 模式：V 后接数字转中文（V123 → 一百二十三，V123.45 → 壹佰贰拾叁元肆角伍分）或计算算式（V1+2*3 → 7）；双拼和五笔用大写 V，全拼大小写均可
 
+#
+# DR Dict
+# 词典联动：在 DR Dict 的弹窗中查词（需要安装并运行过一次 DR Dict）
+#
+[dr_dict]
+enabled = false # 候选右键菜单增加「查词典」
+lookup_candidate_ctrl_shift_enter = false # Ctrl+Shift+Enter 查询高亮候选；需先开启 enabled
+lookup_preedit_ctrl_alt_enter = false # Ctrl+Alt+Enter 查询当前预编辑；需先开启 enabled
+english_popup = true # 英文候选模式下把 DR Dict 弹窗停靠在候选窗旁，显示高亮候选的词典释义（DR Dict 没在运行时不显示）；需先开启 enabled
 #
 # AI Assistant
 # AI 辅助

@@ -23,6 +23,12 @@ The engine's own nested submodules were expanded in place at the commits it pinn
 | `ngram/octagram/darts.h` | `s-yata/darts-clone` | `87b71afd6cf784953e3c08f24c64203397f3b724` (tag `v0.32h`) |
 | `voice/third_party/miniaudio/` | `mackron/miniaudio` | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` |
 
+`voice/third_party/sherpa-onnx/` was added after the import and is not part of the imported tree: it
+is the C API header (`sherpa-onnx/c-api/c-api.h`) of `k2-fsa/sherpa-onnx` v1.13.8 (commit
+`11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf`), copied unmodified with its Apache-2.0 `LICENSE`, the
+same file `metasequoiaime/msime` vendors. The Server's on-device recognition compiles against it and
+loads the matching prebuilt runtime at run time; see `server/src/voice-input/local_asr_catalog.h`.
+
 `ngram/octagram/darts.h` is the only file of that copy in the tree — upstream ships it as
 `include/darts.h` next to `COPYING.md`, both of which are renamed on import to sit beside the
 `octagram_gram` reader that is ours. It is a header-only double-array trie: `octagram_gram` uses
