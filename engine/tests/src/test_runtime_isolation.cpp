@@ -10,6 +10,7 @@
 #include <sqlite3.h>
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <fstream>
 #include <future>
 #include <stdexcept>
@@ -819,6 +820,27 @@ void test_runtime_isolation()
             const float score = model.score(model.null_state(), "中国", out);
             require(score < 0.0F && score > model.unknown_penalty(), "Shipped sc.lm scored a common word as unknown");
         }
+    }
+
+    // 造词模式里亲手造的词是正式词条，不参与 30 天过期；已作为临时自动新词存在的，亲手造一次就转正。
+    {
+        const auto manual_paths = prepare_runtime_paths(resource_a, root / "user-manual", root / "cache-manual", "v1");
+        {
+            QuanpinDictionary dictionary({}, manual_paths);
+            require(dictionary.create_word_from_canonical_pinyin("ni", "伲") == 0, "Automatic insertion failed");
+            require(dictionary.create_word_from_canonical_pinyin("ni", "妳") == 0, "Automatic insertion failed");
+            require(dictionary.create_word_from_canonical_pinyin("ni", "昵", true) == 0, "Manual insertion failed");
+            require(dictionary.create_word_from_canonical_pinyin("ni", "伲", true) == 0, "Manual promotion failed");
+        }
+        const auto later = static_cast<std::int64_t>(std::time(nullptr)) + 31LL * 24 * 60 * 60;
+        require(user_dictionary::expire_temporary_pinyin_words(
+                    path_to_utf8(manual_paths.dictionary(assets::main_dictionary)),
+                    path_to_utf8(manual_paths.user(assets::user_journal)), later) == 1,
+                "Expiry did not remove exactly the one automatic word");
+        QuanpinDictionary dictionary({}, manual_paths);
+        require(dictionary.find_candidate("ni", "昵").has_value(), "A manually created word expired");
+        require(dictionary.find_candidate("ni", "伲").has_value(), "A manually confirmed temporary word expired");
+        require(!dictionary.find_candidate("ni", "妳").has_value(), "An unconfirmed automatic word survived expiry");
     }
 }
 

@@ -548,6 +548,7 @@
               "create",
               "update",
               "delete",
+              "deleteMany",
               "import",
               "importHans",
               "importForeign",
@@ -623,6 +624,27 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 200
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "word": {
+                  "type": "string"
+                },
+                "display": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "word"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
@@ -1518,6 +1540,14 @@
             ],
             "additionalProperties": false
           }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [

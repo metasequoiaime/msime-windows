@@ -3,6 +3,7 @@
 #include "Private.h"
 #include "MetasequoiaIME.h"
 #include "CandidateListUIPresenter.h"
+#include "CandidateUiLessPolicy.h"
 #include "CompositionProcessorEngine.h"
 #include "MetasequoiaIMEBaseStructure.h"
 #include "define.h"
@@ -113,13 +114,24 @@ HRESULT CMetasequoiaIME::_HandleCandidateFinalize(TfEditCookie ec, _In_ ITfConte
         }
         else if (serverMsgType == Global::DataFromServerMsgType::Normal) // 只有正常情况下才会上屏
         {
+            std::wstring commitText = serverCandidateString;
+            if (commitText.empty() && keystrokeBufLen > 0 && _IsComposing())
+            {
+                // The Server cleared its composition but named no text. Commit
+                // the local preedit so both sides end the composition with the
+                // same content; an empty commit would delete the typed letters.
+                DebugTsfIssue47(L"commit-empty-candidate-guard", requestId, 0, L'\0', CATEGORY_CANDIDATE,
+                                FUNCTION_FINALIZE_CANDIDATELIST, 1, TRUE,
+                                _pCompositionProcessorEngine->GetVirtualKeyLength(), S_FALSE);
+                commitText = GlobalIme::word_for_creating_word + keyStrokebuffer.ToWString();
+            }
             GlobalIme::word_for_creating_word = L"";
             GlobalIme::pending_create_word_preedit.clear();
-            if (serverCandidateString.find(L'\n') != std::wstring::npos)
+            if (commitText.find(L'\n') != std::wstring::npos)
             {
-                return _CommitMultilineCandidate(ec, pContext, serverCandidateString);
+                return _CommitMultilineCandidate(ec, pContext, commitText);
             }
-            candidateString.Set(serverCandidateString.c_str(), serverCandidateString.length());
+            candidateString.Set(commitText.c_str(), commitText.length());
             hr = _InsertTextToComposition(ec, pContext, &candidateString);
             if (FAILED(hr))
             {
@@ -772,6 +784,9 @@ HRESULT CCandidateListUIPresenter::_StartCandidateList(TfClientId tfClientId, _I
 
     HRESULT hr = E_FAIL;
 
+    // A failed previous start may have left the one-shot request armed.
+    _requestUiLessPageOnStart = FALSE;
+
     if (FAILED(_StartLayout(pContextDocument, ec, pRangeComposition)))
     {
         goto Exit;
@@ -787,6 +802,21 @@ HRESULT CCandidateListUIPresenter::_StartCandidateList(TfClientId tfClientId, _I
         Global::Point[0] = anchor.x;
         Global::Point[1] = anchor.y;
         _LayoutChangeNotification(&rcTextExt);
+    }
+
+    // BeginUIElement has just learned that this host draws candidates itself,
+    // but the key that started the composition went out before that answer was
+    // known. Ask the Server for this composition's page now; without it the
+    // first character sits in the preedit with no candidate list.
+    if (_requestUiLessPageOnStart)
+    {
+        _requestUiLessPageOnStart = FALSE;
+        CCompositionProcessorEngine *pEngine = _pTextService ? _pTextService->GetCompositionProcessorEngine() : nullptr;
+        if (!_isShowMode && pEngine && pEngine->GetVirtualKeyLength() > 0)
+        {
+            WriteCandidateUiPayload(0b111111);
+            SendShowCandidateWndEventToUIProcess();
+        }
     }
 
     hr = S_OK;
@@ -1291,18 +1321,23 @@ HRESULT CCandidateListUIPresenter::BeginUIElement()
     }
     const BOOL hostShow = _isShowMode;
 
+    // The first key of this composition was already sent to the Server before
+    // this callback could report who draws the candidate UI. Remember whether
+    // the session was already known to be UI-less, so the caller can fetch the
+    // page that the skipped key never built.
+    const bool wasUiLess = Global::IsUiLessMode();
+
     // Hosts that activate with TF_TMF_UIELEMENTENABLEDONLY (typical for games)
     // must never get an IME-owned candidate HWND, even if BeginUIElement left
-    // pbShow TRUE.
-    if (Global::IgnoreHostUiLess)
-    {
-        _isShowMode = TRUE;
-    }
-    else if (_pTextService->_IsUiLessMode())
-    {
-        _isShowMode = FALSE;
-    }
-    Global::CandidateUiLessMode = (_isShowMode == FALSE);
+    // pbShow TRUE. A host that answers pbShow=FALSE also owns its rendering,
+    // whatever the activation flags said: that answer is per composition and
+    // is the one that describes the text the user is typing now.
+    const bool imeDrawsElement = CandidateUiLessPolicy::ImeDrawsElement(hostShow != FALSE, Global::IgnoreHostUiLess,
+                                                                        _pTextService->_IsUiLessMode() != FALSE);
+    _isShowMode = imeDrawsElement ? TRUE : FALSE;
+    Global::CandidateUiLessMode = (imeDrawsElement == false);
+    _requestUiLessPageOnStart =
+        CandidateUiLessPolicy::ShouldRequestPageAfterBegin(wasUiLess, imeDrawsElement) ? TRUE : FALSE;
     QueueTsfHostWindowDiagnostic(
         L"begin-ui-element",
         fmt::format(L"hr={:#x} host_pbShow={} element_id={} activate_flags={:#x} uielement_enabled_only={} "
@@ -1334,6 +1369,10 @@ HRESULT CCandidateListUIPresenter::EndUIElement()
         _uiElementId = static_cast<DWORD>(-1);
     }
 
+    // Cleared here on purpose: the next composition's first key is sent before
+    // its BeginUIElement can report who draws the candidates, so the key must
+    // not inherit the previous composition's answer. BeginUIElement re-arms it
+    // and _StartCandidateList requests the page the key could not build.
     Global::CandidateUiLessMode = false;
     // The next candidate session may talk to a restarted Server, whose generations start over.
     _lastUiLessGeneration = 0;

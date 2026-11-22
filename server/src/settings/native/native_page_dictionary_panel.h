@@ -81,13 +81,26 @@ VisualPtr MakeDialogField(const std::wstring &label, const std::shared_ptr<DictI
 // `.dict-dialog-title`
 std::shared_ptr<Label> MakeDialogTitle(const std::wstring &title);
 
-// `.dict-table` column layout: a 64px index column, percentage columns and a 124px action
-// column; what the percentages leave goes to the two fixed columns in proportion
-// (table-layout: fixed).
+// `.dict-table` column layout: a 40px check column, a 64px index column, percentage columns and
+// a 124px action column; what the percentages leave goes to the two fixed text columns in
+// proportion (table-layout: fixed).
+constexpr float kDictCheckColumn = 40.0f;
+constexpr float kDictIndexWidth = 64.0f;
+constexpr float kDictActionWidth = 124.0f;
+// A text column keeps this much before its 18px cell padding: below it the cell shows a
+// couple of characters at most, so the column is dropped instead.
+constexpr float kDictMinTextColumn = 76.0f;
+
 struct DictColumns
 {
     std::array<float, 3> percents = {0.22f, 0.25f, 0.18f};
-    std::array<float, 6> Edges(float width) const;
+    // 0 check column | 1 index | 2..4 text cells | 5 action start | 6 table right edge.
+    // Narrow tables drop whole columns (weight, then the code column, then the index) by
+    // collapsing their edges; a collapsed cell measures zero or less and draws nothing.
+    std::array<float, 7> Edges(float width) const;
+    // 这种宽度下还剩哪几列（序号、编码、词条、权重）：和 Edges 用同一套预算，
+    // 测试靠它锁住「收起的顺序是权重 → 编码 → 序号」这个语义。
+    std::array<bool, 4> VisibleColumns(float width) const;
 };
 
 // The `<thead>` of `.dict-table-header-wrap`.
@@ -98,28 +111,15 @@ class DictTableHeader : public msimeui::Visual
     void SetLabels(std::array<std::wstring, 4> labels);
     // padding-right of the header wrap: the body's scrollbar width.
     void SetScrollbarReserve(float width);
-
-    SizeF Measure(const SizeF &availableSize) override;
-    void Arrange(const RectF &finalRect) override;
-    void Render(msimeui::DeviceResources &dr) override;
-
-  private:
-    DictColumns columns_;
-    std::array<std::wstring, 4> labels_;
-    float reserve_ = 0.0f;
-};
-
-// The `<tbody>`: rows of index + three text cells + 编辑 / 删除 actions, or one empty row.
-class DictTableBody : public msimeui::Visual
-{
-  public:
-    using ActionHandler = std::function<void(size_t row, bool remove)>;
-
-    explicit DictTableBody(DictColumns columns);
-    void SetRows(std::vector<std::array<std::wstring, 3>> rows, size_t firstIndex);
-    void SetEmpty(std::wstring message);
-    void SetOnAction(ActionHandler handler);
-    void SetReadOnly(bool readOnly);
+    float ScrollbarReserve() const
+    {
+        return reserve_;
+    }
+    // 表头的全选框：点它一次勾上当前页全部，再点一次全取消。
+    void SetOnSelectAll(std::function<void()> handler);
+    void SetAllSelected(bool selected);
+    // 只读表（种子词库的词条）没有勾选框。
+    void SetSelectable(bool selectable);
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
@@ -131,10 +131,62 @@ class DictTableBody : public msimeui::Visual
     HCURSOR GetCursor() const override;
 
   private:
-    float RowHeight() const;
+    RectF CheckRect() const;
+    bool HitCheck(const PointF &point) const;
+
+    DictColumns columns_;
+    std::array<std::wstring, 4> labels_;
+    float reserve_ = 0.0f;
+    bool selectable_ = true;
+    bool allSelected_ = false;
+    bool hovered_ = false;
+    bool pressed_ = false;
+    std::function<void()> onSelectAll_;
+};
+
+// The `<tbody>`: rows of checkbox + index + three text cells + 编辑 / 删除 actions, or one empty row.
+class DictTableBody : public msimeui::Visual
+{
+  public:
+    using ActionHandler = std::function<void(size_t row, bool remove)>;
+    using SelectionHandler = std::function<void()>;
+
+    explicit DictTableBody(DictColumns columns);
+    void SetRows(std::vector<std::array<std::wstring, 3>> rows, size_t firstIndex);
+    void SetEmpty(std::wstring message);
+    void SetOnAction(ActionHandler handler);
+    // 只读：不画编辑 / 删除，也没有勾选框（种子词库的词条只能整库启停、删除）。
+    void SetReadOnly(bool readOnly);
+    // 勾选只按当前页的行号记，翻页、换词库、重新查询都清空。
+    const std::vector<size_t> &Selection() const
+    {
+        return selection_;
+    }
+    bool AllSelected() const;
+    void SetAllSelected(bool selected);
+    void ClearSelection();
+    void SetOnSelectionChanged(SelectionHandler handler);
+
+    SizeF Measure(const SizeF &availableSize) override;
+    void Arrange(const RectF &finalRect) override;
+    void Render(msimeui::DeviceResources &dr) override;
+    bool OnMouseMove(const POINT &point, WPARAM keyState) override;
+    void OnMouseLeave() override;
+    bool OnMouseDown(const POINT &point, WPARAM keyState) override;
+    bool OnMouseUp(const POINT &point, WPARAM keyState) override;
+    HCURSOR GetCursor() const override;
+    // 操作按钮的矩形：窄表下必须钳在表内，测试靠它锁住这个约束。
     RectF ActionRect(size_t row, bool remove) const;
+
+  private:
+    float RowHeight() const;
+    RectF CheckRect(size_t row) const;
     // (row, remove) under the point, or row = -1.
     std::pair<size_t, bool> HitAction(const PointF &point) const;
+    // Row whose checkbox is under the point, or kNone.
+    size_t HitCheck(const PointF &point) const;
+    void NotifySelection();
+    bool IsSelected(size_t row) const;
 
     DictColumns columns_;
     std::vector<std::array<std::wstring, 3>> rows_;
@@ -144,6 +196,10 @@ class DictTableBody : public msimeui::Visual
     std::pair<size_t, bool> pressed_ = {static_cast<size_t>(-1), false};
     ActionHandler onAction_;
     bool readOnly_ = false;
+    std::vector<size_t> selection_;
+    size_t hoveredCheck_ = static_cast<size_t>(-1);
+    size_t pressedCheck_ = static_cast<size_t>(-1);
+    SelectionHandler onSelectionChanged_;
 };
 
 // `.dict-table-wrap`: shows the body up to max-height: clamp(180px, 100vh - 350px, 550px)
@@ -156,6 +212,8 @@ class DictTableScroll : public msimeui::Visual
     void ScrollToTop();
     // Runs once per attach, i.e. when the page it belongs to is actually shown.
     void SetOnAttach(std::function<void()> handler);
+    // 滚动条出现或消失时把占用的宽度告诉表头：表体让出了 8px，表头得跟着让，否则两边的列错开。
+    void SetOnScrollbarReserve(std::function<void(float)> handler);
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
@@ -172,7 +230,9 @@ class DictTableScroll : public msimeui::Visual
     HostServices &host_;
     float contentHeight_ = 0.0f;
     int appliedLight_ = -1;
+    float appliedReserve_ = -1.0f;
     std::function<void()> onAttach_;
+    std::function<void(float)> onScrollbarReserve_;
 };
 
 // `.dict-export-row`: 16px label, 导出 button (min-width 68px), divider on top.
@@ -192,6 +252,8 @@ enum class ListOrder
     ByWeight,
 };
 size_t OffsetAfterWrite(const std::string &action, size_t offset, ListOrder order);
+size_t LastPageOffset(size_t total, size_t pageSize);
+std::wstring PageStatus(size_t offset, size_t count, size_t total);
 
 // 五笔标签页的词库 id 跟随配置 input.wubi_schema：wubi86 → "wubi"（沿用原来的 id），wubi98 → "wubi98"，
 // wubixsj → "wubixsj"；不认识的值按 86。
@@ -248,7 +310,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
         std::string sourceId;
     };
 
-    void Post(const std::string &action, Json data);
+    std::string Post(const std::string &action, Json data);
     void Query(size_t offset, bool fromInput);
     void PostQuery(size_t offset);
     void RefreshQuery(const std::string &action);
@@ -257,6 +319,9 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     void EnsureLoaded();
     void OpenDialog(const Entry *row);
     void SaveDialog();
+    // 勾选状态变了：表头全选框、删除按钮和条数都要跟着走。
+    void SyncSelection();
+    void DeleteSelected();
     void OnResponse(const Json &message);
     void RenderRows();
     void SyncPager();
@@ -272,11 +337,14 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     uint64_t counter_ = 0;
     std::map<std::string, Pending> pending_;
     std::string latestQueryId_;
+    // 批量删除发出后、响应回来前按住按钮：再点一次会对同一批发第二个请求。
+    std::string deletingRequestId_;
     std::wstring lastQuery_;
     std::vector<Entry> rows_;
 
     // Pager state (utils/dictionary-pagination.ts).
     size_t offset_ = 0;
+    size_t total_ = 0;
     bool hasMore_ = false;
     bool loading_ = false;
     bool loaded_ = false;
@@ -298,8 +366,11 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     std::shared_ptr<DictTableBody> body_;
     std::shared_ptr<DictTableScroll> scroll_;
     std::shared_ptr<Label> status_;
+    std::shared_ptr<Button> first_;
     std::shared_ptr<Button> previous_;
     std::shared_ptr<Button> next_;
+    std::shared_ptr<Button> last_;
+    std::shared_ptr<Button> removeSelected_;
     std::function<void()> onModeChanged_;
 };
 } // namespace native_settings

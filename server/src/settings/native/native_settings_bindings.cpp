@@ -229,7 +229,8 @@ const std::vector<PageInfo> &Pages()
         {"helpcode", L"辅助码", L"sidebar/helpcode.svg", &BuildHelpcodePage},
         // id 沿用 ai-settings：页面原名「AI 与云联想」，整句与云候选分区从「输入」页搬来后改了名。
         {"ai-settings", L"整句与云候选", L"sidebar/ai.svg", &BuildAiPage},
-        {"translation-settings", L"翻译", L"sidebar/translation.svg", &BuildTranslationPage},
+        // id 沿用 translation-settings：英文候选模式的音标、释义与补空格并进来之后改了名。
+        {"translation-settings", L"翻译与英文候选", L"sidebar/translation.svg", &BuildTranslationPage},
         {"shortcut", L"快捷键", L"sidebar/shortcut.svg", &BuildShortcutPage},
         {"dict", L"词库", L"sidebar/dictionary.svg", &BuildDictionaryPage},
         {"skin", L"皮肤", L"sidebar/skin.svg", &BuildSkinPage},

@@ -11,6 +11,7 @@
 #include "ipc.h"
 #include "ipc/candidate_display_text.h"
 #include "ipc/candidate_expansion_policy.h"
+#include "ipc/candidate_commit_guard_policy.h"
 #include "ipc/queried_candidate_arrangement_policy.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/candidate_mixed_english_preservation.h"
@@ -56,7 +57,15 @@ void PrepareCandidateTranslationRequest();
 
 std::string g_candidate_translation_scope;
 
+bool BuildTranslationQueryForAnySource(const WordItem &item, EnglishIme::TranslationQuery &query);
+
+// 只认开关打开的那一边：英文候选的译文由英文候选那边的开关管，中文里混输的英文也一样。
 bool BuildTranslationQuery(const WordItem &item, EnglishIme::TranslationQuery &query)
+{
+    return BuildTranslationQueryForAnySource(item, query) && CandidateTranslationsEnabledFor(query.direction);
+}
+
+bool BuildTranslationQueryForAnySource(const WordItem &item, EnglishIme::TranslationQuery &query)
 {
     // Dictionary keys remain simplified even when the visible candidate is
     // converted to traditional Chinese at render/commit time.
@@ -295,8 +304,18 @@ std::string BuildCurrentCandidatePage()
     const std::string ai_badge = AiSuggestionBadge(GetConfiguredCandidateAiBadgeStyle());
     const bool show_sentence_source_badge = GetConfiguredAssocSentenceSourceBadge();
     const bool show_autocorrect_marker = GetConfiguredQuanpinAutocorrectMarker();
+    // 译文的显示方式中文候选、英文候选（含中文里混输的英文）各一套。
     const bool show_translation_pos = GetConfiguredCandidateTranslationShowPos();
     const bool single_translation_sense = GetConfiguredCandidateTranslationSingleSense();
+    const bool show_english_translation_pos = GetConfiguredEnglishCandidateTranslationShowPos();
+    const bool single_english_translation_sense = GetConfiguredEnglishCandidateTranslationSingleSense();
+    // 音标：英文候选标它自己（不依赖英文候选翻译开关）；中文候选只在译成英语时标英文译文的音标。
+    const bool phonetics_allowed = !translation_page && !IsUiLessMode() && !IsCandidateSubPageActive();
+    const bool english_phonetics = phonetics_allowed && GetConfiguredEnglishCandidatePhonetics();
+    const bool chinese_phonetics =
+        phonetics_allowed && GetConfiguredCandidateTranslationPhonetics() &&
+        TranslationTargetLanguage(EnglishIme::TranslationDirection::ChineseToEnglish) == "en";
+    std::vector<std::string> missing_phonetics;
     // 徽标开启时才解析模型包的来源标签，每次组页解析一次，不逐候选查。标签由目录条目
     // 自己声明（万象/八股/墨奇），各家互不冒名；激活值留空时不产生整句候选，徽章分支
     // 不会被走到。
@@ -395,7 +414,10 @@ std::string BuildCurrentCandidatePage()
         std::string raw_translation;
         bool dictionary_translation = false;
         EnglishIme::TranslationQuery translation_query;
-        if (!translation_page && BuildTranslationQuery(item, translation_query))
+        const bool has_query = !translation_page && BuildTranslationQueryForAnySource(item, translation_query);
+        const bool english_source =
+            has_query && translation_query.direction == EnglishIme::TranslationDirection::EnglishToChinese;
+        if (has_query && CandidateTranslationsEnabledFor(translation_query.direction))
         {
             const auto gloss = g_candidate_translation_glosses.find(TranslationIdentity(translation_query));
             if (gloss != g_candidate_translation_glosses.end())
@@ -404,14 +426,23 @@ std::string BuildCurrentCandidatePage()
                 dictionary_translation = gloss->second.from_dictionary;
             }
         }
+        const bool single_sense = english_source ? single_english_translation_sense : single_translation_sense;
         view.translation = FanyImeIpc::FormatTranslationGlossForDisplay(
-            raw_translation, show_translation_pos, single_translation_sense,
-            single_translation_sense && dictionary_translation);
-        // 英文候选模式：高亮的那一个在下方（横排）或右侧（竖排）显示音标与释义，取代普通译文。
-        if (i == ui.selected_index_in_page && !translation_page)
+            raw_translation, english_source ? show_english_translation_pos : show_translation_pos, single_sense,
+            single_sense && dictionary_translation);
+        std::string phonetic_term;
+        if (english_source && english_phonetics)
+            phonetic_term = translation_query.key;
+        else if (has_query && !english_source && chinese_phonetics && !raw_translation.empty())
+            phonetic_term = FanyImeIpc::TranslationPhoneticTerm(raw_translation);
+        if (!phonetic_term.empty())
         {
-            if (std::string detail = FanyNamedPipe::EnglishCandidateDetailText(item); !detail.empty())
-                view.translation = std::move(detail);
+            const auto phonetic = g_candidate_phonetics.find(phonetic_term);
+            if (phonetic != g_candidate_phonetics.end())
+                view.phonetic = phonetic->second;
+            else if (std::find(missing_phonetics.begin(), missing_phonetics.end(), phonetic_term) ==
+                     missing_phonetics.end())
+                missing_phonetics.push_back(std::move(phonetic_term));
         }
         const std::string visible = view.text + view.annotation + view.badge;
         const int display_length = static_cast<int>(utf8::distance(visible.begin(), visible.end()));
@@ -424,6 +455,19 @@ std::string BuildCurrentCandidatePage()
         if (i < loop - 1)
         {
             candidate_string += ",";
+        }
+    }
+
+    // 这一页还没查过的音标一批发给英文词库线程；答复回来之前重组同一页不再重复请求。
+    if (!missing_phonetics.empty())
+    {
+        std::string request;
+        for (const auto &term : missing_phonetics)
+            request += term + '\n';
+        if (request != g_candidate_phonetics_request)
+        {
+            g_candidate_phonetics_request = std::move(request);
+            EnglishIme::RequestPhonetics(std::move(missing_phonetics));
         }
     }
 
@@ -443,7 +487,7 @@ std::string BuildCurrentCandidatePage()
 void PrepareCandidateTranslationRequest()
 {
     const bool japanese = g_inputSession && g_inputSession->current_scheme_type() == SchemeType::JapaneseRomaji;
-    const bool enabled = GetConfiguredCandidateTranslationsEnabled() && !IsUiLessMode() && !japanese;
+    const bool enabled = AnyCandidateTranslationsEnabled() && !IsUiLessMode() && !japanese;
     auto &ui = Global::candidate_ui;
     if (IsCandidateSubPageActive())
     {
@@ -495,7 +539,9 @@ void PrepareCandidateTranslationRequest()
         return;
     g_candidate_translation_signature = std::move(signature);
     CloudTranslation::Clear();
-    EnglishIme::RequestTranslations(std::move(queries), GetConfiguredTencentTmt().target_language == "en");
+    EnglishIme::RequestTranslations(
+        std::move(queries), TranslationTargetLanguage(EnglishIme::TranslationDirection::EnglishToChinese) == "zh",
+        TranslationTargetLanguage(EnglishIme::TranslationDirection::ChineseToEnglish) == "en");
 }
 
 // Copy the page the worker just finished into an immutable value for the CandidatePages module. This is the single
@@ -525,6 +571,13 @@ FanyImeIpc::CandidatePage BuildCandidatePageValue(const std::wstring &candidate_
         for (size_t i = start; i < end; ++i)
             snapshot->expanded_words.push_back(
                 string_to_wstring(FanyImeIpc::QuickPhraseDisplayText(CandidateOutputText(ui.items[i]))));
+    }
+    if (!ui.page_words.empty())
+    {
+        const int highlighted = ui.current_page_start() + ui.selected_index_in_page;
+        if (highlighted >= 0 && static_cast<size_t>(highlighted) < ui.items.size())
+            snapshot->dr_dict_dock_word =
+                string_to_wstring(FanyNamedPipe::DrDictDockWord(ui.items[static_cast<size_t>(highlighted)]));
     }
 
     FanyImeIpc::CandidatePage page;
@@ -1039,7 +1092,7 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
 
     // R4：光标前缀为空时不造「整串假候选」——前缀为空就该没有候选（候选窗由调用方
     // 收起）。caret 未设置时 prefix_end 等于串长，此分支永不触发，现状零差异。
-    if (items.empty() && !g_english_input_mode &&
+    if (items.empty() && !g_english_input_mode && !IsSpecialModeCompositionActive(current_input) &&
         !FanyImeIpc::IsCaretPrefixEmpty(g_inputSession->prefix_end(),
                                         g_inputSession->get_pinyin_sequence_with_cases().size()))
     {
@@ -1048,8 +1101,18 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
         // fallback the key published; otherwise the next ShowCandidate drops the
         // only entry and Space has nothing to commit.
         const bool literal_spelling = current_input.find_first_of("-_+") != std::string::npos;
-        const std::string fallback = literal_spelling ? current_input : pinyin;
-        items.emplace_back(fallback, fallback, 1, CandidateSource::Fallback);
+        // PinyinString is filled by the Show packet, not by the key packet, so
+        // it can still hold the previous composition. Never publish an empty
+        // fallback word: a commit would then answer Normal with no text.
+        std::string fallback = literal_spelling ? current_input : pinyin;
+        if (fallback.empty())
+        {
+            fallback = current_input;
+        }
+        if (!fallback.empty())
+        {
+            items.emplace_back(fallback, fallback, 1, CandidateSource::Fallback);
+        }
         spelled_by_character_set = false;
     }
 
@@ -1060,6 +1123,10 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     g_candidate_list_character_set = character_set;
     g_candidate_list_spelled_by_character_set = spelled_by_character_set;
     ui.set_items(std::move(items));
+    // The identity travels with the page. Commit paths compare it with the live
+    // composition so a page from an older input can never decide this key.
+    ui.page_input = current_input;
+    ui.page_prefix_end = g_inputSession->prefix_end();
     if (preserve_mixed_rows)
     {
         auto &rebuilt = ui.items;
@@ -1141,8 +1208,58 @@ void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch)
     const double mixedMs = segment.Split();
 
     CAND_DIAG_LOGF(L"candidate build total_ms={:.1f} query_ms={:.1f} fixed_pos_ms={:.1f} branch_ms={:.1f} "
-                   L"ui_ms={:.1f} english_ms={:.1f} mixed_ms={:.1f} items={}",
-                   segment.TotalMs(), queryMs, fixedPosMs, branchMs, uiMs, englishMs, mixedMs, itemCount);
+                   L"ui_ms={:.1f} english_ms={:.1f} mixed_ms={:.1f} items={} input_units={}",
+                   segment.TotalMs(), queryMs, fixedPosMs, branchMs, uiMs, englishMs, mixedMs, itemCount,
+                   current_input.size());
+}
+
+// A commit or selection key may only use the page that belongs to the input it
+// is committing. If the page was never built, or it was built for an older
+// input, rebuild it from the engine before the caller reads page_words. The
+// alternative is what produced the swallowed first character: an empty page
+// turned space into OutofRange and a punctuation key into a Normal reply with
+// no candidate, so TSF replaced the preedit with the punctuation alone.
+bool EnsureCandidatePageForComposition(uint64_t client_id, uint64_t activation_epoch)
+{
+    if (!g_inputSession)
+    {
+        return false;
+    }
+    auto &ui = Global::candidate_ui;
+    // Translation and date-time pages are deliberate sub-pages of the live
+    // composition. Rebuilding the normal page here would silently replace the
+    // page the user is selecting from.
+    if (IsCandidateSubPageActive())
+    {
+        return !ui.page_words.empty();
+    }
+    const std::string raw = g_inputSession->get_pinyin_sequence_with_cases();
+    FanyImeIpc::CommitPageState state;
+    state.page_has_words = !ui.page_words.empty();
+    state.composition_empty = raw.empty();
+    state.page_matches_composition =
+        state.composition_empty || (ui.page_input == raw && ui.page_prefix_end == g_inputSession->prefix_end());
+    if (FanyImeIpc::CommitPageUsable(state))
+    {
+        return true;
+    }
+    if (!FanyImeIpc::ShouldRebuildCommitPage(state))
+    {
+        return false;
+    }
+    CAND_DIAG_LOGF(L"candidate-page-rebuild reason={} input_units={} page_units={} page_input_units={}",
+                   state.page_has_words ? L"stale" : L"missing", raw.size(), ui.page_words.size(),
+                   ui.page_input.size());
+    PrepareCandidateList(client_id, activation_epoch);
+    state.page_has_words = !ui.page_words.empty();
+    state.page_matches_composition =
+        state.composition_empty || (ui.page_input == raw && ui.page_prefix_end == g_inputSession->prefix_end());
+    const bool usable = FanyImeIpc::CommitPageUsable(state);
+    if (!usable)
+    {
+        CAND_DIAG_LOGF(L"candidate-page-rebuild-empty input_units={} page_units={}", raw.size(), ui.page_words.size());
+    }
+    return usable;
 }
 
 namespace

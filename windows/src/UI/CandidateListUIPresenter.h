@@ -161,6 +161,10 @@ class CCandidateListUIPresenter : public CTfTextLayoutSink,
     bool _hasSentCaretPoint = false;
     int _sentCaretPoint[2] = {};
     BOOL _asyncCleanupPending;
+    // Set when BeginUIElement first discovers that this host draws candidates
+    // itself. The composition's first key has already gone to the Server
+    // without the UI-less flag, so _StartCandidateList asks for that page once.
+    BOOL _requestUiLessPageOnStart = FALSE;
     std::wstring _lastUiLessCandidatePage;
     // Generation of the Server page shown to a UI-less host. The worker push and the key reply arrive on
     // different pipes, so a page may land after a newer one.

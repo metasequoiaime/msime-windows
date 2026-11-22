@@ -92,7 +92,6 @@ bool g_enter_learns_english_word = true;
 // 英文候选模式下空格、数字键或鼠标上屏后自动补一个空格。默认开启。
 bool g_english_commit_with_space = true;
 // 英文候选模式下在高亮候选下方显示音标与释义。默认开启。
-bool g_english_candidate_detail = true;
 // 五笔 z 键角色两态：off | wildcard。非法值回落 off（升级用户零变化）。
 std::string g_wubi_z_mode = "off";
 // 四码唯一自动上屏与顶字是两个独立开关，与混输、z 键角色都无关：前者决定第四键落下即上屏，
@@ -154,8 +153,13 @@ int g_floating_toolbar_auto_hide_delay = kFloatingToolbarAutoHideDelayDefault;
 bool g_floating_toolbar_shadow = true;
 bool g_english_candidates_enabled = false;
 bool g_candidate_translations_enabled = false;
+std::atomic_bool g_english_candidate_translations_enabled{false};
 std::atomic_bool g_candidate_translation_show_pos{true};
 std::atomic_bool g_candidate_translation_single_sense{false};
+std::atomic_bool g_english_candidate_translation_show_pos{true};
+std::atomic_bool g_english_candidate_translation_single_sense{false};
+std::atomic_bool g_candidate_translation_phonetics{false};
+std::atomic_bool g_english_candidate_phonetics{false};
 int g_english_mixed_input_min_chars = kEnglishMixedInputMinCharsDefault;
 int g_english_mixed_input_first_page_count = kEnglishMixedInputFirstPageCountDefault;
 bool g_cloud_candidates_enabled = true;
@@ -209,7 +213,7 @@ bool g_language_bar_show_punctuation = true;
 std::atomic<bool> g_dr_dict_enabled{false};
 std::atomic<bool> g_dr_dict_lookup_candidate_hotkey{false};
 std::atomic<bool> g_dr_dict_lookup_preedit_hotkey{false};
-std::atomic<bool> g_dr_dict_english_brief{true};
+std::atomic<bool> g_dr_dict_english_popup{true};
 bool g_paging_minus_equal_enabled = true;
 bool g_paging_comma_period_enabled = false;
 bool g_paging_brackets_enabled = false;
@@ -279,6 +283,9 @@ CustomTranslationConfig g_custom_translation;
 NiuTransConfig g_niutrans;
 BilibiliTranslateConfig g_bilibili_translate;
 std::string g_translation_provider = "tencent";
+std::string g_translation_english_target_language = "zh";
+std::string g_translation_english_provider = "tencent";
+bool g_translation_english_provider_explicit = false;
 std::mutex g_network_proxy_mutex;
 NetworkProxyConfig g_network_proxy;
 FrequencyAdjustmentConfig g_frequency_adjustment;
@@ -559,7 +566,6 @@ bool LoadImeConfig()
         g_escape_keeps_selected_word = tbl["input"]["escape_keeps_selected_word"].value_or(false);
         g_enter_learns_english_word = tbl["input"]["enter_learns_english_word"].value_or(true);
         g_english_commit_with_space = tbl["input"]["english_commit_with_space"].value_or(true);
-        g_english_candidate_detail = tbl["input"]["english_candidate_detail"].value_or(true);
         const std::string z_mode = tbl["input"]["wubi_z_mode"].value_or(std::string("off"));
         g_wubi_z_mode = z_mode == "wildcard" ? "wildcard" : "off";
         g_wubi_four_code_auto_commit = tbl["input"]["wubi_four_code_auto_commit"].value_or(true);
@@ -669,10 +675,29 @@ bool LoadImeConfig()
         }
         g_english_candidates_enabled = tbl["general"]["cn_en_mixed_input"].value_or(false);
         g_candidate_translations_enabled = tbl["general"]["candidate_translations"].value_or(false);
+        // 拆开之前一个开关管中英两边：没有新键的配置跟着旧开关走。
+        g_english_candidate_translations_enabled.store(
+            tbl["general"]["english_candidate_translations"].value_or(g_candidate_translations_enabled),
+            std::memory_order_relaxed);
         g_candidate_translation_show_pos.store(tbl["general"]["candidate_translation_show_pos"].value_or(true),
                                                std::memory_order_relaxed);
         g_candidate_translation_single_sense.store(tbl["general"]["candidate_translation_single_sense"].value_or(false),
                                                    std::memory_order_relaxed);
+        // 英文候选的译文显示另有一套；没有新键的配置跟着中文候选那边的走。
+        g_english_candidate_translation_show_pos.store(
+            tbl["general"]["english_candidate_translation_show_pos"].value_or(
+                g_candidate_translation_show_pos.load(std::memory_order_relaxed)),
+            std::memory_order_relaxed);
+        g_english_candidate_translation_single_sense.store(
+            tbl["general"]["english_candidate_translation_single_sense"].value_or(
+                g_candidate_translation_single_sense.load(std::memory_order_relaxed)),
+            std::memory_order_relaxed);
+        g_candidate_translation_phonetics.store(tbl["general"]["candidate_translation_phonetics"].value_or(false),
+                                                std::memory_order_relaxed);
+        // 原来的 input.english_candidate_detail（高亮候选下方的音标与释义）拆成了这个开关和英文候选翻译。
+        g_english_candidate_phonetics.store(tbl["general"]["english_candidate_phonetics"].value_or(
+                                                tbl["input"]["english_candidate_detail"].value_or(false)),
+                                            std::memory_order_relaxed);
         {
             const int min_chars =
                 tbl["general"]["cn_en_mixed_input_min_chars"].value_or(kEnglishMixedInputMinCharsDefault);
@@ -756,7 +781,7 @@ bool LoadImeConfig()
                                                 std::memory_order_relaxed);
         g_dr_dict_lookup_preedit_hotkey.store(tbl["dr_dict"]["lookup_preedit_ctrl_alt_enter"].value_or(false),
                                               std::memory_order_relaxed);
-        g_dr_dict_english_brief.store(tbl["dr_dict"]["english_brief"].value_or(true), std::memory_order_relaxed);
+        g_dr_dict_english_popup.store(tbl["dr_dict"]["english_popup"].value_or(true), std::memory_order_relaxed);
         const auto legacy_paging_mode = tbl["general"]["paging_mode"].value<std::string>();
         g_paging_minus_equal_enabled =
             tbl["general"]["paging_minus_equal"].value_or(!legacy_paging_mode || *legacy_paging_mode == "-/=");
@@ -1144,6 +1169,10 @@ bool LoadImeConfig()
             tbl["bilibili_translate"]["model"].value_or(std::string(BilibiliTranslation::kDefaultModel)));
         // [translation].provider 是唯一来源；旧配置缺这个键时从各提供方的 enabled 布尔推导，
         // 再把布尔按 provider 归一，保证旧版读回时选择不丢。
+        g_translation_english_target_language =
+            tbl["translation"]["english_target_language"].value_or(std::string("zh"));
+        if (!IsValidEnglishTranslationTargetLanguage(g_translation_english_target_language))
+            g_translation_english_target_language = "zh";
         g_translation_provider = tbl["translation"]["provider"].value_or(std::string());
         if (IsValidTranslationProvider(g_translation_provider))
         {
@@ -1166,6 +1195,11 @@ bool LoadImeConfig()
         g_niutrans.enabled = g_translation_provider == "niutrans";
         g_aliyun_mt.enabled = g_translation_provider == "aliyun";
         g_custom_translation.enabled = g_translation_provider == "custom";
+        // 英文候选单独选的服务；没有（拆分之前的配置）就跟中文候选用同一家。
+        g_translation_english_provider = tbl["translation"]["english_provider"].value_or(std::string());
+        g_translation_english_provider_explicit = IsValidTranslationProvider(g_translation_english_provider);
+        if (!g_translation_english_provider_explicit)
+            g_translation_english_provider = g_translation_provider;
         PublishTranslationConfig();
         {
             NetworkProxyConfig proxy;

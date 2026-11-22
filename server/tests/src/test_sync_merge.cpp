@@ -169,6 +169,82 @@ TEST_CASE(merge_user_dictionary_takes_newer_rows_and_keeps_tombstones)
     sqlite3_close(db);
 }
 
+TEST_CASE(merge_user_dictionary_preserves_temporary_state_and_permanent_confirmation)
+{
+    const fs::path root = TempDir("merge-dictionary-learning-state");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {});
+    CreateUserDatabase(remote_db, {});
+    for (const auto &path : {local_db, remote_db})
+    {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(path).c_str(), &db) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(
+                    db,
+                    "ALTER TABLE user_dictionary_operations ADD COLUMN learning_count INTEGER NOT NULL DEFAULT 0;"
+                    "ALTER TABLE user_dictionary_operations ADD COLUMN last_learned_at INTEGER NOT NULL DEFAULT 0;",
+                    nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+    {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(local_db).c_str(), &db) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(db,
+                             "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display,"
+                             "user_inserted,weight_edited,learning_count,last_learned_at,updated_at)"
+                             " VALUES('pinyin','yi','一','upsert',10000,'',1,0,0,0,100),"
+                             "('pinyin','hao','好','upsert',1000,'',1,0,1,500,500)",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+    {
+        sqlite3 *db = nullptr;
+        REQUIRE(sqlite3_open(test::Utf8(remote_db).c_str(), &db) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(db,
+                             "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display,"
+                             "user_inserted,weight_edited,learning_count,last_learned_at,updated_at) VALUES"
+                             "('pinyin','yi','一','upsert',1000,'',1,0,1,50,200),"
+                             "('pinyin','ni','你','upsert',1000,'',1,0,1,300,300),"
+                             "('pinyin','hao','好','upsert',10000,'',1,0,0,0,100)",
+                             nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+    std::string message;
+    user_data_sync::DictionaryMergeReport report;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    sqlite3 *db = nullptr;
+    REQUIRE(sqlite3_open(test::Utf8(local_db).c_str(), &db) == SQLITE_OK);
+    sqlite3_stmt *statement = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db,
+                               "SELECT learning_count,last_learned_at FROM user_dictionary_operations"
+                               " WHERE key='yi'",
+                               -1, &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 0);
+    REQUIRE_EQ(sqlite3_column_int64(statement, 1), 0);
+    sqlite3_finalize(statement);
+    REQUIRE(sqlite3_prepare_v2(db,
+                               "SELECT learning_count,last_learned_at FROM user_dictionary_operations"
+                               " WHERE key='ni'",
+                               -1, &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 1);
+    REQUIRE_EQ(sqlite3_column_int64(statement, 1), 300);
+    sqlite3_finalize(statement);
+    // 远端较旧的正式行盖过本地较新的临时行：状态取正式，但本地时间戳不能被拨回去。
+    REQUIRE(sqlite3_prepare_v2(db,
+                               "SELECT learning_count,weight,updated_at FROM user_dictionary_operations"
+                               " WHERE key='hao'",
+                               -1, &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 0);
+    REQUIRE_EQ(sqlite3_column_int64(statement, 1), 10000);
+    REQUIRE_EQ(sqlite3_column_int64(statement, 2), 500);
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+}
+
 // 本地更新的行不能被远端旧数据覆盖。
 TEST_CASE(merge_user_dictionary_keeps_local_when_local_is_newer)
 {

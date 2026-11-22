@@ -107,6 +107,9 @@ class CandidatePresenter
     // Largest card size kept for the current input (preedit + caret + page,
     // stickyCardKey_); a new key or Hide() starts from the natural size.
     std::wstring stickyCardKey_;
+    // 这一页要停靠在候选窗旁的 DR Dict 弹窗显示的词（页面快照的 dr_dict_dock_word）。PlaceAndShow
+    // 放好卡片之后连同卡片的屏幕矩形交给 DrDictDock。
+    std::wstring drDictDockWord_;
     float stickyCardWidthDip_ = 0.0f;
     float stickyCardHeightDip_ = 0.0f;
     int wheelDeltaAccumulator_ = 0;

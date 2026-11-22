@@ -1,6 +1,9 @@
 #include "english/english_candidate_text_policy.h"
 #include "tests/includes/test_framework.h"
 
+#include <map>
+#include <string>
+
 using EnglishIme::MergeSpellingCandidates;
 using EnglishIme::ShouldAppendCommitSpace;
 using EnglishIme::SpellingCandidate;
@@ -104,14 +107,20 @@ TEST_CASE(english_detail_key_uses_the_dictionary_key_or_a_plain_lowercased_word)
     REQUIRE(EnglishIme::DetailKey(false, "", "two words").empty());
 }
 
-TEST_CASE(english_detail_prefers_the_dr_dict_brief_over_the_local_gloss)
+TEST_CASE(english_phonetic_joins_word_ipa_only_when_every_word_has_one)
 {
-    REQUIRE(EnglishIme::FormatDetail("ˈælgərɪðəm", "n. 算法", "") == "/ˈælgərɪðəm/  n. 算法");
-    REQUIRE(EnglishIme::FormatDetail("ˈælgərɪðəm", "n. 算法", "n. 算法；运算法则") ==
-            "/ˈælgərɪðəm/  n. 算法；运算法则");
-    REQUIRE(EnglishIme::FormatDetail("", "n. 算法", "") == "n. 算法");
-    REQUIRE(EnglishIme::FormatDetail("ˈælgərɪðəm", "", "") == "/ˈælgərɪðəm/");
-    REQUIRE(EnglishIme::FormatDetail("", "", "").empty());
+    const std::map<std::string, std::string> ipa{{"apple", "ˈæpl"}, {"pie", "paɪ"}, {"according to", "əˈkɔːdɪŋ tə"}};
+    const auto lookup = [&](const std::string &word) {
+        const auto found = ipa.find(word);
+        return found == ipa.end() ? std::string() : found->second;
+    };
+    REQUIRE(EnglishIme::PhoneticOf("apple", lookup) == "ˈæpl");
+    // 整个短语有音标就用它；没有时逐词拼，缺一个词就整体不标。
+    REQUIRE(EnglishIme::PhoneticOf("according to", lookup) == "əˈkɔːdɪŋ tə");
+    REQUIRE(EnglishIme::PhoneticOf("apple pie", lookup) == "ˈæpl paɪ");
+    REQUIRE(EnglishIme::PhoneticOf("apple tart", lookup).empty());
+    REQUIRE(EnglishIme::PhoneticOf("tart", lookup).empty());
+    REQUIRE(EnglishIme::PhoneticOf("", lookup).empty());
 }
 
 TEST_CASE(english_spelling_merge_caps_each_source_and_the_total)

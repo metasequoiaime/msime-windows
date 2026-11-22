@@ -16,8 +16,7 @@ namespace native_settings
 {
 namespace
 {
-constexpr wchar_t kProxyHint[] =
-    L"仅支持 HTTP 代理，格式为「主机:端口」，如 127.0.0.1:7890；Clash、v2rayN 等客户端的 HTTP/混合端口均可";
+constexpr wchar_t kProxyHint[] = L"仅支持 HTTP 代理";
 
 bool IsValidProxyServer(const std::wstring &value)
 {
@@ -332,10 +331,7 @@ VisualPtr BuildAdvancedPage(PageContext &context)
         column->Add(Description(L"按 Win+Space 切换输入法、以及系统设置「语言和区域」键盘列表里显示的水杉图标。"
                                 L"更换需要管理员权限"));
         // Windows caches the profile icon in explorer; nothing short of restarting it picks up the new file.
-        auto restartHint =
-            Description(L"应用后需要重启 Windows 资源管理器才会显示新图标：按 Ctrl+Shift+Esc "
-                        L"打开任务管理器，在「进程」页找到「Windows 资源管理器」（explorer.exe），"
-                        L"右键选择「重新启动」。任务栏会短暂消失再出现，属正常现象；也可以注销后重新登录");
+        auto restartHint = Description(L"应用后需要重启 Windows 资源管理器才会显示新图标；也可以注销后重新登录");
         restartHint->SetMargin({0.0f, 4.0f, 0.0f, 0.0f});
         column->Add(restartHint);
         auto tiles = std::make_shared<Row>(24.0f);
@@ -562,8 +558,7 @@ VisualPtr BuildAdvancedPage(PageContext &context)
     {
         auto column = std::make_shared<Column>(0.0f);
         column->Add(MakeTitle(L"网络代理"));
-        column->Add(
-            Description(L"云输入、语法模型下载、AI 联想、翻译和语音识别等联网功能共用这里的设置，修改后立即生效"));
+        column->Add(Description(L"云输入、语法模型下载、AI 联想、翻译和语音识别等联网功能共用"));
         auto options = std::make_shared<Column>(0.0f);
         options->SetMargin({0.0f, 8.0f, 0.0f, 0.0f});
         const std::pair<const char *, const wchar_t *> modes[] = {
@@ -642,7 +637,7 @@ VisualPtr BuildAdvancedPage(PageContext &context)
     {
         auto candidateHotkey = BindToggle(context, "dr_dict.lookup_candidate_ctrl_shift_enter");
         auto preeditHotkey = BindToggle(context, "dr_dict.lookup_preedit_ctrl_alt_enter");
-        auto englishBrief = BindToggle(context, "dr_dict.english_brief");
+        auto englishBrief = BindToggle(context, "dr_dict.english_popup");
         page.AddSection(MakeRows({
             MakeRow(L"DR Dict 词典联动",
                     L"在候选的右键菜单中增加「查词典」，在 DR Dict 的弹窗中查询该候选。需要安装 DR Dict "
@@ -657,9 +652,10 @@ VisualPtr BuildAdvancedPage(PageContext &context)
                     L"一样清掉当前输入，不上屏。由输入法的全局键盘钩子识别，Edge、Chrome 里也能用；"
                     L"候选窗不显示时不拦截。开启上面的词典联动后生效。",
                     preeditHotkey),
-            MakeRow(L"英文候选释义由 DR Dict 提供",
-                    L"英文候选模式下，高亮候选下方的释义改为 DR Dict 里第一本查到该词的词典的摘要。DR Dict "
-                    L"没在运行或查不到时用输入法自带的释义。开启上面的词典联动后生效。",
+            MakeRow(L"英文候选旁显示 DR Dict 释义",
+                    L"英文候选模式下，把 DR Dict 的查词弹窗贴在候选窗右边（右边放不下时贴左边），随高亮的候选"
+                    L"显示它在词典里的音标与释义；弹窗不抢输入焦点，候选窗关闭时一起收起。只在 DR Dict 运行时"
+                    L"显示，不会启动它。开启上面的词典联动后生效。",
                     englishBrief),
         }));
         SettingsModel *dictModel = &context.model;

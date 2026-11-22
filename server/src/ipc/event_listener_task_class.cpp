@@ -60,7 +60,7 @@ TaskClass ClassifyTask(TaskType type)
     case TaskType::ApplyMixedCandidates:
     case TaskType::ApplyRescoredOrder:
     case TaskType::RefreshWithEnrichment:
-    case TaskType::ApplyEnglishCandidateDetail:
+    case TaskType::ApplyCandidatePhonetics:
         return TaskClass::Enrichment;
 
     // 没有人在等结果，但丢不得、也不能无限期拖着的事。

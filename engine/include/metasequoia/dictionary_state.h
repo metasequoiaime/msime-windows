@@ -17,6 +17,9 @@ struct DictionaryStateEntry
     std::string display;
     bool deleted = false;
     bool user_inserted = false;
+    // 0 表示正式词条；1 表示首次自动收录、等待第二次确认。旧协议省略时按正式词条处理。
+    int learning_count = 0;
+    std::int64_t last_learned_at = 0;
 };
 struct DictionaryStatePosition
 {

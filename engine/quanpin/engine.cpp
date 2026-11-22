@@ -128,9 +128,9 @@ int QuanpinEngine::create_word(std::string pinyin, std::string word)
     return dictionary_.create_word(std::move(pinyin), std::move(word));
 }
 
-int QuanpinEngine::create_word_from_canonical_pinyin(std::string pinyin, std::string word)
+int QuanpinEngine::create_word_from_canonical_pinyin(std::string pinyin, std::string word, bool permanent)
 {
-    return dictionary_.create_word_from_canonical_pinyin(std::move(pinyin), std::move(word));
+    return dictionary_.create_word_from_canonical_pinyin(std::move(pinyin), std::move(word), permanent);
 }
 
 int QuanpinEngine::update_weight_by_word(std::string word)

@@ -84,7 +84,9 @@ class QuanpinDictionary
     int handleVkCode(ImeKeyCode vk, ImeModifierMask modifiers_down, ImeCharacter wch = 0);
 
     int create_word(std::string pinyin, std::string word);
-    int create_word_from_canonical_pinyin(std::string pinyin, std::string word);
+    // permanent 为 true 表示用户在造词模式里亲手造的词：直接以正式权重入库、不参与 30 天过期；
+    // 默认按自动新词处理，先临时保留，第二次选用才转正。
+    int create_word_from_canonical_pinyin(std::string pinyin, std::string word, bool permanent = false);
     int update_weight_by_word(std::string word);
     int update_weight_by_pinyin_and_word(std::string pinyin, std::string word);
     int delete_by_pinyin_and_word(std::string pinyin, std::string word);
@@ -205,7 +207,12 @@ class QuanpinDictionary
 
     std::string build_sql_for_creating_word(const std::string &pinyin);
     std::string build_sql_for_checking_word(const std::string &key, const std::string &value);
-    std::string build_sql_for_inserting_word(const std::string &key, const std::string &jp, const std::string &value);
+    std::string build_sql_for_inserting_word(const std::string &key, const std::string &jp, const std::string &value,
+                                             std::int64_t weight);
+    std::string build_sql_for_setting_word_weight(const std::string &key, const std::string &value,
+                                                  std::int64_t weight);
+    // create_word / create_word_from_canonical_pinyin 校验完读音之后的共同入库路径。
+    int store_new_word(const std::string &pinyin, const std::string &jp, const std::string &word, bool permanent);
     std::string build_sql_for_updating_word(const std::string &word);
     std::string build_sql_for_updating_word(std::string pinyin, const std::string &word);
     std::string build_sql_for_deleting_word(std::string pinyin, const std::string &word);

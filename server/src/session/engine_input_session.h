@@ -71,7 +71,7 @@ class EngineInputSession : public IInputSession
     std::string pending_suffix() const override;
 
     int store_user_phrase(std::string pinyin, std::string word) override;
-    int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word) override;
+    int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word, bool permanent = false) override;
     int remove_candidate(std::string pinyin, std::string word, SchemeType scheme) override;
     int cache_dynamic_candidate(const std::string &pinyin, const std::string &word, CandidateSource source) override;
     SelectionTransition advance_composition_after_selection(const std::string &selected_pinyin,

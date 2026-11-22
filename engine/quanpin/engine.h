@@ -20,7 +20,7 @@ class QuanpinEngine
     std::optional<WordItem> find_candidate(const std::string &key, const std::string &value);
     int handleVkCode(ImeKeyCode vk, ImeModifierMask modifiers_down, ImeCharacter wch = 0);
     int create_word(std::string pinyin, std::string word);
-    int create_word_from_canonical_pinyin(std::string pinyin, std::string word);
+    int create_word_from_canonical_pinyin(std::string pinyin, std::string word, bool permanent = false);
     int update_weight_by_word(std::string word);
     int update_weight_by_pinyin_and_word(std::string pinyin, std::string word);
     int delete_by_pinyin_and_word(std::string pinyin, std::string word);

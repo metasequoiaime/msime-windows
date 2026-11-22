@@ -282,14 +282,31 @@ std::optional<size_t> QuickPhraseBypassRank(const std::vector<WordItem> &items, 
 }
 
 /**
- * 候选显示与上屏的文字。convert 为假（不做简转繁）时是 word；为真时取展开填的写法，
- * 没有展开的候选由 to_output(word) 转换。
+ * output_text 只是 word 换了 ASCII 大小写：英文候选跟着用户敲的大小写（Tes → Test，
+ * 见 EnglishIme::WithTypedCase）。这种写法与字形无关，简体下也要用。
+ */
+inline bool IsAsciiCaseVariant(const std::string &word, const std::string &output_text)
+{
+    if (output_text.empty() || output_text.size() != word.size() || output_text == word)
+        return false;
+    const auto lower = [](unsigned char ch) { return ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch; };
+    for (size_t i = 0; i < word.size(); ++i)
+    {
+        if (lower(static_cast<unsigned char>(word[i])) != lower(static_cast<unsigned char>(output_text[i])))
+            return false;
+    }
+    return true;
+}
+
+/**
+ * 候选显示与上屏的文字。convert 为假（不做简转繁）时是 word，只有大小写不同的写法（英文候选跟随
+ * 输入的大小写）例外；为真时取展开填的写法，没有展开的候选由 to_output(word) 转换。
  */
 template <typename ToOutput>
 std::string CandidateOutputTextFor(const WordItem &item, bool convert, ToOutput &&to_output)
 {
     if (!convert)
-        return item.word;
+        return IsAsciiCaseVariant(item.word, item.output_text) ? item.output_text : item.word;
     if (!item.output_text.empty())
         return item.output_text;
     return to_output(item.word);

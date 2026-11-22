@@ -80,18 +80,11 @@ struct CandidateTranslationGloss
 };
 extern std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 extern std::string g_candidate_translation_signature;
-// 英文候选模式里高亮候选下方的音标与释义，按小写词缓存。工作线程独用。词库的音标和释义、
-// DR Dict 的摘要各自异步回来；done 置位后不再请求。
-constexpr size_t kMaxEnglishCandidateDetails = 2048;
-struct EnglishCandidateDetail
-{
-    std::string ipa;
-    std::string gloss;
-    std::string brief;
-    bool local_done = false;
-    bool brief_done = false;
-};
-extern std::unordered_map<std::string, EnglishCandidateDetail> g_english_candidate_details;
+// 候选旁的音标（english.db 的 en_ipa），按小写词或短语缓存；查过但没有的存空串，不再请求。工作线程独用。
+constexpr size_t kMaxCandidatePhonetics = 2048;
+extern std::unordered_map<std::string, std::string> g_candidate_phonetics;
+// 最近一次发出的音标请求：答复回来之前组页不重复请求同一批。
+extern std::string g_candidate_phonetics_request;
 extern bool g_translation_candidates_active;
 // 日期页：选中混输里的「📅日期」入口后，候选框换成整组日期时间格式。和译文页一样不动输入串，
 // 两者互斥，共用下面这份保存的候选与页码，退出时原样放回。
@@ -104,7 +97,12 @@ extern bool g_translation_saved_selection_started;
 extern bool g_dedicated_english_answer_pending;
 extern int g_authoritative_cn_mode;
 
+// 英文候选译成 translation.english_target_language，中文候选译成 tencent_tmt.target_language。
+std::string TranslationTargetLanguage(EnglishIme::TranslationDirection direction);
 std::string TranslationIdentity(const EnglishIme::TranslationQuery &query);
+// 英文候选（英文候选模式与中文里混输的英文）和中文候选的译文各有开关。
+bool CandidateTranslationsEnabledFor(EnglishIme::TranslationDirection direction);
+bool AnyCandidateTranslationsEnabled();
 // 译文页或日期页正占着候选框：items 不是这次输入的候选，异步结果不能往里合并，也不能按会话扩展。
 bool IsCandidateSubPageActive();
 // 把界面线程记下的鼠标操作落到 candidate_ui.selection_started。工作线程每取一个任务先调一次，
@@ -281,7 +279,8 @@ void EnqueueTask(TaskType type, const FanyImeNamedpipeData &pipeData, uint64_t a
 // ranking_candidates 为空时按当前候选页排位；句中辅助码组合传去掉约束后的候选。
 void EnqueueAdjustCandidateRankingTask(bool english, bool wubi, const std::string &context_key,
                                        const std::string &entry_key, const std::string &word, uint64_t client_id,
-                                       uint64_t activation_epoch,
+                                       uint64_t activation_epoch, const std::string &canonical_pinyin,
+                                       bool confirm_temporary_pinyin, bool allow_ranking_fallback,
                                        const std::vector<WordItem> *ranking_candidates = nullptr);
 // 长词前缀补全（#1343）选中后的调频：只把它在自己的完整读音 key 下升到组内首位，不按排位挪位置。
 void EnqueueBumpPinyinWeightTask(const std::string &key, const std::string &word, uint64_t client_id,
@@ -336,6 +335,9 @@ void PushUiLessCandidatesToOwner();
 
 // 拆分前 event_listener.cpp 里的前置声明，定义分布在各个 event_listener*.cpp。
 void PrepareCandidateList(uint64_t client_id, uint64_t activation_epoch);
+// Rebuilds the published page when it does not belong to the live composition.
+// Returns whether page_words can be used by the commit path.
+bool EnsureCandidatePageForComposition(uint64_t client_id, uint64_t activation_epoch);
 // 当前候选列表记下的字形与配置不同（组字途中切换了简繁）时，记下当前字形。这张列表组页时按字形展开过写法的，
 // 在它上面按当前字形换写法：候选的先后顺序不变；写法全归列表里别的底词的候选（「余」「馀」同在列表时的「馀」）
 // 切到繁体时不出现，切回简体也找不回来，要到下一次组页；高亮移到原来那个底词的写法组组首，新列表里没有它时
@@ -367,14 +369,15 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
                       const std::optional<metasequoia::OnlineQuery> &query);
 void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string &input, uint64_t generation);
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge);
-// 高亮英文候选的音标与释义回来了：from_dr_dict 为真时 gloss 是 DR Dict 的摘要（ipa 不用），否则是
-// 词库的音标与释义。写进缓存，正高亮着这个词就重画当前页。
-void ApplyEnglishCandidateDetail(const std::string &word, const std::string &ipa, const std::string &gloss,
-                                 bool from_dr_dict);
-// 组页时取高亮英文候选下方那一行；缓存里还没有的部分顺带发出请求。
-std::string EnglishCandidateDetailText(const WordItem &item);
+// 词库查回来的音标：写进缓存，候选窗开着就重组当前页。
+void ApplyCandidatePhonetics(std::vector<EnglishIme::Phonetic> phonetics);
+// 英文候选模式下要停靠在候选窗旁的 DR Dict 弹窗显示哪个词：高亮的英文候选（小写）；不该显示时为空。
+// 组页时随页面快照发给界面线程，由它连同候选卡片的位置交给 DrDictDock。
+std::string DrDictDockWord(const WordItem &highlighted);
 void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &input, uint64_t generation);
-void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &word, bool pinyin_is_canonical = false);
+// permanent：造词模式里亲手造的词，直接正式入库；其余落库（整句、云联想、AI）按临时自动新词处理。
+void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &word, bool pinyin_is_canonical = false,
+                                bool permanent = false);
 bool ResolveCandidateItem(int one_based_index, WordItem &item);
 bool SendCurrentDataToClient(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id);
 } // namespace FanyNamedPipe

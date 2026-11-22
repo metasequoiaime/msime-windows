@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -202,5 +203,54 @@ inline std::vector<std::string> SplitTranslationGloss(std::string_view gloss)
         start = cut + (cut == fullwidth ? kFullwidthSemicolon.size() : 1);
     }
     return senses;
+}
+
+// 中文候选译成英语时标音标的那个英文：第一条释义去掉词性和括号里的说明，截到第一个逗号（english.db 的
+// 同义词用逗号隔开）。只认 ASCII 字母、空格、连字符、撇号拼成的不超过三个词的词组，其余（带标点的
+// 云端整句、别的语种）返回空串，不标。结果是小写，空白压成一个空格。
+inline std::string TranslationPhoneticTerm(std::string_view gloss)
+{
+    const auto senses = SplitTranslationGloss(gloss);
+    if (senses.empty())
+        return {};
+    std::string term;
+    int depth = 0;
+    bool space = false;
+    int words = 0;
+    for (const char ch : senses.front())
+    {
+        if (ch == '(' || ch == '[')
+        {
+            ++depth;
+            continue;
+        }
+        if ((ch == ')' || ch == ']') && depth > 0)
+        {
+            --depth;
+            continue;
+        }
+        if (depth > 0)
+            continue;
+        if (ch == ',')
+            break;
+        if (ch == ' ' || ch == '\t')
+        {
+            space = !term.empty();
+            continue;
+        }
+        const bool letter = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+        if (!letter && ch != '-' && ch != '\'')
+            return {};
+        if (space || term.empty())
+            ++words;
+        if (space)
+            term += ' ';
+        space = false;
+        term += letter && ch <= 'Z' ? static_cast<char>(ch - 'A' + 'a') : ch;
+    }
+    if (depth != 0 || words > 3 ||
+        std::none_of(term.begin(), term.end(), [](char ch) { return ch >= 'a' && ch <= 'z'; }))
+        return {};
+    return term;
 }
 } // namespace FanyImeIpc

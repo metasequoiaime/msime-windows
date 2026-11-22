@@ -360,6 +360,49 @@
     "direction": "client"
   },
   {
+    "name": "dictionary batch delete",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-4",
+        "dictionary": "quanpin",
+        "action": "deleteMany",
+        "entries": [
+          {
+            "code": "ni'hao",
+            "word": "你好"
+          },
+          {
+            "code": "shi'jie",
+            "word": "世界"
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "dictionary batch delete without word",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "dict-5",
+        "dictionary": "quanpin",
+        "action": "deleteMany",
+        "entries": [
+          {
+            "code": "ni'hao"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
     "name": "negative context size",
     "message": {
       "type": "contextMenuResize",
@@ -463,6 +506,22 @@
           "entryCount": 120
         }
       ]
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "server"
+  },
+  {
+    "name": "dictionary batch delete partial",
+    "message": {
+      "type": "dictionaryResponse",
+      "requestId": "dict-6",
+      "action": "deleteMany",
+      "dictionary": "quanpin",
+      "ok": true,
+      "message": "已删除 1 条词条，1 条未删除：原词条不存在或已被删除",
+      "rows": [],
+      "failed": 1
     },
     "valid": true,
     "surface": "settings",

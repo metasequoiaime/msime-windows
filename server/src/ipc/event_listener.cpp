@@ -82,7 +82,8 @@ namespace event_listener_detail
 {
 std::unordered_map<std::string, CandidateTranslationGloss> g_candidate_translation_glosses;
 std::string g_candidate_translation_signature;
-std::unordered_map<std::string, EnglishCandidateDetail> g_english_candidate_details;
+std::unordered_map<std::string, std::string> g_candidate_phonetics;
+std::string g_candidate_phonetics_request;
 
 // 副候选框：Ctrl+Enter 在高亮候选有多条译义时，把候选框整个换成那几条译义，让空格/
 // 数字键像选普通候选一样选一条上屏。输入串一个字都没动，所以退出这个子模式时把原来的
@@ -95,10 +96,29 @@ int g_translation_saved_page_index = 0;
 int g_translation_saved_selected_index = 0;
 bool g_translation_saved_selection_started = false;
 
+std::string TranslationTargetLanguage(EnglishIme::TranslationDirection direction)
+{
+    return direction == EnglishIme::TranslationDirection::EnglishToChinese
+               ? GetConfiguredTranslation()->english_target_language
+               : GetConfiguredTencentTmt().target_language;
+}
+
 std::string TranslationIdentity(const EnglishIme::TranslationQuery &query)
 {
-    return GetConfiguredTencentTmt().target_language + ":" +
+    return TranslationTargetLanguage(query.direction) + ":" +
            (query.direction == EnglishIme::TranslationDirection::EnglishToChinese ? "e:" : "z:") + query.key;
+}
+
+bool CandidateTranslationsEnabledFor(EnglishIme::TranslationDirection direction)
+{
+    return direction == EnglishIme::TranslationDirection::EnglishToChinese
+               ? GetConfiguredEnglishCandidateTranslationsEnabled()
+               : GetConfiguredCandidateTranslationsEnabled();
+}
+
+bool AnyCandidateTranslationsEnabled()
+{
+    return GetConfiguredCandidateTranslationsEnabled() || GetConfiguredEnglishCandidateTranslationsEnabled();
 }
 
 bool IsCandidateSubPageActive()
@@ -393,6 +413,8 @@ void HideCandidateWindowAndDropItems()
 {
     FanyNamedPipe::ResetRescoreRequeryBudget();
     Global::candidate_ui.set_items({});
+    Global::candidate_ui.page_input.clear();
+    Global::candidate_ui.page_prefix_end = 0;
     HideCandidatePages();
 }
 } // namespace event_listener_detail
@@ -1029,7 +1051,20 @@ void RegisterStatusSnapshotWindow(HWND toolbar_window)
 
 bool SendCurrentDataToClient(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id)
 {
-    const UINT msg_type = Global::MsgTypeToTsf;
+    UINT msg_type = Global::MsgTypeToTsf;
+    if (msg_type == Global::DataFromServerMsgType::Normal && Global::candidate_ui.selected_text.empty() &&
+        g_inputSession && !g_inputSession->get_pinyin_sequence_with_cases().empty())
+    {
+        // A Normal reply with no text commits nothing but still clears the
+        // Server composition, while TSF treats it as an empty commit. Every
+        // caller that commits text must name it; turn the anomaly into the
+        // no-op reply the TSF already understands.
+        CAND_DIAG_LOGF(L"normal-empty-candidate-guard request={} input_units={}", request_id,
+                       g_inputSession->get_pinyin_sequence_with_cases().size());
+        Global::candidate_ui.selected_text = L"OutofRange";
+        Global::MsgTypeToTsf = Global::DataFromServerMsgType::OutofRange;
+        msg_type = Global::MsgTypeToTsf;
+    }
     FANY_IPC_LOGF(L"[msime]: [ipc] send-current-data: msg_type={}, text={}", msg_type,
                   ::Global::candidate_ui.selected_text);
     const ULONGLONG send_started_at_ms = GetTickCount64();
