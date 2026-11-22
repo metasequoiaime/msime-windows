@@ -557,6 +557,10 @@ FanyImeIpc::CandidatePage BuildCandidatePageValue(const std::wstring &candidate_
     snapshot->page_index = ui.page_index;
     snapshot->page_start = ui.current_page_start();
     snapshot->selected_index_in_page = ui.selected_index_in_page;
+    // 字母选词只在 V 组合且列表真是候选时成立：只剩兜底原样串时按字母选中的是同一套键，但列表不是候选。
+    snapshot->letter_labels = !g_english_input_mode &&
+                              IsVModeCompositionActive(GlobalIme::composition.raw_input_with_cases) &&
+                              !ui.items.empty() && ui.items.front().source == CandidateSource::Generated;
     snapshot->page_count = ui.current_page_count();
     snapshot->page_item_count = ui.cur_page_item_cnt;
     snapshot->has_previous_page = ui.has_prev_page();

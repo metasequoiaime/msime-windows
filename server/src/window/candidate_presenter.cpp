@@ -344,7 +344,8 @@ std::uint64_t CandidatePresenter::FillItemsFromUi()
         const auto &view = page->page_views[i];
         words.push_back({string_to_wstring(view.text), string_to_wstring(view.badge)});
         msimeui::CandidateList::Item item;
-        item.label = std::to_wstring(i + 1);
+        item.label =
+            page->letter_labels && i < 26 ? std::wstring(1, static_cast<wchar_t>(L'a' + i)) : std::to_wstring(i + 1);
         item.text = words.back().text + words.back().badge;
         item.annotation = string_to_wstring(view.annotation);
         // 译文开关关着时工作线程不给候选填译文（见 PrepareCandidateTranslationRequest），这里有就画；
