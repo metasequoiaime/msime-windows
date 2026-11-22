@@ -124,7 +124,7 @@ bool ReadSources(sqlite3 *db, std::vector<DictionarySourceRow> &rows, std::strin
     if (sqlite3_prepare_v2(db, "SELECT id,name,format,enabled,deleted,created_at,updated_at FROM dictionary_sources",
                            -1, &statement, nullptr) != SQLITE_OK)
     {
-        message = std::string("读取细胞词库来源失败：") + sqlite3_errmsg(db);
+        message = std::string("读取种子词库来源失败：") + sqlite3_errmsg(db);
         return false;
     }
     int result = SQLITE_ROW;
@@ -146,7 +146,7 @@ bool ReadSources(sqlite3 *db, std::vector<DictionarySourceRow> &rows, std::strin
     }
     const bool done = result == SQLITE_DONE;
     if (!done)
-        message = std::string("读取细胞词库来源失败：") + sqlite3_errmsg(db);
+        message = std::string("读取种子词库来源失败：") + sqlite3_errmsg(db);
     sqlite3_finalize(statement);
     return done;
 }

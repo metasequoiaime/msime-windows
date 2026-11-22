@@ -821,10 +821,10 @@ size_t OffsetAfterWrite(const std::string &action, size_t offset, ListOrder orde
 
 DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
     : context_(context), kind_(kind), dictionary_(kind == Kind::Quick  ? "quick"
-                                                  : kind == Kind::Cell ? "cells"
+                                                  : kind == Kind::Seed ? "seeds"
                                                                        : "quanpin"),
       prefix_(kind == Kind::Quick  ? "quick-"
-              : kind == Kind::Cell ? "cell-"
+              : kind == Kind::Seed ? "seed-"
                                    : "dict-")
 {
     DictColumns columns;
@@ -922,12 +922,12 @@ DictionaryPanel::DictionaryPanel(PageContext &context, Kind kind)
         Query(offset_ + kPageSize, false);
     });
 
-    if (kind_ == Kind::Quick || kind_ == Kind::Cell)
+    if (kind_ == Kind::Quick || kind_ == Kind::Seed)
     {
         header_->SetLabels(HeaderLabels());
         body_->SetEmpty(EmptyText());
-        body_->SetReadOnly(kind_ == Kind::Cell);
-        if (kind_ == Kind::Cell)
+        body_->SetReadOnly(kind_ == Kind::Seed);
+        if (kind_ == Kind::Seed)
             hint_->SetText(L"词条按来源独立保存，不会混入个人用户词库；停用后保留词条，随时可以重新启用");
         SyncPager();
     }
@@ -949,7 +949,7 @@ void DictionaryPanel::AddTo(Column &column)
         if (const auto panel = weak.lock())
             panel->EnsureLoaded();
     });
-    if (kind_ != Kind::Cell)
+    if (kind_ != Kind::Seed)
     {
         auto toolbar = std::make_shared<Row>(10.0f);
         // .dict-toolbar { padding: 20px 22px 10px }
@@ -986,7 +986,7 @@ void DictionaryPanel::EnsureLoaded()
     if (loaded_)
         return;
     loaded_ = true;
-    if (kind_ != Kind::Cell || !sourceId_.empty())
+    if (kind_ != Kind::Seed || !sourceId_.empty())
         PostQuery(0);
 }
 
@@ -994,7 +994,7 @@ std::array<std::wstring, 4> DictionaryPanel::HeaderLabels() const
 {
     if (kind_ == Kind::Quick)
         return {L"编码", L"快捷短语", L"权重", L"操作"};
-    if (kind_ == Kind::Cell)
+    if (kind_ == Kind::Seed)
         return {L"读音", L"词条", L"权重", L""};
     if (dictionary_ == "english")
         return {L"单词", L"显示内容", L"权重", L"操作"};
@@ -1049,7 +1049,7 @@ void DictionaryPanel::SetDictionary(const std::string &dictionary)
 
 void DictionaryPanel::SetSourceId(const std::string &sourceId)
 {
-    if (kind_ != Kind::Cell || sourceId_ == sourceId)
+    if (kind_ != Kind::Seed || sourceId_ == sourceId)
         return;
     sourceId_ = sourceId;
     latestQueryId_.clear();
@@ -1059,7 +1059,7 @@ void DictionaryPanel::SetSourceId(const std::string &sourceId)
     rows_.clear();
     if (sourceId_.empty())
     {
-        body_->SetEmpty(L"还没有导入细胞词库");
+        body_->SetEmpty(L"还没有导入种子词库");
         status_->SetText(L"没有结果");
         SyncPager();
     }
@@ -1080,7 +1080,7 @@ void DictionaryPanel::Post(const std::string &action, Json data)
     std::string target = dictionary_;
     if (data.contains("dictionary") && data["dictionary"].is_string())
         target = data["dictionary"].get<std::string>();
-    pending_[requestId] = {action, target, kind_ == Kind::Cell ? sourceId_ : std::string{}};
+    pending_[requestId] = {action, target, kind_ == Kind::Seed ? sourceId_ : std::string{}};
     if (action == "query")
     {
         latestQueryId_ = requestId;
@@ -1105,7 +1105,7 @@ void DictionaryPanel::Query(size_t offset, bool fromInput)
 void DictionaryPanel::PostQuery(size_t offset)
 {
     Json data = {{"offset", offset}, {"limit", kPageSize}};
-    if (kind_ == Kind::Cell)
+    if (kind_ == Kind::Seed)
         data["sourceId"] = sourceId_;
     const bool user_entries = kind_ == Kind::Dictionary && lastQuery_.empty();
     if (user_entries)
@@ -1317,8 +1317,8 @@ void DictionaryPanel::SaveDialog()
 
 std::wstring DictionaryPanel::EmptyText() const
 {
-    if (kind_ == Kind::Cell)
-        return sourceId_.empty() ? L"还没有导入细胞词库" : L"这个词库没有词条";
+    if (kind_ == Kind::Seed)
+        return sourceId_.empty() ? L"还没有导入种子词库" : L"这个词库没有词条";
     if (!lastQuery_.empty())
         return kind_ == Kind::Quick ? L"没有找到快捷短语" : L"没有找到词条";
     return kind_ == Kind::Quick ? L"还没有快捷短语，可用「新增短语」添加" : L"还没有添加过词条，可用「新增词条」添加";
@@ -1359,7 +1359,7 @@ void DictionaryPanel::OnResponse(const Json &message)
         return;
     if (kind_ == Kind::Dictionary && context.action == "query" && context.dictionary != dictionary_)
         return;
-    if (kind_ == Kind::Cell && context.action == "query" && context.sourceId != sourceId_)
+    if (kind_ == Kind::Seed && context.action == "query" && context.sourceId != sourceId_)
         return;
     const bool ok = message.value("ok", false);
     if (context.action == "query")

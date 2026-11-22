@@ -209,7 +209,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     {
         Dictionary, // quanpin / wubi / english, requestId prefix "dict-"
         Quick,      // quick phrases, requestId prefix "quick-"
-        Cell,       // read-only entries of one cell dictionary, requestId prefix "cell-"
+        Seed,       // read-only entries of one seed dictionary, requestId prefix "seed-"
     };
 
     DictionaryPanel(PageContext &context, Kind kind);

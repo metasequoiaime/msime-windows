@@ -1169,7 +1169,7 @@ bool materialize_latin_word(sqlite3 *db, const UserLatinWord &word, const std::s
 {
     if (source_id.empty())
         return true;
-    auto stmt = prepare(db, "INSERT OR IGNORE INTO main.cell_dictionary_materialized(source_id,dictionary,key,value) "
+    auto stmt = prepare(db, "INSERT OR IGNORE INTO main.seed_dictionary_materialized(source_id,dictionary,key,value) "
                             "VALUES(?1,'latin',?2,?3)");
     return stmt && bind_text(stmt.get(), 1, source_id) && bind_text(stmt.get(), 2, word.key) &&
            bind_text(stmt.get(), 3, word.value) && sqlite3_step(stmt.get()) == SQLITE_DONE;
@@ -1190,7 +1190,7 @@ Db begin_latin_transaction(const std::string &main_db_path, const std::string &u
         return {};
     if (!ensure_latin_words_table(database.get()) ||
         !execute_sql(database.get(),
-                     "CREATE TABLE IF NOT EXISTS main.cell_dictionary_materialized("
+                     "CREATE TABLE IF NOT EXISTS main.seed_dictionary_materialized("
                      "source_id TEXT NOT NULL,dictionary TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,"
                      "PRIMARY KEY(source_id,dictionary,key,value))"))
     {
@@ -2351,7 +2351,7 @@ void replay_user_latin_words(sqlite3 *journal, sqlite3 *main_db, ReplayResult &r
         if (ok && !source_id.empty())
         {
             auto marker =
-                prepare(main_db, "INSERT OR IGNORE INTO cell_dictionary_materialized(source_id,dictionary,key,value) "
+                prepare(main_db, "INSERT OR IGNORE INTO seed_dictionary_materialized(source_id,dictionary,key,value) "
                                  "VALUES(?1,'latin',?2,?3)");
             ok = marker && bind_text(marker.get(), 1, source_id) && bind_text(marker.get(), 2, word.key) &&
                  bind_text(marker.get(), 3, word.value) && sqlite3_step(marker.get()) == SQLITE_DONE;
@@ -2436,9 +2436,13 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
 
     if (!execute_sql(main_db.get(), "BEGIN IMMEDIATE") ||
         !execute_sql(main_db.get(),
-                     "CREATE TABLE IF NOT EXISTS cell_dictionary_materialized("
+                     "CREATE TABLE IF NOT EXISTS seed_dictionary_materialized("
                      "source_id TEXT NOT NULL,dictionary TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,"
-                     "PRIMARY KEY(source_id,dictionary,key,value))"))
+                     "PRIMARY KEY(source_id,dictionary,key,value));"
+                     // 个人行按 (dictionary,key,value) 清标记，不带 source_id 用不上主键；
+                     // 没有这条索引，回放每条个人日志都要扫一遍整张物化表。
+                     "CREATE INDEX IF NOT EXISTS seed_dictionary_materialized_by_entry "
+                     "ON seed_dictionary_materialized(dictionary,key,value)"))
     {
         result.error = "cannot start replay transaction";
         (void)execute_sql(main_db.get(), "ROLLBACK");
@@ -2463,7 +2467,7 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         for (const auto &source_id : inactive_ids)
         {
             auto marked = prepare(main_db.get(),
-                                  "SELECT dictionary,key,value FROM cell_dictionary_materialized WHERE source_id=?1");
+                                  "SELECT dictionary,key,value FROM seed_dictionary_materialized WHERE source_id=?1");
             struct MaterializedRow
             {
                 std::string dictionary;
@@ -2497,7 +2501,7 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
                 if (!ok)
                     ++result.failed;
             }
-            auto clear = prepare(main_db.get(), "DELETE FROM cell_dictionary_materialized WHERE source_id=?1");
+            auto clear = prepare(main_db.get(), "DELETE FROM seed_dictionary_materialized WHERE source_id=?1");
             if (!clear || !bind_text(clear.get(), 1, source_id) || sqlite3_step(clear.get()) != SQLITE_DONE)
                 ++result.failed;
         }
@@ -2554,10 +2558,10 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
             auto marker =
                 operation == "upsert" && !source_id.empty()
                     ? prepare(main_db.get(),
-                              "INSERT OR IGNORE INTO cell_dictionary_materialized(source_id,dictionary,key,value) "
+                              "INSERT OR IGNORE INTO seed_dictionary_materialized(source_id,dictionary,key,value) "
                               "VALUES(?1,'pinyin',?2,?3)")
                     : prepare(main_db.get(),
-                              "DELETE FROM cell_dictionary_materialized WHERE dictionary='pinyin' AND key=?2 AND "
+                              "DELETE FROM seed_dictionary_materialized WHERE dictionary='pinyin' AND key=?2 AND "
                               "value=?3 AND (?1='' OR source_id=?1)");
             ok = marker && bind_text(marker.get(), 1, source_id) && bind_text(marker.get(), 2, key) &&
                  bind_text(marker.get(), 3, value) && sqlite3_step(marker.get()) == SQLITE_DONE;

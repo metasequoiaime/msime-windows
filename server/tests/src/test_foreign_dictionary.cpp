@@ -342,7 +342,7 @@ TEST_CASE(ForeignDictionaryImportWritesThroughThePinyinImportPath)
     REQUIRE_EQ(std::string(missing.at("message").as_string()), std::string("读取文件失败"));
 }
 
-TEST_CASE(ForeignDictionaryImportCreatesManageableCellDictionary)
+TEST_CASE(ForeignDictionaryImportCreatesManageableSeedDictionary)
 {
     ScopedForeignDataDir data;
     CreatePinyinTables(data, {"ni'hao", "shi'jie"});
@@ -362,7 +362,7 @@ TEST_CASE(ForeignDictionaryImportCreatesManageableCellDictionary)
     REQUIRE_EQ(std::string(imported.at("sourceName").as_string()), std::string("文学"));
     REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{1000});
 
-    auto sources = SettingsDictionary::HandleRequest({{"dictionary", "cells"}, {"action", "listSources"}});
+    auto sources = SettingsDictionary::HandleRequest({{"dictionary", "seeds"}, {"action", "listSources"}});
     REQUIRE(sources.at("ok").as_bool());
     REQUIRE_EQ(sources.at("sources").as_array().size(), size_t{1});
     REQUIRE_EQ(std::string(sources.at("sources").as_array()[0].as_object().at("id").as_string()), source_id);
@@ -372,12 +372,12 @@ TEST_CASE(ForeignDictionaryImportCreatesManageableCellDictionary)
         {{"dictionary", "quanpin"}, {"action", "query"}, {"scope", "user"}, {"offset", 0}, {"limit", 100}});
     REQUIRE(personal.at("rows").as_array().empty());
     const auto entries = SettingsDictionary::HandleRequest(
-        {{"dictionary", "cells"}, {"action", "query"}, {"sourceId", source_id}, {"offset", 0}, {"limit", 1}});
+        {{"dictionary", "seeds"}, {"action", "query"}, {"sourceId", source_id}, {"offset", 0}, {"limit", 1}});
     REQUIRE_EQ(entries.at("rows").as_array().size(), size_t{1});
     REQUIRE(entries.at("hasMore").as_bool());
 
     const auto disabled = SettingsDictionary::HandleRequest(
-        {{"dictionary", "cells"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", false}});
+        {{"dictionary", "seeds"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", false}});
     REQUIRE(disabled.at("ok").as_bool());
     REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{-1});
     REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{-1});
@@ -385,22 +385,55 @@ TEST_CASE(ForeignDictionaryImportCreatesManageableCellDictionary)
         {{"dictionary", "quanpin"}, {"action", "create"}, {"code", "ni hao"}, {"word", "你好"}, {"weight", 77}});
     REQUIRE(personal_insert.at("ok").as_bool());
     const auto enabled = SettingsDictionary::HandleRequest(
-        {{"dictionary", "cells"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", true}});
+        {{"dictionary", "seeds"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", true}});
     REQUIRE(enabled.at("ok").as_bool());
     // 停用期间手工加的同键词已转为个人词条，重新启用来源不会接管，删除来源也不会误删。
     REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{77});
     REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{10});
 
     const auto removed = SettingsDictionary::HandleRequest(
-        {{"dictionary", "cells"}, {"action", "deleteSource"}, {"sourceId", source_id}});
+        {{"dictionary", "seeds"}, {"action", "deleteSource"}, {"sourceId", source_id}});
     REQUIRE(removed.at("ok").as_bool());
     REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{77});
     REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{-1});
-    sources = SettingsDictionary::HandleRequest({{"dictionary", "cells"}, {"action", "listSources"}});
+    sources = SettingsDictionary::HandleRequest({{"dictionary", "seeds"}, {"action", "listSources"}});
     REQUIRE(sources.at("sources").as_array().empty());
 }
 
-TEST_CASE(CellDictionaryLatinWordsSupportLegacyTablesWithoutUniqueConstraints)
+TEST_CASE(SeedDictionaryImportSkipsWordsTheUserDeleted)
+{
+    ScopedForeignDataDir data;
+    CreatePinyinTables(data, {"ni'hao", "shi'jie"});
+    // 用户加过又删掉「你好」，日志里留下删除墓碑，主表里已经没有这个词。
+    REQUIRE(SettingsDictionary::HandleRequest(
+                {{"dictionary", "quanpin"}, {"action", "create"}, {"code", "ni hao"}, {"word", "你好"}, {"weight", 5}})
+                .at("ok")
+                .as_bool());
+    REQUIRE(SettingsDictionary::HandleRequest({{"dictionary", "quanpin"},
+                                               {"action", "delete"},
+                                               {"code", "ni'hao"},
+                                               {"word", "你好"},
+                                               {"oldCode", "ni'hao"},
+                                               {"oldWord", "你好"}})
+                .at("ok")
+                .as_bool());
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{-1});
+
+    const std::filesystem::path file = data.path() / L"含已删词.txt";
+    {
+        std::ofstream stream(file, std::ios::binary);
+        stream << "你好\tni hao\t100\n世界\tshi jie\t50\n";
+    }
+    // 墓碑与日志主键冲突时不能让整批回滚：跳过这个词，其余照常导入，删掉的词也不复活。
+    const auto imported = SettingsDictionary::HandleRequest(
+        {{"dictionary", "quanpin"}, {"action", "importForeign"}, {"format", "rime"}, {"path", test::Utf8(file)}});
+    REQUIRE(imported.at("ok").as_bool());
+    REQUIRE(std::string(imported.at("message").as_string()).rfind("成功导入 1 条，跳过 1 条", 0) == 0);
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{-1});
+    REQUIRE(PinyinWeight("shijie", "世界") > 0);
+}
+
+TEST_CASE(SeedDictionaryLatinWordsSupportLegacyTablesWithoutUniqueConstraints)
 {
     ScopedForeignDataDir data;
     CreatePinyinTables(data, {});
@@ -424,7 +457,7 @@ TEST_CASE(CellDictionaryLatinWordsSupportLegacyTablesWithoutUniqueConstraints)
     for (const bool enabled : {false, true})
     {
         const auto changed = SettingsDictionary::HandleRequest(
-            {{"dictionary", "cells"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", enabled}});
+            {{"dictionary", "seeds"}, {"action", "setSourceEnabled"}, {"sourceId", source_id}, {"enabled", enabled}});
         REQUIRE(changed.at("ok").as_bool());
     }
 }

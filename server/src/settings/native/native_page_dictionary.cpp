@@ -166,10 +166,10 @@ class ExportRow : public msimeui::Container
     float minHeight_ = 62.0f;
     bool topBorder_ = true;
 };
-class CellDictionaryManager : public std::enable_shared_from_this<CellDictionaryManager>
+class SeedDictionaryManager : public std::enable_shared_from_this<SeedDictionaryManager>
 {
   public:
-    CellDictionaryManager(PageContext &context, std::shared_ptr<DictionaryPanel> entries)
+    SeedDictionaryManager(PageContext &context, std::shared_ptr<DictionaryPanel> entries)
         : context_(context), entries_(std::move(entries))
     {
         Dropdown::Options options;
@@ -188,7 +188,7 @@ class CellDictionaryManager : public std::enable_shared_from_this<CellDictionary
             if (Selected() == nullptr)
                 return;
             const Source source = *Selected();
-            context_.host.Confirm(L"确定删除细胞词库“" + Widen(source.name) + L"”吗？其中的词条会一并删除。",
+            context_.host.Confirm(L"确定删除种子词库“" + Widen(source.name) + L"”吗？其中的词条会一并删除。",
                                   [weak = weak_from_this(), source](bool confirmed) {
                                       if (confirmed)
                                           if (const auto manager = weak.lock())
@@ -205,9 +205,9 @@ class CellDictionaryManager : public std::enable_shared_from_this<CellDictionary
                 manager->OnResponse(message);
         });
         auto body = std::make_shared<Column>(0.0f);
-        body->Add(MakeTitle(L"细胞词库", L"每次导入都形成独立词库，按来源整理、启停或删除"));
+        body->Add(MakeTitle(L"种子词库", L"每次导入都形成独立词库，按来源整理、启停或删除"));
         auto description = MakeDescription(L"支持 Rime、LibIME（fcitx5）词库。已有词条会跳过；名称留空时使用文件名。"
-                                           L"细胞词库不会混入个人词库，停用后词条仍然保留");
+                                           L"种子词库不会混入个人词库，停用后词条仍然保留");
         description->SetMargin({0.0f, 4.0f, 0.0f, 14.0f});
         body->Add(description);
 
@@ -286,10 +286,10 @@ class CellDictionaryManager : public std::enable_shared_from_this<CellDictionary
 
     void Post(const std::string &action, Json data)
     {
-        const std::string requestId = "cells-" + std::to_string(++counter_);
+        const std::string requestId = "seeds-" + std::to_string(++counter_);
         pending_[requestId] = action;
         data["requestId"] = requestId;
-        data["dictionary"] = "cells";
+        data["dictionary"] = "seeds";
         data["action"] = action;
         context_.model.Post("dictionaryRequest", std::move(data));
     }
@@ -305,7 +305,7 @@ class CellDictionaryManager : public std::enable_shared_from_this<CellDictionary
         const auto found = pending_.find(requestId);
         if (found == pending_.end())
         {
-            if (requestId.rfind("cell-", 0) == 0 && message.value("action", std::string()) == "importForeign" &&
+            if (requestId.rfind("seed-", 0) == 0 && message.value("action", std::string()) == "importForeign" &&
                 message.value("ok", false))
             {
                 name_->SetText(L"");
@@ -443,13 +443,13 @@ VisualPtr BuildDictionaryPage(PageContext &context)
                                : L"批量导入纯汉字词组(e.g.人名)到" + WubiDictionaryLabel(dictionary));
     });
 
-    auto cellEntries = std::make_shared<DictionaryPanel>(context, DictionaryPanel::Kind::Cell);
-    auto cells = std::make_shared<CellDictionaryManager>(context, cellEntries);
-    auto cellCard =
-        std::make_shared<PageCard>(cells->Build(), PageCard::Style::DictCard, Thickness{24.0f, 18.0f, 0.0f, 0.0f});
-    struct CellHolder : msimeui::Container
+    auto seedEntries = std::make_shared<DictionaryPanel>(context, DictionaryPanel::Kind::Seed);
+    auto seeds = std::make_shared<SeedDictionaryManager>(context, seedEntries);
+    auto seedCard =
+        std::make_shared<PageCard>(seeds->Build(), PageCard::Style::DictCard, Thickness{24.0f, 18.0f, 0.0f, 0.0f});
+    struct SeedHolder : msimeui::Container
     {
-        CellHolder(VisualPtr child, std::shared_ptr<CellDictionaryManager> manager)
+        SeedHolder(VisualPtr child, std::shared_ptr<SeedDictionaryManager> manager)
             : msimeui::Container(std::move(child)), manager_(std::move(manager))
         {
         }
@@ -458,9 +458,9 @@ VisualPtr BuildDictionaryPage(PageContext &context)
             msimeui::Container::Attach(window);
             manager_->Load();
         }
-        std::shared_ptr<CellDictionaryManager> manager_;
+        std::shared_ptr<SeedDictionaryManager> manager_;
     };
-    page.AddRaw(std::make_shared<CellHolder>(cellCard, cells), 18.0f);
+    page.AddRaw(std::make_shared<SeedHolder>(seedCard, seeds), 18.0f);
 
     // .dict-export-section: padding-top 18px, padding-bottom 0.
     auto exportBody = std::make_shared<Column>(0.0f);

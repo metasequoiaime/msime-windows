@@ -284,12 +284,12 @@
     "direction": "client"
   },
   {
-    "name": "cell dictionary sources",
+    "name": "seed dictionary sources",
     "message": {
       "type": "dictionaryRequest",
       "data": {
-        "requestId": "cells-1",
-        "dictionary": "cells",
+        "requestId": "seeds-1",
+        "dictionary": "seeds",
         "action": "listSources"
       }
     },
@@ -298,12 +298,12 @@
     "direction": "client"
   },
   {
-    "name": "cell dictionary disable",
+    "name": "seed dictionary disable",
     "message": {
       "type": "dictionaryRequest",
       "data": {
-        "requestId": "cells-2",
-        "dictionary": "cells",
+        "requestId": "seeds-2",
+        "dictionary": "seeds",
         "action": "setSourceEnabled",
         "sourceId": "e4da3b7f-bbce-4ad5-9c3d-7f0d13a1c81f",
         "enabled": false
@@ -445,12 +445,12 @@
     "direction": "server"
   },
   {
-    "name": "cell dictionary sources response",
+    "name": "seed dictionary sources response",
     "message": {
       "type": "dictionaryResponse",
-      "requestId": "cells-1",
+      "requestId": "seeds-1",
       "action": "listSources",
-      "dictionary": "cells",
+      "dictionary": "seeds",
       "ok": true,
       "message": "查询成功",
       "rows": [],

@@ -549,7 +549,7 @@ TEST_CASE(UserDictionaryReplayHonorsSourceEnabledAndDeletedState)
         TestDatabase db(main_path);
         REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='来源词'"), 1);
         REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'"), 1);
-        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM cell_dictionary_materialized WHERE source_id='source-a'"), 2);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM seed_dictionary_materialized WHERE source_id='source-a'"), 2);
     }
     {
         TestDatabase db(user_path);
@@ -562,7 +562,7 @@ TEST_CASE(UserDictionaryReplayHonorsSourceEnabledAndDeletedState)
         TestDatabase db(main_path);
         REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM tbl_1_x WHERE value='来源词'"), 0);
         REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'"), 0);
-        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM cell_dictionary_materialized WHERE source_id='source-a'"), 0);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM seed_dictionary_materialized WHERE source_id='source-a'"), 0);
     }
     {
         TestDatabase db(user_path);
