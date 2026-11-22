@@ -165,6 +165,7 @@ struct Task
     std::string session_pinyin;
     std::string session_word;
     bool session_pinyin_is_canonical = false;
+    bool session_phrase_permanent = false;
     std::shared_ptr<IInputSession> phrase_session;
     int candidate_one_based_index = 0;
     // UiCommitCandidateAt：卷轴展开面板里点中的候选的绝对下标与显示文字。
@@ -577,7 +578,8 @@ void WorkerThread()
             const auto session = task.phrase_session;
             if (task.session_pinyin_is_canonical)
             {
-                session->store_user_phrase_from_canonical_pinyin(task.session_pinyin, task.session_word);
+                session->store_user_phrase_from_canonical_pinyin(task.session_pinyin, task.session_word,
+                                                                 task.session_phrase_permanent);
             }
             else
             {
@@ -1241,7 +1243,8 @@ void EnqueueMixedCandidates(MixedCandidates::Result result, const std::string &i
     pipe_queueCv.notify_one();
 }
 
-void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &word, bool pinyin_is_canonical)
+void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &word, bool pinyin_is_canonical,
+                                bool permanent)
 {
     {
         std::lock_guard lock(queueMutex);
@@ -1250,6 +1253,7 @@ void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &wo
         task.session_pinyin = pinyin;
         task.session_word = word;
         task.session_pinyin_is_canonical = pinyin_is_canonical;
+        task.session_phrase_permanent = permanent;
         // A language cycle can replace the active language session before this
         // queued learning task runs. Store into the session that chose the word.
         task.phrase_session = PersistentInputSession();
@@ -1283,8 +1287,13 @@ SerialTaskRunner &DictionaryWriter()
                 std::int64_t observed = last_expiry_day.load();
                 if (observed != day && last_expiry_day.compare_exchange_strong(observed, day))
                 {
-                    (void)user_dictionary::expire_temporary_pinyin_words(
-                        CommonUtils::get_ime_data_path() + "\\msime.db", user_dictionary::default_user_db_path(), now);
+                    // 删掉的词可能还在候选缓存里，不清缓存的话用户仍能看到并选中一个已不存在的行。
+                    if (user_dictionary::expire_temporary_pinyin_words(CommonUtils::get_ime_data_path() + "\\msime.db",
+                                                                       user_dictionary::default_user_db_path(),
+                                                                       now) > 0)
+                    {
+                        EnqueueResetInputSessionCacheTask();
+                    }
                 }
                 user_dictionary::checkpoint_user_journal_if_needed();
             });

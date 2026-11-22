@@ -836,14 +836,14 @@ int InputSession::store_user_phrase(std::string pinyin, std::string word)
     return engine_.create_word(std::move(pinyin), std::move(word));
 }
 
-int InputSession::store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word)
+int InputSession::store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word, bool permanent)
 {
     // Both quanpin and shuangpin ultimately share the canonical quanpin
     // dictionary.  Do not feed a complete quanpin key back through the active
     // shuangpin profile a second time.
     if (!canonical_phrase_engine_)
         canonical_phrase_engine_ = std::make_unique<QuanpinEngine>(paths_);
-    return canonical_phrase_engine_->create_word_from_canonical_pinyin(std::move(pinyin), std::move(word));
+    return canonical_phrase_engine_->create_word_from_canonical_pinyin(std::move(pinyin), std::move(word), permanent);
 }
 
 // 整句候选（词格 CandidateSource::Generated、Google 解码器 CandidateSource::Fallback、

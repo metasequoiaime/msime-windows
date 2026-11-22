@@ -192,7 +192,8 @@ TEST_CASE(merge_user_dictionary_preserves_temporary_state_and_permanent_confirma
         REQUIRE(sqlite3_exec(db,
                              "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display,"
                              "user_inserted,weight_edited,learning_count,last_learned_at,updated_at)"
-                             " VALUES('pinyin','yi','一','upsert',10000,'',1,0,0,0,100)",
+                             " VALUES('pinyin','yi','一','upsert',10000,'',1,0,0,0,100),"
+                             "('pinyin','hao','好','upsert',1000,'',1,0,1,500,500)",
                              nullptr, nullptr, nullptr) == SQLITE_OK);
         sqlite3_close(db);
     }
@@ -203,7 +204,8 @@ TEST_CASE(merge_user_dictionary_preserves_temporary_state_and_permanent_confirma
                              "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display,"
                              "user_inserted,weight_edited,learning_count,last_learned_at,updated_at) VALUES"
                              "('pinyin','yi','一','upsert',1000,'',1,0,1,50,200),"
-                             "('pinyin','ni','你','upsert',1000,'',1,0,1,300,300)",
+                             "('pinyin','ni','你','upsert',1000,'',1,0,1,300,300),"
+                             "('pinyin','hao','好','upsert',10000,'',1,0,0,0,100)",
                              nullptr, nullptr, nullptr) == SQLITE_OK);
         sqlite3_close(db);
     }
@@ -228,6 +230,16 @@ TEST_CASE(merge_user_dictionary_preserves_temporary_state_and_permanent_confirma
     REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
     REQUIRE_EQ(sqlite3_column_int(statement, 0), 1);
     REQUIRE_EQ(sqlite3_column_int64(statement, 1), 300);
+    sqlite3_finalize(statement);
+    // 远端较旧的正式行盖过本地较新的临时行：状态取正式，但本地时间戳不能被拨回去。
+    REQUIRE(sqlite3_prepare_v2(db,
+                               "SELECT learning_count,weight,updated_at FROM user_dictionary_operations"
+                               " WHERE key='hao'",
+                               -1, &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    REQUIRE_EQ(sqlite3_column_int(statement, 0), 0);
+    REQUIRE_EQ(sqlite3_column_int64(statement, 1), 10000);
+    REQUIRE_EQ(sqlite3_column_int64(statement, 2), 500);
     sqlite3_finalize(statement);
     sqlite3_close(db);
 }

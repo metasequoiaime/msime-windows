@@ -92,6 +92,17 @@ void bounded_text(const std::string &value, std::size_t maximum, bool empty = fa
     require((empty || !value.empty()) && value.size() <= maximum && value.find('\0') == std::string::npos &&
             utf8::is_valid(value.begin(), value.end()));
 }
+bool has_column(sqlite3 *db, const char *table, const char *column)
+{
+    auto columns = prepare(db, (std::string("PRAGMA table_info(\"") + table + "\")").c_str());
+    while (sqlite3_step(columns.get()) == SQLITE_ROW)
+    {
+        const unsigned char *found = sqlite3_column_text(columns.get(), 1);
+        if (found != nullptr && std::string(reinterpret_cast<const char *>(found)) == column)
+            return true;
+    }
+    return false;
+}
 bool overlap(const std::filesystem::path &a, const std::filesystem::path &b)
 {
     const auto p = std::mismatch(a.begin(), a.end(), b.begin(), b.end());
@@ -112,10 +123,13 @@ void stream_dictionary_state(const RuntimePaths &paths, const std::function<bool
     execute(db.get(), "PRAGMA query_only=ON");
     execute(db.get(), "BEGIN");
     {
-        auto rows = prepare(
-            db.get(),
-            "SELECT dictionary,key,value,weight,display,operation,user_inserted,learning_count,last_learned_at FROM "
-            "user_dictionary_operations ORDER BY dictionary,key,value");
+        // query_only 连接不做 schema 迁移；还没被新版本以读写方式打开过的日志没有这两列，按正式词条读。
+        const bool has_learning_state = has_column(db.get(), "user_dictionary_operations", "learning_count") &&
+                                        has_column(db.get(), "user_dictionary_operations", "last_learned_at");
+        const std::string sql = std::string("SELECT dictionary,key,value,weight,display,operation,user_inserted,") +
+                                (has_learning_state ? "learning_count,last_learned_at" : "0,0") +
+                                " FROM user_dictionary_operations ORDER BY dictionary,key,value";
+        auto rows = prepare(db.get(), sql.c_str());
         int status;
         while ((status = sqlite3_step(rows.get())) == SQLITE_ROW)
         {

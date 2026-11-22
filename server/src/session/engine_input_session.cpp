@@ -373,9 +373,9 @@ int EngineInputSession::store_user_phrase(std::string pinyin, std::string word)
     return session_.store_user_phrase(pinyin, word);
 }
 
-int EngineInputSession::store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word)
+int EngineInputSession::store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word, bool permanent)
 {
-    return session_.store_user_phrase_from_canonical_pinyin(pinyin, word);
+    return session_.store_user_phrase_from_canonical_pinyin(pinyin, word, permanent);
 }
 
 int EngineInputSession::remove_candidate(std::string pinyin, std::string word, SchemeType scheme)

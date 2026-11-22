@@ -452,7 +452,9 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
         insert_sql += ",learning_count=excluded.learning_count";
     if (has_last_learned_at)
         insert_sql += ",last_learned_at=excluded.last_learned_at";
-    insert_sql += ",updated_at=excluded.updated_at";
+    // 远端的正式行盖过本地更新的临时行时（下面 WHERE 的第二个分支），不能把本地时间戳拨回去，
+    // 否则之后的合并会拿一个过时的时间比较。普通分支里 excluded 本来就更新，取较大值不改变结果。
+    insert_sql += ",updated_at=MAX(user_dictionary_operations.updated_at,excluded.updated_at)";
     // RemoteWins 已经只放行更新的行，这里在数据库层再守一道，防止本地快照与表不一致时用旧行盖新行。
     insert_sql += " WHERE excluded.updated_at>user_dictionary_operations.updated_at";
     if (has_learning_count)

@@ -608,7 +608,7 @@ void ProcessSelectionKey(UINT keycode, uint64_t client_id, uint64_t activation_e
                     // 这里异步处理，不然有可能会阻塞住 TSF 端读取 pipe 导致超时
                     EnqueueStoreUserPhraseTask(GlobalIme::composition.creating_word.pinyin,
                                                GlobalIme::composition.creating_word.word,
-                                               /*pinyin_is_canonical=*/true);
+                                               /*pinyin_is_canonical=*/true, /*permanent=*/true);
                 }
                 if (!japanese_candidate)
                 {

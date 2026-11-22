@@ -917,7 +917,7 @@ KeyResult InputSession::commit(std::size_t index)
             return {true, std::move(text), std::move(diagnostic)};
         }
         if (!immediate_phrase_progress_.word.empty() && progress.can_store && candidate_learning_enabled_ &&
-            store_user_phrase_from_canonical_pinyin(progress.pinyin, progress.word) != 0)
+            store_user_phrase_from_canonical_pinyin(progress.pinyin, progress.word, /*permanent=*/true) != 0)
         {
             diagnostic = "Unable to persist the composed phrase.";
         }

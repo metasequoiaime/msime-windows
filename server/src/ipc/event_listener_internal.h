@@ -357,7 +357,9 @@ void ApplyAiCandidate(const std::string &candidate, const std::string &identity,
 void ApplyEnglishCandidates(std::vector<WordItem> candidates, const std::string &input, uint64_t generation);
 void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> results, uint64_t generation, bool merge);
 void ApplyMixedCandidates(MixedCandidates::Result result, const std::string &input, uint64_t generation);
-void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &word, bool pinyin_is_canonical = false);
+// permanent：造词模式里亲手造的词，直接正式入库；其余落库（整句、云联想、AI）按临时自动新词处理。
+void EnqueueStoreUserPhraseTask(const std::string &pinyin, const std::string &word, bool pinyin_is_canonical = false,
+                                bool permanent = false);
 bool ResolveCandidateItem(int one_based_index, WordItem &item);
 bool SendCurrentDataToClient(uint64_t client_id, uint64_t activation_epoch, uint64_t request_id);
 } // namespace FanyNamedPipe

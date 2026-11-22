@@ -757,7 +757,7 @@ bool record_user_insert(const std::string &user_db_path, DictionaryKind kind, co
 }
 
 bool record_automatic_pinyin_insert(const std::string &user_db_path, const std::string &key, const std::string &value,
-                                    const std::int64_t now)
+                                    const std::int64_t now, std::int64_t *main_weight)
 {
     if (key.empty() || value.empty() || now <= 0)
         return false;
@@ -770,10 +770,27 @@ bool record_automatic_pinyin_insert(const std::string &user_db_path, const std::
                           " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation='upsert',weight=excluded.weight,"
                           " display='',user_inserted=1,weight_edited=0,learning_count=1,last_learned_at=?4,"
                           " updated_at=unixepoch() WHERE learning_count=1 OR operation='delete'");
-    return stmt && bind_text(stmt.get(), 1, key) && bind_text(stmt.get(), 2, value) &&
-           sqlite3_bind_int64(stmt.get(), 3, kTemporaryPinyinWordWeight) == SQLITE_OK &&
-           sqlite3_bind_int64(stmt.get(), 4, now) == SQLITE_OK && sqlite3_step(stmt.get()) == SQLITE_DONE &&
-           sqlite3_changes(db.get()) == 1;
+    if (!stmt || !bind_text(stmt.get(), 1, key) || !bind_text(stmt.get(), 2, value) ||
+        sqlite3_bind_int64(stmt.get(), 3, kTemporaryPinyinWordWeight) != SQLITE_OK ||
+        sqlite3_bind_int64(stmt.get(), 4, now) != SQLITE_OK || sqlite3_step(stmt.get()) != SQLITE_DONE)
+        return false;
+    if (sqlite3_changes(db.get()) == 1)
+    {
+        if (main_weight)
+            *main_weight = kTemporaryPinyinWordWeight;
+        return true;
+    }
+    stmt.reset();
+    // 冲突行是正式词条（例如词库重建后主库少了这一行，日志里仍记着它）：保持正式，不降级成临时词。
+    // 调用方据返回的权重把刚插入主库的那一行改回日志记的正式权重。
+    auto formal = prepare(db.get(), "SELECT weight FROM user_dictionary_operations WHERE dictionary='pinyin'"
+                                    " AND key=?1 AND value=?2 AND operation='upsert' AND learning_count=0");
+    if (!formal || !bind_text(formal.get(), 1, key) || !bind_text(formal.get(), 2, value) ||
+        sqlite3_step(formal.get()) != SQLITE_ROW)
+        return false;
+    if (main_weight)
+        *main_weight = std::max<std::int64_t>(sqlite3_column_int64(formal.get(), 0), 1);
+    return true;
 }
 
 bool record_delete(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
@@ -974,11 +991,29 @@ bool adjust_english_candidate_ranking(const std::string &english_db_path, const 
     return ok;
 }
 
-bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::string &user_db_path,
-                                   const std::string &key, const std::string &value)
+namespace
 {
-    // 普通候选确认是纯读取快路径：日志库尚不存在就不可能有临时词，不能因此创建一个空库。
-    if (key.empty() || value.empty() || !std::filesystem::exists(metasequoia::path_from_utf8(user_db_path.c_str())) ||
+// 选词路径上绝大多数候选都不是临时词。先用只读连接查一次，命中了才去迁移日志、开写事务，
+// 免得每次上屏都在 msime.db 和日志上各拿一次写锁。
+bool has_temporary_pinyin_word(const std::string &user_db_path, const std::string &key, const std::string &value)
+{
+    // 日志库尚不存在就不可能有临时词，不能因此创建一个空库。
+    if (!std::filesystem::exists(metasequoia::path_from_utf8(user_db_path.c_str())))
+        return false;
+    auto journal = open_database(user_db_path, SQLITE_OPEN_READONLY);
+    if (!journal || !has_column(journal.get(), "user_dictionary_operations", "learning_count"))
+        return false;
+    auto temporary = prepare(journal.get(), "SELECT 1 FROM user_dictionary_operations WHERE dictionary='pinyin'"
+                                            " AND key=?1 AND value=?2 AND operation='upsert' AND learning_count=1");
+    return temporary && bind_text(temporary.get(), 1, key) && bind_text(temporary.get(), 2, value) &&
+           sqlite3_step(temporary.get()) == SQLITE_ROW;
+}
+
+// promote_even_if_expired 为 true 时（用户在造词模式里亲手造出这个词）直接转正，不看保留期。
+bool settle_temporary_pinyin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                  const std::string &key, const std::string &value, bool promote_even_if_expired)
+{
+    if (key.empty() || value.empty() || !has_temporary_pinyin_word(user_db_path, key, value) ||
         !ensure_user_database(user_db_path))
         return false;
     const std::string table = pinyin_table(key);
@@ -1007,7 +1042,7 @@ bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::s
     const std::int64_t learned_at = sqlite3_column_int64(temporary.get(), 0);
     temporary.reset();
     const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-    if (learned_at <= now - kTemporaryWordRetentionSeconds)
+    if (!promote_even_if_expired && learned_at <= now - kTemporaryWordRetentionSeconds)
     {
         auto refresh =
             prepare(database.get(), "UPDATE candidate_journal.user_dictionary_operations SET last_learned_at=?1,"
@@ -1022,17 +1057,25 @@ bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::s
         // 本次仍按临时学习处理；调用方据此跳过普通调频，避免重新开始保留期时权重先突破 1000。
         return true;
     }
-    auto promote = prepare(database.get(), "UPDATE main.\"" + table + "\" SET weight=?1 WHERE key=?2 AND value=?3");
+    // 临时期间这一行可能已被前缀补全加权或邻居调频抬过正式权重，转正只补到正式权重，不往下压。
+    auto promote =
+        prepare(database.get(), "UPDATE main.\"" + table + "\" SET weight=MAX(weight,?1) WHERE key=?2 AND value=?3");
     if (!promote || sqlite3_bind_int64(promote.get(), 1, kFormalPinyinWordWeight) != SQLITE_OK ||
         !bind_text(promote.get(), 2, key) || !bind_text(promote.get(), 3, value) ||
         sqlite3_step(promote.get()) != SQLITE_DONE || sqlite3_changes(database.get()) == 0)
         return rollback();
     promote.reset();
+    auto promoted = prepare(database.get(), "SELECT MAX(weight) FROM main.\"" + table + "\" WHERE key=?1 AND value=?2");
+    if (!promoted || !bind_text(promoted.get(), 1, key) || !bind_text(promoted.get(), 2, value) ||
+        sqlite3_step(promoted.get()) != SQLITE_ROW)
+        return rollback();
+    const std::int64_t promoted_weight = sqlite3_column_int64(promoted.get(), 0);
+    promoted.reset();
     auto journal = prepare(database.get(),
                            "UPDATE candidate_journal.user_dictionary_operations SET weight=?1,learning_count=0,"
                            "last_learned_at=0,updated_at=unixepoch() WHERE dictionary='pinyin' AND key=?2 AND value=?3"
                            " AND operation='upsert' AND learning_count=1");
-    if (!journal || sqlite3_bind_int64(journal.get(), 1, kFormalPinyinWordWeight) != SQLITE_OK ||
+    if (!journal || sqlite3_bind_int64(journal.get(), 1, promoted_weight) != SQLITE_OK ||
         !bind_text(journal.get(), 2, key) || !bind_text(journal.get(), 3, value) ||
         sqlite3_step(journal.get()) != SQLITE_DONE || sqlite3_changes(database.get()) != 1)
         return rollback();
@@ -1040,6 +1083,19 @@ bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::s
     if (!execute_sql(database.get(), "COMMIT"))
         return rollback();
     return true;
+}
+} // namespace
+
+bool confirm_temporary_pinyin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                   const std::string &key, const std::string &value)
+{
+    return settle_temporary_pinyin_word(main_db_path, user_db_path, key, value, false);
+}
+
+bool promote_temporary_pinyin_word(const std::string &main_db_path, const std::string &user_db_path,
+                                   const std::string &key, const std::string &value)
+{
+    return settle_temporary_pinyin_word(main_db_path, user_db_path, key, value, true);
 }
 
 int expire_temporary_pinyin_words(const std::string &main_db_path, const std::string &user_db_path,
@@ -1078,11 +1134,8 @@ int expire_temporary_pinyin_words(const std::string &main_db_path, const std::st
     int removed = 0;
     for (const auto &[key, value] : words)
     {
-        const std::string table = pinyin_table(key);
         auto journal =
-            table.empty() ? Stmt{}
-                          : prepare(database.get(),
-                                    "DELETE FROM candidate_journal.user_dictionary_operations WHERE dictionary='pinyin'"
+            prepare(database.get(), "DELETE FROM candidate_journal.user_dictionary_operations WHERE dictionary='pinyin'"
                                     " AND key=?1 AND value=?2 AND operation='upsert' AND learning_count=1"
                                     " AND last_learned_at>0 AND last_learned_at<=?3");
         if (!journal || !bind_text(journal.get(), 1, key) || !bind_text(journal.get(), 2, value) ||
@@ -1094,6 +1147,11 @@ int expire_temporary_pinyin_words(const std::string &main_db_path, const std::st
         }
         removed += sqlite3_changes(database.get());
         journal.reset();
+        // 读音解析不出分表（同步或导入来的坏行）时主库里不可能有这一行，只清日志。
+        // 不能让它中止整批：回滚后下次还会先挑到它，所有临时词就再也清不掉了。
+        const std::string table = pinyin_table(key);
+        if (table.empty())
+            continue;
         auto remove = prepare(database.get(), "DELETE FROM main.\"" + table + "\" WHERE key=?1 AND value=?2");
         if (!remove || !bind_text(remove.get(), 1, key) || !bind_text(remove.get(), 2, value) ||
             sqlite3_step(remove.get()) != SQLITE_DONE)
@@ -2402,6 +2460,8 @@ struct RebasedOperation
     std::string key;
     std::string value;
     std::int64_t weight = 0;
+    // 新词库已经收录了这个临时自动新词：日志里的临时行作废，删掉它，免得到期清理把出厂词一起删了。
+    bool absorbed_temporary = false;
 };
 
 // 把改记到新词库上的调频写回日志，并记下这次回放到的词库。写不成只是下次回放再改记一遍，
@@ -2415,10 +2475,20 @@ bool save_rebased_journal(const std::string &user_db_path, const std::string &di
     auto update =
         prepare(user_db.get(), "UPDATE user_dictionary_operations SET weight=?4 WHERE dictionary=?1 AND "
                                "key=?2 AND value=?3 AND operation='upsert' AND user_inserted=0 AND weight_edited=0");
-    if (!update)
+    auto absorb = prepare(user_db.get(), "DELETE FROM user_dictionary_operations WHERE dictionary=?1 AND key=?2"
+                                         " AND value=?3 AND operation='upsert' AND learning_count=1");
+    if (!update || !absorb)
         return false;
     for (const auto &operation : rebased)
     {
+        if (operation.absorbed_temporary)
+        {
+            sqlite3_reset(absorb.get());
+            if (!bind_text(absorb.get(), 1, operation.kind) || !bind_text(absorb.get(), 2, operation.key) ||
+                !bind_text(absorb.get(), 3, operation.value) || sqlite3_step(absorb.get()) != SQLITE_DONE)
+                return false;
+            continue;
+        }
         sqlite3_reset(update.get());
         if (!bind_text(update.get(), 1, operation.kind) || !bind_text(update.get(), 2, operation.key) ||
             !bind_text(update.get(), 3, operation.value) ||
@@ -2427,6 +2497,7 @@ bool save_rebased_journal(const std::string &user_db_path, const std::string &di
             return false;
     }
     update.reset();
+    absorb.reset();
     auto state = prepare(user_db.get(), "INSERT INTO dictionary_state(name,value) VALUES(?1,?2)"
                                         " ON CONFLICT(name) DO UPDATE SET value=excluded.value");
     if (!state || !bind_text(state.get(), 1, kReplayedDictionaryState) ||
@@ -2565,6 +2636,15 @@ ReplayResult replay(const std::string &user_db_path, const std::string &main_db_
         const bool user_owned_row = sqlite3_column_int(rows.get(), 7) != 0;
         const int learning_state = sqlite3_column_int(rows.get(), 8);
         const std::int64_t learned_at = sqlite3_column_int64(rows.get(), 9);
+        // 换了词库时主库是新出厂的那份，这时查得到就是出厂词。临时行不写回（写回会把出厂权重压成
+        // 临时权重），并从日志里删掉；放在过期判断之前，已过期的临时行也一样，否则到期清理会删掉出厂词。
+        if (rebase && kind == "pinyin" && operation == "upsert" && learning_state == 1 &&
+            shipped_weight(main_db.get(), kind, key, value))
+        {
+            rebased.push_back({kind, key, value, 0, true});
+            ++result.applied;
+            continue;
+        }
         const bool expired_temporary =
             kind == "pinyin" && operation == "upsert" && learning_state == 1 && learned_at > 0 &&
             learned_at <= static_cast<std::int64_t>(std::time(nullptr)) - kTemporaryWordRetentionSeconds;
