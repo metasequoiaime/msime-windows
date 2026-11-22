@@ -307,7 +307,7 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
     // T-mode: digits, '/' and ':' that still extend a date/time are input. The rest keep their usual
     // meaning below (digits select, '/' and ':' are punctuation); Shift+digit never matches here.
     // V-mode: digits and . + - * / ( ) after the V prefix are input, so they neither select, page nor commit
-    // punctuation. Shift+8/9/0 give * ( ) and are input too; other Shift+digits still select.
+    // punctuation.
     if (IsDateTimeInputKey(uCode, pwch ? *pwch : 0, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength(),
                            _caretPosition) ||
         IsVModeInputKey(pwch ? *pwch : 0, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength(), _caretPosition))
@@ -319,15 +319,30 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
         }
         return TRUE;
     }
-    // V-mode: bare digits are input, so Shift+1..9 selects. It must be decided here,
-    // before the punctuation rule below would commit the highlighted candidate together with '!' '@' ...
-    // Shift+8/9 produce '*' '(' and were already taken as input above.
-    if (IsVModeShiftDigitSelectionKey(uCode, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength()))
+    // V-mode: letters select, a is the first candidate. It must be decided here, before the 26 letters below
+    // would be taken as composition input, and before the punctuation rule would commit with punctuation.
+    // Without a page on screen there is nothing to select and the letter keeps its usual meaning.
+    if (candidateMode != CANDIDATE_NONE &&
+        IsVModeSelectionLetterKey(uCode, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength()))
     {
         if (pKeyState)
         {
             pKeyState->Category = CATEGORY_CANDIDATE;
             pKeyState->Function = FUNCTION_SELECT_BY_NUMBER;
+        }
+        return TRUE;
+    }
+
+    // V-mode: a layout that produces ￥ / ¥ directly needs the same "commit with punctuation" round-trip as '$'
+    // (PunctuationTable maps '$' to ￥), so the money format the Server sends back replaces the composition.
+    if (candidateMode != CANDIDATE_NONE && FanyImeVModeInput::IsCurrencySymbol(pwch ? *pwch : 0) &&
+        FanyImeVModeInput::IsComposition(_keystrokeBuffer.Get(), _keystrokeBuffer.GetLength(),
+                                         Global::VModeTrigger.load(std::memory_order_relaxed)))
+    {
+        if (pKeyState)
+        {
+            pKeyState->Category = CATEGORY_COMPOSING;
+            pKeyState->Function = FUNCTION_PUNCTUATION;
         }
         return TRUE;
     }
@@ -961,11 +976,10 @@ bool CCompositionProcessorEngine::IsDateTimeInputKey(UINT uCode, WCHAR wch, cons
 
 // 只看字符不看键位：主键盘和小键盘的数字、运算符一样收，Server 也只看字符。前缀认哪个由 Server 的
 // VModeChanged 决定（双拼和五笔只认 V，全拼 V、v 都认）。
-bool CCompositionProcessorEngine::IsVModeShiftDigitSelectionKey(UINT uCode, const WCHAR *buffer, DWORD_PTR length)
+bool CCompositionProcessorEngine::IsVModeSelectionLetterKey(UINT uCode, const WCHAR *buffer, DWORD_PTR length)
 {
-    const bool shift_only = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0 &&
-                            (GetAsyncKeyState(VK_CONTROL) & 0x8000) == 0 && (GetAsyncKeyState(VK_MENU) & 0x8000) == 0;
-    return shift_only && uCode >= L'1' && uCode <= L'9' &&
+    // 字母是 V 模式的选词键（a 是第一个候选），不算编码键，所以这里不看光标位置：怎么按都是选词。
+    return FanyImeVModeInput::IsSelectionLetter(uCode) &&
            FanyImeVModeInput::IsComposition(buffer, static_cast<std::size_t>(length),
                                             Global::VModeTrigger.load(std::memory_order_relaxed));
 }

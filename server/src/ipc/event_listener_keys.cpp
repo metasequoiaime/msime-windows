@@ -13,6 +13,7 @@
 #include "ipc/input_key_policy.h"
 #include "engine/contracts/date_time_input.h"
 #include "engine/contracts/dictionary_lookup_keys.h"
+#include "engine/local_modes/v_mode_query.h"
 #include "engine/contracts/direct_helpcode.h"
 #include "engine/contracts/ipc_negotiation.h"
 #include "engine/contracts/mid_sentence_helpcode.h"
@@ -1361,6 +1362,54 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
     // T 模式对五笔同样开放，但五笔不能并进 chinese_scheme：那个变量还给 K/U/E/M/S/J/Y/R 触发与
     // ShouldLearnEnteredEnglishWord 用，并进去会让五笔连带打开其它本地模式（R7）。
     const bool date_time_scheme = chinese_scheme || scheme == SchemeType::Wubi;
+    // V 模式（V + 数字 / 算式）：候选是现算的，不进词库也不调频，顺序固定。字母选词，a 是第一个；
+    // ￥ 把当前数字或算式上屏成金额；回车（含小键盘回车）上屏第一个候选，也就是算式结果。
+    // 这段必须排在回车提交原文和「上屏高亮候选 + 标点」之前，否则 V1+2 回车上屏的是原文、￥ 被当标点。
+    if (!g_english_input_mode && IsVModeCompositionActive(input_before_key))
+    {
+        const bool command_modifier_down = (Global::ModifiersDown & 0b00000110u) != 0;
+        // 输入不完整 / 算式算不了时列表里只有兜底的原样上屏那条，它不是候选，别让字母和回车选中它。
+        const bool has_v_mode_candidates = !Global::candidate_ui.items.empty() &&
+                                           Global::candidate_ui.items.front().source == CandidateSource::Generated;
+        const WCHAR selection_char =
+            FanyImeVModeInput::IsSelectionLetter(Global::Wch) ? Global::Wch : static_cast<WCHAR>(Global::Keycode);
+        const int selection_index =
+            has_v_mode_candidates && !command_modifier_down && FanyImeVModeInput::IsSelectionLetter(selection_char)
+                ? FanyImeVModeInput::SelectionIndex(selection_char)
+                : -1;
+        if (selection_index >= 0 && static_cast<std::size_t>(selection_index) < Global::candidate_ui.items.size())
+        {
+            ScopedKeyStage select_v_mode{client_id, activation_epoch, request_id, L"handle-selection"};
+            ProcessSelectionKey(static_cast<UINT>(selection_char), client_id, activation_epoch, selection_index);
+            select_v_mode.Stop();
+            SendCurrentDataToClient(client_id, activation_epoch, request_id);
+            return;
+        }
+        // 中文标点下 Shift+4 打的是 '$'，PunctuationTable 把它映射成 ￥；直接按出全角 ￥ / 半角 ¥ 的键盘也认。
+        // TSF 那边两条都走「上屏高亮候选 + 标点」，等的是这里的 CommitExactText。
+        const unsigned int wch_code = static_cast<unsigned int>(Global::Wch);
+        const bool currency_key =
+            wch_code == static_cast<unsigned int>(L'$') || FanyImeVModeInput::IsCurrencySymbol(wch_code);
+        if (!command_modifier_down && currency_key)
+        {
+            const std::string money = metasequoia::local_modes::v_mode_money_text(input_before_key.substr(1));
+            if (!money.empty())
+            {
+                Global::candidate_ui.selected_text = string_to_wstring(money);
+                Global::MsgTypeToTsf = Global::DataFromServerMsgType::CommitExactText;
+                SendCurrentDataToClient(client_id, activation_epoch, request_id);
+                return;
+            }
+        }
+        if (!command_modifier_down && Global::Keycode == VK_RETURN && has_v_mode_candidates)
+        {
+            ScopedKeyStage select_v_mode_result{client_id, activation_epoch, request_id, L"handle-selection"};
+            ProcessSelectionKey(Global::Keycode, client_id, activation_epoch, 0);
+            select_v_mode_result.Stop();
+            SendCurrentDataToClient(client_id, activation_epoch, request_id);
+            return;
+        }
+    }
     const bool pinyin_commit =
         FanyImeIpc::IsPinyinCommitKey(Global::Keycode, Global::ModifiersDown) && !input_before_key.empty();
     const bool convert_shuangpin = pinyin_commit && g_inputSession->current_scheme_type() == SchemeType::Shuangpin &&
@@ -1455,12 +1504,9 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         ClientNegotiatedCompositionRestore(client_id) &&
         DirectHelpcodeEndTriggerPrefix(Global::Keycode, Global::Wch, input_before_key).has_value();
     const bool is_date_time_input_key = IsDateTimeInputKey(Global::Keycode, Global::Wch, input_before_key);
-    // V 模式的数字和 . + - * / ( )：只进输入串，不选词、不翻页、不当标点。
+    // V 模式的数字和 . + - * / ( )：只进输入串，不选词、不翻页、不当标点。字母选词走上面的
+    // IsSelectionLetter 分支，不进组合编辑。
     const bool is_v_mode_input_key = IsVModeInputKey(Global::Wch, input_before_key);
-    // V 模式里数字键用来输入，Shift+数字选词。Shift+1 出的是 !，不排除就会被当成「上屏高亮候选
-    // + 标点」；Shift+8/9/0 出 * ( ) 是编码键，上一行已经收下。
-    const bool is_v_mode_shift_digit_selection = !is_v_mode_input_key && shift_only && Global::Keycode >= '1' &&
-                                                 Global::Keycode <= '9' && IsVModeCompositionActive(input_before_key);
     // 日语模式下 '-' 是长音符输入键，既不翻页也不做词转字。
     const bool is_japanese_long_vowel = IsJapaneseLongVowelKey(Global::Keycode, Global::Wch);
     const int word_character_direction = FanyImeIpc::WordToCharacterDirection(
@@ -1471,7 +1517,7 @@ void HandleImeKey(uint64_t client_id, uint64_t activation_epoch, uint64_t reques
         word_character_direction != 0 ||
         (!is_manual_pinyin_separator && !is_microsoft_shuangpin_ing_key && !is_mid_sentence_helpcode_marker &&
          !is_direct_helpcode_slash && !is_direct_helpcode_end_trigger && !is_date_time_input_key &&
-         !is_v_mode_input_key && !is_v_mode_shift_digit_selection &&
+         !is_v_mode_input_key &&
          IsCommitWithHighlightedCandidatePunctuationInCandidateMode(Global::Keycode, Global::Wch));
     const bool is_selection_key = IsSelectionKey(Global::Keycode);
     // 移高亮的左右键不碰组合，交给下面的候选导航分支。Home / End 把光标移到串首 / 串尾。

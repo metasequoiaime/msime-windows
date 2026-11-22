@@ -4,6 +4,7 @@
 #include "../../local_modes/quick_phrase_query.h"
 #include "../../local_modes/radical_query.h"
 #include "../../local_modes/symbol_query.h"
+#include "../../contracts/v_mode_input.h"
 #include "../../local_modes/v_mode_query.h"
 #include "../../core/data_path.h"
 
@@ -217,18 +218,24 @@ int run_test()
                 metasequoia::local_modes::date_time_category("9:05") == "time",
             "Specific date/time recognition or grouping was incorrect.");
 
-    // V 模式：数字转中文。
-    const std::array<const char *, 4> expected_v_integer = {"一百二十三", "壹佰贰拾叁", "壹佰贰拾叁元整", "一二三"};
+    // V 模式：数字转中文。顺序固定：大写读法、小写读法、货币、罗马数字、千分位。
+    const std::array<const char *, 4> expected_v_integer = {"壹佰贰拾叁", "一百二十三", "壹佰贰拾叁元整", "CXXIII"};
     require_words(metasequoia::local_modes::query_v_mode("123"), expected_v_integer,
-                  "V mode did not convert an integer to Chinese.");
-    const std::array<const char *, 3> expected_v_money = {"壹佰贰拾叁元肆角伍分", "一百二十三点四五",
-                                                          "壹佰贰拾叁点肆伍"};
+                  "V mode did not convert an integer to Chinese in the fixed order.");
+    const std::array<const char *, 3> expected_v_money = {"壹佰贰拾叁元肆角伍分", "壹佰贰拾叁点肆伍",
+                                                          "一百二十三点四五"};
     require_words(metasequoia::local_modes::query_v_mode("123.45"), expected_v_money,
                   "V mode did not put the money form first for a decimal.");
-    const std::array<const char *, 5> expected_v_thousands = {"一万二千三百四十五", "壹万贰仟叁佰肆拾伍",
-                                                              "壹万贰仟叁佰肆拾伍元整", "一二三四五", "12,345"};
+    const std::array<const char *, 4> expected_v_thousands = {"壹万贰仟叁佰肆拾伍", "一万二千三百四十五",
+                                                              "壹万贰仟叁佰肆拾伍元整", "12,345"};
     require_words(metasequoia::local_modes::query_v_mode("12345"), expected_v_thousands,
                   "V mode did not add the thousands-separated form.");
+    require(metasequoia::local_modes::v_mode_money_text("123") == "壹佰贰拾叁元整" &&
+                metasequoia::local_modes::v_mode_money_text("123.456") == "壹佰贰拾叁元肆角陆分" &&
+                metasequoia::local_modes::v_mode_money_text("1+2*3") == "柒元整" &&
+                metasequoia::local_modes::v_mode_money_text("10/3") == "叁元叁角叁分" &&
+                metasequoia::local_modes::v_mode_money_text("1-9").empty(),
+            "The money form behind the currency symbol was wrong.");
     using metasequoia::local_modes::chinese_financial_number;
     using metasequoia::local_modes::chinese_money;
     using metasequoia::local_modes::chinese_number_reading;
@@ -256,11 +263,11 @@ int run_test()
                 chinese_money("0", "") == "零元整" && chinese_money("1", "456").empty(),
             "Chinese money amounts were wrong.");
 
-    // V 模式：算式计算。
-    const std::array<const char *, 2> expected_v_expression = {"7", "1+2*3=7"};
+    // V 模式：算式计算。候选顺序：结果、算式=结果、大写读法、小写读法、货币。
+    const std::array<const char *, 5> expected_v_expression = {"7", "1+2*3=7", "柒", "七", "柒元整"};
     require_words(metasequoia::local_modes::query_v_mode("1+2*3"), expected_v_expression,
                   "V mode did not evaluate an arithmetic expression.");
-    const std::array<std::array<const char *, 2>, 7> expressions = {{
+    const std::array<std::array<const char *, 2>, 9> expressions = {{
         {"(1+2)*3", "9"},
         {"10/4", "2.5"},
         {"0.1+0.2", "0.3"},
@@ -268,6 +275,8 @@ int run_test()
         {"2*-3", "-6"},
         {"-(2-5)", "3"},
         {"7-7", "0"},
+        {"2**10", "1024"},
+        {"2**3**2", "512"},
     }};
     for (const auto &expression : expressions)
     {
@@ -276,11 +285,18 @@ int run_test()
                 "An arithmetic expression evaluated to the wrong result.");
     }
     for (const char *input :
-         std::array<const char *, 9>{"1/0", "1+", "(1+2", "1+2)", "1..2", "1.", "1.2.3", "12a", "2(3)"})
+         std::array<const char *, 10>{"1/0", "1+", "(1+2", "1+2)", "1..2", "1.", "1.2.3", "12a", "2(3)", "2**"})
     {
         require(metasequoia::local_modes::query_v_mode(input).empty(),
                 "An incomplete or invalid V-mode input produced candidates.");
     }
+    // 选词键是字母，a/A 是第一个；￥ 是上屏金额的键。
+    require(FanyImeVModeInput::IsSelectionLetter('a') && FanyImeVModeInput::IsSelectionLetter('Z') &&
+                !FanyImeVModeInput::IsSelectionLetter('1') && FanyImeVModeInput::SelectionIndex('a') == 0 &&
+                FanyImeVModeInput::SelectionIndex('A') == 0 && FanyImeVModeInput::SelectionIndex('e') == 4 &&
+                FanyImeVModeInput::SelectionIndex('5') == -1 && FanyImeVModeInput::IsCurrencySymbol(0xFFE5u) &&
+                FanyImeVModeInput::IsCurrencySymbol(0x00A5u) && !FanyImeVModeInput::IsCurrencySymbol(0x0024u),
+            "The V-mode selection-letter or currency-symbol contract was wrong.");
 
     const auto suffix = std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count());
     const std::filesystem::path quick_phrase_directory =

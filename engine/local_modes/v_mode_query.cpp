@@ -12,8 +12,6 @@ namespace
 {
 constexpr const char *kReadingDigits[] = {"零", "一", "二", "三", "四", "五", "六", "七", "八", "九"};
 constexpr const char *kFinancialDigits[] = {"零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"};
-// 逐位读数字用 〇，和日期里的「二〇二四年」一样。
-constexpr const char *kSpelledDigits[] = {"〇", "一", "二", "三", "四", "五", "六", "七", "八", "九"};
 constexpr const char *kReadingUnits[] = {"", "十", "百", "千"};
 constexpr const char *kFinancialUnits[] = {"", "拾", "佰", "仟"};
 constexpr const char *kGroupUnits[] = {"", "万", "亿", "万亿"};
@@ -125,34 +123,100 @@ bool split_number(const std::string &input, std::string &integer, std::string &f
     return all_digits(integer) && (dot == std::string::npos || all_digits(fraction));
 }
 
+// 罗马数字：只到 3999，零和更大的数没有通用写法，返回空串。
+std::string roman_numeral(const std::string &digits)
+{
+    const std::string trimmed = strip_leading_zeros(digits);
+    if (trimmed.empty() || trimmed.size() > 4)
+        return {};
+    unsigned value = static_cast<unsigned>(std::stoul(trimmed));
+    if (value == 0 || value > 3999)
+        return {};
+    static constexpr struct
+    {
+        unsigned value;
+        const char *symbol;
+    } kTable[] = {{1000, "M"}, {900, "CM"}, {500, "D"}, {400, "CD"}, {100, "C"}, {90, "XC"}, {50, "L"},
+                  {40, "XL"},  {10, "X"},   {9, "IX"},  {5, "V"},    {4, "IV"},  {1, "I"}};
+    std::string text;
+    for (const auto &entry : kTable)
+    {
+        for (; value >= entry.value; value -= entry.value)
+            text += entry.symbol;
+    }
+    return text;
+}
+
+// 金额：恰好两位小数时按分读；超过两位（算式结果常常是 3.333333）先四舍五入到分。
+std::string money_for_parts(const std::string &integer, const std::string &fraction)
+{
+    if (fraction.size() <= 2)
+        return chinese_money(integer, fraction);
+    const double value = std::strtod((integer + "." + fraction).c_str(), nullptr);
+    if (!std::isfinite(value) || std::fabs(value) >= 1e13)
+        return {};
+    const long long cents = std::llround(value * 100.0);
+    char buffer[16] = {};
+    std::snprintf(buffer, sizeof(buffer), "%02lld", cents % 100);
+    return chinese_money(std::to_string(cents / 100), std::string(buffer, 2));
+}
+
+// 候选顺序固定（issue #639）：大写读法、小写读法、货币、罗马数字、千分位。不调频，也不随使用次数
+// 改序——这批候选不进词库，顺序只由输入决定。
 std::vector<std::string> number_candidates(const std::string &integer, const std::string &fraction)
 {
     std::vector<std::string> texts;
-    const std::string reading = integer_text(integer, false);
     const std::string financial = integer_text(integer, true);
+    const std::string reading = integer_text(integer, false);
+    const std::string digits_only = strip_leading_zeros(integer);
     if (fraction.empty())
     {
-        const std::string digits_only = strip_leading_zeros(integer);
-        texts.push_back(reading);
         texts.push_back(financial);
+        texts.push_back(reading);
         texts.push_back(chinese_money(integer, {}));
-        texts.push_back(spelled_digits(integer, kSpelledDigits));
+        texts.push_back(roman_numeral(digits_only));
         if (digits_only.size() >= 4)
             texts.push_back(with_thousands_separators(digits_only));
     }
     else
     {
-        // 带小数时多半是金额，金额排第一。
-        texts.push_back(chinese_money(integer, fraction));
-        if (!reading.empty())
-            texts.push_back(reading + "点" + spelled_digits(fraction, kReadingDigits));
+        // 带小数时多半是金额，金额排第一；两种读法按位读小数。
+        texts.push_back(money_for_parts(integer, fraction));
         if (!financial.empty())
             texts.push_back(financial + "点" + spelled_digits(fraction, kFinancialDigits));
+        if (!reading.empty())
+            texts.push_back(reading + "点" + spelled_digits(fraction, kReadingDigits));
     }
     return texts;
 }
 
-// + - 一层、* / 一层、一元正负号和括号，按通常的优先级和左结合求值。
+// 算式候选顺序固定：阿拉伯结果、算式=结果、大写读法、小写读法、货币。负结果读作「负…」，
+// 不出金额。
+std::vector<std::string> expression_candidates(const std::string &input, const std::string &result)
+{
+    std::vector<std::string> texts{result, input + "=" + result};
+    const bool negative = !result.empty() && result.front() == '-';
+    std::string integer;
+    std::string fraction;
+    if (!split_number(negative ? result.substr(1) : result, integer, fraction))
+        return texts;
+    const std::string sign = negative ? std::string("负") : std::string{};
+    const std::string financial = integer_text(integer, true);
+    const std::string reading = integer_text(integer, false);
+    const std::string fraction_suffix_financial =
+        fraction.empty() ? std::string{} : "点" + spelled_digits(fraction, kFinancialDigits);
+    const std::string fraction_suffix_reading =
+        fraction.empty() ? std::string{} : "点" + spelled_digits(fraction, kReadingDigits);
+    if (!financial.empty())
+        texts.push_back(sign + financial + fraction_suffix_financial);
+    if (!reading.empty())
+        texts.push_back(sign + reading + fraction_suffix_reading);
+    if (!negative)
+        texts.push_back(money_for_parts(integer, fraction));
+    return texts;
+}
+
+// + - 一层、* / 一层、乘方 ** 右结合、一元正负号和括号，按通常的优先级求值。
 class ExpressionParser
 {
   public:
@@ -183,13 +247,13 @@ class ExpressionParser
 
     bool term(double &value, int depth)
     {
-        if (!factor(value, depth))
+        if (!unary(value, depth))
             return false;
         while (position_ < text_.size() && (text_[position_] == '*' || text_[position_] == '/'))
         {
             const char op = text_[position_++];
             double right = 0;
-            if (!factor(right, depth))
+            if (!unary(right, depth))
                 return false;
             if (op == '/' && right == 0)
                 return false;
@@ -198,7 +262,7 @@ class ExpressionParser
         return true;
     }
 
-    bool factor(double &value, int depth)
+    bool unary(double &value, int depth)
     {
         if (depth > kMaxExpressionDepth || position_ >= text_.size())
             return false;
@@ -206,12 +270,36 @@ class ExpressionParser
         if (ch == '+' || ch == '-')
         {
             ++position_;
-            if (!factor(value, depth + 1))
+            if (!unary(value, depth + 1))
                 return false;
             value = ch == '-' ? -value : value;
             return true;
         }
-        if (ch == '(')
+        return power(value, depth);
+    }
+
+    // ** 右结合：2**3**2 = 2**(3**2)。溢出留空。
+    bool power(double &value, int depth)
+    {
+        if (!primary(value, depth))
+            return false;
+        if (position_ + 1 < text_.size() && text_[position_] == '*' && text_[position_ + 1] == '*')
+        {
+            position_ += 2;
+            double exponent = 0;
+            if (!unary(exponent, depth + 1))
+                return false;
+            value = std::pow(value, exponent);
+            return std::isfinite(value);
+        }
+        return true;
+    }
+
+    bool primary(double &value, int depth)
+    {
+        if (depth > kMaxExpressionDepth || position_ >= text_.size())
+            return false;
+        if (text_[position_] == '(')
         {
             ++position_;
             if (!expression(value, depth + 1) || position_ >= text_.size() || text_[position_] != ')')
@@ -330,10 +418,7 @@ std::vector<WordItem> query_v_mode(const std::string &input, int limit)
     {
         std::string result;
         if (evaluate_v_mode_expression(input, result))
-        {
-            texts.push_back(result);
-            texts.push_back(input + "=" + result);
-        }
+            texts = expression_candidates(input, result);
     }
 
     texts.erase(std::remove(texts.begin(), texts.end(), std::string{}), texts.end());
@@ -350,5 +435,26 @@ std::vector<WordItem> query_v_mode(const std::string &input, int limit)
     for (std::size_t index = 0; index < results.size(); ++index)
         results[index].weight = static_cast<std::int64_t>(results.size() - index);
     return results;
+}
+
+std::string v_mode_money_text(const std::string &input)
+{
+    if (input.empty())
+        return {};
+    std::string integer;
+    std::string fraction;
+    if (!has_operator(input))
+    {
+        if (!split_number(input, integer, fraction))
+            return {};
+        return money_for_parts(integer, fraction);
+    }
+    std::string result;
+    if (!evaluate_v_mode_expression(input, result))
+        return {};
+    const bool negative = !result.empty() && result.front() == '-';
+    if (negative || !split_number(result, integer, fraction))
+        return {};
+    return money_for_parts(integer, fraction);
 }
 } // namespace metasequoia::local_modes
