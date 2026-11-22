@@ -402,6 +402,9 @@ shuangpin_schema = "xiaohe"
 wubi_schema = "wubi86"
 # 五笔拼音混输：同一串字母同时给五笔码表和全拼，五笔候选在前、拼音候选按权重追加在后
 wubi_mixed_pinyin = false
+# 混输时在拼音打出的候选后显示该词的五笔全码（如「中 khk」），边打拼音边看五笔怎么敲
+# 只作用于候选窗显示，不改排序、不改上屏；五笔码表命中的候选行本身不重复显示码
+wubi_code_hint = false
 # 五笔 z 键角色，可选："off", "wildcard"：
 #   off      -> z 不进码（默认）
 #   wildcard -> z 匹配码表中该位置的任意一个字母（含首位）

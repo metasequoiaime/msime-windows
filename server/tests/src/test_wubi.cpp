@@ -4,7 +4,10 @@
 #include "engine/core/runtime_paths.h"
 #include "engine/providers/wubi_candidate_provider.h"
 #include "engine/schemes/wubi_scheme.h"
+#include "src/config/ime_config_internal.h"
+#include "src/session/engine_input_session.h"
 #include <filesystem>
+#include <optional>
 #include <sqlite3.h>
 #include <stdexcept>
 #include <string>
@@ -254,4 +257,119 @@ TEST_CASE(WubiProviderDeletesWubiCandidateThroughJournal)
                    1);
     }
     std::filesystem::remove_all(directory);
+}
+
+TEST_CASE(WubiProviderLooksUpFullCodeForWordAnnotation)
+{
+    const auto directory = test::TempRoot() / ("msime-wubi-word-code-" + std::to_string(GetCurrentProcessId()));
+    std::filesystem::create_directories(directory);
+    const auto db_path = directory / "main.db";
+    {
+        TestDatabase db(db_path);
+        // 工 同时有简码 a 和全码 aaaa，另有等长的 aaab：注解要最长的码，等长时按码字母序取第一个。
+        // wubi98 放同一个词的不同码、以及只有 98 版才有的词，验证反查跟着当前版本走。
+        db.exec("CREATE TABLE wubi86(\"key\" TEXT,\"value\" TEXT,\"weight\" INTEGER);"
+                "CREATE TABLE wubi98(\"key\" TEXT,\"value\" TEXT,\"weight\" INTEGER);"
+                "INSERT INTO wubi86 VALUES('a','工',20),('aaaa','工',5),('aaab','工',4),('wq','你好',10);"
+                "INSERT INTO wubi98 VALUES('wq','你们',10),('kg','号',9),('kghh','号',3);");
+    }
+    {
+        WubiCandidateProvider provider(test::Utf8(db_path));
+        REQUIRE(provider.full_code_for_word("工") == std::optional<std::string>("aaaa"));
+        REQUIRE(provider.full_code_for_word("你好") == std::optional<std::string>("wq"));
+        // 表里没有的词和空词都没有码：调用方据此不显示注解，而不是显示空括号。
+        REQUIRE(!provider.full_code_for_word("式").has_value());
+        REQUIRE(!provider.full_code_for_word("").has_value());
+
+        provider.set_profile(metasequoia::WubiProfile::Wubi98);
+        REQUIRE(provider.full_code_for_word("号") == std::optional<std::string>("kghh"));
+        REQUIRE(provider.full_code_for_word("你们") == std::optional<std::string>("wq"));
+        REQUIRE(!provider.full_code_for_word("工").has_value());
+    }
+    // 旧词库没有这一版的表（还没带 98、新世纪）：查不到就是没有。用「补装词库」把记忆的语义钉死：
+    // 组页循环里每行都会来问一次，所以同一页只付一次开库代价——换成含 98 表的库后仍然返回空，
+    // 直到候选查询在新库上成功（ensure_query_statement 清记忆）或 set_profile()/reset_cache()。
+    const auto thin_path = directory / "thin.db";
+    {
+        TestDatabase db(thin_path);
+        db.exec("CREATE TABLE wubi86(\"key\" TEXT,\"value\" TEXT,\"weight\" INTEGER);"
+                "INSERT INTO wubi86 VALUES('aaaa','工',5),('wq','你好',10);");
+    }
+    {
+        WubiCandidateProvider provider(test::Utf8(thin_path));
+        provider.set_profile(metasequoia::WubiProfile::Wubi98);
+        REQUIRE(!provider.full_code_for_word("工").has_value());
+        REQUIRE(!provider.full_code_for_word("工").has_value());
+
+        // 补装：换成带 wubi98 表的库（失败后不占着句柄，所以这里能替换）。
+        std::filesystem::remove(thin_path);
+        {
+            TestDatabase db(thin_path);
+            db.exec("CREATE TABLE wubi86(\"key\" TEXT,\"value\" TEXT,\"weight\" INTEGER);"
+                    "CREATE TABLE wubi98(\"key\" TEXT,\"value\" TEXT,\"weight\" INTEGER);"
+                    "INSERT INTO wubi98 VALUES('wq','你们',10),('aaaa','工',5);");
+        }
+        // 没换版本、也没失效缓存：仍然不重开，证明记忆生效（否则每行候选都会来开一次库）。
+        REQUIRE(!provider.full_code_for_word("你们").has_value());
+
+        // 生产里的恢复路径：每键的候选查询走 ensure_query_statement()，候选语句在补装后的表上
+        // 准备成功就清掉失败记忆。配置没变时 InputSession::set_wubi_input_options 会早退，
+        // set_profile() 根本不会被调到，所以这条恢复必须是「每键可达」的。
+        // 先证明候选查询真的在新库上跑通了（非空候选），再断言记忆已清。
+        REQUIRE_EQ(provider.query(WubiRequest("aaaa")).size(), static_cast<size_t>(1));
+        REQUIRE(provider.full_code_for_word("你们") == std::optional<std::string>("wq"));
+    }
+    // set_profile() 用同一版本调进来也要清记忆：清除点刻意放在等值早退之前。模拟「选项变了但版本
+    // 没变」的那次调用——先缺表失败，补装后用同版本 set_profile 恢复。这条只护顺序，不护产品行为。
+    const auto heal_path = directory / "heal.db";
+    {
+        TestDatabase db(heal_path);
+        db.exec("CREATE TABLE wubi86(\"key\" TEXT,\"value\" TEXT,\"weight\" INTEGER);"
+                "INSERT INTO wubi86 VALUES('aaaa','工',5);");
+    }
+    {
+        WubiCandidateProvider provider(test::Utf8(heal_path));
+        provider.set_profile(metasequoia::WubiProfile::Wubi98);
+        REQUIRE(!provider.full_code_for_word("工").has_value());
+
+        std::filesystem::remove(heal_path);
+        {
+            TestDatabase db(heal_path);
+            db.exec("CREATE TABLE wubi86(\"key\" TEXT,\"value\" TEXT,\"weight\" INTEGER);"
+                    "CREATE TABLE wubi98(\"key\" TEXT,\"value\" TEXT,\"weight\" INTEGER);"
+                    "INSERT INTO wubi98 VALUES('wq','你们',10);");
+        }
+        provider.set_profile(metasequoia::WubiProfile::Wubi98);
+        REQUIRE(provider.full_code_for_word("你们") == std::optional<std::string>("wq"));
+    }
+    std::filesystem::remove_all(directory);
+}
+
+TEST_CASE(EngineWubiSessionAnnotatesWordsWithTheirFullWubiCode)
+{
+    // 码值写死的是 wubi86 的，先把当前版本钉在内存里（不落盘，不动开发机的 config.toml）：
+    // 开发机把 input.wubi_schema 设成 98 时，断言不能跟着变。会话在构造时读版本。
+    struct ScopedWubi86Schema
+    {
+        std::string previous = ime_config_detail::g_wubi_schema;
+        ScopedWubi86Schema()
+        {
+            ime_config_detail::g_wubi_schema = "wubi86";
+        }
+        ~ScopedWubi86Schema()
+        {
+            ime_config_detail::g_wubi_schema = previous;
+        }
+    } scoped_schema;
+
+    // 集成运行器铺的是锁定的出厂词库；码值取自出厂 wubi86（中 的拆解是 khk，一级简码 k 不用于注解）。
+    EngineInputSession wubi(SchemeType::Wubi);
+    REQUIRE_EQ(wubi.get_wubi_code_annotation("中"), std::string("(khk)"));
+    REQUIRE_EQ(wubi.get_wubi_code_annotation("华"), std::string("(wxfj)"));
+
+    // 词不在码表、空词、以及非五笔会话都不给注解。
+    REQUIRE_EQ(wubi.get_wubi_code_annotation("hello"), std::string());
+    REQUIRE_EQ(wubi.get_wubi_code_annotation(""), std::string());
+    EngineInputSession quanpin(SchemeType::Quanpin);
+    REQUIRE_EQ(quanpin.get_wubi_code_annotation("中"), std::string());
 }

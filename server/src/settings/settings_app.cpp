@@ -429,6 +429,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"shuangpin_schema", GetConfiguredShuangpinSchema()},
             {"wubi_schema", GetConfiguredWubiSchema()},
             {"wubi_mixed_pinyin", GetConfiguredWubiMixedPinyin()},
+            {"wubi_code_hint", GetConfiguredWubiCodeHint()},
             {"escape_keeps_selected_word", GetConfiguredEscapeKeepsSelectedWord()},
             {"enter_learns_english_word", GetConfiguredEnterLearnsEnglishWord()},
             {"english_commit_with_space", GetConfiguredEnglishCommitWithSpace()},
@@ -850,6 +851,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredWubiSchema(json::value_to<std::string>(data.at("value")));
     if (path == "input.wubi_mixed_pinyin")
         return SetConfiguredWubiMixedPinyin(json::value_to<bool>(data.at("value")));
+    if (path == "input.wubi_code_hint")
+        return SetConfiguredWubiCodeHint(json::value_to<bool>(data.at("value")));
     if (path == "input.escape_keeps_selected_word")
         return SetConfiguredEscapeKeepsSelectedWord(json::value_to<bool>(data.at("value")));
     if (path == "input.enter_learns_english_word")

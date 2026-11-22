@@ -188,10 +188,14 @@ std::vector<WordItem> WubiCandidateProvider::assemble(std::vector<Row> leading, 
 void WubiCandidateProvider::reset_cache()
 {
     close_database();
+    value_unavailable_ = false;
 }
 
 void WubiCandidateProvider::set_profile(metasequoia::WubiProfile profile)
 {
+    // 换版本就重开词库，缺表的结论一并作废。这一路不是每键都走：服务端配置没变时
+    // InputSession::set_wubi_input_options 会早退，真正的每键自愈在 ensure_query_statement。
+    value_unavailable_ = false;
     if (profile_ == profile)
         return;
     profile_ = profile;
@@ -249,6 +253,11 @@ bool WubiCandidateProvider::ensure_query_statement()
 {
     if (code_statement_ != nullptr && hint_key_statement_ != nullptr && wildcard_key_statement_ != nullptr)
     {
+        // 三条查询语句就绪就证明这一版的表在词库里，反查「缺表」的结论随之作废。query() 每键都走到
+        // 这里，所以补装词库后不必换版本或重启，下一键就能重新反查；只在 set_profile 里清是不够的，
+        // 服务端配置没变时它根本不会被调用。前提是反查语句与候选语句始终同一条连接、同一张表：
+        // 表名同出自 wubi_profile_table(profile_)，连接和语句由 close_database 一起回收。
+        value_unavailable_ = false;
         return true;
     }
 
@@ -277,6 +286,7 @@ bool WubiCandidateProvider::ensure_query_statement()
                                      " WHERE \"key\" GLOB ?1 GROUP BY \"key\" "
                                      "ORDER BY length(\"key\") ASC, \"key\" ASC" +
                                      limit;
+    // 反查的语句不在这里准备：它只服务候选注解，失败不能连带候选查询。见 ensure_value_statement。
     if (sqlite3_prepare_v2(db_, code_sql.c_str(), -1, &code_statement_, nullptr) != SQLITE_OK ||
         sqlite3_prepare_v2(db_, hint_sql.c_str(), -1, &hint_key_statement_, nullptr) != SQLITE_OK ||
         sqlite3_prepare_v2(db_, wildcard_sql.c_str(), -1, &wildcard_key_statement_, nullptr) != SQLITE_OK)
@@ -285,7 +295,73 @@ bool WubiCandidateProvider::ensure_query_statement()
         close_database();
         return false;
     }
+    value_unavailable_ = false;
     return true;
+}
+
+bool WubiCandidateProvider::ensure_value_statement()
+{
+    if (value_statement_ != nullptr)
+    {
+        return true;
+    }
+    if (value_unavailable_)
+    {
+        return false;
+    }
+    // 打开连接的人负责关：连接早就为候选查询开好时不能关，否则同一条连接上已准备好的三条候选语句
+    // 会被一起 finalize，下一键还得重开重备。
+    const bool opened_here = db_ == nullptr;
+    if (opened_here && sqlite3_open_v2(db_path_.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK)
+    {
+        // 打不开多半是瞬时的（词库正被替换、被占用），不记忆，下一次再试。
+        close_database();
+        return false;
+    }
+    const std::string table = "\"" + std::string(metasequoia::wubi_profile_table(profile_)) + "\"";
+    // 反查：按词取对应的码。走 idx_<table>_value 命中的行通常只有简码到全码两三条，排序代价可忽略；
+    // 最长的那条就是全码。
+    const std::string value_sql =
+        "SELECT \"key\" FROM " + table + " WHERE \"value\" = ?1 ORDER BY length(\"key\") DESC, \"key\" ASC LIMIT 1";
+    const int rc = sqlite3_prepare_v2(db_, value_sql.c_str(), -1, &value_statement_, nullptr);
+    if (rc != SQLITE_OK)
+    {
+        value_statement_ = nullptr;
+        // 词库里没有这一版的表（还没带 98、新世纪表的旧词库）是结构性失败，会一直错到底：组页循环里
+        // 每行候选都会来问一次，记下来让同一页只付一次开库代价。BUSY/LOCKED/IOERR/NOMEM 这些是瞬时的，
+        // 记下来会把一次抖动放大成整会话没有注解，交给下一次重试。
+        value_unavailable_ = rc == SQLITE_ERROR;
+        if (opened_here)
+        {
+            close_database();
+        }
+        return false;
+    }
+    return true;
+}
+
+std::optional<std::string> WubiCandidateProvider::full_code_for_word(const std::string &word)
+{
+    if (word.empty() || !ensure_value_statement())
+    {
+        return std::nullopt;
+    }
+    // 上一轮可能停在 SQLITE_ROW 上，先归零再 bind，同 code_rows。
+    sqlite3_reset(value_statement_);
+    if (sqlite3_bind_text(value_statement_, 1, word.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK)
+    {
+        return std::nullopt;
+    }
+    std::optional<std::string> code;
+    if (sqlite3_step(value_statement_) == SQLITE_ROW)
+    {
+        if (const auto *key = reinterpret_cast<const char *>(sqlite3_column_text(value_statement_, 0)); key != nullptr)
+        {
+            code = key;
+        }
+    }
+    sqlite3_reset(value_statement_);
+    return code;
 }
 
 std::string WubiCandidateProvider::journal_db_path() const
@@ -295,7 +371,8 @@ std::string WubiCandidateProvider::journal_db_path() const
 
 void WubiCandidateProvider::close_database()
 {
-    for (sqlite3_stmt **statement : {&code_statement_, &hint_key_statement_, &wildcard_key_statement_})
+    for (sqlite3_stmt **statement :
+         {&code_statement_, &hint_key_statement_, &wildcard_key_statement_, &value_statement_})
     {
         if (*statement != nullptr)
         {

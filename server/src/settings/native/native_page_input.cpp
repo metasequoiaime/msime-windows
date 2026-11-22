@@ -1792,6 +1792,10 @@ VisualPtr BuildInputPage(PageContext &context)
             Col({MakeRow(L"五笔方案", L"", scheme),
                  ItemSetting(L"拼音混输", L"同一串字母同时给五笔码表和全拼，五笔候选在前",
                              Toggle(context, "input.wubi_mixed_pinyin"), true, false),
+                 ItemSetting(L"拼音候选显示五笔码",
+                             L"混输时在拼音打出的候选后显示该词的五笔全码（如「中 khk」），边打拼音边看五笔怎么敲；"
+                             L"只改候选窗显示，不影响排序与上屏",
+                             Toggle(context, "input.wubi_code_hint"), false, false),
                  ItemSetting(L"z 键通配", L"开启后 z 可匹配码表中该位置的任意字母（含首位），常用于首码不确定时起头",
                              zMode, false, false),
                  ItemSetting(L"四码唯一时自动上屏",

@@ -287,6 +287,21 @@ bool SetConfiguredWubiMixedPinyin(bool enabled)
     return true;
 }
 
+bool GetConfiguredWubiCodeHint()
+{
+    return g_wubi_code_hint;
+}
+
+bool SetConfiguredWubiCodeHint(bool enabled)
+{
+    if (!WriteConfiguredValue("input", "wubi_code_hint", enabled ? "true" : "false"))
+    {
+        return false;
+    }
+    g_wubi_code_hint = enabled;
+    return true;
+}
+
 bool GetConfiguredWubiFourCodeAutoCommit()
 {
     return g_wubi_four_code_auto_commit;

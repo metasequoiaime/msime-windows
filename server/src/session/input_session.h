@@ -39,6 +39,12 @@ class IInputSession
     virtual bool can_expand_initial_candidates() const = 0;
     virtual bool expand_initial_candidates() = 0;
     virtual std::string get_helpcode_annotation(const std::string &word, bool uppercase_all) const = 0;
+    // 五笔会话里按词反查当前版本的全码，返回带括号的显示串（"(khk)"）。只在候选注解上用，
+    // 不参与查询与上屏；非五笔会话、词不在码表时为空。非 const：反查要懒准备查询语句，同 find_candidate。
+    virtual std::string get_wubi_code_annotation(const std::string &)
+    {
+        return {};
+    }
     virtual std::optional<WordItem> find_candidate(const std::string &, const std::string &)
     {
         return std::nullopt;

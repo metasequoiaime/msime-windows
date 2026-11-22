@@ -144,6 +144,8 @@ extern std::string g_candidate_text_color;
 extern std::string g_shuangpin_schema;
 extern std::string g_wubi_schema;
 extern bool g_wubi_mixed_pinyin;
+// 混输时给拼音候选附上该词的五笔全码，供用户边打拼音边学五笔。
+extern bool g_wubi_code_hint;
 extern bool g_escape_keeps_selected_word;
 extern bool g_enter_learns_english_word;
 extern bool g_english_commit_with_space;

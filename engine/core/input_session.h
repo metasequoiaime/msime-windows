@@ -212,6 +212,11 @@ class InputSession
     bool can_expand_initial_candidates() const;
     bool expand_initial_candidates();
     std::optional<WordItem> find_candidate(const std::string &key, const std::string &value);
+    // 按词反查当前五笔版本的全码（候选注解用），不查候选也不改状态；词不在码表时返回 nullopt。
+    std::optional<std::string> wubi_full_code_for_word(const std::string &word)
+    {
+        return engine_.wubi_full_code_for_word(word);
+    }
 
     const std::string &get_pinyin_sequence() const;
     const std::string &get_pinyin_sequence_with_cases() const;

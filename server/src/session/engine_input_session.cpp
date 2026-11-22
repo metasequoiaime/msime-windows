@@ -420,6 +420,18 @@ IInputSession::CreatingWordProgress EngineInputSession::update_creating_word_pro
     return session_.update_creating_word_progress(current_pinyin, current_word, selected_word, selection_transition);
 }
 
+std::string EngineInputSession::get_wubi_code_annotation(const std::string &word)
+{
+    // 反查表就是五笔码表，只有五笔会话才有「这个词的五笔打法」。词不在码表（英文、emoji、日期、
+    // 云/AI 这类合成候选）返回空，不报错也不留空白。
+    if (word.empty() || session_.scheme() != SchemeType::Wubi)
+        return {};
+    const auto code = session_.wubi_full_code_for_word(word);
+    if (!code || code->empty())
+        return {};
+    return "(" + *code + ")";
+}
+
 std::vector<IInputSession::WordItem> EngineInputSession::query_radical(const std::string &code, SchemeType scheme,
                                                                        const ShuangpinProfile &profile) const
 {
