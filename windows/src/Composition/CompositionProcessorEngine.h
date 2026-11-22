@@ -66,9 +66,9 @@ class CCompositionProcessorEngine
     // engine/contracts/v_mode_input.h，前缀由 Server 的 VModeChanged 决定。
     static bool IsVModeInputKey(WCHAR wch, _In_reads_opt_(length) const WCHAR *buffer, DWORD_PTR length,
                                 DWORD_PTR caret);
-    // V 模式里数字键用来输入，选词改用 Shift+数字。放在 IsVModeInputKey 之后判断：Shift+8/9
-    // 打出的 * ( 在那里已经当编码键收下了。
-    static bool IsVModeShiftDigitSelectionKey(UINT uCode, _In_reads_opt_(length) const WCHAR *buffer, DWORD_PTR length);
+    // V 模式里字母是选词键，a 是第一个候选。规则与 Server 同一条（engine/contracts/v_mode_input.h），
+    // 这里只用来把键归到 SELECT_BY_NUMBER，选哪个由 Server 回。
+    static bool IsVModeSelectionLetterKey(UINT uCode, _In_reads_opt_(length) const WCHAR *buffer, DWORD_PTR length);
     // 当句中辅助码触发键的分号在缓冲里记成反引号，当末尾辅助码（间接）触发键的反引号、分号记成 kEndMarker
     // （与 Server 的 raw 一致），其余字符原样返回。
     static WCHAR NormalizeMidSentenceHelpcodeTrigger(WCHAR wch, _In_reads_opt_(length) const WCHAR *buffer,

@@ -309,9 +309,10 @@ VisualPtr BuildToolsPage(PageContext &context)
                  "utility.r_mode"));
     page.AddSection(
         centered(L"数字与计算(V 模式)",
-                 L"中文模式下输入 V 再接数字或算式：V123 → 一百二十三 / 壹佰贰拾叁；V123.45 → "
-                 L"壹佰贰拾叁元肆角伍分；V1+2*3 → 7（支持 + - * / 和括号）。双拼和五笔按 Shift+V；全拼大小写 v "
-                 L"都可以。空格上屏；数字键用来输入，Shift+数字选词。",
+                 L"中文模式下输入 V 再接数字或算式：V123 → 壹佰贰拾叁 / 一百二十三 / 壹佰贰拾叁元整 / CXXIII；"
+                 L"V123.45 → 壹佰贰拾叁元肆角伍分；V1+2*3 → 7（支持 + - * / ** 和括号）。双拼和五笔按 "
+                 L"Shift+V；全拼大小写 v 都可以。空格或回车（含小键盘回车）上屏首选，字母选其他候选（a 是第一个），"
+                 L"￥ 直接上屏货币格式。",
                  "utility.v_mode"));
 
     struct Holder : msimeui::Container

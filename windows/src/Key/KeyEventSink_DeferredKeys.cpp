@@ -628,6 +628,13 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
             isInputKey = CCompositionProcessorEngine::IsDateTimeInputKey(
                 *classifiedCode, *classifiedWch, shadow.rawInput.data(), shadow.rawInput.size(), shadow.caret);
         }
+        // V 模式列着候选时，字母是选词键而不是输入：否则上面那个空组合判定会把它当字母输入。
+        if (isInputKey && shadow.candidateActive &&
+            CCompositionProcessorEngine::IsVModeSelectionLetterKey(*classifiedCode, shadow.rawInput.data(),
+                                                                   shadow.rawInput.size()))
+        {
+            isInputKey = false;
+        }
         // V 模式的数字和运算符，同上。
         if (!isInputKey && !shadow.japaneseMode)
         {
@@ -718,15 +725,23 @@ bool CMetasequoiaIME::_ClassifyDeferredKeyDown(_In_ ITfContext *pContext, WPARAM
             break;
         }
 
-        // Same order as the sync classifier: V-mode Shift+1..9 selects, then a
-        // highlighted-candidate punctuation such as Shift+0 ')' commits with
-        // punctuation, and only then does the digit key code select. Checking the
-        // key code first would turn Shift+digit punctuation into number selection.
-        const bool vModeShiftDigitSelection =
-            (capturedModifiers & 0b00000001) != 0 && *classifiedCode >= L'1' && *classifiedCode <= L'9' &&
+        // Same order as the sync classifier: a V-mode letter selects (a is the first candidate), then a
+        // highlighted-candidate punctuation such as Shift+0 ')' commits with punctuation, and only then does
+        // the digit key code select. Checking the key code first would turn Shift+digit punctuation into
+        // number selection.
+        if (shadow.candidateActive && CCompositionProcessorEngine::IsVModeSelectionLetterKey(
+                                          *classifiedCode, shadow.rawInput.data(), shadow.rawInput.size()))
+        {
+            return setKeyState(CATEGORY_CANDIDATE, FUNCTION_SELECT_BY_NUMBER);
+        }
+        // 与同步路径一致：直接弄出 ￥ / ¥ 的键盘把键交给标点上屏，等 Server 回金额文本。
+        if (shadow.candidateActive && FanyImeVModeInput::IsCurrencySymbol(*classifiedWch) &&
             FanyImeVModeInput::IsComposition(shadow.rawInput.data(), shadow.rawInput.size(),
-                                             Global::VModeTrigger.load(std::memory_order_relaxed));
-        if (!vModeShiftDigitSelection && shadow.candidateActive && *classifiedWch != L'\0' &&
+                                             Global::VModeTrigger.load(std::memory_order_relaxed)))
+        {
+            return setKeyState(CATEGORY_COMPOSING, FUNCTION_PUNCTUATION);
+        }
+        if (shadow.candidateActive && *classifiedWch != L'\0' &&
             Global::CommitWithHighlightedCandPunc.count(*classifiedWch) > 0)
         {
             return setKeyState(CATEGORY_COMPOSING, FUNCTION_PUNCTUATION);

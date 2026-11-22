@@ -12,9 +12,9 @@
 // 都认，全拼里 v 不会出现在开头。小写 v 只有后面接了数字或左括号才算 V 模式，vip 这类输入照旧走
 // 拼音和英文混输。
 //
-// 进了 V 模式后，数字和 . + - * / ( ) 都是编码键：数字不再选词，改用 Shift+数字选，
-// 空格上屏高亮的那个。Shift+8/9/0 打出的 * ( ) 是编码键，所以只有 Shift+1~7 选词，V 模式的候选
-// 也不会超过 7 个。
+// 进了 V 模式后，数字和 . + - * / ( ) ** 都是编码键，数字不再选词：字母是选词键，a/A 是第一个候选、
+// b/B 第二个，依此类推，空格上屏高亮的那个。Shift+数字不再是选词键，Shift+4 打出的 ￥ 直接上屏货币格式
+// 大写的金额（见 IsCurrencySymbol），回车（含小键盘回车）直接上屏算术结果。
 //
 // TSF 在同步吃键阶段按这里判断，Server 按同一条规则改输入串，两边必须一致，否则输入串会分叉。
 // TSF 看不到配置和方案，由 Server 用 VModeChanged 告诉它当前的 Trigger。
@@ -53,6 +53,27 @@ template <typename Char> constexpr bool IsInputChar(Char ch)
 template <typename Char> constexpr bool IsStartChar(Char ch)
 {
     return IsDigit(ch) || ch == Char('(');
+}
+
+// 候选选词键：字母，大小写都认。V 模式的编码键里没有字母，所以它们空出来当快捷键。
+template <typename Char> constexpr bool IsSelectionLetter(Char ch)
+{
+    return (ch >= Char('a') && ch <= Char('z')) || (ch >= Char('A') && ch <= Char('Z'));
+}
+
+// a/A → 0，b/B → 1……z/Z → 25；不是字母时 -1。
+template <typename Char> constexpr int SelectionIndex(Char ch)
+{
+    return ch >= Char('a') && ch <= Char('z')   ? ch - Char('a')
+           : ch >= Char('A') && ch <= Char('Z') ? ch - Char('A')
+                                                : -1;
+}
+
+// 货币符号：中文键盘上 Shift+4 打出全角 ￥（U+FFE5），半角 ¥（U+00A5）也认。比较的是宽字符，
+// 所以不接受窄字符，免得 char 装不下。
+constexpr bool IsCurrencySymbol(unsigned int ch)
+{
+    return ch == 0x00A5u || ch == 0xFFE5u;
 }
 
 template <typename Char> constexpr bool IsPrefix(Char ch, Trigger trigger)
