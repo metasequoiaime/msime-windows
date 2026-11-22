@@ -15,6 +15,7 @@
 #include "ipc/queried_candidate_arrangement_policy.h"
 #include "ipc/candidate_ui_owner.h"
 #include "ipc/candidate_mixed_english_preservation.h"
+#include "ipc/candidate_wubi_code_hint_policy.h"
 #include "ipc/input_key_policy.h"
 #include "utils/common_utils.h"
 #include <utf8.h>
@@ -297,11 +298,16 @@ std::string BuildCurrentCandidatePage()
     // 提示不在该模式出现（候选来源是 Generated，本来也不走辅助码的整句规则）。
     const bool radical_mode = IsRadicalCandidateListActive();
     // 五笔混输里拼音查出来的候选，在词后附上该词的五笔全码，用户边用拼音边看五笔怎么敲。
-    // 只限五笔会话：拼音/双拼会话没有「这个词的五笔打法」这个概念；UILess 宿主自绘，页里的注解没人读，
-    // 不必为此查表（同 phonetics_allowed）。
-    const bool wubi_code_hint = !radical_mode && !translation_page && !IsUiLessMode() && !IsCandidateSubPageActive() &&
-                                current_scheme == SchemeType::Wubi && GetConfiguredWubiMixedPinyin() &&
-                                GetConfiguredWubiCodeHint();
+    // 五笔码注解的闸门在 ipc/candidate_wubi_code_hint_policy.h 里，脱离 IPC 全局状态也能自动验证。
+    // UILess 宿主自绘，页里的注解没人读，不必为此查表（同 phonetics_allowed）。
+    FanyImeIpc::WubiCodeHintContext wubi_hint_context;
+    wubi_hint_context.session_scheme = current_scheme;
+    wubi_hint_context.mixed_pinyin = GetConfiguredWubiMixedPinyin();
+    wubi_hint_context.hint_enabled = GetConfiguredWubiCodeHint();
+    wubi_hint_context.ui_less_mode = IsUiLessMode();
+    wubi_hint_context.sub_page_active = IsCandidateSubPageActive();
+    wubi_hint_context.radical_page = radical_mode;
+    wubi_hint_context.translation_page = translation_page;
 
     // 组页时读一次徽标配置，循环内不再逐条查
     const bool show_fixed_badge = GetConfiguredCandidateFixedBadge();
@@ -387,17 +393,11 @@ std::string BuildCurrentCandidatePage()
             view.annotation = g_inputSession->get_helpcode_annotation(item.word, uppercase_all_helpcodes);
         }
         // 英文、日期、快捷短语这类合成候选的 word 不是词库里的词，注解与反查都先按来源排掉。
-        const bool annotation_source_allowed =
-            item.source != CandidateSource::EnglishDictionary && item.source != CandidateSource::QuickPhrase &&
-            item.source != CandidateSource::Emoji && item.source != CandidateSource::Kaomoji &&
-            item.source != CandidateSource::Symbol && item.source != CandidateSource::DateTime &&
-            item.source != CandidateSource::Generated;
-        if (show_helpcodes && annotation_source_allowed)
+        // 辅助码提示只在拼音/双拼会话出现，与五笔码互斥，用 else if 把「一条候选只有一个注解
+        // 来源」写进结构。
+        if (show_helpcodes && !FanyImeIpc::IsSynthesizedCandidateSource(item.source))
             view.annotation = g_inputSession->get_helpcode_annotation(item.word, uppercase_all_helpcodes);
-        // 五笔码表命中的那行，码就是用户刚敲进去的串，再加一遍只是噪声；只标拼音侧的行
-        // （只有五笔码表会把行标成 SchemeType::Wubi，反过来用它区分两侧）。辅助码提示只在拼音/
-        // 双拼会话出现，与这里互斥，用 else if 把「一条候选只有一个注解来源」写进结构。
-        else if (wubi_code_hint && annotation_source_allowed && item.scheme != SchemeType::Wubi)
+        else if (FanyImeIpc::WubiCodeHintAnnotatesRow(wubi_hint_context, item.source, item.scheme))
             view.annotation = g_inputSession->get_wubi_code_annotation(item.word);
         if (!IsCandidateSubPageActive() && item.word == JevSelectionWord() && Jev::IsPoolSource(item) &&
             item.fixed_position == 0)

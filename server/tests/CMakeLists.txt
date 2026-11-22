@@ -186,6 +186,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_wheel_paging.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_view_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_text_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_candidate_wubi_code_hint_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_region_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_order_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_traditional_variant_expansion_policy.cpp"
