@@ -17,6 +17,7 @@
 #include <utility>
 #include <cstdlib>
 #include <climits>
+#include <ctime>
 #include <boost/algorithm/string.hpp>
 #include <fmt/xchar.h>
 #include <utf8/cpp17.h>
@@ -771,8 +772,21 @@ int ShuangpinDictionary::create_word_from_quanpin(string pinyin, string word)
     {
         return ERROR_CODE;
     }
-    (void)user_dictionary::record_user_insert(metasequoia::path_to_utf8(paths_.user(metasequoia::assets::user_journal)),
-                                              user_dictionary::DictionaryKind::Pinyin, pinyin, word, 10000);
+    std::int64_t main_weight = user_dictionary::kTemporaryPinyinWordWeight;
+    if (!user_dictionary::record_automatic_pinyin_insert(
+            metasequoia::path_to_utf8(paths_.user(metasequoia::assets::user_journal)), pinyin, word,
+            static_cast<std::int64_t>(std::time(nullptr)), &main_weight))
+    {
+        (void)delete_data(quanpin_db_, build_quanpin_sql_for_deleting_canonical_word(pinyin, word));
+        return ERROR_CODE;
+    }
+    // 日志里已是正式词条（主库被重建过、少了这一行）：主库这一行按日志记的正式权重写，不留成临时权重。
+    if (main_weight != user_dictionary::kTemporaryPinyinWordWeight)
+    {
+        (void)update_data(quanpin_db_, fmt::format("update {} set weight = {} where key = '{}' and value = '{}';",
+                                                   quanpin::build_table_name(segments), main_weight,
+                                                   escape_sql_text(pinyin), escape_sql_text(word)));
+    }
     /* 插入新词之后要清理缓存 */
     reset_cache();
     return OK;
@@ -1087,7 +1101,8 @@ std::string ShuangpinDictionary::build_quanpin_sql_for_inserting_word(const std:
     }
     const std::string table = quanpin::build_table_name(cuts.front());
     return fmt::format("insert into {} (key, jp, value, weight) values ('{}', '{}', '{}', '{}');", table,
-                       escape_sql_text(key), escape_sql_text(jp), escape_sql_text(value), 10000);
+                       escape_sql_text(key), escape_sql_text(jp), escape_sql_text(value),
+                       user_dictionary::kTemporaryPinyinWordWeight);
 }
 
 std::string ShuangpinDictionary::build_quanpin_sql_for_updating_word(const std::string &word) const

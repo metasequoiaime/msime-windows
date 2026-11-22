@@ -135,7 +135,9 @@ class IInputSession
     virtual std::string pending_suffix() const = 0;
 
     virtual int store_user_phrase(std::string pinyin, std::string word) = 0;
-    virtual int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word) = 0;
+    // permanent：造词模式里亲手造的词，直接正式入库、不参与临时新词过期。
+    virtual int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word,
+                                                        bool permanent = false) = 0;
     // remove_candidate 没有出错时的返回值（引擎各词库的 OK）：拼音、五笔词库删除成功时返回它。日语方案不支持删词，
     // 什么都不做也返回它，要确认真的删了词的调用方得自己排除日语候选。单字母输入不删、词库删除失败都返回 -1。
     static constexpr int kRemoveCandidateSucceeded = 0;

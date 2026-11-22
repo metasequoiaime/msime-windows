@@ -917,7 +917,7 @@ KeyResult InputSession::commit(std::size_t index)
             return {true, std::move(text), std::move(diagnostic)};
         }
         if (!immediate_phrase_progress_.word.empty() && progress.can_store && candidate_learning_enabled_ &&
-            store_user_phrase_from_canonical_pinyin(progress.pinyin, progress.word) != 0)
+            store_user_phrase_from_canonical_pinyin(progress.pinyin, progress.word, /*permanent=*/true) != 0)
         {
             diagnostic = "Unable to persist the composed phrase.";
         }
@@ -1287,7 +1287,7 @@ std::optional<std::string> InputSession::learn_candidate(std::size_t index)
         return adjust_candidate_frequency(index, frequency_adjustment_, false);
     }
 
-    const WordItem &selected = candidates()[index];
+    const WordItem selected = candidates()[index];
     std::optional<std::string> quick_phrase_diagnostic = learn_quick_phrase_order(index);
     if (selected.source == CandidateSource::QuickPhrase)
     {
@@ -1297,6 +1297,20 @@ std::optional<std::string> InputSession::learn_candidate(std::size_t index)
     if (selected.latin_word)
     {
         return std::nullopt;
+    }
+    // 自动新词首次以低权重临时保留。第二次选用时无论它是否已排第一、调频是否关闭，都先转正；
+    // 这次确认不再叠加普通调频，后续选择才进入常规调频路径。
+    if ((selected.source == CandidateSource::Database || selected.source == CandidateSource::UserDatabase) &&
+        (selected.scheme == SchemeType::Quanpin || selected.scheme == SchemeType::Shuangpin))
+    {
+        const std::string &canonical = selected.canonical_pinyin.empty() ? selected.pinyin : selected.canonical_pinyin;
+        if (user_dictionary::confirm_temporary_pinyin_word(path_to_utf8(paths_.dictionary(assets::main_dictionary)),
+                                                           path_to_utf8(paths_.user(assets::user_journal)), canonical,
+                                                           selected.word))
+        {
+            reset_cache();
+            return std::nullopt;
+        }
     }
     // 长词前缀补全（#1343）：它的键比首选长，和同页其他候选不是一个读音，按排位挪位置会拿别的键的权重
     // 当阶梯（engine/AGENTS.md「用户词库权重」）。只按它自己的键加一次权重：出厂的长词几乎都是同一个低

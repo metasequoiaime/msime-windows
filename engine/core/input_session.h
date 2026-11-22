@@ -267,7 +267,8 @@ class InputSession
     void set_wubi_literal_input(bool literal);
 
     int store_user_phrase(std::string pinyin, std::string word);
-    int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word);
+    // permanent：用户在造词模式里亲手造的词，直接正式入库；默认按自动新词临时保留。
+    int store_user_phrase_from_canonical_pinyin(std::string pinyin, std::string word, bool permanent = false);
     // 混输组合里五笔与拼音候选共存，删除必须由调用方指明候选自己的方案，不能按会话方案。
     int remove_candidate(std::string pinyin, std::string word, SchemeType scheme);
     int cache_dynamic_candidate(const std::string &pinyin, const std::string &word, CandidateSource source);

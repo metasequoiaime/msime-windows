@@ -92,6 +92,17 @@ void bounded_text(const std::string &value, std::size_t maximum, bool empty = fa
     require((empty || !value.empty()) && value.size() <= maximum && value.find('\0') == std::string::npos &&
             utf8::is_valid(value.begin(), value.end()));
 }
+bool has_column(sqlite3 *db, const char *table, const char *column)
+{
+    auto columns = prepare(db, (std::string("PRAGMA table_info(\"") + table + "\")").c_str());
+    while (sqlite3_step(columns.get()) == SQLITE_ROW)
+    {
+        const unsigned char *found = sqlite3_column_text(columns.get(), 1);
+        if (found != nullptr && std::string(reinterpret_cast<const char *>(found)) == column)
+            return true;
+    }
+    return false;
+}
 bool overlap(const std::filesystem::path &a, const std::filesystem::path &b)
 {
     const auto p = std::mismatch(a.begin(), a.end(), b.begin(), b.end());
@@ -112,8 +123,13 @@ void stream_dictionary_state(const RuntimePaths &paths, const std::function<bool
     execute(db.get(), "PRAGMA query_only=ON");
     execute(db.get(), "BEGIN");
     {
-        auto rows = prepare(db.get(), "SELECT dictionary,key,value,weight,display,operation,user_inserted FROM "
-                                      "user_dictionary_operations ORDER BY dictionary,key,value");
+        // query_only 连接不做 schema 迁移；还没被新版本以读写方式打开过的日志没有这两列，按正式词条读。
+        const bool has_learning_state = has_column(db.get(), "user_dictionary_operations", "learning_count") &&
+                                        has_column(db.get(), "user_dictionary_operations", "last_learned_at");
+        const std::string sql = std::string("SELECT dictionary,key,value,weight,display,operation,user_inserted,") +
+                                (has_learning_state ? "learning_count,last_learned_at" : "0,0") +
+                                " FROM user_dictionary_operations ORDER BY dictionary,key,value";
+        auto rows = prepare(db.get(), sql.c_str());
         int status;
         while ((status = sqlite3_step(rows.get())) == SQLITE_ROW)
         {
@@ -123,7 +139,9 @@ void stream_dictionary_state(const RuntimePaths &paths, const std::function<bool
                                        sqlite3_column_int64(rows.get(), 3),
                                        text(rows.get(), 4),
                                        text(rows.get(), 5) == "delete",
-                                       sqlite3_column_int(rows.get(), 6) != 0};
+                                       sqlite3_column_int(rows.get(), 6) != 0,
+                                       sqlite3_column_int(rows.get(), 7),
+                                       sqlite3_column_int64(rows.get(), 8)};
             require(emit(entry));
         }
         require(status == SQLITE_DONE);
@@ -170,8 +188,8 @@ RuntimePaths stage_dictionary_state(const std::filesystem::path &resources, cons
             execute(db.get(), "BEGIN IMMEDIATE");
             auto entry = prepare(
                 db.get(),
-                "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display,user_inserted) "
-                "VALUES(?1,?2,?3,?4,?5,?6,?7)");
+                "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display,user_inserted,"
+                "learning_count,last_learned_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)");
             auto position = prepare(
                 db.get(),
                 "INSERT INTO fixed_candidate_positions(context_key,entry_key,value,position) VALUES(?1,?2,?3,?4)");
@@ -201,6 +219,12 @@ RuntimePaths stage_dictionary_state(const std::filesystem::path &resources, cons
                             require(sqlite3_bind_int64(stmt, 5, value.weight) == SQLITE_OK);
                             bind(stmt, 6, value.display);
                             require(sqlite3_bind_int(stmt, 7, value.user_inserted) == SQLITE_OK);
+                            require(value.learning_count == 0 || (value.kind == PersonalDictionaryKind::Pinyin &&
+                                                                  !value.deleted && value.learning_count == 1));
+                            require(value.last_learned_at >= 0 &&
+                                    (value.learning_count == 0 || value.last_learned_at > 0));
+                            require(sqlite3_bind_int(stmt, 8, value.learning_count) == SQLITE_OK);
+                            require(sqlite3_bind_int64(stmt, 9, value.last_learned_at) == SQLITE_OK);
                         }
                         else
                         {

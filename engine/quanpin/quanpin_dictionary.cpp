@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <ctime>
 #include <fmt/format.h>
 #include <string_view>
 #include <unordered_map>
@@ -2269,22 +2270,55 @@ int QuanpinDictionary::create_word(std::string pinyin, std::string word)
         return ERROR_CODE;
     }
 
+    return store_new_word(pinyin, jp, word, /*permanent=*/false);
+}
+
+int QuanpinDictionary::store_new_word(const std::string &pinyin, const std::string &jp, const std::string &word,
+                                      bool permanent)
+{
+    const std::string journal = metasequoia::path_to_utf8(paths_.user(metasequoia::assets::user_journal));
     if (check_data(build_sql_for_checking_word(pinyin, word)))
     {
+        // 已经在词库里。亲手造出的词如果还是一个临时自动新词，就地转正。
+        if (permanent && user_dictionary::promote_temporary_pinyin_word(
+                             metasequoia::path_to_utf8(paths_.dictionary(metasequoia::assets::main_dictionary)),
+                             journal, pinyin, word))
+        {
+            reset_cache();
+        }
         return OK;
     }
 
-    if (insert_data(build_sql_for_inserting_word(pinyin, jp, word)) != OK)
+    const std::int64_t weight =
+        permanent ? user_dictionary::kFormalPinyinWordWeight : user_dictionary::kTemporaryPinyinWordWeight;
+    if (insert_data(build_sql_for_inserting_word(pinyin, jp, word, weight)) != OK)
     {
         return ERROR_CODE;
     }
-    (void)user_dictionary::record_user_insert(metasequoia::path_to_utf8(paths_.user(metasequoia::assets::user_journal)),
-                                              user_dictionary::DictionaryKind::Pinyin, pinyin, word, 10000);
+    if (permanent)
+    {
+        (void)user_dictionary::record_user_insert(journal, user_dictionary::DictionaryKind::Pinyin, pinyin, word,
+                                                  user_dictionary::kFormalPinyinWordWeight);
+    }
+    else
+    {
+        std::int64_t main_weight = user_dictionary::kTemporaryPinyinWordWeight;
+        if (!user_dictionary::record_automatic_pinyin_insert(
+                journal, pinyin, word, static_cast<std::int64_t>(std::time(nullptr)), &main_weight))
+        {
+            // 日志写不进就不留这一行：主库里有、日志里没有的词下次装新词库时会无声消失，也永远不会过期。
+            (void)delete_data(build_sql_for_deleting_word(pinyin, word));
+            return ERROR_CODE;
+        }
+        // 日志里已是正式词条（主库被重建过、少了这一行）：主库这一行按日志记的正式权重写，不留成临时权重。
+        if (main_weight != user_dictionary::kTemporaryPinyinWordWeight)
+            (void)update_data(build_sql_for_setting_word_weight(pinyin, word, main_weight));
+    }
     reset_cache();
     return OK;
 }
 
-int QuanpinDictionary::create_word_from_canonical_pinyin(std::string pinyin, std::string word)
+int QuanpinDictionary::create_word_from_canonical_pinyin(std::string pinyin, std::string word, bool permanent)
 {
     const auto segments = quanpin::split_segments(pinyin);
     const size_t han_count = HelpcodeUtils::count_han_chars(word);
@@ -2302,18 +2336,7 @@ int QuanpinDictionary::create_word_from_canonical_pinyin(std::string pinyin, std
     // split_segments 校验过段数、逐段完整性，jp 也是每段一字母、长度必然等于字数。
     // do_validate 会先 remove_delimiters 再用贪心 correction 重切，把 qi'e'huan 断成
     // qie'huan（段数 3→2），从而误杀这条合法整句——正是 AI / 云联想选中却入不了库的根因。
-    if (check_data(build_sql_for_checking_word(pinyin, word)))
-    {
-        return OK;
-    }
-    if (insert_data(build_sql_for_inserting_word(pinyin, jp, word)) != OK)
-    {
-        return ERROR_CODE;
-    }
-    (void)user_dictionary::record_user_insert(metasequoia::path_to_utf8(paths_.user(metasequoia::assets::user_journal)),
-                                              user_dictionary::DictionaryKind::Pinyin, pinyin, word, 10000);
-    reset_cache();
-    return OK;
+    return store_new_word(pinyin, jp, word, permanent);
 }
 
 int QuanpinDictionary::update_weight_by_word(std::string word)
@@ -2755,7 +2778,7 @@ std::string QuanpinDictionary::build_sql_for_checking_word(const std::string &ke
 }
 
 std::string QuanpinDictionary::build_sql_for_inserting_word(const std::string &key, const std::string &jp,
-                                                            const std::string &value)
+                                                            const std::string &value, std::int64_t weight)
 {
     const auto cuts = cut_for_write(key);
     if (cuts.empty())
@@ -2764,7 +2787,20 @@ std::string QuanpinDictionary::build_sql_for_inserting_word(const std::string &k
     }
     const std::string table = quanpin::build_table_name(cuts.front());
     return fmt::format("insert into {} (key, jp, value, weight) values ('{}', '{}', '{}', '{}');", table,
-                       escape_sql_text(key), escape_sql_text(jp), escape_sql_text(value), 10000);
+                       escape_sql_text(key), escape_sql_text(jp), escape_sql_text(value), weight);
+}
+
+std::string QuanpinDictionary::build_sql_for_setting_word_weight(const std::string &key, const std::string &value,
+                                                                 std::int64_t weight)
+{
+    const auto cuts = cut_for_write(key);
+    if (cuts.empty())
+    {
+        return "";
+    }
+    const std::string table = quanpin::build_table_name(cuts.front());
+    return fmt::format("update {} set weight = {} where key = '{}' and value = '{}';", table, weight,
+                       escape_sql_text(key), escape_sql_text(value));
 }
 
 std::string QuanpinDictionary::build_sql_for_updating_word(const std::string &word)

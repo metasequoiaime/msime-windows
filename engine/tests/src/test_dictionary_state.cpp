@@ -76,7 +76,7 @@ void run(bool capacity)
     }
     std::vector<DictionaryStateRecord> records{
         DictionaryStateEntry{PersonalDictionaryKind::Pinyin, "ni'hao", "你好", 0, "", true, true},
-        DictionaryStateEntry{PersonalDictionaryKind::Pinyin, "ni'hao", "拟好", 200, "", false, false},
+        DictionaryStateEntry{PersonalDictionaryKind::Pinyin, "ni'hao", "拟好", 1000, "", false, true, 1, 12345},
         DictionaryStateEntry{PersonalDictionaryKind::Pinyin, "ni'hao", "拟蒿", 150, "", false, true},
         DictionaryStateEntry{PersonalDictionaryKind::QuickPhrase, "fixture", "合成短语", 100, "", false, true},
         DictionaryStateEntry{PersonalDictionaryKind::English, "cloudfixture", "Cloudfixture", 100, "Cloudfixture",
@@ -115,17 +115,19 @@ void run(bool capacity)
         return true;
     });
     check(roundtrip.size() == records.size(), "state record lost");
-    bool selection = false, ownership = false, deleted_ownership = false;
+    bool selection = false, ownership = false, deleted_ownership = false, learning_state = false;
     for (const auto &record : roundtrip)
     {
         if (auto p = std::get_if<DictionaryStateSelection>(&record))
             selection = p->count == 1;
         if (auto p = std::get_if<DictionaryStateEntry>(&record); p && p->value == "拟蒿")
             ownership = p->user_inserted;
+        if (auto p = std::get_if<DictionaryStateEntry>(&record); p && p->value == "拟好")
+            learning_state = p->learning_count == 1 && p->last_learned_at == 12345;
         if (auto p = std::get_if<DictionaryStateEntry>(&record); p && p->value == "你好")
             deleted_ownership = p->deleted && p->user_inserted;
     }
-    check(selection && ownership && deleted_ownership, "counter or ownership lost");
+    check(selection && ownership && deleted_ownership && learning_state, "counter or ownership lost");
     SessionOptions options;
     options.paths = second;
     options.learning = false;
