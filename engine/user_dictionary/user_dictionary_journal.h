@@ -7,6 +7,8 @@
 #include "../core/word_item.h"
 #include "../core/wubi_profile.h"
 
+struct sqlite3;
+
 namespace user_dictionary
 {
 enum class DictionaryKind
@@ -65,8 +67,7 @@ bool record_upsert(const std::string &user_db_path, DictionaryKind kind, const s
 bool record_weight_edit(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
                         const std::string &value, std::int64_t weight, const std::string &display = {});
 bool record_user_insert(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
-                        const std::string &value, std::int64_t weight, const std::string &display = {},
-                        const std::string &source_id = {});
+                        const std::string &value, std::int64_t weight, const std::string &display = {});
 bool record_delete(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
                    const std::string &value);
 bool is_user_inserted(const std::string &user_db_path, DictionaryKind kind, const std::string &key,
@@ -115,8 +116,7 @@ enum class LatinWordWrite
 // 逐条加进 latin_words 与日志，整批一个事务（词库是还没有这张表的旧版本时先建表）。结果与 words 一一对应；
 // 事务本身失败时全部是 Failed，什么也没写。调用方先用 quanpin::parse_latin_entry 规范好键。
 std::vector<LatinWordWrite> add_user_latin_words(const std::string &main_db_path, const std::string &user_db_path,
-                                                 const std::vector<UserLatinWord> &words,
-                                                 const std::string &source_id = {});
+                                                 const std::vector<UserLatinWord> &words);
 // 把用户加的 (old_key, old_value) 换成 word：两张表上删旧写新，一个事务。
 LatinWordWrite update_user_latin_word(const std::string &main_db_path, const std::string &user_db_path,
                                       const std::string &old_key, const std::string &old_value,
@@ -204,6 +204,37 @@ struct ReplayResult
 
 ReplayResult replay(const std::string &user_db_path, const std::string &main_db_path,
                     const std::string &english_db_path);
+
+// 种子词库（按来源导入的外部词库）。
+//
+// 用户日志里的 dictionary_sources 记来源的名称、格式和启停/删除状态，seed_entries 记每个来源的词条，
+// 同一个词可以同时属于多个来源。它们与个人日志 user_dictionary_operations 分开：种子词条不是用户
+// 的编辑，不进个人列表、个人导出，也不带个人词条的合并与换库规则。
+//
+// 查询仍只查主词库：启用来源的词条物化进主库的拼音表和 latin_words，主库里的 seed_materialized
+// 记下哪些行是种子层插进去的，停用、删除时只撤这些行，不碰出厂词条和用户自己的词。
+inline constexpr const char *kSeedJournalTablesSql =
+    "CREATE TABLE IF NOT EXISTS dictionary_sources("
+    "id TEXT PRIMARY KEY,name TEXT NOT NULL,format TEXT NOT NULL,"
+    "enabled INTEGER NOT NULL DEFAULT 1,deleted INTEGER NOT NULL DEFAULT 0,"
+    "created_at INTEGER NOT NULL DEFAULT(unixepoch()),updated_at INTEGER NOT NULL DEFAULT(unixepoch()));"
+    "CREATE TABLE IF NOT EXISTS seed_entries("
+    "source_id TEXT NOT NULL,dictionary TEXT NOT NULL CHECK(dictionary IN ('pinyin','latin')),"
+    "key TEXT NOT NULL,value TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
+    "exact_only INTEGER NOT NULL DEFAULT 0,"
+    "PRIMARY KEY(source_id,dictionary,key,value));"
+    "CREATE INDEX IF NOT EXISTS seed_entries_by_entry ON seed_entries(dictionary,key,value);";
+// 主词库里的标记表：dictionary 为 'pinyin' 或 'latin'。
+inline constexpr const char *kSeedMaterializedTableSql =
+    "CREATE TABLE IF NOT EXISTS main.seed_materialized("
+    "dictionary TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(dictionary,key,value))";
+
+// 把主库的种子层对齐到「启用来源的词条之并，去掉用户日志里自己拥有或删掉的词」：缺的插入并记标记，
+// 多出来的（来源停用、删除，或用户删了这个词）撤下；词已由用户接管的只丢标记、不删行；
+// 主库里本来就有、没有标记的行（出厂词条）既不覆盖也不删除。
+// main_db 是主词库连接，用户日志以 journal_schema 为名附加在它上面，调用方负责事务。
+// 日志还没有种子表时什么也不做，返回 true。
+bool reconcile_seed_dictionaries(sqlite3 *main_db, const std::string &journal_schema, std::string &error);
 
 bool adjust_candidate_ranking(const std::string &main_db_path, const std::string &user_db_path,
                               const std::string &context_key, const std::vector<WordItem> &ordered_candidates,

@@ -433,6 +433,56 @@ TEST_CASE(SeedDictionaryImportSkipsWordsTheUserDeleted)
     REQUIRE(PinyinWeight("shijie", "世界") > 0);
 }
 
+// 两个来源都有的词各记一份：停用、删除其中一个，另一个还启用着就保留。出厂词条不进来源，也从不被撤下。
+TEST_CASE(SeedDictionariesShareWordsAndNeverTouchShippedEntries)
+{
+    ScopedForeignDataDir data;
+    CreatePinyinTables(data, {"ni'hao", "shi'jie"});
+    {
+        sqlite3 *raw = nullptr;
+        REQUIRE_EQ(sqlite3_open(test::Utf8(data.path() / L"msime.db").c_str(), &raw), SQLITE_OK);
+        const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+        const std::string sql = "INSERT INTO \"" + quanpin::build_table_name(quanpin::split_segments("ni'hao")) +
+                                "\" VALUES('ni''hao','nh','你好',4242)";
+        REQUIRE_EQ(sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr), SQLITE_OK);
+    }
+    const auto import = [&](const wchar_t *file_name, const char *content) {
+        const std::filesystem::path file = data.path() / file_name;
+        {
+            std::ofstream stream(file, std::ios::binary);
+            stream << content;
+        }
+        const auto imported = SettingsDictionary::HandleRequest(
+            {{"dictionary", "quanpin"}, {"action", "importForeign"}, {"format", "rime"}, {"path", test::Utf8(file)}});
+        REQUIRE(imported.at("ok").as_bool());
+        return std::string(imported.at("sourceId").as_string());
+    };
+    const std::string first = import(L"甲.txt", "你好\tni hao\t100\n世界\tshi jie\t50\n");
+    const std::string second = import(L"乙.txt", "世界\tshi jie\t50\n");
+
+    const auto sources = SettingsDictionary::HandleRequest({{"dictionary", "seeds"}, {"action", "listSources"}});
+    REQUIRE_EQ(sources.at("sources").as_array().size(), size_t{2});
+    for (const auto &source : sources.at("sources").as_array())
+        REQUIRE_EQ(source.as_object().at("entryCount").as_int64(), int64_t{1});
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{4242});
+
+    const auto set = [](const std::string &id, const char *action, bool enabled) {
+        const auto changed = SettingsDictionary::HandleRequest(
+            {{"dictionary", "seeds"}, {"action", action}, {"sourceId", id}, {"enabled", enabled}});
+        REQUIRE(changed.at("ok").as_bool());
+    };
+    set(first, "setSourceEnabled", false);
+    REQUIRE(PinyinWeight("shijie", "世界") > 0);
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{4242});
+    set(second, "deleteSource", false);
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{-1});
+    set(first, "setSourceEnabled", true);
+    REQUIRE(PinyinWeight("shijie", "世界") > 0);
+    set(first, "deleteSource", false);
+    REQUIRE_EQ(PinyinWeight("shijie", "世界"), int64_t{-1});
+    REQUIRE_EQ(PinyinWeight("nihao", "你好"), int64_t{4242});
+}
+
 TEST_CASE(SeedDictionaryLatinWordsSupportLegacyTablesWithoutUniqueConstraints)
 {
     ScopedForeignDataDir data;

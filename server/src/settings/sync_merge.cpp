@@ -1,6 +1,7 @@
 #include "settings/sync_merge.h"
 
 #include "config/ime_config_internal.h"
+#include "engine/user_dictionary/user_dictionary_journal.h"
 
 #include <bcrypt.h>
 #include <sqlite3.h>
@@ -10,10 +11,8 @@
 #include <fstream>
 #include <map>
 #include <memory>
-#include <optional>
 #include <set>
 #include <string>
-#include <tuple>
 #include <vector>
 
 #pragma comment(lib, "bcrypt.lib")
@@ -90,6 +89,43 @@ bool Exec(sqlite3 *db, const std::string &sql, std::string &message)
     return true;
 }
 
+// 远端有没有种子词库的两张表。读失败时 message 非空。
+bool RemoteHasSeedTables(const std::filesystem::path &remote_db, std::string &message)
+{
+    DbHandle remote = OpenDatabase(remote_db, SQLITE_OPEN_READONLY, message);
+    if (!remote)
+        return false;
+    return TableExists(remote.get(), "dictionary_sources") && TableExists(remote.get(), "seed_entries");
+}
+
+// 种子词库：来源按稳定 id 合并，较新的 updated_at 胜出；同一秒两边都改过时删除优先、其次停用优先，
+// 两台设备各自合并后结果一致。词条导入后不再改，按 (来源, 词) 取并集；已删除来源的词条两边都清掉，
+// 删除墓碑留在 dictionary_sources，远端的旧副本不会把它带回来。主库由随后的回放对齐。
+bool MergeSeedDictionaries(sqlite3 *local, std::string &message)
+{
+    return Exec(local, user_dictionary::kSeedJournalTablesSql, message) &&
+           Exec(local,
+                "INSERT INTO main.dictionary_sources(id,name,format,enabled,deleted,created_at,updated_at) "
+                "SELECT id,name,format,enabled,deleted,created_at,updated_at FROM sync_remote.dictionary_sources "
+                "WHERE true ON CONFLICT(id) DO UPDATE SET name=excluded.name,format=excluded.format,"
+                "enabled=excluded.enabled,deleted=excluded.deleted,created_at=excluded.created_at,"
+                "updated_at=excluded.updated_at "
+                "WHERE excluded.updated_at>dictionary_sources.updated_at OR "
+                "(excluded.updated_at=dictionary_sources.updated_at AND "
+                "(excluded.deleted>dictionary_sources.deleted OR (excluded.deleted=dictionary_sources.deleted AND "
+                "excluded.enabled<dictionary_sources.enabled)))",
+                message) &&
+           Exec(local,
+                "INSERT OR IGNORE INTO main.seed_entries(source_id,dictionary,key,value,weight,exact_only) "
+                "SELECT r.source_id,r.dictionary,r.key,r.value,r.weight,r.exact_only FROM sync_remote.seed_entries r "
+                "JOIN main.dictionary_sources s ON s.id=r.source_id AND s.deleted=0",
+                message) &&
+           Exec(local,
+                "DELETE FROM main.seed_entries WHERE source_id IN "
+                "(SELECT id FROM main.dictionary_sources WHERE deleted<>0)",
+                message);
+}
+
 // 词库日志的一行。字段顺序与 user_dictionary_operations 的表结构对齐。
 struct OperationRow
 {
@@ -102,67 +138,17 @@ struct OperationRow
     bool user_inserted = false;
     bool weight_edited = false;
     std::int64_t updated_at = 0;
-    std::optional<std::string> source_id;
 };
-
-struct DictionarySourceRow
-{
-    std::string id;
-    std::string name;
-    std::string format;
-    bool enabled = true;
-    bool deleted = false;
-    std::int64_t created_at = 0;
-    std::int64_t updated_at = 0;
-};
-
-bool ReadSources(sqlite3 *db, std::vector<DictionarySourceRow> &rows, std::string &message)
-{
-    if (!TableExists(db, "dictionary_sources"))
-        return true;
-    sqlite3_stmt *statement = nullptr;
-    if (sqlite3_prepare_v2(db, "SELECT id,name,format,enabled,deleted,created_at,updated_at FROM dictionary_sources",
-                           -1, &statement, nullptr) != SQLITE_OK)
-    {
-        message = std::string("读取种子词库来源失败：") + sqlite3_errmsg(db);
-        return false;
-    }
-    int result = SQLITE_ROW;
-    while ((result = sqlite3_step(statement)) == SQLITE_ROW)
-    {
-        const auto text = [&](int column) {
-            const unsigned char *value = sqlite3_column_text(statement, column);
-            return value ? std::string(reinterpret_cast<const char *>(value)) : std::string();
-        };
-        DictionarySourceRow row;
-        row.id = text(0);
-        row.name = text(1);
-        row.format = text(2);
-        row.enabled = sqlite3_column_int(statement, 3) != 0;
-        row.deleted = sqlite3_column_int(statement, 4) != 0;
-        row.created_at = sqlite3_column_int64(statement, 5);
-        row.updated_at = sqlite3_column_int64(statement, 6);
-        rows.push_back(std::move(row));
-    }
-    const bool done = result == SQLITE_DONE;
-    if (!done)
-        message = std::string("读取种子词库来源失败：") + sqlite3_errmsg(db);
-    sqlite3_finalize(statement);
-    return done;
-}
 
 bool ReadOperations(sqlite3 *db, std::vector<OperationRow> &rows, std::string &message)
 {
     // 老版本的日志没有 user_inserted / weight_edited 两列；缺列时按默认值读，不能因此失败。
     const bool has_user_inserted = HasColumn(db, "user_dictionary_operations", "user_inserted");
     const bool has_weight_edited = HasColumn(db, "user_dictionary_operations", "weight_edited");
-    const bool has_source_id = HasColumn(db, "user_dictionary_operations", "source_id");
     std::string sql = "SELECT dictionary,key,value,operation,weight,display,";
     sql += has_user_inserted ? "user_inserted," : "0,";
     sql += has_weight_edited ? "weight_edited," : "0,";
-    sql += "updated_at,";
-    sql += has_source_id ? "source_id" : "NULL";
-    sql += " FROM user_dictionary_operations";
+    sql += "updated_at FROM user_dictionary_operations";
 
     sqlite3_stmt *statement = nullptr;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
@@ -187,8 +173,6 @@ bool ReadOperations(sqlite3 *db, std::vector<OperationRow> &rows, std::string &m
         row.user_inserted = sqlite3_column_int(statement, 6) != 0;
         row.weight_edited = sqlite3_column_int(statement, 7) != 0;
         row.updated_at = sqlite3_column_int64(statement, 8);
-        if (sqlite3_column_type(statement, 9) != SQLITE_NULL)
-            row.source_id = text(9);
         rows.push_back(std::move(row));
     }
     // 读到一半出错（SQLITE_CORRUPT、IO 错误）时只拿到了部分行。拿它去合并，远端的旧行会
@@ -232,18 +216,15 @@ struct LatinWordRow
     std::int64_t weight = 0;
     int exact_only = 0;
     std::int64_t updated_at = 0;
-    std::optional<std::string> source_id;
 };
 
 bool ReadLatinWords(sqlite3 *db, std::vector<LatinWordRow> &rows, std::string &message)
 {
     if (!TableExists(db, "user_latin_words"))
         return true; // 旧日志还没有这张表，等于没有字母词
-    const bool has_source_id = HasColumn(db, "user_latin_words", "source_id");
-    const std::string sql = std::string("SELECT key,value,weight,exact_only,updated_at,") +
-                            (has_source_id ? "source_id" : "NULL") + " FROM user_latin_words";
     sqlite3_stmt *statement = nullptr;
-    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
+    if (sqlite3_prepare_v2(db, "SELECT key,value,weight,exact_only,updated_at FROM user_latin_words", -1, &statement,
+                           nullptr) != SQLITE_OK)
     {
         message = std::string("读取用户字母词失败：") + sqlite3_errmsg(db);
         return false;
@@ -259,11 +240,6 @@ bool ReadLatinWords(sqlite3 *db, std::vector<LatinWordRow> &rows, std::string &m
         row.weight = sqlite3_column_int64(statement, 2);
         row.exact_only = sqlite3_column_int(statement, 3);
         row.updated_at = sqlite3_column_int64(statement, 4);
-        if (sqlite3_column_type(statement, 5) != SQLITE_NULL)
-        {
-            const unsigned char *source = sqlite3_column_text(statement, 5);
-            row.source_id = source ? reinterpret_cast<const char *>(source) : "";
-        }
         rows.push_back(std::move(row));
     }
     const bool done = result == SQLITE_DONE;
@@ -273,29 +249,10 @@ bool ReadLatinWords(sqlite3 *db, std::vector<LatinWordRow> &rows, std::string &m
     return done;
 }
 
-bool BindOptionalText(sqlite3_stmt *statement, int index, const std::optional<std::string> &value)
-{
-    return value ? sqlite3_bind_text(statement, index, value->c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK
-                 : sqlite3_bind_null(statement, index) == SQLITE_OK;
-}
-
 std::string OperationId(const OperationRow &row)
 {
     // 与主键 (dictionary,key,value) 一致。用不可见分隔符拼，避免键里本身含分隔字符时串味。
     return row.dictionary + '\x1f' + row.key + '\x1f' + row.value;
-}
-
-bool SourceRemoteWins(const DictionarySourceRow &local, const DictionarySourceRow &remote)
-{
-    if (remote.updated_at != local.updated_at)
-        return remote.updated_at > local.updated_at;
-    // 同秒冲突必须双向收敛：删除优先；都未删除时禁用优先。其余字段的字典序处理剩下同秒变化。
-    if (remote.deleted != local.deleted)
-        return remote.deleted;
-    if (!remote.deleted && remote.enabled != local.enabled)
-        return !remote.enabled;
-    return std::tie(remote.name, remote.format, remote.enabled, remote.created_at) >
-           std::tie(local.name, local.format, local.enabled, local.created_at);
 }
 
 // 较新者胜出；时间相同时本地胜出并计入 conflicts（两边同时改过同一词的情况很少，
@@ -307,37 +264,11 @@ bool RemoteWins(const OperationRow &local, const OperationRow &remote, int &conf
     if (remote.updated_at < local.updated_at)
         return false;
     if (remote.operation != local.operation || remote.weight != local.weight || remote.display != local.display ||
-        remote.user_inserted != local.user_inserted || remote.weight_edited != local.weight_edited ||
-        remote.source_id != local.source_id)
+        remote.user_inserted != local.user_inserted || remote.weight_edited != local.weight_edited)
     {
         ++conflicts;
     }
     return false;
-}
-
-// 跨个人与来源归属时，显式个人行总胜出；其余冲突仍由普通时间规则处理。
-bool RemoteOperationWins(const OperationRow &local, const OperationRow &remote, int &conflicts)
-{
-    const bool local_explicit = !local.source_id && (local.user_inserted || local.weight_edited);
-    const bool remote_explicit = !remote.source_id && (remote.user_inserted || remote.weight_edited);
-    // 来源不能接管明确拥有的个人词条，普通自动调频也不能清除已有来源。
-    if (local_explicit && remote.source_id)
-        return false;
-    if (local.source_id && !remote.source_id && !remote_explicit)
-        return false;
-    if (local.source_id && remote_explicit)
-        return true;
-    return RemoteWins(local, remote, conflicts);
-}
-
-bool RemoteLatinWins(const LatinWordRow &local, const LatinWordRow &remote)
-{
-    // 字母词没有显式标记，未分组即个人。个人行与来源行冲突时个人总胜出。
-    if (!local.source_id && remote.source_id)
-        return false;
-    if (local.source_id && !remote.source_id)
-        return true;
-    return remote.updated_at > local.updated_at;
 }
 
 // 32 位小写十六进制，UUID v4 形状但不带连字符：够唯一，也不依赖任何平台 UUID API。
@@ -475,9 +406,6 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     std::vector<LatinWordRow> remote_latin;
     if (!ReadLatinWords(remote.get(), remote_latin, message))
         return false;
-    std::vector<DictionarySourceRow> remote_sources;
-    if (!ReadSources(remote.get(), remote_sources, message))
-        return false;
     const std::string remote_identity = ReplayedDictionaryIdentity(remote.get());
     remote.reset();
 
@@ -492,41 +420,34 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     std::vector<OperationRow> local_rows;
     if (!ReadOperations(local.get(), local_rows, message))
         return false;
-    std::vector<DictionarySourceRow> local_sources;
-    if (!ReadSources(local.get(), local_sources, message))
-        return false;
-    std::vector<LatinWordRow> local_latin;
-    if (!ReadLatinWords(local.get(), local_latin, message))
-        return false;
+
     std::map<std::string, const OperationRow *> local_by_id;
     for (const OperationRow &row : local_rows)
         local_by_id.emplace(OperationId(row), &row);
-    std::map<std::pair<std::string, std::string>, const LatinWordRow *> local_latin_by_id;
-    for (const LatinWordRow &row : local_latin)
-        local_latin_by_id.emplace(std::make_pair(row.key, row.value), &row);
-
-    std::map<std::string, DictionarySourceRow> merged_sources;
-    for (const auto &row : local_sources)
-        merged_sources.emplace(row.id, row);
-    for (const auto &row : remote_sources)
-    {
-        const auto found = merged_sources.find(row.id);
-        if (found == merged_sources.end())
-            merged_sources.emplace(row.id, row);
-        else if (SourceRemoteWins(found->second, row))
-            found->second = row;
-    }
-    const auto source_deleted = [&](const std::optional<std::string> &source_id) {
-        if (!source_id)
-            return false;
-        const auto found = merged_sources.find(*source_id);
-        return found != merged_sources.end() && found->second.deleted;
-    };
 
     // 合并 user_dictionary_operations 与 user_latin_words。字母词是用户在设置页亲手加的词，
     // 有日志时归档里的文本词库会被整批跳过，不在这里合并它就永远同步不过来。
     // 其余调频状态表（固定位置、槽位、日期格式顺序）是每台设备自己的使用习惯，跨机合并
     // 没有确定语义，这一版不动它们。
+    // 种子词库在 SQL 里按集合合并，远端库要附加到本地连接上；ATTACH 不能放进事务里。
+    const bool remote_has_seeds = RemoteHasSeedTables(remote_db, message);
+    if (!message.empty())
+        return false;
+    if (remote_has_seeds)
+    {
+        sqlite3_stmt *attach = nullptr;
+        const std::string remote_path = Utf8(remote_db);
+        const bool attached =
+            sqlite3_prepare_v2(local.get(), "ATTACH DATABASE ?1 AS sync_remote", -1, &attach, nullptr) == SQLITE_OK &&
+            sqlite3_bind_text(attach, 1, remote_path.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+            sqlite3_step(attach) == SQLITE_DONE;
+        sqlite3_finalize(attach);
+        if (!attached)
+        {
+            message = std::string("附加远端用户词库失败：") + sqlite3_errmsg(local.get());
+            return false;
+        }
+    }
     if (!Exec(local.get(), "BEGIN IMMEDIATE", message))
         return false;
     const std::string local_identity = ReplayedDictionaryIdentity(local.get());
@@ -534,114 +455,19 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     // 保持那些行的默认值，不能因为缺列而合并失败。
     const bool has_user_inserted = HasColumn(local.get(), "user_dictionary_operations", "user_inserted");
     const bool has_weight_edited = HasColumn(local.get(), "user_dictionary_operations", "weight_edited");
-    bool has_source_id = HasColumn(local.get(), "user_dictionary_operations", "source_id");
-    bool ok = true;
-    const bool needs_source_id = std::any_of(remote_rows.begin(), remote_rows.end(), [&](const OperationRow &row) {
-        return row.source_id && !source_deleted(row.source_id);
-    });
-    if (needs_source_id && !has_source_id)
-    {
-        ok = Exec(local.get(), "ALTER TABLE user_dictionary_operations ADD COLUMN source_id TEXT", message);
-        has_source_id = ok;
-    }
-
-    if (ok && !merged_sources.empty())
-    {
-        ok = Exec(local.get(),
-                  "CREATE TABLE IF NOT EXISTS dictionary_sources("
-                  "id TEXT PRIMARY KEY,name TEXT NOT NULL,format TEXT NOT NULL,"
-                  "enabled INTEGER NOT NULL DEFAULT 1,deleted INTEGER NOT NULL DEFAULT 0,"
-                  "created_at INTEGER NOT NULL DEFAULT(unixepoch()),updated_at INTEGER NOT NULL DEFAULT(unixepoch()))",
-                  message);
-    }
-    sqlite3_stmt *source_statement = nullptr;
-    if (ok && !remote_sources.empty())
-    {
-        ok = sqlite3_prepare_v2(local.get(),
-                                "INSERT INTO dictionary_sources(id,name,format,enabled,deleted,created_at,updated_at) "
-                                "VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET name=excluded.name,"
-                                "format=excluded.format,enabled=excluded.enabled,deleted=excluded.deleted,"
-                                "created_at=excluded.created_at,updated_at=excluded.updated_at "
-                                "WHERE excluded.updated_at>=dictionary_sources.updated_at",
-                                -1, &source_statement, nullptr) == SQLITE_OK;
-        if (!ok)
-            message = std::string("准备来源合并语句失败：") + sqlite3_errmsg(local.get());
-    }
-    for (const auto &row : remote_sources)
-    {
-        if (!ok)
-            break;
-        const auto found = std::find_if(local_sources.begin(), local_sources.end(),
-                                        [&](const DictionarySourceRow &local) { return local.id == row.id; });
-        if (found != local_sources.end() && !SourceRemoteWins(*found, row))
-            continue;
-        const bool bound =
-            sqlite3_bind_text(source_statement, 1, row.id.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
-            sqlite3_bind_text(source_statement, 2, row.name.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
-            sqlite3_bind_text(source_statement, 3, row.format.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
-            sqlite3_bind_int(source_statement, 4, row.enabled ? 1 : 0) == SQLITE_OK &&
-            sqlite3_bind_int(source_statement, 5, row.deleted ? 1 : 0) == SQLITE_OK &&
-            sqlite3_bind_int64(source_statement, 6, row.created_at) == SQLITE_OK &&
-            sqlite3_bind_int64(source_statement, 7, row.updated_at) == SQLITE_OK;
-        if (!bound || sqlite3_step(source_statement) != SQLITE_DONE)
-        {
-            message = std::string("写入来源合并结果失败：") + sqlite3_errmsg(local.get());
-            ok = false;
-            break;
-        }
-        sqlite3_reset(source_statement);
-        sqlite3_clear_bindings(source_statement);
-    }
-    if (source_statement)
-        sqlite3_finalize(source_statement);
-
-    for (const auto &[id, source] : merged_sources)
-    {
-        if (!ok)
-            break;
-        if (!source.deleted)
-            continue;
-        if (has_source_id)
-        {
-            sqlite3_stmt *remove = nullptr;
-            ok = sqlite3_prepare_v2(local.get(), "DELETE FROM user_dictionary_operations WHERE source_id=?1", -1,
-                                    &remove, nullptr) == SQLITE_OK &&
-                 sqlite3_bind_text(remove, 1, id.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
-                 sqlite3_step(remove) == SQLITE_DONE;
-            if (remove)
-                sqlite3_finalize(remove);
-        }
-        if (ok && TableExists(local.get(), "user_latin_words") &&
-            HasColumn(local.get(), "user_latin_words", "source_id"))
-        {
-            sqlite3_stmt *remove = nullptr;
-            ok = sqlite3_prepare_v2(local.get(), "DELETE FROM user_latin_words WHERE source_id=?1", -1, &remove,
-                                    nullptr) == SQLITE_OK &&
-                 sqlite3_bind_text(remove, 1, id.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
-                 sqlite3_step(remove) == SQLITE_DONE;
-            if (remove)
-                sqlite3_finalize(remove);
-        }
-        if (!ok)
-            message = std::string("清理已删除来源失败：") + sqlite3_errmsg(local.get());
-    }
 
     std::string insert_sql = "INSERT INTO user_dictionary_operations(dictionary,key,value,operation,weight,display";
     if (has_user_inserted)
         insert_sql += ",user_inserted";
     if (has_weight_edited)
         insert_sql += ",weight_edited";
-    insert_sql +=
-        has_source_id ? ",updated_at,source_id) VALUES(?1,?2,?3,?4,?5,?6" : ",updated_at) VALUES(?1,?2,?3,?4,?5,?6";
+    insert_sql += ",updated_at) VALUES(?1,?2,?3,?4,?5,?6";
     int next_parameter = 7;
     if (has_user_inserted)
         insert_sql += ",?" + std::to_string(next_parameter++);
     if (has_weight_edited)
         insert_sql += ",?" + std::to_string(next_parameter++);
-    insert_sql += ",?" + std::to_string(next_parameter++);
-    if (has_source_id)
-        insert_sql += ",?" + std::to_string(next_parameter);
-    insert_sql += ")";
+    insert_sql += ",?" + std::to_string(next_parameter) + ")";
     insert_sql +=
         " ON CONFLICT(dictionary,key,value) DO UPDATE SET operation=excluded.operation,weight=excluded.weight,"
         "display=excluded.display";
@@ -653,38 +479,22 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     if (has_weight_edited)
         insert_sql += ",weight_edited=excluded.weight_edited";
     insert_sql += ",updated_at=excluded.updated_at";
-    if (has_source_id)
-        insert_sql += ",source_id=excluded.source_id";
     // RemoteWins 已经只放行更新的行，这里在数据库层再守一道，防止本地快照与表不一致时用旧行盖新行。
     insert_sql += " WHERE excluded.updated_at>user_dictionary_operations.updated_at";
-    if (has_source_id && (has_user_inserted || has_weight_edited))
-    {
-        // 来源转显式个人在同秒也能落库。普通同秒冲突仍只保留本机现有行。
-        insert_sql += " OR (excluded.updated_at=user_dictionary_operations.updated_at "
-                      "AND excluded.source_id IS NULL AND user_dictionary_operations.source_id IS NOT NULL AND ";
-        if (has_user_inserted && has_weight_edited)
-            insert_sql += "(excluded.user_inserted<>0 OR excluded.weight_edited<>0)";
-        else
-            insert_sql += has_user_inserted ? "excluded.user_inserted<>0" : "excluded.weight_edited<>0";
-        insert_sql += ")";
-    }
 
     sqlite3_stmt *statement = nullptr;
-    if (ok && sqlite3_prepare_v2(local.get(), insert_sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
+    if (sqlite3_prepare_v2(local.get(), insert_sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
     {
         message = std::string("准备合并语句失败：") + sqlite3_errmsg(local.get());
         (void)Exec(local.get(), "ROLLBACK", message);
         return false;
     }
 
+    bool ok = true;
     for (const OperationRow &row : remote_rows)
     {
-        if (!ok)
-            break;
-        if (source_deleted(row.source_id))
-            continue;
         const auto found = local_by_id.find(OperationId(row));
-        if (found != local_by_id.end() && !RemoteOperationWins(*found->second, row, report.conflicts))
+        if (found != local_by_id.end() && !RemoteWins(*found->second, row, report.conflicts))
         {
             ++report.kept_local;
             continue;
@@ -702,9 +512,7 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
             bound = bound && sqlite3_bind_int(statement, next++, row.user_inserted ? 1 : 0) == SQLITE_OK;
         if (has_weight_edited)
             bound = bound && sqlite3_bind_int(statement, next++, row.weight_edited ? 1 : 0) == SQLITE_OK;
-        bound = bound && sqlite3_bind_int64(statement, next++, row.updated_at) == SQLITE_OK;
-        if (has_source_id)
-            bound = bound && BindOptionalText(statement, next, row.source_id);
+        bound = bound && sqlite3_bind_int64(statement, next, row.updated_at) == SQLITE_OK;
         if (!bound || sqlite3_step(statement) != SQLITE_DONE)
         {
             message = std::string("写入合并结果失败：") + sqlite3_errmsg(local.get());
@@ -727,32 +535,19 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
                   "CREATE TABLE IF NOT EXISTS user_latin_words("
                   "key TEXT NOT NULL,value TEXT NOT NULL,weight INTEGER NOT NULL DEFAULT 0,"
                   "exact_only INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT(unixepoch()),"
-                  "source_id TEXT,PRIMARY KEY(key,value))",
+                  "PRIMARY KEY(key,value))",
                   message))
         {
             ok = false;
         }
-        bool has_latin_source = ok && HasColumn(local.get(), "user_latin_words", "source_id");
-        const bool needs_latin_source =
-            std::any_of(remote_latin.begin(), remote_latin.end(),
-                        [&](const LatinWordRow &row) { return row.source_id && !source_deleted(row.source_id); });
-        if (ok && needs_latin_source && !has_latin_source)
-        {
-            ok = Exec(local.get(), "ALTER TABLE user_latin_words ADD COLUMN source_id TEXT", message);
-            has_latin_source = ok;
-        }
         sqlite3_stmt *latin = nullptr;
-        const std::string latin_sql =
-            std::string("INSERT INTO user_latin_words(key,value,weight,exact_only,updated_at") +
-            (has_latin_source ? ",source_id) VALUES(?1,?2,?3,?4,?5,?6)" : ") VALUES(?1,?2,?3,?4,?5)") +
-            " ON CONFLICT(key,value) DO UPDATE SET weight=excluded.weight,exact_only=excluded.exact_only,"
-            "updated_at=excluded.updated_at" +
-            (has_latin_source ? ",source_id=excluded.source_id" : "") +
-            " WHERE excluded.updated_at>user_latin_words.updated_at" +
-            (has_latin_source ? " OR (excluded.updated_at=user_latin_words.updated_at "
-                                "AND excluded.source_id IS NULL AND user_latin_words.source_id IS NOT NULL)"
-                              : "");
-        if (ok && sqlite3_prepare_v2(local.get(), latin_sql.c_str(), -1, &latin, nullptr) != SQLITE_OK)
+        if (ok && sqlite3_prepare_v2(local.get(),
+                                     "INSERT INTO user_latin_words(key,value,weight,exact_only,updated_at) "
+                                     "VALUES(?1,?2,?3,?4,?5) ON CONFLICT(key,value) DO UPDATE SET "
+                                     "weight=excluded.weight,exact_only=excluded.exact_only,"
+                                     "updated_at=excluded.updated_at "
+                                     "WHERE excluded.updated_at>user_latin_words.updated_at",
+                                     -1, &latin, nullptr) != SQLITE_OK)
         {
             message = std::string("准备字母词合并语句失败：") + sqlite3_errmsg(local.get());
             ok = false;
@@ -761,20 +556,13 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
         {
             if (!ok)
                 break;
-            if (source_deleted(row.source_id))
-                continue;
-            const auto found = local_latin_by_id.find({row.key, row.value});
-            if (found != local_latin_by_id.end() && !RemoteLatinWins(*found->second, row))
-                continue;
             sqlite3_reset(latin);
             sqlite3_clear_bindings(latin);
-            bool bound = sqlite3_bind_text(latin, 1, row.key.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
-                         sqlite3_bind_text(latin, 2, row.value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
-                         sqlite3_bind_int64(latin, 3, row.weight) == SQLITE_OK &&
-                         sqlite3_bind_int(latin, 4, row.exact_only) == SQLITE_OK &&
-                         sqlite3_bind_int64(latin, 5, row.updated_at) == SQLITE_OK;
-            if (has_latin_source)
-                bound = bound && BindOptionalText(latin, 6, row.source_id);
+            const bool bound = sqlite3_bind_text(latin, 1, row.key.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+                               sqlite3_bind_text(latin, 2, row.value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+                               sqlite3_bind_int64(latin, 3, row.weight) == SQLITE_OK &&
+                               sqlite3_bind_int(latin, 4, row.exact_only) == SQLITE_OK &&
+                               sqlite3_bind_int64(latin, 5, row.updated_at) == SQLITE_OK;
             if (!bound || sqlite3_step(latin) != SQLITE_DONE)
             {
                 message = std::string("写入字母词合并结果失败：") + sqlite3_errmsg(local.get());
@@ -786,6 +574,9 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
         if (latin)
             sqlite3_finalize(latin);
     }
+
+    if (ok && remote_has_seeds)
+        ok = MergeSeedDictionaries(local.get(), message);
 
     // 远端的行是按远端回放过的那份出厂词库的量级记的。两边词库不是同一份（或远端没记）时，
     // 这些绝对权重原样回放会把新词库的词频压下去（「了 le」被压到旧值就是这么来的）。
