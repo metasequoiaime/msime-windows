@@ -305,7 +305,8 @@ BOOL CCompositionProcessorEngine::IsVirtualKeyNeed( //
     }
 
     // T-mode: digits, '/' and ':' that still extend a date/time are input. The rest keep their usual
-    // meaning below (digits select, '/' and ':' are punctuation); Shift+digit never matches here.
+    // meaning below (digits select, '/' and ':' are punctuation) — except inside a V composition, where a digit
+    // is always an encoding key and selection has moved to letters. Shift+digit never matches here.
     // V-mode: digits and . + - * / ( ) after the V prefix are input, so they neither select, page nor commit
     // punctuation.
     if (IsDateTimeInputKey(uCode, pwch ? *pwch : 0, _keystrokeBuffer.Get(), _keystrokeBuffer.GetLength(),

@@ -204,7 +204,7 @@ bool IsDateTimeInputKey(UINT keycode, WCHAR wch, const std::string &raw_input)
 }
 
 // V 模式的数字和 . + - * / ( )：插入后仍是一段 V 模式输入时是编码键，不再选词、翻页或当标点。只看字符不看
-// 键位，主键盘和小键盘一样；Shift+1 这类出 ! 的仍是选词键。TSF 按同一条规则
+// 键位，主键盘和小键盘一样；出 ! 这类符号的 Shift+数字仍是普通标点，不再是选词键（选词改用字母）。TSF 按同一条规则
 // （FanyImeVModeInput::AcceptsAt）和同一个 Trigger（VModeChanged）预判吃键。光标按 IsDirectHelpcodeSlashKey
 // 同样的方式算。
 bool IsVModeInputKey(WCHAR wch, const std::string &raw_input)
