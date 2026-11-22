@@ -674,6 +674,126 @@ TEST_CASE(DictionaryStateExportReadsAJournalWithoutLearningColumns)
     REQUIRE_EQ(entry->last_learned_at, static_cast<std::int64_t>(0));
 }
 
+// 种子词库只加自己的表，个人日志的结构不变。
+TEST_CASE(UserDictionarySeedSchemaLeavesThePersonalJournalAlone)
+{
+    ScopedTempDirectory directory("msime-seed-schema-");
+    const auto user_path = directory.path() / "msime_user.db";
+    {
+        TestDatabase legacy(user_path);
+        legacy.exec("CREATE TABLE user_dictionary_operations("
+                    "dictionary TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,operation TEXT NOT NULL,"
+                    "weight INTEGER NOT NULL DEFAULT 0,display TEXT NOT NULL DEFAULT '',"
+                    "updated_at INTEGER NOT NULL DEFAULT(unixepoch()),PRIMARY KEY(dictionary,key,value));"
+                    "INSERT INTO user_dictionary_operations VALUES('pinyin','jiu','旧','upsert',1,'',1);");
+    }
+    REQUIRE(user_dictionary::ensure_user_database(test::Utf8(user_path)));
+    TestDatabase db(user_path);
+    REQUIRE_EQ(db.scalar_int("PRAGMA user_version"), 5);
+    REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM dictionary_sources"), 0);
+    REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM seed_entries"), 0);
+    REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM pragma_table_info('user_dictionary_operations') "
+                             "WHERE name='source_id'"),
+               0);
+    REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM user_dictionary_operations WHERE value='旧'"), 1);
+}
+
+// 回放把启用来源的词物化进主库：出厂词条不覆盖、不删除；多个来源共有的词取较大权重，
+// 停掉一个来源后另一个还在就保留；自动调频只改种子词的权重，不能把停用来源的词带回来；
+// 用户删掉的种子词不再出现。
+TEST_CASE(UserDictionaryReplayMaterializesEnabledSeedSources)
+{
+    ScopedTempDirectory directory("msime-seed-replay-");
+    const auto user_path = directory.path() / "msime_user.db";
+    const auto main_path = directory.path() / "msime.db";
+    const auto english_path = directory.path() / "english.db";
+    const std::string user = test::Utf8(user_path);
+    {
+        TestDatabase db(main_path);
+        db.exec("CREATE TABLE tbl_1_x(key TEXT,jp TEXT,value TEXT,weight INTEGER);"
+                "INSERT INTO tbl_1_x VALUES('xin','x','出厂',500);"
+                "CREATE TABLE latin_words(key TEXT,value TEXT,weight INTEGER,exact_only INTEGER);");
+        TestDatabase english(english_path);
+        english.exec("CREATE TABLE english_words(word TEXT PRIMARY KEY,display TEXT);");
+    }
+    REQUIRE(user_dictionary::ensure_user_database(user));
+    {
+        TestDatabase db(user_path);
+        db.exec("INSERT INTO dictionary_sources VALUES('a','甲','rime',1,0,1,1),('b','乙','rime',1,0,1,1);"
+                "INSERT INTO seed_entries VALUES('a','pinyin','xin','来源词',10,0),('a','pinyin','xin','出厂',10,0),"
+                "('a','pinyin','xin','共有',10,0),('b','pinyin','xin','共有',20,0),('a','latin','a','来源字母',5,0);");
+    }
+    const auto replay = [&]() {
+        const auto result = user_dictionary::replay(user, test::Utf8(main_path), test::Utf8(english_path));
+        REQUIRE(result.error.empty());
+        REQUIRE_EQ(result.failed, 0);
+    };
+    const auto pinyin_weight = [&](const char *value) {
+        TestDatabase db(main_path);
+        const std::string sql = std::string("SELECT COALESCE(MAX(weight),-1) FROM tbl_1_x WHERE value='") + value + "'";
+        return db.scalar_int(sql.c_str());
+    };
+    const auto latin_count = [&]() {
+        TestDatabase db(main_path);
+        return db.scalar_int("SELECT COUNT(*) FROM latin_words WHERE value='来源字母'");
+    };
+
+    replay();
+    REQUIRE_EQ(pinyin_weight("来源词"), 10);
+    REQUIRE_EQ(pinyin_weight("共有"), 20);
+    REQUIRE_EQ(pinyin_weight("出厂"), 500);
+    REQUIRE_EQ(latin_count(), 1);
+    {
+        TestDatabase db(main_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM seed_materialized"), 3);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM seed_materialized WHERE value='出厂'"), 0);
+    }
+
+    // 自动调频改种子词的权重，回放照样写回。
+    REQUIRE(user_dictionary::record_upsert(user, user_dictionary::DictionaryKind::Pinyin, "xin", "来源词", 99));
+    replay();
+    REQUIRE_EQ(pinyin_weight("来源词"), 99);
+
+    // 停用 a：只撤 a 独有的词，出厂词和 b 也有的词都在；调频记录不把它带回来。
+    {
+        TestDatabase db(user_path);
+        db.exec("UPDATE dictionary_sources SET enabled=0,updated_at=2 WHERE id='a'");
+    }
+    replay();
+    REQUIRE_EQ(pinyin_weight("来源词"), -1);
+    REQUIRE_EQ(pinyin_weight("共有"), 20);
+    REQUIRE_EQ(pinyin_weight("出厂"), 500);
+    REQUIRE_EQ(latin_count(), 0);
+
+    // 换上一份新主库（升级）再回放：停用的来源仍然不出现。
+    {
+        TestDatabase db(main_path);
+        db.exec("DELETE FROM tbl_1_x WHERE value<>'出厂';DELETE FROM latin_words;DROP TABLE seed_materialized;");
+    }
+    replay();
+    REQUIRE_EQ(pinyin_weight("来源词"), -1);
+    REQUIRE_EQ(pinyin_weight("共有"), 20);
+
+    // 重新启用：词回来，调频过的权重也回来。
+    {
+        TestDatabase db(user_path);
+        db.exec("UPDATE dictionary_sources SET enabled=1,updated_at=3 WHERE id='a'");
+    }
+    replay();
+    REQUIRE_EQ(pinyin_weight("来源词"), 99);
+    REQUIRE_EQ(latin_count(), 1);
+
+    // 用户删掉种子词：撤下，标记一并清掉，之后的回放也不复活。
+    REQUIRE(user_dictionary::record_delete(user, user_dictionary::DictionaryKind::Pinyin, "xin", "来源词"));
+    replay();
+    replay();
+    REQUIRE_EQ(pinyin_weight("来源词"), -1);
+    {
+        TestDatabase db(main_path);
+        REQUIRE_EQ(db.scalar_int("SELECT COUNT(*) FROM seed_materialized WHERE value='来源词'"), 0);
+    }
+}
+
 TEST_CASE(EnterLearnedEnglishWordsAreValidatedPersistedAndIdempotent)
 {
     const auto directory = test::TempRoot() / ("msime-enter-english-" + std::to_string(GetCurrentProcessId()));

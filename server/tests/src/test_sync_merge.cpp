@@ -1,6 +1,7 @@
 #include "settings/sync_merge.h"
 #include "tests/includes/test_framework.h"
 #include "tests/includes/test_utf8_path.h"
+#include "engine/user_dictionary/user_dictionary_journal.h"
 
 #include <sqlite3.h>
 
@@ -301,6 +302,90 @@ constexpr const char *kLatinTable = "CREATE TABLE user_latin_words(key TEXT NOT 
                                     "updated_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(key,value));";
 constexpr const char *kStateTable = "CREATE TABLE dictionary_state(name TEXT PRIMARY KEY,value TEXT NOT NULL);";
 } // namespace
+
+// 种子词库：来源按 id 合并、较新者胜出；词条取并集；删除墓碑清掉两边的词条，再合并同一份旧归档也不复活。
+// 种子词条不进个人日志。
+TEST_CASE(merge_user_dictionary_syncs_seed_sources_and_entries)
+{
+    const fs::path root = TempDir("merge-seed-sources");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {user_dictionary::kSeedJournalTablesSql,
+                                  "INSERT INTO dictionary_sources VALUES('a','本地名','rime',1,0,1,100),"
+                                  "('local-only','本地','rime',1,0,1,100);"
+                                  "INSERT INTO seed_entries VALUES('a','pinyin','xin','本地词',10,0),"
+                                  "('local-only','pinyin','ben','本',10,0);"});
+    CreateUserDatabase(remote_db, {user_dictionary::kSeedJournalTablesSql,
+                                   "INSERT INTO dictionary_sources VALUES('a','远端名','rime',0,0,1,200),"
+                                   "('remote-only','远端','rime',1,0,1,150);"
+                                   "INSERT INTO seed_entries VALUES('a','pinyin','xin','远端词',10,0),"
+                                   "('a','latin','a','A股',5,0),('remote-only','pinyin','yuan','远',10,0);"});
+
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources"), 3);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT enabled FROM dictionary_sources WHERE id='a'"), 0);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM seed_entries WHERE source_id='a'"), 3);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM seed_entries"), 5);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM user_dictionary_operations"), 0);
+
+    // 本机较新的删除：词条清掉，再合并同一份远端归档也不回来。
+    Exec(local_db, "UPDATE dictionary_sources SET deleted=1,enabled=0,updated_at=300 WHERE id='a';"
+                   "DELETE FROM seed_entries WHERE source_id='a'");
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT deleted FROM dictionary_sources WHERE id='a'"), 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM seed_entries WHERE source_id='a'"), 0);
+}
+
+// 同一秒两边都改过：删除优先、其次停用优先，两个方向合并结果一致。
+TEST_CASE(merge_user_dictionary_seed_source_ties_converge)
+{
+    const fs::path root = TempDir("merge-seed-ties");
+    const fs::path first = root / "first.db";
+    const fs::path second = root / "second.db";
+    const std::vector<std::string> first_rows = {user_dictionary::kSeedJournalTablesSql,
+                                                 "INSERT INTO dictionary_sources VALUES"
+                                                 "('del','删','rime',1,1,1,100),('off','停','rime',1,0,1,100);"
+                                                 "INSERT INTO seed_entries VALUES('del','pinyin','shan','删',10,0);"};
+    const std::vector<std::string> second_rows = {user_dictionary::kSeedJournalTablesSql,
+                                                  "INSERT INTO dictionary_sources VALUES"
+                                                  "('del','删','rime',1,0,1,100),('off','停','rime',0,0,1,100);"
+                                                  "INSERT INTO seed_entries VALUES('del','pinyin','shan','删',10,0);"};
+    for (const bool forward : {true, false})
+    {
+        std::error_code error;
+        fs::remove(first, error);
+        fs::remove(second, error);
+        CreateUserDatabase(first, first_rows);
+        CreateUserDatabase(second, second_rows);
+        const fs::path &local = forward ? first : second;
+        const fs::path &remote = forward ? second : first;
+        user_data_sync::DictionaryMergeReport report;
+        std::string message;
+        REQUIRE(user_data_sync::MergeUserDictionary(local, remote, report, message));
+        REQUIRE_EQ(QueryInt(local, "SELECT deleted FROM dictionary_sources WHERE id='del'"), 1);
+        REQUIRE_EQ(QueryInt(local, "SELECT enabled FROM dictionary_sources WHERE id='off'"), 0);
+        REQUIRE_EQ(QueryInt(local, "SELECT COUNT(*) FROM seed_entries"), 0);
+    }
+}
+
+// 远端是还没有种子表的旧归档：本机的种子词库原样保留。
+TEST_CASE(merge_user_dictionary_old_archive_keeps_local_seed_sources)
+{
+    const fs::path root = TempDir("merge-seed-old-remote");
+    const fs::path local_db = root / "local.db";
+    const fs::path remote_db = root / "remote.db";
+    CreateUserDatabase(local_db, {user_dictionary::kSeedJournalTablesSql,
+                                  "INSERT INTO dictionary_sources VALUES('a','来源','rime',1,0,1,100);"
+                                  "INSERT INTO seed_entries VALUES('a','pinyin','xin','来源词',10,0);"});
+    CreateUserDatabase(remote_db, {});
+    user_data_sync::DictionaryMergeReport report;
+    std::string message;
+    REQUIRE(user_data_sync::MergeUserDictionary(local_db, remote_db, report, message));
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM dictionary_sources"), 1);
+    REQUIRE_EQ(QueryInt(local_db, "SELECT COUNT(*) FROM seed_entries"), 1);
+}
 
 // user_inserted 是粘性标记：远端较新的自动调频行（0）不能把本机手动加的词（1）降级，
 // 否则带假名的手加词会在回放时被当成学来的假名拼音跳过并删掉。

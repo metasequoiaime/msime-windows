@@ -1,6 +1,7 @@
 #include "settings/sync_merge.h"
 
 #include "config/ime_config_internal.h"
+#include "engine/user_dictionary/user_dictionary_journal.h"
 
 #include <bcrypt.h>
 #include <sqlite3.h>
@@ -86,6 +87,43 @@ bool Exec(sqlite3 *db, const std::string &sql, std::string &message)
         return false;
     }
     return true;
+}
+
+// 远端有没有种子词库的两张表。读失败时 message 非空。
+bool RemoteHasSeedTables(const std::filesystem::path &remote_db, std::string &message)
+{
+    DbHandle remote = OpenDatabase(remote_db, SQLITE_OPEN_READONLY, message);
+    if (!remote)
+        return false;
+    return TableExists(remote.get(), "dictionary_sources") && TableExists(remote.get(), "seed_entries");
+}
+
+// 种子词库：来源按稳定 id 合并，较新的 updated_at 胜出；同一秒两边都改过时删除优先、其次停用优先，
+// 两台设备各自合并后结果一致。词条导入后不再改，按 (来源, 词) 取并集；已删除来源的词条两边都清掉，
+// 删除墓碑留在 dictionary_sources，远端的旧副本不会把它带回来。主库由随后的回放对齐。
+bool MergeSeedDictionaries(sqlite3 *local, std::string &message)
+{
+    return Exec(local, user_dictionary::kSeedJournalTablesSql, message) &&
+           Exec(local,
+                "INSERT INTO main.dictionary_sources(id,name,format,enabled,deleted,created_at,updated_at) "
+                "SELECT id,name,format,enabled,deleted,created_at,updated_at FROM sync_remote.dictionary_sources "
+                "WHERE true ON CONFLICT(id) DO UPDATE SET name=excluded.name,format=excluded.format,"
+                "enabled=excluded.enabled,deleted=excluded.deleted,created_at=excluded.created_at,"
+                "updated_at=excluded.updated_at "
+                "WHERE excluded.updated_at>dictionary_sources.updated_at OR "
+                "(excluded.updated_at=dictionary_sources.updated_at AND "
+                "(excluded.deleted>dictionary_sources.deleted OR (excluded.deleted=dictionary_sources.deleted AND "
+                "excluded.enabled<dictionary_sources.enabled)))",
+                message) &&
+           Exec(local,
+                "INSERT OR IGNORE INTO main.seed_entries(source_id,dictionary,key,value,weight,exact_only) "
+                "SELECT r.source_id,r.dictionary,r.key,r.value,r.weight,r.exact_only FROM sync_remote.seed_entries r "
+                "JOIN main.dictionary_sources s ON s.id=r.source_id AND s.deleted=0",
+                message) &&
+           Exec(local,
+                "DELETE FROM main.seed_entries WHERE source_id IN "
+                "(SELECT id FROM main.dictionary_sources WHERE deleted<>0)",
+                message);
 }
 
 // 词库日志的一行。字段顺序与 user_dictionary_operations 的表结构对齐。
@@ -408,6 +446,25 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
     // 有日志时归档里的文本词库会被整批跳过，不在这里合并它就永远同步不过来。
     // 其余调频状态表（固定位置、槽位、日期格式顺序）是每台设备自己的使用习惯，跨机合并
     // 没有确定语义，这一版不动它们。
+    // 种子词库在 SQL 里按集合合并，远端库要附加到本地连接上；ATTACH 不能放进事务里。
+    const bool remote_has_seeds = RemoteHasSeedTables(remote_db, message);
+    if (!message.empty())
+        return false;
+    if (remote_has_seeds)
+    {
+        sqlite3_stmt *attach = nullptr;
+        const std::string remote_path = Utf8(remote_db);
+        const bool attached =
+            sqlite3_prepare_v2(local.get(), "ATTACH DATABASE ?1 AS sync_remote", -1, &attach, nullptr) == SQLITE_OK &&
+            sqlite3_bind_text(attach, 1, remote_path.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+            sqlite3_step(attach) == SQLITE_DONE;
+        sqlite3_finalize(attach);
+        if (!attached)
+        {
+            message = std::string("附加远端用户词库失败：") + sqlite3_errmsg(local.get());
+            return false;
+        }
+    }
     if (!Exec(local.get(), "BEGIN IMMEDIATE", message))
         return false;
     const std::string local_identity = ReplayedDictionaryIdentity(local.get());
@@ -557,6 +614,9 @@ bool MergeUserDictionary(const std::filesystem::path &local_db, const std::files
         if (latin)
             sqlite3_finalize(latin);
     }
+
+    if (ok && remote_has_seeds)
+        ok = MergeSeedDictionaries(local.get(), message);
 
     // 远端的行是按远端回放过的那份出厂词库的量级记的。两边词库不是同一份（或远端没记）时，
     // 这些绝对权重原样回放会把新词库的词频压下去（「了 le」被压到旧值就是这么来的）。

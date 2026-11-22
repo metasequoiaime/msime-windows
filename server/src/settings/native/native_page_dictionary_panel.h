@@ -118,6 +118,8 @@ class DictTableHeader : public msimeui::Visual
     // 表头的全选框：点它一次勾上当前页全部，再点一次全取消。
     void SetOnSelectAll(std::function<void()> handler);
     void SetAllSelected(bool selected);
+    // 只读表（种子词库的词条）没有勾选框。
+    void SetSelectable(bool selectable);
 
     SizeF Measure(const SizeF &availableSize) override;
     void Arrange(const RectF &finalRect) override;
@@ -135,6 +137,7 @@ class DictTableHeader : public msimeui::Visual
     DictColumns columns_;
     std::array<std::wstring, 4> labels_;
     float reserve_ = 0.0f;
+    bool selectable_ = true;
     bool allSelected_ = false;
     bool hovered_ = false;
     bool pressed_ = false;
@@ -152,6 +155,8 @@ class DictTableBody : public msimeui::Visual
     void SetRows(std::vector<std::array<std::wstring, 3>> rows, size_t firstIndex);
     void SetEmpty(std::wstring message);
     void SetOnAction(ActionHandler handler);
+    // 只读：不画编辑 / 删除，也没有勾选框（种子词库的词条只能整库启停、删除）。
+    void SetReadOnly(bool readOnly);
     // 勾选只按当前页的行号记，翻页、换词库、重新查询都清空。
     const std::vector<size_t> &Selection() const
     {
@@ -190,6 +195,7 @@ class DictTableBody : public msimeui::Visual
     std::pair<size_t, bool> hovered_ = {static_cast<size_t>(-1), false};
     std::pair<size_t, bool> pressed_ = {static_cast<size_t>(-1), false};
     ActionHandler onAction_;
+    bool readOnly_ = false;
     std::vector<size_t> selection_;
     size_t hoveredCheck_ = static_cast<size_t>(-1);
     size_t pressedCheck_ = static_cast<size_t>(-1);
@@ -265,6 +271,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     {
         Dictionary, // quanpin / wubi / english, requestId prefix "dict-"
         Quick,      // quick phrases, requestId prefix "quick-"
+        Seed,       // read-only entries of one seed dictionary, requestId prefix "seed-"
     };
 
     DictionaryPanel(PageContext &context, Kind kind);
@@ -277,11 +284,12 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     {
         return dictionary_;
     }
+    void SetSourceId(const std::string &sourceId);
     // 批量导入 for the current dictionary (`import`) or 纯汉字导入 (`importHans`).
     void Import(const std::string &action);
     // 导入其他词库：按 `format`（foreign_dictionary.h 的格式标识）选文件，交给宿主读取并
     // 导入拼音用户词库。导入进行中再点只提示，不重复提交。
-    void ImportForeign(const std::string &format);
+    void ImportForeign(const std::string &format, const std::string &name = {});
     void Export(const std::string &dictionary);
     // Called when the current dictionary changes, e.g. to retitle the hans import card.
     void SetOnModeChanged(std::function<void()> handler);
@@ -299,6 +307,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     {
         std::string action;
         std::string dictionary;
+        std::string sourceId;
     };
 
     std::string Post(const std::string &action, Json data);
@@ -323,6 +332,7 @@ class DictionaryPanel : public std::enable_shared_from_this<DictionaryPanel>
     PageContext &context_;
     Kind kind_ = Kind::Dictionary;
     std::string dictionary_;
+    std::string sourceId_;
     std::string prefix_;
     uint64_t counter_ = 0;
     std::map<std::string, Pending> pending_;

@@ -275,7 +275,38 @@
         "dictionary": "quanpin",
         "action": "importForeign",
         "format": "libimebin",
-        "path": "C:\\Users\\me\\Downloads\\sogou-network.dict"
+        "path": "C:\\Users\\me\\Downloads\\sogou-network.dict",
+        "name": "网络新词"
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "seed dictionary sources",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "seeds-1",
+        "dictionary": "seeds",
+        "action": "listSources"
+      }
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "client"
+  },
+  {
+    "name": "seed dictionary disable",
+    "message": {
+      "type": "dictionaryRequest",
+      "data": {
+        "requestId": "seeds-2",
+        "dictionary": "seeds",
+        "action": "setSourceEnabled",
+        "sourceId": "e4da3b7f-bbce-4ad5-9c3d-7f0d13a1c81f",
+        "enabled": false
       }
     },
     "valid": true,
@@ -449,6 +480,30 @@
           "word": "你好",
           "code": "ni'hao",
           "weight": 10
+        }
+      ]
+    },
+    "valid": true,
+    "surface": "settings",
+    "direction": "server"
+  },
+  {
+    "name": "seed dictionary sources response",
+    "message": {
+      "type": "dictionaryResponse",
+      "requestId": "seeds-1",
+      "action": "listSources",
+      "dictionary": "seeds",
+      "ok": true,
+      "message": "查询成功",
+      "rows": [],
+      "sources": [
+        {
+          "id": "e4da3b7f-bbce-4ad5-9c3d-7f0d13a1c81f",
+          "name": "网络新词",
+          "format": "libimebin",
+          "enabled": true,
+          "entryCount": 120
         }
       ]
     },

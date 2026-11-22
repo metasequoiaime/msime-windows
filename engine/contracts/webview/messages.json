@@ -537,7 +537,8 @@
               "wubixsj",
               "english",
               "quick",
-              "latin"
+              "latin",
+              "seeds"
             ]
           },
           "action": {
@@ -551,7 +552,10 @@
               "import",
               "importHans",
               "importForeign",
-              "export"
+              "export",
+              "listSources",
+              "setSourceEnabled",
+              "deleteSource"
             ]
           },
           "format": {
@@ -564,6 +568,15 @@
           },
           "path": {
             "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
           },
           "word": {
             "type": "string"
@@ -1489,6 +1502,44 @@
         },
         "hasMore": {
           "type": "boolean"
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "sourceName": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "format": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "entryCount": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "format",
+              "enabled",
+              "entryCount"
+            ],
+            "additionalProperties": false
+          }
         },
         "total": {
           "type": "integer",
