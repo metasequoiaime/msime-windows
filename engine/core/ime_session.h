@@ -114,6 +114,11 @@ class ImeSession
     int cache_dynamic_candidate_for_current_request(const std::string &word, CandidateSource source);
     int apply_dynamic_candidate(const std::string &word, CandidateSource source);
     std::optional<WordItem> find_candidate(SchemeType scheme, const std::string &key, const std::string &value);
+    // 按词反查当前五笔版本的全码（候选注解用）。不查候选、不影响后续查询的状态，词不在码表时返回 nullopt。
+    std::optional<std::string> wubi_full_code_for_word(const std::string &word)
+    {
+        return provider_registry_.wubi_full_code_for_word(word);
+    }
 
     SchemeType current_scheme_type() const;
     const std::string &get_preedit() const;

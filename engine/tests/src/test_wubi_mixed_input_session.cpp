@@ -549,6 +549,28 @@ int main()
             const auto wubi86 = words(session);
             require(!wubi86.empty() && wubi86[0] == "你好", "A Wubi 98 removal touched the wubi86 table.");
         }
+
+        // 候选注解的反查：一个词有多条码时取全码（最长），读当前那一版的表，查不到就是没有。
+        {
+            InputSession session(SchemeType::Wubi, GetXiaoheShuangpinProfile(), paths_for(resources, root, next()));
+            session.set_wubi_input_options(WubiInputOptions{false});
+            // 工 在 fixture 里有 a（一级简码）和 aaaa（全码），注解要的是后者。
+            require(session.wubi_full_code_for_word("工") == std::optional<std::string>("aaaa"),
+                    "The reverse lookup did not prefer the full code over the short one.");
+            require(session.wubi_full_code_for_word("你好") == std::optional<std::string>("wq"),
+                    "The reverse lookup did not answer a word the table holds.");
+            require(!session.wubi_full_code_for_word("子").has_value(),
+                    "The reverse lookup answered a word the table does not hold.");
+            require(!session.wubi_full_code_for_word("").has_value(), "The reverse lookup answered an empty word.");
+
+            WubiInputOptions options;
+            options.profile = WubiProfile::Wubi98;
+            session.set_wubi_input_options(options);
+            require(session.wubi_full_code_for_word("你们") == std::optional<std::string>("wq"),
+                    "The reverse lookup did not follow the wubi profile.");
+            require(!session.wubi_full_code_for_word("你好").has_value(),
+                    "The reverse lookup answered from another version's table.");
+        }
     }
     catch (const std::exception &error)
     {

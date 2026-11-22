@@ -85,6 +85,8 @@ std::string g_shuangpin_schema = "xiaohe";
 std::string g_wubi_schema = "wubi86";
 // 五笔拼音混输是独立开关：同一串字母同时给五笔码表和全拼，五笔候选在前。与 z 键角色无关。
 bool g_wubi_mixed_pinyin = false;
+// 混输时在拼音候选后显示该词的五笔全码，方便学五笔。默认关闭：新增显示内容不改变升级用户的现有观感。
+bool g_wubi_code_hint = false;
 // 造词时 Esc 只清掉还没选的拼音、保留已选的词（小狼毫风格），第二次 Esc 才整体取消。默认关闭。
 bool g_escape_keeps_selected_word = false;
 // 回车上屏英文时顺带写入英文词库。默认开启，保持原有行为。
@@ -563,6 +565,7 @@ bool LoadImeConfig()
             g_wubi_schema = metasequoia::wubi_profile_from_name(schema) ? schema : "wubi86";
         }
         g_wubi_mixed_pinyin = tbl["input"]["wubi_mixed_pinyin"].value_or(false);
+        g_wubi_code_hint = tbl["input"]["wubi_code_hint"].value_or(false);
         g_escape_keeps_selected_word = tbl["input"]["escape_keeps_selected_word"].value_or(false);
         g_enter_learns_english_word = tbl["input"]["enter_learns_english_word"].value_or(true);
         g_english_commit_with_space = tbl["input"]["english_commit_with_space"].value_or(true);

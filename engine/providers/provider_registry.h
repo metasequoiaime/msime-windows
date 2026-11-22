@@ -44,6 +44,12 @@ class ProviderRegistry
         wubi_provider_.set_profile(profile);
     }
 
+    // 按词反查五笔全码（候选注解用），表跟当前 profile 走。
+    std::optional<std::string> wubi_full_code_for_word(const std::string &word)
+    {
+        return wubi_provider_.full_code_for_word(word);
+    }
+
     void set_helpcode_keymap(HelpcodeUtils::SharedKeymap table)
     {
         pinyin_provider_.set_helpcode_keymap(std::move(table));

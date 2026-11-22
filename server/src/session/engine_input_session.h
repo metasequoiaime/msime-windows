@@ -37,6 +37,7 @@ class EngineInputSession : public IInputSession
     bool can_expand_initial_candidates() const override;
     bool expand_initial_candidates() override;
     std::string get_helpcode_annotation(const std::string &word, bool uppercase_all) const override;
+    std::string get_wubi_code_annotation(const std::string &word) override;
     std::optional<WordItem> find_candidate(const std::string &key, const std::string &value) override;
     std::vector<WordItem> query_radical(const std::string &code, SchemeType scheme,
                                         const ShuangpinProfile &profile) const override;

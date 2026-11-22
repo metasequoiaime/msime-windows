@@ -32,6 +32,9 @@ class WubiCandidateProvider : public ICandidateProvider
     {
         return profile_;
     }
+    // 按词反查码（候选注解用）：一个词在码表里常有简码到全码的多条码，这里取最长的那条全码，
+    // 因为它完整反映字根拆解。词不在码表、或码表打不开时返回 nullopt——调用方只需要「没有就不显示」。
+    std::optional<std::string> full_code_for_word(const std::string &word);
     int create_word(SchemeType scheme, std::string code, std::string word) override;
     int update_weight_by_pinyin_and_word(SchemeType scheme, std::string code, std::string word) override;
     int delete_by_pinyin_and_word(SchemeType scheme, std::string code, std::string word) override;
@@ -69,4 +72,14 @@ class WubiCandidateProvider : public ICandidateProvider
     sqlite3_stmt *hint_key_statement_ = nullptr;
     // 通配码（含 z）专用：WHERE 是 GLOB 而非范围，单独 prepared。
     sqlite3_stmt *wildcard_key_statement_ = nullptr;
+    // 反查专用：按 value（词）查 key（码），走 idx_<table>_value。
+    sqlite3_stmt *value_statement_ = nullptr;
+    // 反查自己偷懒准备，失败也不连累上面的候选语句。
+    bool ensure_value_statement();
+    // 只在「持久失败」（词库里没有这一版的表）上置位：组页循环里每行候选都会来反查一次，
+    // 不记就变成每页 N 次开库重准备。打开失败与 SQLITE_BUSY/IOERR 这类瞬时错误不记忆，
+    // 下一次就该重试。清除点有两处：ensure_query_statement() 每键成功（三条查询语句就绪就
+    // 证明表存在，这条是生产里真正的自愈路径），以及 set_profile()/reset_cache()（配置变化或
+    // 词典变更时重开词库）。所以补装词库后不必换版本或重启。
+    bool value_unavailable_ = false;
 };
