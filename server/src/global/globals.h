@@ -591,6 +591,8 @@ struct CandidatePageSnapshot
     // 这一页第一个候选的绝对下标。横排固定宽度时各页个数不等，不能再用 page_index * page_size 推。
     int page_start = 0;
     int selected_index_in_page = 0;
+    // V 模式的候选按字母选（a 是第一个），左侧标签跟着换；其余模式仍是 1..9。
+    bool letter_labels = false;
     // page_count mirrors current_page_count() and page_item_count mirrors cur_page_item_cnt. Both are carried because
     // the height estimate prefers the derived count and only falls back to the rendered one.
     int page_count = 0;
