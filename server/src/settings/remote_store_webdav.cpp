@@ -28,6 +28,13 @@ using detail::Perform;
 using detail::Retry;
 using detail::UrlRoot;
 
+std::string CollectionUrl(std::string url)
+{
+    if (!url.empty() && url.back() != '/')
+        url.push_back('/');
+    return url;
+}
+
 std::string NormalizeBase(std::string base)
 {
     while (!base.empty() && base.back() == '/')
@@ -470,7 +477,7 @@ class WebDavStore final : public RemoteStore
             [&](std::string &attempt_message) {
                 HttpRequest request;
                 request.method = "PROPFIND";
-                request.url = JoinUrl(options_.base_url, prefix);
+                request.url = CollectionUrl(JoinUrl(options_.base_url, prefix));
                 request.headers = BaseHeaders(options_);
                 request.headers.push_back("Depth: 1");
                 request.headers.push_back("Content-Type: application/xml; charset=utf-8");
@@ -586,7 +593,7 @@ class WebDavStore final : public RemoteStore
         // 探测数据实际落点的基址（默认是用户填的目录下面的 msime）。这样 404 的含义就
         // 正好是「msime 这一层还没建」，与 EnsureDirectory 从这一级开始 MKCOL 的行为对得上：
         // 那一级上不去的话上传同样建不出来，探测不能给出一个必然失败的承诺。
-        const HttpResponse response = PropfindDepth0(options_.base_url, 30);
+        const HttpResponse response = PropfindDepth0(CollectionUrl(options_.base_url), 30);
         if (IsSuccess(response.status))
             return true; // 文案由 SyncService::Probe 统一兜底，这里不再写一份。
         if (response.status == 401 || response.status == 403)
@@ -678,14 +685,19 @@ class WebDavStore final : public RemoteStore
             accumulated += segments[index];
             HttpRequest request;
             request.method = "MKCOL";
-            request.url = JoinUrl(UrlRoot(options_.base_url), accumulated);
+            request.url = CollectionUrl(JoinUrl(UrlRoot(options_.base_url), accumulated));
             request.headers = BaseHeaders(options_);
             request.timeout_seconds = 60;
-            const HttpResponse response = Perform(request);
+            HttpResponse response = Perform(request);
+            const bool is_leaf = index + 1 == segments.size();
+            if (is_leaf && response.status == 409 && request.url.size() > 1 && request.url.back() == '/')
+            {
+                request.url.pop_back();
+                response = Perform(request);
+            }
             // 201 新建、405 已存在。中间层级再放过 409（上级还没建，下一段会补上）与 403
             // （服务端已有的根集合不许 MKCOL，坚果云的 /dav 就是）。最后一级必须真的存在：
             // 它若是 403 / 409，后面的 PUT 一定失败，在这里报出来比让 PUT 回一个 409 好懂。
-            const bool is_leaf = index + 1 == segments.size();
             const bool exists = IsSuccess(response.status) || response.status == 405;
             const bool tolerated = !is_leaf && (response.status == 409 || response.status == 403);
             if (!exists && !tolerated)
@@ -729,7 +741,7 @@ class WebDavStore final : public RemoteStore
         const std::string parent = detail::ParentOf(options_.base_url);
         if (parent.empty())
             return 0;
-        return PropfindDepth0(parent, 30).status;
+        return PropfindDepth0(CollectionUrl(parent), 30).status;
     }
 
     // HEAD 不可靠时用 PROPFIND Depth: 0 取单个对象的元信息。失败不改变已找到的结论：
