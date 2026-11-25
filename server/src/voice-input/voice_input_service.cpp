@@ -1389,13 +1389,10 @@ void CommitRecognizedText(const std::string &utf8, const VoiceInputConfig &confi
         {
             CancelInlinePreeditFor(final_target);
         }
-        // This action requires a live captured route. A failed chunk leaves
-        // any delivered prefix in the field; keep the full original on the
-        // Copy surface without replaying it through another delivery method.
-        if (SendTextViaTsf(text, final_target) == text.size())
-        {
-            return;
-        }
+        // The worker pipe acknowledges sending, not the host edit session.
+        // Keep the full result available without replaying any text that may
+        // already have been inserted.
+        SendTextViaTsf(text, final_target);
         show_card(text);
         return;
     case VoiceInput::VoiceCommitAction::CommitSendInput:

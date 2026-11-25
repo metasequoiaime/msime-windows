@@ -143,6 +143,7 @@ std::unique_ptr<StreamingAsr> g_stream_asr;
 std::vector<std::future<void>> g_network_tasks;
 std::function<void()> g_during_capture, g_during_recognition;
 bool g_fast_valid = true, g_route_valid = true;
+bool g_host_accepts_delivery = true;
 int g_pipe_attempts = 0, g_pipe_fail_at = 0, g_cancels = 0, g_send_input = 0;
 std::atomic<int> g_recognitions{0};
 namespace VoiceInput
@@ -175,7 +176,8 @@ bool SendToTsfWorkerThreadClientViaNamedpipe(std::uint64_t, std::uint64_t, UINT 
     }
     if (++g_pipe_attempts == g_pipe_fail_at)
         return false;
-    g_inserted += text;
+    if (g_host_accepts_delivery)
+        g_inserted += text;
     return true;
 }
 bool SendVoiceCompositionToTsfWorker(std::uint64_t client, std::uint64_t epoch, UINT type, const std::wstring &text)
@@ -265,7 +267,7 @@ void Reset()
     g_inline_owner = {};
     g_inline_owner_session = 0;
     g_during_capture = g_during_recognition = {};
-    g_fast_valid = g_route_valid = true;
+    g_fast_valid = g_route_valid = g_host_accepts_delivery = true;
     g_pipe_attempts = g_pipe_fail_at = g_cancels = g_send_input = g_recognitions = 0;
     g_inserted.clear();
 }
@@ -418,6 +420,21 @@ void TestTsfPartialDeliveryKeepsFullCard()
     CHECK(g_result_card.shows == 1 && g_result_card.text == string_to_wstring(original));
     CHECK(g_send_input == 0);
 }
+void TestTsfPipeSuccessKeepsFullCardWithoutReplayingText()
+{
+    for (bool host_accepts_delivery : {false, true})
+    {
+        Reset();
+        BindOwner();
+        g_host_accepts_delivery = host_accepts_delivery;
+        CommitRecognizedText("voice", {}, false, g_target, 1);
+        CHECK(g_pipe_attempts == 1);
+        CHECK(g_inserted == (host_accepts_delivery ? L"voice" : L""));
+        CHECK(g_result_card.shows == 1 && g_result_card.text == L"voice");
+        CHECK(g_send_input == 0);
+    }
+}
+
 int main()
 {
     try
@@ -430,7 +447,8 @@ int main()
         TestStaleCancelPreservesNewRecording();
         TestOwnerCancellationFences();
         TestTsfPartialDeliveryKeepsFullCard();
-        std::cout << "PASS voice service cancellation, owner and partial-delivery regressions\n";
+        TestTsfPipeSuccessKeepsFullCardWithoutReplayingText();
+        std::cout << "PASS voice service cancellation, owner and delivery regressions\n";
         return 0;
     }
     catch (const std::exception &error)
