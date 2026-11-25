@@ -8,6 +8,7 @@
 #include "../uiless_page.h"
 #include "../v_mode_input.h"
 #include "../voice_composition_pipe.h"
+#include "../voice_insert_receipt.h"
 
 #include <algorithm>
 #include <array>
@@ -37,6 +38,18 @@ int main()
     CHECK(FanyImePipeEventType::InputStateAction == 17);
     CHECK(FanyImeProtocol::InputStateShortcuts == (1u << 7));
     CHECK(FanyImeProtocol::TemporaryJapaneseLongVowel == (1u << 8));
+    const auto receiptCaps = FanyImeProtocol::Capabilities | FanyImeProtocol::VoiceInsertReceipt;
+    const auto receiptHello = FanyImeProtocol::Hello(7, 123, receiptCaps);
+    CHECK((FanyImeProtocol::Negotiate(receiptHello).capabilities & FanyImeProtocol::VoiceInsertReceipt) == 0);
+    CHECK((FanyImeProtocol::Negotiate(receiptHello, receiptCaps).capabilities & FanyImeProtocol::VoiceInsertReceipt) !=
+          0);
+    const auto payload = FanyImeVoiceInsert::Encode((std::numeric_limits<std::uint64_t>::max)() - 1, 25, L"a\tb");
+    const auto insert = FanyImeVoiceInsert::Decode(payload);
+    CHECK(insert.receipt == (std::numeric_limits<std::uint64_t>::max)() - 1 && insert.focus == 25 &&
+          insert.text == L"a\tb");
+    CHECK(FanyImeVoiceInsert::Decode(L"18446744073709551616\t25\ta").receipt == 0);
+    CHECK(FanyImeVoiceInsert::Decode(L"7\t0\ta").receipt == 0);
+    CHECK(FanyImeVoiceInsert::Decode(L"7\t25\t").receipt == 0);
     const auto rCapabilities = FanyImeProtocol::Capabilities | FanyImeProtocol::TemporaryJapaneseLongVowel;
     const auto rHello = FanyImeProtocol::Hello(7, 123, rCapabilities);
     CHECK((FanyImeProtocol::Negotiate(rHello).capabilities & FanyImeProtocol::TemporaryJapaneseLongVowel) == 0);
@@ -46,7 +59,8 @@ int main()
            FanyImeProtocol::TemporaryJapaneseLongVowel) == 0);
     CHECK(FanyImeWorkerReplyType::TemporaryJapanesePolicyChanged == 36);
     CHECK(FanyImeWorkerReplyType::UpdateInstallerReady == 40);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::CancelComposition);
+    CHECK(FanyImeWorkerReplyType::InsertVoiceText == 43);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::InsertVoiceText);
     // ServerCompositionCancel is optional: an unversioned hello or a client without the bit never gets it.
     CHECK(FanyImeProtocol::ServerCompositionCancel == (1u << 9));
     CHECK((FanyImeProtocol::ServerCompositionCancel & FanyImeProtocol::RequiredCapabilities) == 0);
@@ -258,7 +272,7 @@ int main()
     CHECK(FanyImeWorkerReplyType::UpdateInstallerReady == 40);
     CHECK(FanyImeWorkerReplyType::DirectHelpcodeEndTriggerChanged == 41);
     CHECK(FanyImeWorkerReplyType::CancelComposition == 42);
-    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::CancelComposition);
+    CHECK(FanyImeWorkerReplyType::MaxKnown == FanyImeWorkerReplyType::InsertVoiceText);
     // EnumerationCommaKeysChanged 的载荷：\ 和 / 各一位，两个都没勾按只有 \ 发。
     CHECK(FanyImeEnumerationComma::PayloadFor(true, false) == L'1' &&
           FanyImeEnumerationComma::PayloadFor(false, true) == L'2' &&

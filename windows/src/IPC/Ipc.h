@@ -69,6 +69,7 @@ bool SupportsTrilingualCycle();
 bool SupportsInputStateShortcuts();
 // The Server negotiated FanyImeProtocol::FocusFieldAttestation.
 bool SupportsFocusFieldAttestation();
+void SendVoiceInsertReceipt(std::uint64_t receipt, bool accepted);
 // Records this thread's focused TSF document: whether it takes text and whether
 // it is another field than the last one reported (a new serial). Sends
 // FocusFieldState when it changed and the focus session is already fenced;

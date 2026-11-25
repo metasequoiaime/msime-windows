@@ -520,7 +520,7 @@ bool WritePipeHello(HANDLE hPipeHandle, UINT pipeRole)
                 FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
                 FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
                 FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::ServerCompositionCancel |
-                FanyImeProtocol::FocusFieldAttestation);
+                FanyImeProtocol::FocusFieldAttestation | FanyImeProtocol::VoiceInsertReceipt);
         BOOL ret = WriteFile(hPipeHandle, &hello, sizeof(hello), &bytesWritten, NULL);
         // Never authorize keys from merely writing a hello. An old Server
         // without negotiation times out into the existing raw-input fallback.
@@ -1071,6 +1071,23 @@ bool SupportsFocusFieldAttestation()
 {
     return hPipe && hPipe != INVALID_HANDLE_VALUE &&
            (negotiatedServerCapabilities & FanyImeProtocol::FocusFieldAttestation) != 0;
+}
+
+void SendVoiceInsertReceipt(std::uint64_t receipt, bool accepted)
+{
+    if (!IsValidPipeHandle(hPipe) || (negotiatedServerCapabilities & FanyImeProtocol::VoiceInsertReceipt) == 0 ||
+        receipt == 0)
+        return;
+    // A receipt describes a finished edit, even if focus has since moved.
+    // Send it only on the existing nonblocking Main pipe. A missing receipt
+    // falls back to the card, so never activate another focus or reconnect here.
+    FanyImeNamedpipeData packet{};
+    packet.client_id = GetPipeClientId();
+    packet.event_type = FanyImePipeEventType::VoiceInsertReceipt;
+    packet.request_id = receipt;
+    packet.keycode = accepted ? 1u : 0u;
+    DWORD written = 0;
+    WriteFile(hPipe, &packet, sizeof(packet), &written, nullptr);
 }
 
 void FlushNamedpipeFocusField()

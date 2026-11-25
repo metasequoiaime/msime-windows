@@ -20,6 +20,7 @@
 #include <vector>
 #include "FanyLog.h"
 #include "Ipc.h"
+#include "../../../engine/contracts/voice_insert_receipt.h"
 #include "CommonUtils.h"
 #include "Global/FanyDefines.h"
 #include "Utils/FanyUtils.h"
@@ -125,7 +126,7 @@ void CMetasequoiaIME::_DispatchUnsolicitedVoiceText(WPARAM wParam, KEYSTROKE_FUN
     }
 }
 
-bool CMetasequoiaIME::_PostServerTextDelivery(UINT windowMessage, _In_z_ const WCHAR *text)
+bool CMetasequoiaIME::_PostServerTextDelivery(UINT windowMessage, _In_z_ const WCHAR *text, uint64_t requiredFocusToken)
 {
     constexpr size_t maxPendingServerCommits = 64;
     if (!_workerCommitReady.load(std::memory_order_acquire) ||
@@ -147,6 +148,7 @@ bool CMetasequoiaIME::_PostServerTextDelivery(UINT windowMessage, _In_z_ const W
         std::lock_guard<std::mutex> lock(_pendingCommitCandidateMutex);
         if (!_workerCommitReady.load(std::memory_order_relaxed) ||
             _localSessionResetPending.load(std::memory_order_relaxed) || focusToken == 0 ||
+            (requiredFocusToken != 0 && focusToken != requiredFocusToken) ||
             _expectedWorkerFocusToken.load(std::memory_order_relaxed) != focusToken ||
             _acknowledgedWorkerFocusToken.load(std::memory_order_relaxed) != focusToken ||
             _pendingServerCommitMessages.size() >= maxPendingServerCommits)
@@ -354,6 +356,7 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
         if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitCurCandidate ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitCandidateAndContinue ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InsertText ||
+            buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InsertVoiceText ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelVoiceComposition ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CancelComposition ||
             buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UiLessCandidatesChanged)
@@ -369,6 +372,8 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             }
             validFrame = hasTerminator;
         }
+        if (validFrame && buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InsertVoiceText)
+            validFrame = FanyImeVoiceInsert::Decode(buf.data).receipt != 0;
         if (validFrame && buf.msg_type == Global::DataToTsfWorkerThreadMsgType::PagingCommaPeriodChanged)
         {
             // Accepted forms: "0", "1", "0|raw", "1|pinyin", "0|empty".
@@ -598,6 +603,11 @@ void CMetasequoiaIME::IpcWorkerThread(CMetasequoiaIME *pIME)
             {
                 pIME->_PostServerInsertText(buf.data);
             }
+        }
+        else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::InsertVoiceText)
+        {
+            const auto payload = FanyImeVoiceInsert::Decode(buf.data);
+            pIME->_PostServerTextDelivery(WM_InsertVoiceText, buf.data, payload.focus);
         }
         else if (buf.msg_type == Global::DataToTsfWorkerThreadMsgType::UpdateVoiceComposition ||
                  buf.msg_type == Global::DataToTsfWorkerThreadMsgType::CommitVoiceComposition)

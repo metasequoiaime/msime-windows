@@ -815,7 +815,7 @@ bool NegotiateMainPipeClient(const FanyImeNamedpipeData &hello, uint64_t registr
                    FanyImeProtocol::CompositionRestore | FanyImeProtocol::CaretStateIndicator |
                    FanyImeProtocol::TrilingualCycle | FanyImeProtocol::InputStateShortcuts |
                    FanyImeProtocol::TemporaryJapaneseLongVowel | FanyImeProtocol::ServerCompositionCancel |
-                   FanyImeProtocol::FocusFieldAttestation);
+                   FanyImeProtocol::FocusFieldAttestation | FanyImeProtocol::VoiceInsertReceipt);
     std::lock_guard lock(g_pipe_clients_mutex);
     auto it = g_pipe_clients.find(hello.client_id);
     if (it == g_pipe_clients.end() || registration_id == 0 || it->second.main_registration_id != registration_id)
@@ -888,6 +888,14 @@ bool ClientNegotiatedServerCompositionCancel(uint64_t client_id)
     const auto it = g_pipe_clients.find(client_id);
     return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
            (it->second.protocol.capabilities & FanyImeProtocol::ServerCompositionCancel) != 0;
+}
+
+bool ClientNegotiatedVoiceInsertReceipt(uint64_t client_id)
+{
+    std::lock_guard lock(g_pipe_clients_mutex);
+    const auto it = g_pipe_clients.find(client_id);
+    return it != g_pipe_clients.end() && !it->second.protocol.legacy &&
+           (it->second.protocol.capabilities & FanyImeProtocol::VoiceInsertReceipt) != 0;
 }
 
 void RecordPipeClientFocusField(uint64_t client_id, uint64_t main_registration_id, uint64_t focus_token,

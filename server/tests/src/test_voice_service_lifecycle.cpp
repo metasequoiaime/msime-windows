@@ -2,6 +2,8 @@
 // are production code. Only device/network/target/pipe/UI boundaries are doubles.
 #include "voice-input/voice_commit_policy.h"
 #include "voice-input/voice_control_policy.h"
+#include "voice-input/voice_insert_receipts.h"
+#include "../../../engine/contracts/voice_insert_receipt.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -29,11 +31,11 @@ using ControlRequest = VoiceInput::ControlPolicy::Request;
 constexpr unsigned kSampleRate = 16000;
 namespace Global::DataFromServerMsgTypeToTsfWorkerThread
 {
-constexpr UINT InsertText = 1, CancelVoiceComposition = 2, CommitVoiceComposition = 3;
+constexpr UINT InsertText = 1, CancelVoiceComposition = 2, CommitVoiceComposition = 3, InsertVoiceText = 4;
 }
 struct FanyImeNamedpipeDataToTsfWorkerThread
 {
-    wchar_t data[8];
+    wchar_t data[200];
 };
 struct VoiceInputConfig
 {
@@ -128,6 +130,8 @@ struct CuePlayer
     }
 } g_cue_player;
 std::mutex g_send_mutex, g_control_mutex, g_mutex;
+VoiceInput::VoiceInsertReceipts g_voice_insert_receipts;
+constexpr auto kVoiceInsertReceiptTimeout = std::chrono::milliseconds(5);
 std::condition_variable g_control_cv;
 std::deque<ControlRequest> g_control_commands;
 std::atomic<std::uint64_t> g_voice_session{1}, g_dismissed_overlay_session{0};
@@ -144,6 +148,8 @@ std::vector<std::future<void>> g_network_tasks;
 std::function<void()> g_during_capture, g_during_recognition;
 bool g_fast_valid = true, g_route_valid = true;
 bool g_host_accepts_delivery = true;
+bool g_negotiates_receipts = true, g_host_rejects_delivery = false;
+std::function<void()> g_before_host_receipt;
 int g_pipe_attempts = 0, g_pipe_fail_at = 0, g_cancels = 0, g_send_input = 0;
 std::atomic<int> g_recognitions{0};
 namespace VoiceInput
@@ -167,7 +173,11 @@ bool IsPipeRouteCurrent(const VoiceInput::Target &target)
 {
     return g_route_valid && VoiceInput::HasBoundRoute(target);
 }
-bool SendToTsfWorkerThreadClientViaNamedpipe(std::uint64_t, std::uint64_t, UINT type, const std::wstring &text)
+bool ClientNegotiatedVoiceInsertReceipt(std::uint64_t)
+{
+    return g_negotiates_receipts;
+}
+bool SendToTsfWorkerThreadClientViaNamedpipe(std::uint64_t client, std::uint64_t, UINT type, const std::wstring &text)
 {
     if (type == Global::DataFromServerMsgTypeToTsfWorkerThread::CancelVoiceComposition)
     {
@@ -176,7 +186,18 @@ bool SendToTsfWorkerThreadClientViaNamedpipe(std::uint64_t, std::uint64_t, UINT 
     }
     if (++g_pipe_attempts == g_pipe_fail_at)
         return false;
-    if (g_host_accepts_delivery)
+    if (type == Global::DataFromServerMsgTypeToTsfWorkerThread::InsertVoiceText)
+    {
+        const auto payload = FanyImeVoiceInsert::Decode(text);
+        CHECK(payload.receipt != 0 && payload.focus == g_target.focus_token);
+        if (g_host_accepts_delivery)
+            g_inserted += payload.text;
+        if (g_before_host_receipt)
+            g_before_host_receipt();
+        if (g_host_accepts_delivery || g_host_rejects_delivery)
+            g_voice_insert_receipts.Record(client, payload.receipt, g_host_accepts_delivery);
+    }
+    else if (g_host_accepts_delivery)
         g_inserted += text;
     return true;
 }
@@ -268,6 +289,9 @@ void Reset()
     g_inline_owner_session = 0;
     g_during_capture = g_during_recognition = {};
     g_fast_valid = g_route_valid = g_host_accepts_delivery = true;
+    g_negotiates_receipts = true;
+    g_host_rejects_delivery = false;
+    g_before_host_receipt = {};
     g_pipe_attempts = g_pipe_fail_at = g_cancels = g_send_input = g_recognitions = 0;
     g_inserted.clear();
 }
@@ -414,25 +438,73 @@ void TestTsfPartialDeliveryKeepsFullCard()
     Reset();
     BindOwner();
     g_pipe_fail_at = 2;
-    const std::string original = "first packet and remaining text";
+    const std::string original(220, 'a');
     CommitRecognizedText(original, {}, false, g_target, 1);
-    CHECK(g_pipe_attempts == 2 && g_inserted == L"first p");
+    CHECK(g_pipe_attempts == 2 && !g_inserted.empty() && g_inserted.size() < original.size());
     CHECK(g_result_card.shows == 1 && g_result_card.text == string_to_wstring(original));
     CHECK(g_send_input == 0);
 }
-void TestTsfPipeSuccessKeepsFullCardWithoutReplayingText()
+void TestTsfOnlyShowsCardWhenHostDoesNotConfirm()
 {
-    for (bool host_accepts_delivery : {false, true})
+    for (int host_result : {0, 1, 2})
     {
         Reset();
         BindOwner();
+        const bool host_accepts_delivery = host_result == 1;
         g_host_accepts_delivery = host_accepts_delivery;
+        g_host_rejects_delivery = host_result == 2;
         CommitRecognizedText("voice", {}, false, g_target, 1);
         CHECK(g_pipe_attempts == 1);
         CHECK(g_inserted == (host_accepts_delivery ? L"voice" : L""));
-        CHECK(g_result_card.shows == 1 && g_result_card.text == L"voice");
+        CHECK(g_result_card.shows == (host_accepts_delivery ? 0 : 1));
+        CHECK(g_result_card.text == (host_accepts_delivery ? L"" : L"voice"));
         CHECK(g_send_input == 0);
     }
+}
+
+void TestOlderTsfKeepsPipeOnlyBehavior()
+{
+    Reset();
+    BindOwner();
+    g_negotiates_receipts = false;
+    CommitRecognizedText("voice", {}, false, g_target, 1);
+    CHECK(g_pipe_attempts == 1 && g_inserted == L"voice");
+    CHECK(g_result_card.shows == 0 && g_send_input == 0);
+}
+
+void TestAllTsfChunksConfirmedDoesNotShowCard()
+{
+    Reset();
+    BindOwner();
+    const std::string original(360, 'a');
+    CommitRecognizedText(original, {}, false, g_target, 1);
+    CHECK(g_pipe_attempts == 3 && g_inserted == string_to_wstring(original));
+    CHECK(g_result_card.shows == 0 && g_send_input == 0);
+}
+
+void TestReceiptTimeoutDoesNotShowStaleCard()
+{
+    Reset();
+    BindOwner();
+    g_host_accepts_delivery = false;
+    g_before_host_receipt = [] { ++g_voice_session; };
+    CommitRecognizedText("voice", {}, false, g_target, 1);
+    CHECK(g_result_card.shows == 0);
+}
+
+void TestReceiptTrackingIsClientAndChunkSpecific()
+{
+    VoiceInput::VoiceInsertReceipts tracker;
+    const auto first = tracker.Begin(7, 2);
+    tracker.Record(7, first + 1, true);
+    tracker.Record(7, first + 1, true);
+    tracker.Record(8, first, true);
+    CHECK(!tracker.Wait(first, std::chrono::milliseconds(0)));
+    const auto second = tracker.Begin(7, 2);
+    tracker.Record(7, first, true);
+    tracker.Record(7, second + 1, true);
+    tracker.Record(7, second, true);
+    CHECK(tracker.Wait(second, std::chrono::milliseconds(0)));
 }
 
 int main()
@@ -447,7 +519,11 @@ int main()
         TestStaleCancelPreservesNewRecording();
         TestOwnerCancellationFences();
         TestTsfPartialDeliveryKeepsFullCard();
-        TestTsfPipeSuccessKeepsFullCardWithoutReplayingText();
+        TestTsfOnlyShowsCardWhenHostDoesNotConfirm();
+        TestOlderTsfKeepsPipeOnlyBehavior();
+        TestAllTsfChunksConfirmedDoesNotShowCard();
+        TestReceiptTimeoutDoesNotShowStaleCard();
+        TestReceiptTrackingIsClientAndChunkSpecific();
         std::cout << "PASS voice service cancellation, owner and delivery regressions\n";
         return 0;
     }

@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -57,6 +58,7 @@ const DWORD WM_ApplyUiLessCandidates = WM_USER + 31;
 const DWORD WM_ApplyCapsLockEdge = WM_USER + 32;
 // Worker CancelComposition: drop the composition without committing, as Esc does.
 const DWORD WM_CancelServerComposition = WM_USER + 33;
+const DWORD WM_InsertVoiceText = WM_USER + 34;
 constexpr ULONG_PTR SMART_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535050u;
 constexpr ULONG_PTR PAIRED_PUNCTUATION_SENDINPUT_EXTRA_INFO = 0x4D535051u;
 // Synthetic input that this tip generates carries a marker meaning "this tip
@@ -292,7 +294,8 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     HRESULT _WriteTextAtSelection(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
     HRESULT _HandleToogleIMEMode(TfEditCookie ec, _In_ ITfContext *pContext);
     void _ClearCreatingWordState();
-    HRESULT _HandleInsertText(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
+    HRESULT _HandleInsertText(TfEditCookie ec, _In_ ITfContext *pContext, std::wstring_view text,
+                              bool requireConfirmedWrite = false);
     HRESULT _HandleCycleInputMode(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &payload);
     HRESULT _HandleCommitCandidateAndContinue(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &payload);
     HRESULT _HandleUpdateVoiceComposition(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text);
@@ -579,7 +582,7 @@ class CMetasequoiaIME : public ITfTextInputProcessorEx,
     bool _PostServerCandidateCommit(_In_z_ const WCHAR *candidateText);
     bool _PostServerCandidateCommitAndContinue(_In_z_ const WCHAR *payload);
     bool _PostServerInsertText(_In_z_ const WCHAR *text);
-    bool _PostServerTextDelivery(UINT windowMessage, _In_z_ const WCHAR *text);
+    bool _PostServerTextDelivery(UINT windowMessage, _In_z_ const WCHAR *text, uint64_t requiredFocusToken = 0);
     bool _TakeServerCandidateCommit(UINT token, _Out_ WorkerCandidateCommit &request);
     void _ResetVoiceCompositionAssemble();
     void _AssembleVoiceCompositionFrame(const FanyImeNamedpipeDataToTsfWorkerThread &buf);

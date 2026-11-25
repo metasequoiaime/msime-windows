@@ -1,6 +1,7 @@
 #include "KeyStateCategory.h"
 #include "Globals.h"
 #include "Ipc.h"
+#include "../../../engine/contracts/voice_insert_receipt.h"
 #include "MetasequoiaIMEBaseStructure.h"
 #include <debugapi.h>
 
@@ -91,6 +92,14 @@ HRESULT CKeyStateCategory::KeyStateHandler(KEYSTROKE_FUNCTION function, KeyHandl
 
     case FUNCTION_INSERT_TEXT:
         return _pTextService->_HandleInsertText(dto.ec, dto.pContext, dto.prefetchedText);
+    case FUNCTION_INSERT_VOICE_TEXT: {
+        const auto payload = FanyImeVoiceInsert::Decode(dto.prefetchedText);
+        if (payload.receipt == 0)
+            return E_INVALIDARG;
+        const auto result = _pTextService->_HandleInsertText(dto.ec, dto.pContext, payload.text, true);
+        SendVoiceInsertReceipt(payload.receipt, result == S_OK);
+        return result;
+    }
 
     case FUNCTION_CYCLE_INPUT_MODE:
         return _pTextService->_HandleCycleInputMode(dto.ec, dto.pContext, dto.prefetchedText);

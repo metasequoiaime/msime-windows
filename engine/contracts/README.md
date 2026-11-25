@@ -111,3 +111,16 @@ hosting without an automation provider, a focused HWND and UIA element in
 different processes) and Chromium's lazily enabled accessibility, whose first
 query emits focus events that do not move the input. Without a positive state,
 or against an older client, the Server keeps the UIA-based decision.
+
+### Voice insert receipts
+
+`VoiceInsertReceipt` (bit 11) is optional. For ordinary voice insertion the
+Server sends worker opcode `InsertVoiceText` (43) with each text chunk prefixed
+by two nonzero decimal IDs (receipt and focus token), each followed by a tab.
+The client queues the insert only for that focus token and replies on Main with
+event `VoiceInsertReceipt` (19), the ID in `request_id`, and `keycode` equal
+to 1 for a completed edit or 0 for a failed edit. A dropped session may
+produce no reply. The Server shows the original text on the result card
+when a send or edit fails or when any receipt is missing at the deadline.
+It never retries the insertion. Older clients keep the original `InsertText`
+pipe-only behavior.
