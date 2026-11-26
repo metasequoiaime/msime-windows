@@ -745,7 +745,8 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
         }
         break;
     }
-    case WM_InsertText: {
+    case WM_InsertText:
+    case WM_InsertVoiceText: {
         CMetasequoiaIME::WorkerCandidateCommit request;
         if (!pIME->_TakeServerCandidateCommit(static_cast<UINT>(wParam), request))
         {
@@ -765,7 +766,8 @@ LRESULT CALLBACK CMetasequoiaIME_WindowProc(HWND hWnd, UINT message, WPARAM wPar
             {
                 _KEYSTROKE_STATE KeystrokeState;
                 KeystrokeState.Category = CATEGORY_COMPOSING;
-                KeystrokeState.Function = FUNCTION_INSERT_TEXT;
+                KeystrokeState.Function =
+                    message == WM_InsertVoiceText ? FUNCTION_INSERT_VOICE_TEXT : FUNCTION_INSERT_TEXT;
                 pIME->_InvokeKeyHandler(pContext, 0, 0, 0, KeystrokeState, FANY_IME_UNSOLICITED_REQUEST_ID,
                                         std::move(request.text), 0, request.compositionEpoch, request.focusToken);
                 pContext->Release();

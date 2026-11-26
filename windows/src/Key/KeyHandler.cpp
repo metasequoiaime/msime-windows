@@ -280,7 +280,8 @@ HRESULT CMetasequoiaIME::_HandleToogleIMEMode(TfEditCookie ec, _In_ ITfContext *
     return S_OK;
 }
 
-HRESULT CMetasequoiaIME::_HandleInsertText(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &text)
+HRESULT CMetasequoiaIME::_HandleInsertText(TfEditCookie ec, _In_ ITfContext *pContext, std::wstring_view text,
+                                           bool requireConfirmedWrite)
 {
     if (text.empty())
     {
@@ -288,13 +289,13 @@ HRESULT CMetasequoiaIME::_HandleInsertText(TfEditCookie ec, _In_ ITfContext *pCo
     }
 
     CStringRange insertString;
-    insertString.Set(text.c_str(), text.length());
-    HRESULT hr = _AddCharAndFinalize(ec, pContext, &insertString);
-    if (FAILED(hr))
+    insertString.Set(text.data(), text.length());
+    HRESULT hr = _AddCharAndFinalize(ec, pContext, &insertString, requireConfirmedWrite);
+    if (FAILED(hr) || (requireConfirmedWrite && hr != S_OK))
     {
         return hr;
     }
-    return _HandleCompleteCommitFirst(ec, pContext);
+    return _HandleCompleteCommitFirst(ec, pContext, requireConfirmedWrite);
 }
 
 HRESULT CMetasequoiaIME::_HandleCycleInputMode(TfEditCookie ec, _In_ ITfContext *pContext, const std::wstring &payload)

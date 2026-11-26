@@ -113,7 +113,8 @@ enum KEYSTROKE_FUNCTION
     // Right, TSF moves its own caret and the Server mirrors the move on the same key. Append-only, like every
     // function above.
     FUNCTION_MOVE_HOME,
-    FUNCTION_MOVE_END
+    FUNCTION_MOVE_END,
+    FUNCTION_INSERT_VOICE_TEXT
 };
 
 //---------------------------------------------------------------------

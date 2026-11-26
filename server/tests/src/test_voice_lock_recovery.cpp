@@ -1459,6 +1459,13 @@ PipeClientActivation GetActivePipeClient()
     return active;
 }
 
+bool ClientNegotiatedVoiceInsertReceipt(uint64_t)
+{
+    // This fixture exercises recording control with its existing pipe double.
+    // Receipt-capable clients are tested in the voice service lifecycle fixture.
+    return false;
+}
+
 bool SendToTsfWorkerThreadClientViaNamedpipe(uint64_t, uint64_t, UINT msg_type, const std::wstring &text)
 {
     if (msg_type == Global::DataFromServerMsgTypeToTsfWorkerThread::InsertText)

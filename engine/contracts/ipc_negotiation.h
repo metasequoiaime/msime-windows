@@ -42,6 +42,8 @@ constexpr std::uint32_t ServerCompositionCancel = 1u << 9;
 // relying only on UI Automation. A client must not send the event unless the
 // Server acknowledged this bit: an older Server drops the connection on it.
 constexpr std::uint32_t FocusFieldAttestation = 1u << 10;
+// Optional: plain voice insert packets carry IDs acknowledged by the TSF edit session.
+constexpr std::uint32_t VoiceInsertReceipt = 1u << 11;
 constexpr std::uint32_t Capabilities = RequestIds | FocusEpochs | FramedVoice;
 constexpr std::uint32_t RequiredCapabilities = RequestIds | FocusEpochs;
 

@@ -130,6 +130,9 @@ constexpr std::uint32_t InputStateAction = 17;
 // context changes. Sent after every activation and on every change; never
 // activates the route by itself.
 constexpr std::uint32_t FocusFieldState = 18;
+// Main, negotiated VoiceInsertReceipt. request_id identifies the worker
+// insertion and keycode is 1 (written) or 0 (edit failed).
+constexpr std::uint32_t VoiceInsertReceipt = 19;
 constexpr bool IsRouteDeactivation(std::uint32_t event_type)
 {
     return event_type == ClientDeactivated || event_type == ClientSuspended;
@@ -511,7 +514,9 @@ constexpr std::uint32_t DirectHelpcodeEndTriggerChanged = 41;
 // shortcut it caught in its keyboard hook (the DR Dict preedit lookup, which some hosts never hand to TSF).
 // The DLL applies it only to the focus session and composition epoch current when it arrives. Payload empty.
 constexpr std::uint32_t CancelComposition = 42;
-constexpr std::uint32_t MaxKnown = CancelComposition;
+// VoiceInsertReceipt capability, payload encoded by voice_insert_receipt.h.
+constexpr std::uint32_t InsertVoiceText = CancelComposition + 1;
+constexpr std::uint32_t MaxKnown = InsertVoiceText;
 // Source compatibility for the Server's historical spellings.
 constexpr std::uint32_t SwitchToEn = SwitchToEnglish;
 constexpr std::uint32_t SwitchToCn = SwitchToChinese;

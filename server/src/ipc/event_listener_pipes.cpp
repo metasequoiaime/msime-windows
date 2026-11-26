@@ -19,6 +19,7 @@
 #include "watchdog/watchdog_protocol.h"
 #include "log/candidate_diag_log.h"
 #include "statistics/stats_pipe.h"
+#include "voice-input/voice_input_service.h"
 #include <cwchar>
 
 using namespace event_listener_detail;
@@ -209,6 +210,7 @@ bool IsKnownMainPipeEvent(UINT event_type)
     case FanyImePipeEventType::FocusRestored:
     case FanyImePipeEventType::HideCaretState:
     case FanyImePipeEventType::FocusFieldState:
+    case FanyImePipeEventType::VoiceInsertReceipt:
         return true;
     default:
         return false;
@@ -245,6 +247,11 @@ bool IsValidMainPipeFrame(const FanyImeNamedpipeData &pipe_data)
     }
     if (pipe_data.event_type == FanyImePipeEventType::FocusFieldState &&
         (pipe_data.request_id == 0 || pipe_data.keycode > 1))
+    {
+        return false;
+    }
+    if (pipe_data.event_type == FanyImePipeEventType::VoiceInsertReceipt &&
+        (pipe_data.request_id == 0 || pipe_data.keycode > 1 || pipe_data.pinyin_length != 0))
     {
         return false;
     }
@@ -497,6 +504,12 @@ void MainPipeClientThread(HANDLE clientPipe, uint64_t handlerId)
             // the token it carries and never claims or changes routing.
             RecordPipeClientFocusField(clientId, mainRegistrationId, pipeData.request_id, pipeData.modifiers_down,
                                        pipeData.keycode == 1);
+            continue;
+        }
+        if (pipeData.event_type == FanyImePipeEventType::VoiceInsertReceipt)
+        {
+            if (ClientNegotiatedVoiceInsertReceipt(clientId))
+                VoiceInput::RecordTsfInsertReceipt(clientId, pipeData.request_id, pipeData.keycode == 1);
             continue;
         }
         if (FanyImePipeEventType::IsRouteDeactivation(pipeData.event_type))

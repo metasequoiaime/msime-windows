@@ -22,6 +22,8 @@
 #include "voice_commit_policy.h"
 #include "voice_control_policy.h"
 #include "voice_input_delivery.h"
+#include "voice_insert_receipts.h"
+#include "../../../engine/contracts/voice_insert_receipt.h"
 
 #include "utils/network_proxy.h"
 #include <curl/curl.h>
@@ -66,6 +68,8 @@ std::atomic<std::uint64_t> g_voice_session{0};
 std::atomic<std::uint64_t> g_dismissed_overlay_session{0};
 std::vector<std::future<void>> g_network_tasks;
 std::mutex g_send_mutex;
+VoiceInput::VoiceInsertReceipts g_voice_insert_receipts;
+constexpr auto kVoiceInsertReceiptTimeout = std::chrono::milliseconds(800);
 std::atomic<bool> g_stream_inline_this_session{false};
 // Inline composition owner route for the current session; guarded by g_send_mutex.
 VoiceInput::Target g_inline_owner;
@@ -1285,37 +1289,52 @@ bool CancelInlinePreeditOnControlThread(std::uint64_t expected_session)
 
 // Delivers through the captured commit route, never a freshly picked active
 // client: the destination was decided when the target snapshot was taken.
-// Returns the number of UTF-16 units successfully delivered. Each chunk starts
-// only after the route is re-verified (fast focus + live pipe); when delivery
-// stops, everything up to the returned offset is already in the field. The
-// caller shows the full original on the card and never replays any part,
-// because automatic replay would duplicate the delivered prefix.
-// Must be called under g_send_mutex.
-std::size_t SendTextViaTsf(const std::wstring &text, const VoiceInput::Target &route)
+// Keep legacy hosts on their original pipe-only path. New hosts report the
+// actual edit result for each chunk. Wait outside the send lock so cancellation
+// and the next recording remain usable when a host stops responding.
+bool SendTextViaTsf(const std::wstring &text, const VoiceInput::Target &route, std::unique_lock<std::mutex> &send_lock)
 {
     if (text.empty() || route.client == 0 || route.epoch == 0)
     {
-        return 0;
+        return false;
     }
-    constexpr size_t maxCharsPerPacket =
+    constexpr size_t pipeChars =
         (sizeof(((FanyImeNamedpipeDataToTsfWorkerThread *)nullptr)->data) / sizeof(wchar_t)) - 1;
-    size_t offset = 0;
-    while (offset < text.size())
+    const bool confirms = ClientNegotiatedVoiceInsertReceipt(route.client);
+    if (confirms && route.focus_token == 0)
+        return false;
+    const auto maxChars = pipeChars - (confirms ? FanyImeVoiceInsert::MaxPrefixChars : 0);
+    const auto opcode = confirms ? Global::DataFromServerMsgTypeToTsfWorkerThread::InsertVoiceText
+                                 : Global::DataFromServerMsgTypeToTsfWorkerThread::InsertText;
+    std::vector<std::wstring_view> chunks;
+    std::wstring_view remaining(text);
+    while (!remaining.empty())
     {
-        if (!OwnerRouteValid(route))
-        {
-            break;
-        }
-        const size_t chunkLen = (std::min)(maxCharsPerPacket, text.size() - offset);
-        if (!SendToTsfWorkerThreadClientViaNamedpipe(route.client, route.epoch,
-                                                     Global::DataFromServerMsgTypeToTsfWorkerThread::InsertText,
-                                                     text.substr(offset, chunkLen)))
-        {
-            break;
-        }
-        offset += chunkLen;
+        auto size = (std::min)(maxChars, remaining.size());
+        if (size < remaining.size() && remaining[size - 1] >= 0xd800 && remaining[size - 1] <= 0xdbff)
+            --size;
+        chunks.push_back(remaining.substr(0, size));
+        remaining.remove_prefix(size);
     }
-    return offset;
+    const auto first = confirms ? g_voice_insert_receipts.Begin(route.client, chunks.size()) : 0;
+    for (std::size_t i = 0; i < chunks.size(); ++i)
+    {
+        const auto payload =
+            confirms ? FanyImeVoiceInsert::Encode(first + i, route.focus_token, chunks[i]) : std::wstring(chunks[i]);
+        if (!OwnerRouteValid(route) ||
+            !SendToTsfWorkerThreadClientViaNamedpipe(route.client, route.epoch, opcode, payload))
+        {
+            if (confirms)
+                g_voice_insert_receipts.Forget(first);
+            return false;
+        }
+    }
+    if (!confirms)
+        return true;
+    send_lock.unlock();
+    const bool written = g_voice_insert_receipts.Wait(first, kVoiceInsertReceiptTimeout);
+    send_lock.lock();
+    return written;
 }
 
 void CommitRecognizedText(const std::string &utf8, const VoiceInputConfig &config, bool stream_inline,
@@ -1334,7 +1353,7 @@ void CommitRecognizedText(const std::string &utf8, const VoiceInputConfig &confi
     // cross-process query is slow and the lock stays lean (no COM under it).
     const VoiceInput::Target final_target = CaptureVoiceTarget();
 
-    std::lock_guard<std::mutex> send_lock(g_send_mutex);
+    std::unique_lock<std::mutex> send_lock(g_send_mutex);
     if (g_voice_session != voice_session)
     {
         return;
@@ -1389,14 +1408,8 @@ void CommitRecognizedText(const std::string &utf8, const VoiceInputConfig &confi
         {
             CancelInlinePreeditFor(final_target);
         }
-        // This action requires a live captured route. A failed chunk leaves
-        // any delivered prefix in the field; keep the full original on the
-        // Copy surface without replaying it through another delivery method.
-        if (SendTextViaTsf(text, final_target) == text.size())
-        {
-            return;
-        }
-        show_card(text);
+        if (!SendTextViaTsf(text, final_target, send_lock) && g_voice_session == voice_session)
+            show_card(text);
         return;
     case VoiceInput::VoiceCommitAction::CommitSendInput:
         if (stream_inline)
@@ -1939,6 +1952,11 @@ void DiscardRecording(const VoiceInputConfig &config)
     }
 }
 } // namespace
+
+void VoiceInput::RecordTsfInsertReceipt(std::uint64_t client, std::uint64_t receipt, bool accepted)
+{
+    g_voice_insert_receipts.Record(client, receipt, accepted);
+}
 
 namespace VoiceInput::Detail
 {

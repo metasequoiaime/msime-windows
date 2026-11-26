@@ -164,6 +164,7 @@ struct PipeClientUnregisterResult
 PipeClientUnregisterResult UnregisterPipeClientHandle(uint64_t client_id, UINT pipe_role, HANDLE pipe,
                                                       uint64_t registration_id);
 bool IsPipeClientRegistrationCurrent(uint64_t client_id, UINT pipe_role, uint64_t registration_id);
+bool ClientNegotiatedVoiceInsertReceipt(uint64_t client_id);
 PipeClientActivation ActivatePipeClient(uint64_t client_id, uint64_t main_registration_id,
                                         bool wait_for_reverse_pipe = false, uint64_t focus_token = 0,
                                         bool update_focus_token = false);

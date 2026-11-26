@@ -73,7 +73,8 @@ TEST_CASE(ipc_pipe_ready_is_a_distinct_server_reply)
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::UpdateInstallerReady, 40u);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged, 41u);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition, 42u);
-    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown, 42u);
+    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::InsertVoiceText, 43u);
+    REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown, 43u);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::FocusSessionReady >
             Global::DataFromServerMsgTypeToTsfWorkerThread::PagingCommaPeriodChanged);
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::PipeReady >
@@ -141,7 +142,7 @@ TEST_CASE(ipc_pipe_ready_is_a_distinct_server_reply)
     REQUIRE(Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition >
             Global::DataFromServerMsgTypeToTsfWorkerThread::DirectHelpcodeEndTriggerChanged);
     REQUIRE_EQ(Global::DataFromServerMsgTypeToTsfWorkerThread::MaxKnown,
-               Global::DataFromServerMsgTypeToTsfWorkerThread::CancelComposition);
+               Global::DataFromServerMsgTypeToTsfWorkerThread::InsertVoiceText);
 }
 
 TEST_CASE(ipc_client_suspension_is_a_distinct_nonterminal_route_reset)
@@ -184,6 +185,9 @@ TEST_CASE(ipc_focus_field_state_is_an_appended_optional_event)
     REQUIRE_EQ(FanyImeProtocol::FocusFieldAttestation, 1u << 10);
     REQUIRE((FanyImeProtocol::Capabilities & FanyImeProtocol::FocusFieldAttestation) == 0u);
     REQUIRE((FanyImeProtocol::RequiredCapabilities & FanyImeProtocol::FocusFieldAttestation) == 0u);
+    REQUIRE_EQ(FanyImePipeEventType::VoiceInsertReceipt, 19u);
+    REQUIRE_EQ(FanyImeProtocol::VoiceInsertReceipt, 1u << 11);
+    REQUIRE((FanyImeProtocol::RequiredCapabilities & FanyImeProtocol::VoiceInsertReceipt) == 0u);
     REQUIRE(!FanyImePipeEventType::IsRouteDeactivation(FanyImePipeEventType::FocusFieldState));
     REQUIRE(!FanyImePipeEventType::IsTerminalDeactivation(FanyImePipeEventType::FocusFieldState));
 }
