@@ -6,6 +6,13 @@ build64/
 build64-release/
 build32/
 build32-release/
+buildarm64/
+buildarm64-release/
+buildarm64x-release/
+
+# Arm64X 的链接输入暂存目录：Arm64 那一遍把每个目标的 obj/lib/def 写进响应文件，
+# Arm64EC 那一遍读回来合并成 Arm64X（见 windows/cmake/arm64x.cmake）。
+/windows/repros/
 draft/
 *.log
 CMakeSettings.json

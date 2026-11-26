@@ -27,7 +27,8 @@ $files = if ($Set -eq 'Payload') {
         'server_exe/MetasequoiaImeHandwritingPanel.exe',
         'server_exe/MetasequoiaImeSettings.exe',
         'tsf_dll/32/MetasequoiaImeTsf.dll',
-        'tsf_dll/64/MetasequoiaImeTsf.dll'
+        'tsf_dll/64/MetasequoiaImeTsf.dll',
+        'tsf_dll/arm64/MetasequoiaImeTsf.dll'
     )
 }
 else {
