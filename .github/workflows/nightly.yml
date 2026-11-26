@@ -413,11 +413,15 @@ jobs:
           # The previous commit comes from the marker in the existing body, not from the tag: the
           # tag never moves, so it would compare today's HEAD against the first nightly forever.
           $previous = ''
-          gh release view $tag --repo $env:GH_REPO --json body --jq .body *> $null
+          # Out-String is load-bearing: native stdout reaches PowerShell as one array element per
+          # line, and -match against an array only filters it without filling $Matches, so
+          # $Matches[1] threw "Cannot index into a null array" on every night after the marker
+          # appeared. [regex]::Match is independent of how the body was split into lines.
+          $existing = gh release view $tag --repo $env:GH_REPO --json body --jq .body 2>$null | Out-String
           if ($LASTEXITCODE -eq 0) {
-            $existing = gh release view $tag --repo $env:GH_REPO --json body --jq .body
-            if ($existing -match '<!--\s*nightly-sha:\s*([0-9a-f]{7,40})\s*-->') {
-              $previous = $Matches[1]
+            $shaMatch = [regex]::Match($existing, '<!--\s*nightly-sha:\s*([0-9a-f]{7,40})\s*-->')
+            if ($shaMatch.Success) {
+              $previous = $shaMatch.Groups[1].Value
             }
           }
 
