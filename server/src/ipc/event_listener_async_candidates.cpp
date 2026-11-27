@@ -462,12 +462,9 @@ void ApplyCandidateTranslations(std::vector<EnglishIme::TranslationResult> resul
         }
     }
     const FanyImeIpc::CandidateUiOwner owner = SnapshotCandidateUiOwner();
-    std::vector<std::string> page_words;
-    page_words.reserve(Global::candidate_ui.page_words.size());
-    for (const std::wstring &word : Global::candidate_ui.page_words)
-        page_words.push_back(wstring_to_string(word));
+    const std::vector<std::string> page_keys = CurrentPageTranslationKeys();
     const bool visible_gloss_changed =
-        page_words.empty() || FanyImeIpc::AnyTranslatedKeyOnPage(page_words, changed_keys);
+        Global::candidate_ui.page_words.empty() || FanyImeIpc::AnyTranslatedKeyOnPage(page_keys, changed_keys);
     if (glosses_changed && visible_gloss_changed && owner &&
         IsPipeActivationCurrent(owner.client_id, owner.activation_epoch))
         RefreshCandidatePageUiAsync();
