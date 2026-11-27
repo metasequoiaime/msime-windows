@@ -209,6 +209,10 @@ void SyncShuangpinPreeditForms();
 // event_listener_candidates.cpp
 void EnsureCandidatePageReady();
 std::wstring BuildUiLessCandidatePageW();
+// 当前页可见候选用于查译文的规范键（与 BuildTranslationQuery 一致：简体底词 / 归一化英文），
+// 供 ApplyCandidateTranslations 判断本批译文改动是否落在当前页上；不能拿已做繁简或大小写转换的
+// page_words 直接比对。
+std::vector<std::string> CurrentPageTranslationKeys();
 void RefreshCandidatePageUi(bool show_window);
 // 异步来源（混输、重排、云/AI、专用英文、译文）的结果：重新组页并立即请求显示。不设合并窗口、不限帧数，
 // 调用方只在可见内容真的变了时才来，内容没变的回包在调用方就返回了。

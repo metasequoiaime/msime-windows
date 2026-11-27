@@ -17,6 +17,7 @@
 #include "ipc/candidate_mixed_english_preservation.h"
 #include "ipc/candidate_wubi_code_hint_policy.h"
 #include "ipc/input_key_policy.h"
+#include "ipc/translation_page_visibility.h"
 #include "utils/common_utils.h"
 #include <utf8.h>
 #include "global/globals.h"
@@ -272,6 +273,16 @@ std::wstring BuildUiLessCandidatePageW()
         page += FanyImeIpc::QuickPhraseDisplayText(ui.page_words[i]);
     }
     return page;
+}
+
+std::vector<std::string> CurrentPageTranslationKeys()
+{
+    const auto &ui = Global::candidate_ui;
+    return FanyImeIpc::VisiblePageTranslationKeys(
+        ui.items, ui.current_page_start(), ui.current_page_count(), [](const WordItem &item) {
+            EnglishIme::TranslationQuery query;
+            return BuildTranslationQuery(item, query) ? std::move(query.key) : std::string{};
+        });
 }
 } // namespace event_listener_detail
 
